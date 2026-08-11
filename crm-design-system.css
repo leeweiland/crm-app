@@ -168,6 +168,12 @@ body { margin: 0; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
 
+/* Toggleable chip picker -- lists/tags selection in the campaign builder,
+   automation/workflow trigger targets, webhook-form default lists/tags. */
+.chip-multiselect { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip-option { font-size: .74rem; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--pra-border); color: var(--pra-dim); cursor: pointer; }
+.chip-option.on { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-blue); }
+
 /* ── Email block editor (block-editor-client.js) ── */
 .be-shell { display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start; }
 .be-canvas-wrap { min-width: 0; }

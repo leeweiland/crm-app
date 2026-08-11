@@ -13,11 +13,17 @@ import { handleSmsRequest } from "./sms_backend.js";
 import { handleWorkflowsRequest } from "./workflows_backend.js";
 import { handleInboxRequest } from "./inbox_backend.js";
 import { handleReportingRequest } from "./reporting_backend.js";
+import { handleWebhooksRequest } from "./webhooks_backend.js";
+import { handleImportRequest } from "./import_backend.js";
 import { startScheduler } from "./scheduler.js";
 
-dotenv.config();
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// Explicit path, not dotenv's default (process.cwd()) -- the preview
+// launcher runs `node <absolute path to server.js>` without first `cd`ing
+// into this folder, so process.cwd() is wrong and .env silently never
+// loads. Doesn't affect Railway, which injects env vars directly into
+// process.env regardless of any .env file.
+dotenv.config({ path: join(__dirname, ".env") });
 const PORT = process.env.PORT || 3457;
 
 process.on("unhandledRejection", (reason) => {
@@ -57,6 +63,8 @@ createServer(async (req, res) => {
   if (await handleWorkflowsRequest(req, res, url)) return;
   if (await handleInboxRequest(req, res, url)) return;
   if (await handleReportingRequest(req, res, url)) return;
+  if (await handleWebhooksRequest(req, res, url)) return;
+  if (await handleImportRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike
   // chat-app, which shares a domain/nav with sibling apps), so there's no

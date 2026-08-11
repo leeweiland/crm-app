@@ -29,6 +29,8 @@
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
         <button class="tab-btn" data-tab="tagslists">Tags &amp; Lists</button>
         <button class="tab-btn" data-tab="footers">Email Footers</button>
+        <button class="tab-btn" data-tab="webhooks">Webhook Forms</button>
+        <button class="tab-btn" data-tab="import">Data Import</button>
         <button class="tab-btn" data-tab="users">Users</button>
       </div>
 
@@ -89,6 +91,57 @@
               <button class="pra-btn" id="saveFooterBtn" style="flex:1">Save</button>
               <button class="pra-btn pra-btn-ghost" id="setDefaultFooterBtn">Make Default</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-webhooks">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div class="pra-panel" style="padding:22px">
+            <div class="pra-h2" style="margin-bottom:6px">Webhook Forms</div>
+            <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Point a Framer form's "Send to a URL" action directly at the URL shown here -- no Zapier needed. Each form gets its own URL and field mapping.</div>
+            <div id="webhookConfigsList"></div>
+            <button class="pra-btn" id="newWebhookBtn" style="margin-top:14px">+ New Form</button>
+          </div>
+          <div class="pra-panel" id="webhookEditorPanel" style="padding:22px;display:none">
+            <div class="pra-h2" style="margin-bottom:14px">Edit Form</div>
+            <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="webhookName"/></div>
+            <div class="field"><label class="pra-label">Webhook URL</label>
+              <div style="display:flex;gap:8px">
+                <input class="pra-input" id="webhookUrl" readonly/>
+                <button class="pra-btn pra-btn-ghost pra-btn-sm" id="copyWebhookUrlBtn">Copy</button>
+              </div>
+            </div>
+            <div class="pra-label" style="margin:14px 0 8px">Field Mapping</div>
+            <div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">Left = the exact field name/label Framer sends. Right = where it goes on the contact.</div>
+            <div id="fieldMapRows"></div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addFieldMapRowBtn" style="margin-top:8px">+ Add Field Mapping</button>
+            <div class="pra-label" style="margin:14px 0 8px">Defaults for New Contacts</div>
+            <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="webhookDefaultStatus"><option value="">None</option></select></div>
+            <div class="field"><label class="pra-label">Tags</label><div class="chip-multiselect" id="webhookDefaultTags"></div></div>
+            <div class="field"><label class="pra-label">Lists</label><div class="chip-multiselect" id="webhookDefaultLists"></div></div>
+            <button class="pra-btn" id="saveWebhookBtn" style="width:100%;margin-top:14px">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:6px">Data Import</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:18px">Batch-imports one page at a time -- click "Run Next Batch" repeatedly (or "Run Until Done") whenever you want to pull in more. Never runs unattended in the background.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div class="pra-card" style="padding:18px" id="acImportCard">
+            <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">ActiveCampaign</div>
+            <div class="pra-muted" id="acStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
+            <div id="acJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="activecampaign">Run Next Batch</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="activecampaign">Run Until Done</button>
+          </div>
+          <div class="pra-card" style="padding:18px" id="closeImportCard">
+            <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">Close</div>
+            <div class="pra-muted" id="closeStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
+            <div id="closeJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="close">Run Next Batch</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="close">Run Until Done</button>
           </div>
         </div>
       </div>
@@ -326,12 +379,163 @@ document.getElementById('setDefaultFooterBtn').onclick = async () => {
   loadFooters();
 };
 
+// ── Webhook Forms (Framer, no Zapier) ───────────────────────────────────
+let allWebhooks = [], editingWebhookId = null, webhookRefTags = [], webhookRefLists = [], webhookRefStatuses = [], webhookRefFields = [];
+async function loadWebhookRefs() {
+  const [tagsRes, listsRes, statusesRes, fieldsRes] = await Promise.all([
+    fetch('/api/tags'), fetch('/api/lists'), fetch('/api/statuses'), fetch('/api/custom-fields?entityType=contact')
+  ]);
+  webhookRefTags = (await tagsRes.json()).tags;
+  webhookRefLists = (await listsRes.json()).lists;
+  webhookRefStatuses = (await statusesRes.json()).statuses;
+  webhookRefFields = (await fieldsRes.json()).fields;
+}
+async function loadWebhooks() {
+  const r = await fetch('/api/webhook-configs');
+  allWebhooks = (await r.json()).configs;
+  document.getElementById('webhookConfigsList').innerHTML = allWebhooks.map(w => `
+    <div class="row-item" style="cursor:pointer" data-open-webhook="${w.id}">
+      <span style="flex:1">${escapeHtml(w.name)}</span>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-webhook="${w.id}">Delete</button>
+    </div>
+  `).join('') || '<div class="pra-muted">No forms yet.</div>';
+  document.querySelectorAll('[data-open-webhook]').forEach(el => el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-del-webhook]')) return;
+    openWebhookEditor(el.dataset.openWebhook);
+  }));
+  document.querySelectorAll('[data-del-webhook]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    await fetch('/api/webhook-configs/' + btn.dataset.delWebhook, { method: 'DELETE' });
+    loadWebhooks();
+  });
+}
+function fieldMapRowHtml(label, target) {
+  return `
+    <div class="field-row" style="margin-bottom:8px" data-fieldmap-row>
+      <input class="pra-input" placeholder="Framer field label" value="${escapeHtml(label || '')}" data-fm-label/>
+      <select class="pra-select" data-fm-target>
+        <option value="first" ${target === 'first' ? 'selected' : ''}>First name</option>
+        <option value="last" ${target === 'last' ? 'selected' : ''}>Last name</option>
+        <option value="email" ${target === 'email' ? 'selected' : ''}>Email</option>
+        <option value="phone" ${target === 'phone' ? 'selected' : ''}>Phone</option>
+        ${webhookRefFields.map(f => `<option value="customField:${f.id}" ${target === 'customField:' + f.id ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
+      </select>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-remove-fieldmap-row type="button">&times;</button>
+    </div>
+  `;
+}
+function wireFieldMapRow(el) {
+  el.querySelector('[data-remove-fieldmap-row]').onclick = () => el.remove();
+}
+document.getElementById('addFieldMapRowBtn').onclick = () => {
+  const wrap = document.getElementById('fieldMapRows');
+  wrap.insertAdjacentHTML('beforeend', fieldMapRowHtml('', 'first'));
+  wireFieldMapRow(wrap.lastElementChild);
+};
+function openWebhookEditor(id) {
+  const w = allWebhooks.find(x => x.id === id);
+  if (!w) return;
+  editingWebhookId = id;
+  document.getElementById('webhookEditorPanel').style.display = 'block';
+  document.getElementById('webhookName').value = w.name;
+  document.getElementById('webhookUrl').value = location.origin + '/api/webhooks/framer/' + w.webhookToken;
+  const rowsWrap = document.getElementById('fieldMapRows');
+  rowsWrap.innerHTML = '';
+  Object.entries(w.fieldMap || {}).forEach(([label, target]) => {
+    rowsWrap.insertAdjacentHTML('beforeend', fieldMapRowHtml(label, target));
+    wireFieldMapRow(rowsWrap.lastElementChild);
+  });
+  document.getElementById('webhookDefaultStatus').innerHTML = '<option value="">None</option>' + webhookRefStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${w.defaultStatusId === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
+  document.getElementById('webhookDefaultTags').innerHTML = webhookRefTags.map(t => `<span class="chip-option${(w.defaultTagIds || []).includes(t.id) ? ' on' : ''}" data-id="${t.id}">${escapeHtml(t.name)}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
+  document.getElementById('webhookDefaultLists').innerHTML = webhookRefLists.map(l => `<span class="chip-option${(w.defaultListIds || []).includes(l.id) ? ' on' : ''}" data-id="${l.id}">${escapeHtml(l.name)}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
+  document.querySelectorAll('#webhookDefaultTags .chip-option, #webhookDefaultLists .chip-option').forEach(chip => chip.onclick = () => chip.classList.toggle('on'));
+}
+document.getElementById('newWebhookBtn').onclick = async () => {
+  const r = await fetch('/api/webhook-configs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Form' }) });
+  const d = await r.json();
+  await loadWebhooks();
+  if (r.ok) openWebhookEditor(d.config.id);
+};
+document.getElementById('copyWebhookUrlBtn').onclick = () => {
+  document.getElementById('webhookUrl').select();
+  document.execCommand('copy');
+  showToast('Copied');
+};
+document.getElementById('saveWebhookBtn').onclick = async () => {
+  if (!editingWebhookId) return;
+  const fieldMap = {};
+  document.querySelectorAll('[data-fieldmap-row]').forEach(row => {
+    const label = row.querySelector('[data-fm-label]').value.trim();
+    const target = row.querySelector('[data-fm-target]').value;
+    if (label) fieldMap[label] = target;
+  });
+  const defaultTagIds = [...document.querySelectorAll('#webhookDefaultTags .chip-option.on')].map(el => el.dataset.id);
+  const defaultListIds = [...document.querySelectorAll('#webhookDefaultLists .chip-option.on')].map(el => el.dataset.id);
+  const body = { name: document.getElementById('webhookName').value.trim(), fieldMap, defaultTagIds, defaultListIds, defaultStatusId: document.getElementById('webhookDefaultStatus').value || null };
+  const r = await fetch('/api/webhook-configs/' + editingWebhookId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { showToast('Could not save', true); return; }
+  showToast('Saved');
+  loadWebhooks();
+};
+
+// ── Data Import ──────────────────────────────────────────────────────────
+async function loadImportStatus() {
+  const r = await fetch('/api/import/config-status');
+  if (!r.ok) return; // non-admin -- tab just stays empty
+  const { activecampaign, close } = await r.json();
+  document.getElementById('acStatusMsg').textContent = activecampaign ? 'AC_API_KEY configured.' : 'AC_API_KEY not set in .env yet.';
+  document.getElementById('closeStatusMsg').textContent = close ? 'CLOSE_API_KEY configured.' : 'CLOSE_API_KEY not set in .env yet.';
+  document.querySelectorAll('[data-import-run]').forEach(btn => btn.disabled = (btn.dataset.importRun === 'activecampaign' ? !activecampaign : !close));
+  document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.disabled = (btn.dataset.importRunUntilDone === 'activecampaign' ? !activecampaign : !close));
+  await refreshImportJobStats();
+}
+async function refreshImportJobStats() {
+  const r = await fetch('/api/import/jobs');
+  if (!r.ok) return;
+  const { jobs } = await r.json();
+  ['activecampaign', 'close'].forEach(source => {
+    const job = jobs.filter(j => j.source === source).slice(-1)[0];
+    const el = document.getElementById(source === 'activecampaign' ? 'acJobStats' : 'closeJobStats');
+    el.textContent = job ? `Status: ${job.status} · Imported: ${job.totalImported} · Errors: ${job.totalErrors}` : 'No import started yet.';
+  });
+}
+async function ensureImportJob(source) {
+  const r = await fetch('/api/import/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }) });
+  const d = await r.json();
+  return d.job;
+}
+document.querySelectorAll('[data-import-run]').forEach(btn => btn.onclick = async () => {
+  const job = await ensureImportJob(btn.dataset.importRun);
+  const r = await fetch(`/api/import/jobs/${job.id}/run`, { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { showToast(d.error || 'Import batch failed', true); return; }
+  showToast(d.done ? 'Import complete' : 'Batch imported');
+  refreshImportJobStats();
+});
+document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.onclick = async () => {
+  btn.disabled = true;
+  const source = btn.dataset.importRunUntilDone;
+  const job = await ensureImportJob(source);
+  let done = false, guard = 0;
+  while (!done && guard++ < 500) {
+    const r = await fetch(`/api/import/jobs/${job.id}/run`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Import failed', true); break; }
+    done = d.done;
+    await refreshImportJobStats();
+  }
+  btn.disabled = false;
+  showToast(done ? 'Import complete' : 'Stopped');
+});
+
 loadStatuses();
 loadFields();
 loadTags();
 loadLists();
 loadUsers();
 loadFooters();
+loadWebhookRefs().then(loadWebhooks);
+loadImportStatus();
 </script>
 </body>
 </html>
