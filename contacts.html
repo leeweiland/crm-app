@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Contacts — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .toolbar { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; }
+  .toolbar input { max-width: 320px; }
+  .tag-chip { display: inline-block; font-size: .68rem; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 4px; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="toolbar">
+        <div class="pra-h1" style="flex:1">Contacts</div>
+        <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
+        <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
+        <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
+      </div>
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Account</th><th>Email</th><th>Phone</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead>
+          <tbody id="contactsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="addModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Add Contact</div>
+    <div class="field-row">
+      <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="newFirst"/></div>
+      <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="newLast"/></div>
+    </div>
+    <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="newEmail"/></div>
+    <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="newPhone"/></div>
+    <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="newStatus"></select></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveContactBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" id="cancelContactBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script>
+let allStatuses = [];
+
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : ''; }
+
+async function loadStatuses() {
+  const r = await fetch('/api/statuses');
+  allStatuses = r.ok ? (await r.json()).statuses : [];
+  const filterSel = document.getElementById('statusFilter');
+  const newSel = document.getElementById('newStatus');
+  allStatuses.forEach(s => {
+    filterSel.innerHTML += `<option value="${s.label}">${escapeHtml(s.label)}</option>`;
+    newSel.innerHTML += `<option value="${s.label}">${escapeHtml(s.label)}</option>`;
+  });
+}
+
+async function loadContacts() {
+  const q = document.getElementById('searchInput').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  const r = await fetch('/api/contacts?' + params.toString());
+  const body = document.getElementById('contactsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load contacts.</td></tr>'; return; }
+  const { contacts } = await r.json();
+  if (!contacts.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No contacts yet.</td></tr>'; return; }
+  body.innerHTML = contacts.map(c => `
+    <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
+      <td>${escapeHtml(c.first)} ${escapeHtml(c.last)}</td>
+      <td class="pra-muted">${escapeHtml(c.accountName || '')}</td>
+      <td>${escapeHtml(c.email || '')}</td>
+      <td>${escapeHtml(c.phone || '')}</td>
+      <td>${c.status ? `<span class="pra-badge">${escapeHtml(c.status)}</span>` : ''}</td>
+      <td>${(c.tags || []).length ? c.tags.length + ' tag(s)' : ''}</td>
+      <td class="pra-muted">${fmtDate(c.createdAt)}</td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('searchInput').addEventListener('input', () => { clearTimeout(window._st); window._st = setTimeout(loadContacts, 250); });
+document.getElementById('statusFilter').addEventListener('change', loadContacts);
+
+document.getElementById('addContactBtn').onclick = () => document.getElementById('addModal').classList.add('show');
+document.getElementById('cancelContactBtn').onclick = () => document.getElementById('addModal').classList.remove('show');
+document.getElementById('saveContactBtn').onclick = async () => {
+  const first = document.getElementById('newFirst').value.trim();
+  const last = document.getElementById('newLast').value.trim();
+  if (!first || !last) { showToast('First and last name are required', true); return; }
+  const body = {
+    first, last,
+    email: document.getElementById('newEmail').value.trim(),
+    phone: document.getElementById('newPhone').value.trim(),
+    status: document.getElementById('newStatus').value,
+  };
+  const r = await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { showToast('Could not save contact', true); return; }
+  document.getElementById('addModal').classList.remove('show');
+  ['newFirst','newLast','newEmail','newPhone'].forEach(id => document.getElementById(id).value = '');
+  showToast('Contact added');
+  loadContacts();
+};
+
+(async function init() {
+  await loadStatuses();
+  await loadContacts();
+})();
+</script>
+</body>
+</html>

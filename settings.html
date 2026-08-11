@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Settings — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); }
+  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .row-item:last-child { border-bottom: none; }
+  .add-row { display: flex; gap: 10px; margin-top: 14px; }
+  .add-row input, .add-row select { flex: 1; }
+  .drag-handle { cursor: grab; color: var(--pra-dim); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="pra-h1" style="margin-bottom:20px">Settings</div>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="statuses">Statuses</button>
+        <button class="tab-btn" data-tab="customfields">Custom Fields</button>
+        <button class="tab-btn" data-tab="tagslists">Tags &amp; Lists</button>
+        <button class="tab-btn" data-tab="users">Users</button>
+      </div>
+
+      <div class="tab-panel active pra-panel" id="tab-statuses" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:6px">Lead Statuses</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Drag to reorder. Represents a contact's current relationship to your company.</div>
+        <div id="statusesList"></div>
+        <div class="add-row">
+          <input class="pra-input" id="newStatusLabel" placeholder="New status name..."/>
+          <button class="pra-btn" id="addStatusBtn">Add</button>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-customfields" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:6px">Custom Fields</div>
+        <div style="display:flex;gap:20px;margin-bottom:14px">
+          <label class="pra-label" style="cursor:pointer"><input type="radio" name="cfEntity" value="contact" checked/> Contacts</label>
+          <label class="pra-label" style="cursor:pointer"><input type="radio" name="cfEntity" value="lead"/> Leads</label>
+          <label class="pra-label" style="cursor:pointer"><input type="radio" name="cfEntity" value="opportunity"/> Opportunities</label>
+        </div>
+        <div id="fieldsList"></div>
+        <div class="add-row">
+          <input class="pra-input" id="newFieldLabel" placeholder="New field label..."/>
+          <button class="pra-btn" id="addFieldBtn">Add</button>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-tagslists">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div class="pra-panel" style="padding:22px">
+            <div class="pra-h2" style="margin-bottom:14px">Tags</div>
+            <div id="tagsList"></div>
+            <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
+          </div>
+          <div class="pra-panel" style="padding:22px">
+            <div class="pra-h2" style="margin-bottom:14px">Lists</div>
+            <div id="listsList"></div>
+            <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-users" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:14px">Team Users</div>
+        <table class="data-table" id="usersTable">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+        <button class="pra-btn" id="addUserBtn" style="margin-top:16px">+ Add User</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="userModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Add User</div>
+    <div class="field-row">
+      <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="uFirst"/></div>
+      <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="uLast"/></div>
+    </div>
+    <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="uEmail"/></div>
+    <div class="field"><label class="pra-label">Password</label><input class="pra-input" type="password" id="uPassword"/></div>
+    <div class="field"><label class="pra-label">Role</label>
+      <select class="pra-select" id="uRole"><option value="user">User</option><option value="superuser">Super User</option><option value="admin">Admin</option></select>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveUserBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" id="cancelUserBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  };
+});
+
+// ── Statuses ─────────────────────────────────────────────────────────────
+async function loadStatuses() {
+  const r = await fetch('/api/statuses');
+  const { statuses } = await r.json();
+  const list = document.getElementById('statusesList');
+  list.innerHTML = statuses.map(s => `
+    <div class="row-item" draggable="true" data-id="${s.id}">
+      <span class="drag-handle">&#8942;&#8942;</span>
+      <span style="flex:1">${escapeHtml(s.label)}</span>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-status="${s.id}">Delete</button>
+    </div>
+  `).join('') || '<div class="pra-muted">No statuses yet.</div>';
+  list.querySelectorAll('[data-del-status]').forEach(btn => btn.onclick = async () => {
+    await fetch('/api/statuses/' + btn.dataset.delStatus, { method: 'DELETE' });
+    loadStatuses();
+  });
+  wireDragReorder(list, async (orderedIds) => {
+    await fetch('/api/statuses/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderedIds }) });
+  });
+}
+function wireDragReorder(container, onReorder) {
+  let dragEl = null;
+  container.querySelectorAll('[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', () => { dragEl = el; el.style.opacity = '.4'; });
+    el.addEventListener('dragend', () => { el.style.opacity = ''; });
+    el.addEventListener('dragover', (e) => e.preventDefault());
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragEl || dragEl === el) return;
+      const items = [...container.children];
+      const dragIdx = items.indexOf(dragEl), dropIdx = items.indexOf(el);
+      if (dragIdx < dropIdx) el.after(dragEl); else el.before(dragEl);
+      onReorder([...container.children].map(c => c.dataset.id));
+    });
+  });
+}
+document.getElementById('addStatusBtn').onclick = async () => {
+  const input = document.getElementById('newStatusLabel');
+  if (!input.value.trim()) return;
+  await fetch('/api/statuses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: input.value.trim() }) });
+  input.value = '';
+  loadStatuses();
+};
+
+// ── Custom fields ────────────────────────────────────────────────────────
+async function loadFields() {
+  const entityType = document.querySelector('input[name="cfEntity"]:checked').value;
+  const r = await fetch('/api/custom-fields?entityType=' + entityType);
+  const { fields } = await r.json();
+  const list = document.getElementById('fieldsList');
+  list.innerHTML = fields.map(f => `
+    <div class="row-item"><span style="flex:1">${escapeHtml(f.label)}</span><span class="pra-muted" style="font-size:.78rem">Text</span>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-field="${f.id}">Delete</button>
+    </div>
+  `).join('') || '<div class="pra-muted">No custom fields yet.</div>';
+  list.querySelectorAll('[data-del-field]').forEach(btn => btn.onclick = async () => {
+    await fetch('/api/custom-fields/' + btn.dataset.delField, { method: 'DELETE' });
+    loadFields();
+  });
+}
+document.querySelectorAll('input[name="cfEntity"]').forEach(r => r.addEventListener('change', loadFields));
+document.getElementById('addFieldBtn').onclick = async () => {
+  const input = document.getElementById('newFieldLabel');
+  if (!input.value.trim()) return;
+  const entityType = document.querySelector('input[name="cfEntity"]:checked').value;
+  await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entityType, label: input.value.trim() }) });
+  input.value = '';
+  loadFields();
+};
+
+// ── Tags & Lists ─────────────────────────────────────────────────────────
+async function loadTags() {
+  const r = await fetch('/api/tags');
+  const { tags } = await r.json();
+  document.getElementById('tagsList').innerHTML = tags.map(t => `
+    <div class="row-item"><span style="flex:1">${escapeHtml(t.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-tag="${t.id}">Delete</button></div>
+  `).join('') || '<div class="pra-muted">No tags yet.</div>';
+  document.querySelectorAll('[data-del-tag]').forEach(btn => btn.onclick = async () => { await fetch('/api/tags/' + btn.dataset.delTag, { method: 'DELETE' }); loadTags(); });
+}
+async function loadLists() {
+  const r = await fetch('/api/lists');
+  const { lists } = await r.json();
+  document.getElementById('listsList').innerHTML = lists.map(l => `
+    <div class="row-item"><span style="flex:1">${escapeHtml(l.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-list="${l.id}">Delete</button></div>
+  `).join('') || '<div class="pra-muted">No lists yet.</div>';
+  document.querySelectorAll('[data-del-list]').forEach(btn => btn.onclick = async () => { await fetch('/api/lists/' + btn.dataset.delList, { method: 'DELETE' }); loadLists(); });
+}
+document.getElementById('addTagBtn').onclick = async () => {
+  const input = document.getElementById('newTagName');
+  if (!input.value.trim()) return;
+  await fetch('/api/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.value.trim() }) });
+  input.value = ''; loadTags();
+};
+document.getElementById('addListBtn').onclick = async () => {
+  const input = document.getElementById('newListName');
+  if (!input.value.trim()) return;
+  await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.value.trim() }) });
+  input.value = ''; loadLists();
+};
+
+// ── Users ────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const r = await fetch('/api/auth/users');
+  const body = document.getElementById('usersBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="4" class="pra-muted">Admins only.</td></tr>'; return; }
+  const { users } = await r.json();
+  body.innerHTML = users.map(u => `
+    <tr>
+      <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
+      <td class="pra-muted">${escapeHtml(u.email)}</td>
+      <td><span class="pra-badge pra-badge-${u.role}">${u.role}</span></td>
+      <td>${u.archived ? '<span class="pra-muted">Archived</span>' : ''}</td>
+    </tr>
+  `).join('');
+}
+document.getElementById('addUserBtn').onclick = () => document.getElementById('userModal').classList.add('show');
+document.getElementById('cancelUserBtn').onclick = () => document.getElementById('userModal').classList.remove('show');
+document.getElementById('saveUserBtn').onclick = async () => {
+  const body = {
+    first: document.getElementById('uFirst').value.trim(),
+    last: document.getElementById('uLast').value.trim(),
+    email: document.getElementById('uEmail').value.trim(),
+    password: document.getElementById('uPassword').value,
+    role: document.getElementById('uRole').value,
+  };
+  const r = await fetch('/api/auth/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not create user', true); return; }
+  document.getElementById('userModal').classList.remove('show');
+  showToast('User created');
+  loadUsers();
+};
+
+loadStatuses();
+loadFields();
+loadTags();
+loadLists();
+loadUsers();
+</script>
+</body>
+</html>

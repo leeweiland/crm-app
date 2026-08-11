@@ -1,0 +1,7 @@
+node_modules/
+.env
+
+# Runtime data files -- created fresh on first run (or seeded onto the
+# Railway Volume by migrateDataFile), never committed. Mirrors chat-app's
+# discipline of git-adding specific code files only, never these.
+crm_*.json

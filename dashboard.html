@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Dashboard — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="pra-h1" style="margin-bottom:20px">Dashboard</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px">
+        <div class="pra-card" style="padding:18px"><div class="pra-label">Contacts</div><div class="pra-h1" id="statContacts">–</div></div>
+        <div class="pra-card" style="padding:18px"><div class="pra-label">Lists</div><div class="pra-h1" id="statLists">–</div></div>
+        <div class="pra-card" style="padding:18px"><div class="pra-label">Tags</div><div class="pra-h1" id="statTags">–</div></div>
+      </div>
+      <div class="pra-muted" style="font-size:.85rem">
+        Campaigns, Automations, Workflows, and Reporting land in later phases —
+        Contacts and Settings are live now.
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+(async function loadStats() {
+  const [contactsRes, listsRes, tagsRes] = await Promise.all([
+    fetch('/api/contacts'), fetch('/api/lists'), fetch('/api/tags')
+  ]);
+  if (contactsRes.ok) document.getElementById('statContacts').textContent = (await contactsRes.json()).total;
+  if (listsRes.ok) document.getElementById('statLists').textContent = (await listsRes.json()).lists.length;
+  if (tagsRes.ok) document.getElementById('statTags').textContent = (await tagsRes.json()).tags.length;
+})();
+</script>
+</body>
+</html>

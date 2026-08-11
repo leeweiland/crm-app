@@ -1,0 +1,18 @@
+{
+  "name": "crm-app",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Self-hosted ActiveCampaign + Close alternative for Pacific Rim Athletics",
+  "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.677.0",
+    "dotenv": "^17.4.2",
+    "twilio": "^5.3.4"
+  }
+}

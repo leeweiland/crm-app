@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Contact — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .detail-grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+  .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); margin: 0 6px 6px 0; }
+  .tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
+  @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <a class="pra-link" href="/contacts.html">&larr; Back to Contacts</a>
+      <div class="pra-h1" id="contactName" style="margin:10px 0 20px">Loading…</div>
+
+      <div class="detail-grid">
+        <div class="pra-panel" style="padding:22px">
+          <div class="pra-h2" style="margin-bottom:14px">Details</div>
+          <div class="field-row">
+            <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="fFirst"/></div>
+            <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="fLast"/></div>
+          </div>
+          <div class="field"><label class="pra-label">Account / Company</label><input class="pra-input" id="fAccount"/></div>
+          <div class="field-row">
+            <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="fEmail"/></div>
+            <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="fPhone"/></div>
+          </div>
+          <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="fStatus"></select></div>
+          <div class="field-row" style="margin:14px 0">
+            <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
+            <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fSmsOptOut"/> SMS opt-out</label>
+          </div>
+          <div id="customFieldsWrap"></div>
+          <button class="pra-btn" id="saveBtn" style="margin-top:10px">Save</button>
+          <button class="pra-btn pra-btn-danger" id="deleteBtn" style="margin-top:10px;margin-left:10px">Delete Contact</button>
+        </div>
+
+        <div>
+          <div class="pra-panel" style="padding:18px;margin-bottom:16px">
+            <div class="pra-h2" style="margin-bottom:12px">Tags</div>
+            <div id="tagsWrap"></div>
+            <select class="pra-select" id="addTagSelect" style="margin-top:8px"><option value="">+ Add a tag...</option></select>
+          </div>
+          <div class="pra-panel" style="padding:18px">
+            <div class="pra-h2" style="margin-bottom:12px">Lists</div>
+            <div id="listsWrap"></div>
+            <select class="pra-select" id="addListSelect" style="margin-top:8px"><option value="">+ Add to a list...</option></select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+const contactId = new URLSearchParams(location.search).get('id');
+let contact = null, allTags = [], allLists = [], allStatuses = [], allFields = [];
+
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+
+async function loadRefs() {
+  const [tagsRes, listsRes, statusesRes, fieldsRes] = await Promise.all([
+    fetch('/api/tags'), fetch('/api/lists'), fetch('/api/statuses'), fetch('/api/custom-fields?entityType=contact')
+  ]);
+  allTags = (await tagsRes.json()).tags;
+  allLists = (await listsRes.json()).lists;
+  allStatuses = (await statusesRes.json()).statuses;
+  allFields = (await fieldsRes.json()).fields;
+}
+
+function renderTags() {
+  const wrap = document.getElementById('tagsWrap');
+  wrap.innerHTML = (contact.tags || []).map(tagId => {
+    const t = allTags.find(x => x.id === tagId);
+    if (!t) return '';
+    return `<span class="tag-pill">${escapeHtml(t.name)}<button data-tag="${tagId}" class="removeTag">&times;</button></span>`;
+  }).join('') || '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
+  wrap.querySelectorAll('.removeTag').forEach(btn => btn.onclick = async () => {
+    contact.tags = contact.tags.filter(id => id !== btn.dataset.tag);
+    await saveContact();
+    renderTags();
+  });
+  const sel = document.getElementById('addTagSelect');
+  sel.innerHTML = '<option value="">+ Add a tag...</option>' + allTags.filter(t => !contact.tags.includes(t.id)).map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+}
+document.getElementById('addTagSelect').onchange = async (e) => {
+  if (!e.target.value) return;
+  contact.tags.push(e.target.value);
+  await saveContact();
+  renderTags();
+  e.target.value = '';
+};
+
+function renderLists() {
+  const wrap = document.getElementById('listsWrap');
+  wrap.innerHTML = (contact.listIds || []).map(listId => {
+    const l = allLists.find(x => x.id === listId);
+    if (!l) return '';
+    return `<span class="tag-pill">${escapeHtml(l.name)}<button data-list="${listId}" class="removeList">&times;</button></span>`;
+  }).join('') || '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
+  wrap.querySelectorAll('.removeList').forEach(btn => btn.onclick = async () => {
+    contact.listIds = contact.listIds.filter(id => id !== btn.dataset.list);
+    await saveContact();
+    renderLists();
+  });
+  const sel = document.getElementById('addListSelect');
+  sel.innerHTML = '<option value="">+ Add to a list...</option>' + allLists.filter(l => !contact.listIds.includes(l.id)).map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+}
+document.getElementById('addListSelect').onchange = async (e) => {
+  if (!e.target.value) return;
+  contact.listIds.push(e.target.value);
+  await saveContact();
+  renderLists();
+  e.target.value = '';
+};
+
+function renderCustomFields() {
+  const wrap = document.getElementById('customFieldsWrap');
+  if (!allFields.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = allFields.map(f => `
+    <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label>
+      <input class="pra-input custom-field-input" data-field="${f.id}" value="${escapeHtml(contact.customFields?.[f.id] || '')}"/>
+    </div>
+  `).join('');
+}
+
+async function saveContact() {
+  const r = await fetch('/api/contacts/' + contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(contact) });
+  if (!r.ok) { showToast('Could not save', true); return; }
+  contact = (await r.json()).contact;
+}
+
+document.getElementById('saveBtn').onclick = async () => {
+  contact.first = document.getElementById('fFirst').value.trim();
+  contact.last = document.getElementById('fLast').value.trim();
+  contact.accountName = document.getElementById('fAccount').value.trim();
+  contact.email = document.getElementById('fEmail').value.trim();
+  contact.phone = document.getElementById('fPhone').value.trim();
+  contact.status = document.getElementById('fStatus').value;
+  contact.emailOptOut = document.getElementById('fEmailOptOut').checked;
+  contact.smsOptOut = document.getElementById('fSmsOptOut').checked;
+  contact.customFields = contact.customFields || {};
+  document.querySelectorAll('.custom-field-input').forEach(inp => { contact.customFields[inp.dataset.field] = inp.value; });
+  await saveContact();
+  document.getElementById('contactName').textContent = contact.first + ' ' + contact.last;
+  showToast('Saved');
+};
+
+document.getElementById('deleteBtn').onclick = async () => {
+  if (!confirm('Delete this contact? This cannot be undone.')) return;
+  const r = await fetch('/api/contacts/' + contactId, { method: 'DELETE' });
+  if (!r.ok) { showToast('Could not delete', true); return; }
+  location.href = '/contacts.html';
+};
+
+(async function init() {
+  if (!contactId) { document.getElementById('contactName').textContent = 'No contact selected.'; return; }
+  await loadRefs();
+  const statusSel = document.getElementById('fStatus');
+  statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
+
+  const r = await fetch('/api/contacts/' + contactId);
+  if (!r.ok) { document.getElementById('contactName').textContent = 'Contact not found.'; return; }
+  contact = (await r.json()).contact;
+  document.getElementById('contactName').textContent = contact.first + ' ' + contact.last;
+  document.getElementById('fFirst').value = contact.first || '';
+  document.getElementById('fLast').value = contact.last || '';
+  document.getElementById('fAccount').value = contact.accountName || '';
+  document.getElementById('fEmail').value = contact.email || '';
+  document.getElementById('fPhone').value = contact.phone || '';
+  statusSel.value = contact.status || '';
+  document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
+  document.getElementById('fSmsOptOut').checked = !!contact.smsOptOut;
+  renderCustomFields();
+  renderTags();
+  renderLists();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+import { randomUUID } from "crypto";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+
+export const CONTACTS_FILE = "crm_contacts.json";
+export const LISTS_FILE = "crm_lists.json";
+export const TAGS_FILE = "crm_tags.json";
+export const SEGMENTS_FILE = "crm_segments.json";
+export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
+
+function publicContact(c) { return c; } // no sensitive fields to strip yet — placeholder for parity with auth's publicUser
+
+// ── Segment predicate evaluator ─────────────────────────────────────────
+// filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
+// field: "status" | "tags" | "listIds" | "customFields.<fieldId>"
+// op: "eq" | "neq" | "includes" | "excludes" | "exists"
+function evalCondition(contact, cond) {
+  const { field, op, value } = cond;
+  let actual;
+  if (field.startsWith("customFields.")) {
+    actual = contact.customFields?.[field.slice("customFields.".length)];
+  } else {
+    actual = contact[field];
+  }
+  switch (op) {
+    case "eq": return actual === value;
+    case "neq": return actual !== value;
+    case "includes": return Array.isArray(actual) && actual.includes(value);
+    case "excludes": return Array.isArray(actual) && !actual.includes(value);
+    case "exists": return actual !== undefined && actual !== null && actual !== "";
+    default: return false;
+  }
+}
+export function matchesSegment(contact, filter) {
+  if (!filter) return true;
+  if (filter.all) return filter.all.every(c => evalCondition(contact, c));
+  if (filter.any) return filter.any.some(c => evalCondition(contact, c));
+  return true;
+}
+
+function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {
+  return {
+    id: randomUUID(),
+    type: type === "lead" ? "lead" : "contact",
+    accountName: accountName || "",
+    first: first || "", last: last || "", email: (email || "").toLowerCase(), phone: phone || "",
+    status: status || "",
+    tags: Array.isArray(tags) ? tags : [],
+    listIds: Array.isArray(listIds) ? listIds : [],
+    customFields: customFields || {},
+    source: source || "manual",
+    ownerId: ownerId || null,
+    emailOptOut: false, smsOptOut: false,
+    externalIds: { acContactId: null, closeLeadId: null },
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function handleContactsRequest(req, res, url) {
+  const p = url.pathname;
+  const me = getSessionUser(req);
+
+  // Every /api/contacts*, /api/lists*, /api/tags*, /api/segments*,
+  // /api/custom-fields* route requires a logged-in user — this is an
+  // internal team tool, no anonymous or public-read surface.
+  const owned = p.startsWith("/api/contacts") || p.startsWith("/api/lists") ||
+    p.startsWith("/api/tags") || p.startsWith("/api/segments") || p.startsWith("/api/custom-fields");
+  if (!owned) return false;
+  if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // ── Contacts ─────────────────────────────────────────────────────────
+  if (p === "/api/contacts" && req.method === "GET") {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const q = (url.searchParams.get("q") || "").trim().toLowerCase();
+    const status = url.searchParams.get("status");
+    const tag = url.searchParams.get("tag");
+    const listId = url.searchParams.get("listId");
+    let filtered = contacts;
+    if (q) filtered = filtered.filter(c =>
+      `${c.first} ${c.last}`.toLowerCase().includes(q) ||
+      (c.email || "").toLowerCase().includes(q) ||
+      (c.accountName || "").toLowerCase().includes(q)
+    );
+    if (status) filtered = filtered.filter(c => c.status === status);
+    if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
+    if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
+    return sendJson(res, 200, { contacts: filtered.map(publicContact), total: filtered.length });
+  }
+  if (p === "/api/contacts" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    if (!body.first || !body.last) return sendJson(res, 400, { error: "first and last are required" });
+    const contacts = readJson(CONTACTS_FILE, []);
+    const record = newContactRecord(body);
+    contacts.push(record);
+    writeJson(CONTACTS_FILE, contacts);
+    return sendJson(res, 200, { ok: true, contact: record });
+  }
+  const contactMatch = p.match(/^\/api\/contacts\/([^/]+)$/);
+  if (contactMatch) {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find(c => c.id === contactMatch[1]);
+    if (req.method === "GET") {
+      if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+      return sendJson(res, 200, { contact: publicContact(contact) });
+    }
+    if (req.method === "PATCH") {
+      if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+      const body = await readJsonBody(req);
+      const allowed = ["type", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
+      for (const k of allowed) if (k in body) contact[k] = body[k];
+      contact.updatedAt = new Date().toISOString();
+      writeJson(CONTACTS_FILE, contacts);
+      return sendJson(res, 200, { ok: true, contact: publicContact(contact) });
+    }
+    if (req.method === "DELETE") {
+      if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+      writeJson(CONTACTS_FILE, contacts.filter(c => c.id !== contactMatch[1]));
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  // ── Lists ────────────────────────────────────────────────────────────
+  if (p === "/api/lists" && req.method === "GET") {
+    return sendJson(res, 200, { lists: readJson(LISTS_FILE, []) });
+  }
+  if (p === "/api/lists" && req.method === "POST") {
+    const { name } = await readJsonBody(req);
+    if (!name) return sendJson(res, 400, { error: "name is required" });
+    const lists = readJson(LISTS_FILE, []);
+    const list = { id: randomUUID(), name, createdAt: new Date().toISOString() };
+    lists.push(list);
+    writeJson(LISTS_FILE, lists);
+    return sendJson(res, 200, { ok: true, list });
+  }
+  const listMatch = p.match(/^\/api\/lists\/([^/]+)$/);
+  if (listMatch && req.method === "DELETE") {
+    const lists = readJson(LISTS_FILE, []);
+    writeJson(LISTS_FILE, lists.filter(l => l.id !== listMatch[1]));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // ── Tags ─────────────────────────────────────────────────────────────
+  if (p === "/api/tags" && req.method === "GET") {
+    return sendJson(res, 200, { tags: readJson(TAGS_FILE, []) });
+  }
+  if (p === "/api/tags" && req.method === "POST") {
+    const { name, color } = await readJsonBody(req);
+    if (!name) return sendJson(res, 400, { error: "name is required" });
+    const tags = readJson(TAGS_FILE, []);
+    const tag = { id: randomUUID(), name, color: color || "#009bff", createdAt: new Date().toISOString() };
+    tags.push(tag);
+    writeJson(TAGS_FILE, tags);
+    return sendJson(res, 200, { ok: true, tag });
+  }
+  const tagMatch = p.match(/^\/api\/tags\/([^/]+)$/);
+  if (tagMatch && req.method === "DELETE") {
+    const tags = readJson(TAGS_FILE, []);
+    writeJson(TAGS_FILE, tags.filter(t => t.id !== tagMatch[1]));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // ── Segments (saved filters, evaluated live — no materialized membership) ─
+  if (p === "/api/segments" && req.method === "GET") {
+    return sendJson(res, 200, { segments: readJson(SEGMENTS_FILE, []) });
+  }
+  if (p === "/api/segments" && req.method === "POST") {
+    const { name, filter } = await readJsonBody(req);
+    if (!name || !filter) return sendJson(res, 400, { error: "name and filter are required" });
+    const segments = readJson(SEGMENTS_FILE, []);
+    const segment = { id: randomUUID(), name, filter, createdAt: new Date().toISOString() };
+    segments.push(segment);
+    writeJson(SEGMENTS_FILE, segments);
+    return sendJson(res, 200, { ok: true, segment });
+  }
+  const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);
+  if (segmentMatch && req.method === "DELETE") {
+    const segments = readJson(SEGMENTS_FILE, []);
+    writeJson(SEGMENTS_FILE, segments.filter(s => s.id !== segmentMatch[1]));
+    return sendJson(res, 200, { ok: true });
+  }
+  const segmentContactsMatch = p.match(/^\/api\/segments\/([^/]+)\/contacts$/);
+  if (segmentContactsMatch && req.method === "GET") {
+    const segments = readJson(SEGMENTS_FILE, []);
+    const segment = segments.find(s => s.id === segmentContactsMatch[1]);
+    if (!segment) return sendJson(res, 404, { error: "Segment not found" });
+    const contacts = readJson(CONTACTS_FILE, []).filter(c => matchesSegment(c, segment.filter));
+    return sendJson(res, 200, { contacts, total: contacts.length });
+  }
+
+  // ── Custom fields ────────────────────────────────────────────────────
+  if (p === "/api/custom-fields" && req.method === "GET") {
+    const entityType = url.searchParams.get("entityType");
+    let fields = readJson(CUSTOM_FIELDS_FILE, []);
+    if (entityType) fields = fields.filter(f => f.entityType === entityType);
+    return sendJson(res, 200, { fields });
+  }
+  if (p === "/api/custom-fields" && req.method === "POST") {
+    const { entityType, label } = await readJsonBody(req);
+    if (!["lead", "contact", "opportunity"].includes(entityType)) return sendJson(res, 400, { error: "entityType must be 'lead', 'contact', or 'opportunity'" });
+    if (!label) return sendJson(res, 400, { error: "label is required" });
+    const fields = readJson(CUSTOM_FIELDS_FILE, []);
+    const order = fields.filter(f => f.entityType === entityType).length;
+    const field = { id: randomUUID(), entityType, label, type: "text", order, createdAt: new Date().toISOString() };
+    fields.push(field);
+    writeJson(CUSTOM_FIELDS_FILE, fields);
+    return sendJson(res, 200, { ok: true, field });
+  }
+  const fieldMatch = p.match(/^\/api\/custom-fields\/([^/]+)$/);
+  if (fieldMatch && req.method === "DELETE") {
+    const fields = readJson(CUSTOM_FIELDS_FILE, []);
+    writeJson(CUSTOM_FIELDS_FILE, fields.filter(f => f.id !== fieldMatch[1]));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  return false;
+}

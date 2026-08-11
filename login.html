@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Log in — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .login-box { width: 100%; max-width: 380px; padding: 32px; }
+  .toggle-row { text-align: center; margin-top: 14px; font-size: .82rem; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="login-wrap">
+    <div class="pra-panel login-box">
+      <div class="pra-h1" style="margin-bottom:4px">Pacific Rim Athletics</div>
+      <div class="pra-muted" style="margin-bottom:22px;font-size:.85rem">Internal CRM</div>
+
+      <div id="loginForm">
+        <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="loginEmail"/></div>
+        <div class="field"><label class="pra-label">Password</label><input class="pra-input" type="password" id="loginPassword"/></div>
+        <button class="pra-btn" id="loginBtn" style="width:100%">LOG IN</button>
+        <div class="pra-muted" id="loginMsg" style="font-size:.8rem;margin-top:10px;min-height:1em"></div>
+      </div>
+
+      <div id="bootstrapForm" style="display:none">
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px">No accounts exist yet — create the first admin account.</div>
+        <div class="field-row">
+          <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="bsFirst"/></div>
+          <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="bsLast"/></div>
+        </div>
+        <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="bsEmail"/></div>
+        <div class="field"><label class="pra-label">Password (8+ characters)</label><input class="pra-input" type="password" id="bsPassword"/></div>
+        <button class="pra-btn" id="bootstrapBtn" style="width:100%">CREATE ADMIN ACCOUNT</button>
+        <div class="pra-muted" id="bootstrapMsg" style="font-size:.8rem;margin-top:10px;min-height:1em"></div>
+      </div>
+
+      <div class="toggle-row">
+        <a class="pra-link" id="toggleBootstrap">First time setup? Create the admin account</a>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById('toggleBootstrap').onclick = () => {
+  const bs = document.getElementById('bootstrapForm');
+  const lf = document.getElementById('loginForm');
+  const showingBs = bs.style.display !== 'none';
+  bs.style.display = showingBs ? 'none' : 'block';
+  lf.style.display = showingBs ? 'block' : 'none';
+  document.getElementById('toggleBootstrap').textContent = showingBs ? 'First time setup? Create the admin account' : 'Already have an account? Log in';
+};
+
+function nextUrl() {
+  const params = new URLSearchParams(location.search);
+  return params.get('next') || '/dashboard.html';
+}
+
+document.getElementById('loginBtn').onclick = async () => {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const msg = document.getElementById('loginMsg');
+  msg.textContent = 'Logging in...';
+  const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+  const d = await r.json();
+  if (!r.ok) { msg.textContent = d.error || 'Login failed.'; return; }
+  location.href = nextUrl();
+};
+document.getElementById('loginPassword').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginBtn').click(); });
+
+document.getElementById('bootstrapBtn').onclick = async () => {
+  const first = document.getElementById('bsFirst').value.trim();
+  const last = document.getElementById('bsLast').value.trim();
+  const email = document.getElementById('bsEmail').value.trim();
+  const password = document.getElementById('bsPassword').value;
+  const msg = document.getElementById('bootstrapMsg');
+  msg.textContent = 'Creating account...';
+  const r = await fetch('/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ first, last, email, password }) });
+  const d = await r.json();
+  if (!r.ok) { msg.textContent = d.error || 'Could not create account.'; return; }
+  location.href = nextUrl();
+};
+</script>
+</body>
+</html>

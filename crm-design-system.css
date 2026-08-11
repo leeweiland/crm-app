@@ -1,0 +1,174 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   CRM DESIGN SYSTEM — same visual language as chat-app's pra-design-system
+   (black + white + #009bff, Century Gothic/Aldrich), extended with the
+   sidebar-nav + data-table primitives a CRM's list-heavy pages need.
+   ───────────────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Aldrich&family=Poppins:wght@400;600;700;800&display=swap');
+
+:root {
+  --pra-black: #000000;
+  --pra-black-soft: #0a0a0d;
+  --pra-panel: #101014;
+  --pra-panel-2: #16161c;
+  --pra-border: #26262e;
+  --pra-white: #ffffff;
+  --pra-dim: #9a9aa5;
+  --pra-blue: #009bff;
+  --pra-blue-glow: rgba(0, 155, 255, 0.55);
+  --pra-blue-dim: rgba(0, 155, 255, 0.12);
+  --pra-green: #39ff14;
+  --pra-red: #ff3b3b;
+  --font-primary: 'Century Gothic', 'Poppins', 'Trebuchet MS', sans-serif;
+  --font-secondary: 'Aldrich', 'Century Gothic', 'Poppins', sans-serif;
+}
+
+.pra-root, .pra-root * { box-sizing: border-box; }
+body { margin: 0; }
+
+.pra-root {
+  font-family: var(--font-primary);
+  font-weight: 700;
+  color: var(--pra-white);
+  background: var(--pra-black-soft);
+  min-height: 100vh;
+  position: relative;
+}
+
+.pra-h1 { font-family: var(--font-primary); font-weight: 700; font-size: 1.6rem; letter-spacing: .01em; margin: 0; }
+.pra-h2 { font-family: var(--font-primary); font-weight: 700; font-size: 1.15rem; margin: 0; }
+.pra-label {
+  font-family: var(--font-secondary);
+  font-weight: 400;
+  font-size: .72rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--pra-dim);
+}
+
+.pra-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 12px; }
+.pra-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; }
+
+.pra-btn {
+  font-family: var(--font-primary);
+  font-weight: 700;
+  font-size: .85rem;
+  letter-spacing: .02em;
+  color: var(--pra-white);
+  background: var(--pra-blue);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  cursor: pointer;
+  transition: box-shadow .15s, background .15s;
+}
+.pra-btn:hover { box-shadow: 0 0 14px var(--pra-blue-glow); }
+.pra-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.pra-btn-outline { background: transparent; color: var(--pra-blue); border: 1.5px solid var(--pra-blue); }
+.pra-btn-outline:hover { background: var(--pra-blue-dim); }
+.pra-btn-ghost { background: transparent; color: var(--pra-dim); border: 1px solid var(--pra-border); }
+.pra-btn-ghost:hover { color: var(--pra-white); border-color: var(--pra-blue); }
+.pra-btn-danger { background: transparent; color: var(--pra-red); border: 1px solid var(--pra-red); }
+.pra-btn-danger:hover { background: rgba(255,59,59,0.12); }
+.pra-btn-sm { padding: 6px 12px; font-size: .76rem; border-radius: 6px; }
+
+.pra-input, .pra-textarea, .pra-select {
+  font-family: var(--font-primary);
+  font-weight: 400;
+  font-size: .88rem;
+  color: var(--pra-white);
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--pra-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  width: 100%;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.pra-input::placeholder, .pra-textarea::placeholder { color: #55555f; }
+.pra-input:focus, .pra-textarea:focus, .pra-select:focus {
+  border-color: var(--pra-blue);
+  box-shadow: 0 0 0 3px var(--pra-blue-dim);
+}
+.pra-select { -webkit-appearance: none; appearance: none; cursor: pointer; }
+.pra-select option { background: var(--pra-panel); color: var(--pra-white); }
+
+.pra-badge {
+  display: inline-block;
+  font-family: var(--font-secondary);
+  font-size: .6rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 20px;
+  background: var(--pra-blue-dim);
+  color: var(--pra-blue);
+  border: 1px solid rgba(0,155,255,0.35);
+}
+.pra-badge-admin { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+.pra-badge-superuser { background: rgba(255,59,59,0.15); color: var(--pra-red); }
+.pra-badge-user { background: rgba(255,255,255,0.12); color: #fff; }
+
+.pra-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--pra-panel-2);
+  border: 1px solid var(--pra-border);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-secondary);
+  font-size: .82rem;
+  color: var(--pra-blue);
+  flex-shrink: 0;
+}
+
+.pra-muted { color: var(--pra-dim); }
+.pra-link { color: var(--pra-blue); text-decoration: none; cursor: pointer; }
+.pra-link:hover { text-decoration: underline; }
+
+/* ── App shell: fixed left sidebar + scrollable main ── */
+.app-shell { display: flex; min-height: 100vh; }
+.app-sidebar {
+  width: 220px; flex-shrink: 0; background: var(--pra-panel);
+  border-right: 1px solid var(--pra-border);
+  display: flex; flex-direction: column; padding: 18px 12px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.app-sidebar-logo { font-family: var(--font-secondary); font-size: .95rem; padding: 6px 10px 18px; color: var(--pra-white); }
+.app-nav-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px; color: var(--pra-dim);
+  text-decoration: none; font-size: .86rem; margin-bottom: 2px;
+}
+.app-nav-link:hover { color: var(--pra-white); background: rgba(255,255,255,0.04); }
+.app-nav-link.active { color: var(--pra-white); background: var(--pra-blue-dim); border: 1px solid rgba(0,155,255,0.3); }
+.app-main { flex: 1; min-width: 0; padding: 28px 32px; max-width: 1400px; }
+.app-sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--pra-border); font-size: .78rem; color: var(--pra-dim); }
+
+/* ── Data table ── */
+.data-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.data-table th {
+  text-align: left; font-family: var(--font-secondary); font-size: .66rem;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim);
+  padding: 10px 12px; border-bottom: 1px solid var(--pra-border);
+}
+.data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; }
+.data-table tr:hover td { background: rgba(255,255,255,0.02); }
+.data-table tr.clickable { cursor: pointer; }
+
+/* ── Modal ── */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; box-sizing: border-box; }
+.modal-backdrop.show { display: flex; }
+.modal-box { max-width: 480px; width: 100%; max-height: 86vh; overflow-y: auto; padding: 24px; }
+
+/* ── Toast ── */
+.toast { position: fixed; bottom: 20px; right: 20px; z-index: 800; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; font-size: .85rem; opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.error { border-color: var(--pra-red); color: var(--pra-red); }
+
+.field { margin-bottom: 14px; }
+.field-row { display: flex; gap: 10px; }
+.field-row .field { flex: 1; }
+
+.pra-root ::-webkit-scrollbar { width: 8px; height: 8px; }
+.pra-root ::-webkit-scrollbar-track { background: transparent; }
+.pra-root ::-webkit-scrollbar-thumb { background: #2a2a33; border-radius: 8px; }
+.pra-root ::-webkit-scrollbar-thumb:hover { background: #3a3a45; }
