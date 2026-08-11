@@ -6,6 +6,10 @@ import dotenv from "dotenv";
 import { handleAuthRequest } from "./auth_backend.js";
 import { handleContactsRequest } from "./contacts_backend.js";
 import { handleStatusesRequest } from "./statuses_backend.js";
+import { handleEmailRequest } from "./email_backend.js";
+import { handleCampaignsRequest } from "./campaigns_backend.js";
+import { handleReportingRequest } from "./reporting_backend.js";
+import { startScheduler } from "./scheduler.js";
 
 dotenv.config();
 
@@ -42,6 +46,9 @@ createServer(async (req, res) => {
   if (await handleAuthRequest(req, res, url)) return;
   if (await handleContactsRequest(req, res, url)) return;
   if (await handleStatusesRequest(req, res, url)) return;
+  if (await handleEmailRequest(req, res, url)) return;
+  if (await handleCampaignsRequest(req, res, url)) return;
+  if (await handleReportingRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike
   // chat-app, which shares a domain/nav with sibling apps), so there's no
@@ -58,3 +65,5 @@ createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": mime });
   res.end(readFileSync(filePath));
 }).listen(PORT, () => console.log(`crm-app running on port ${PORT}`));
+
+startScheduler();

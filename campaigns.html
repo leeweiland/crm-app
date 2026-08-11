@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campaigns — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
+  .status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
+  .status-draft { background: rgba(255,255,255,0.1); color: #fff; }
+  .status-scheduled { background: rgba(255,193,7,0.15); color: #ffc107; }
+  .status-sending { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+  .status-sent { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="toolbar">
+        <div class="pra-h1" style="flex:1">Campaigns</div>
+        <button class="pra-btn" id="newCampaignBtn">+ New Campaign</button>
+      </div>
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Status</th><th>Subject</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Last Updated</th></tr></thead>
+          <tbody id="campaignsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+
+async function loadCampaigns() {
+  const r = await fetch('/api/campaigns');
+  const body = document.getElementById('campaignsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
+  const { campaigns } = await r.json();
+  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No campaigns yet.</td></tr>'; return; }
+  body.innerHTML = campaigns.map(c => `
+    <tr class="clickable" onclick="location.href='/campaign-builder.html?id=${c.id}'">
+      <td>${escapeHtml(c.name)}</td>
+      <td><span class="status-pill status-${c.status}">${c.status}</span></td>
+      <td class="pra-muted">${escapeHtml(c.subject || '')}</td>
+      <td>${c.stats?.sent ?? 0}</td>
+      <td>${c.stats?.opened ?? 0}</td>
+      <td>${c.stats?.clicked ?? 0}</td>
+      <td class="pra-muted">${fmtDate(c.updatedAt)}</td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('newCampaignBtn').onclick = async () => {
+  const r = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Campaign' }) });
+  const d = await r.json();
+  if (r.ok) location.href = '/campaign-builder.html?id=' + d.campaign.id;
+};
+
+loadCampaigns();
+</script>
+</body>
+</html>

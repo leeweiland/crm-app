@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campaign — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .cb-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .cb-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
+  .cb-name-input:focus { border-bottom-color: var(--pra-blue); }
+  .cb-status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); }
+  .cb-layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+  .cb-sidebar > .pra-panel { padding: 18px; margin-bottom: 16px; }
+  .not-configured-banner { background: rgba(255,193,7,0.12); border: 1px solid #ffc107; color: #ffc107; border-radius: 8px; padding: 10px 14px; font-size: .8rem; margin-bottom: 16px; }
+  .chip-multiselect { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chip-option { font-size: .74rem; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--pra-border); color: var(--pra-dim); cursor: pointer; }
+  .chip-option.on { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-blue); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <a class="pra-link" href="/campaigns.html">&larr; Back to Campaigns</a>
+      <div id="sesBanner" class="not-configured-banner" style="display:none;margin-top:12px">
+        Amazon SES isn't configured yet — you can build and save campaigns, but sending is disabled until AWS credentials are added.
+      </div>
+      <div class="cb-header" style="margin-top:14px">
+        <input class="cb-name-input" id="campaignName"/>
+        <span class="cb-status-pill" id="statusPill">draft</span>
+      </div>
+
+      <div class="cb-layout">
+        <div>
+          <div class="field" style="margin-bottom:16px">
+            <label class="pra-label">Subject line</label>
+            <input class="pra-input" id="subjectInput" placeholder="Your session with Coach Lee..."/>
+          </div>
+          <div id="blockEditorRoot"></div>
+        </div>
+
+        <div class="cb-sidebar">
+          <div class="pra-panel">
+            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Recipients</div>
+            <div class="pra-label">Lists</div>
+            <div class="chip-multiselect" id="listChips"></div>
+            <div class="pra-label" style="margin-top:12px">Tags</div>
+            <div class="chip-multiselect" id="tagChips"></div>
+            <div class="pra-label" style="margin-top:12px">Segment</div>
+            <select class="pra-select" id="segmentSelect"><option value="">None</option></select>
+            <div class="pra-label" style="margin-top:12px">Exclude lists</div>
+            <div class="chip-multiselect" id="excludeChips"></div>
+            <div class="pra-muted" style="font-size:.8rem;margin-top:12px" id="recipientCount">— recipients</div>
+          </div>
+
+          <div class="pra-panel">
+            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
+            <select class="pra-select" id="footerSelect"><option value="">Default</option></select>
+          </div>
+
+          <div class="pra-panel">
+            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Send</div>
+            <button class="pra-btn pra-btn-ghost" id="saveDraftBtn" style="width:100%;margin-bottom:8px">Save Draft</button>
+            <div class="field" style="margin-bottom:8px">
+              <label class="pra-label">Schedule for later (optional)</label>
+              <input class="pra-input" type="datetime-local" id="scheduleInput"/>
+            </div>
+            <button class="pra-btn pra-btn-outline" id="scheduleBtn" style="width:100%;margin-bottom:8px">Schedule</button>
+            <button class="pra-btn" id="sendNowBtn" style="width:100%">Send Now</button>
+            <div class="pra-muted" id="sendMsg" style="font-size:.78rem;margin-top:8px;min-height:1em"></div>
+          </div>
+
+          <div class="pra-panel">
+            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Test Send</div>
+            <input class="pra-input" id="testEmailInput" placeholder="you@email.com" style="margin-bottom:8px"/>
+            <button class="pra-btn pra-btn-ghost" id="testSendBtn" style="width:100%">Send Test</button>
+          </div>
+
+          <div class="pra-panel" id="statsPanel" style="display:none">
+            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Stats</div>
+            <div id="statsBody" class="pra-muted" style="font-size:.82rem"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script src="/block-editor-client.js"></script>
+<script>
+const campaignId = new URLSearchParams(location.search).get('id');
+let campaign = null, editor = null, allLists = [], allTags = [], allSegments = [], allFooters = [];
+let debounceTimer;
+
+async function loadRefs() {
+  const [listsRes, tagsRes, segmentsRes, footersRes, sesRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/segments'), fetch('/api/footer-templates'), fetch('/api/email/config-status')
+  ]);
+  allLists = (await listsRes.json()).lists;
+  allTags = (await tagsRes.json()).tags;
+  allSegments = (await segmentsRes.json()).segments;
+  allFooters = (await footersRes.json()).templates;
+  const { configured } = await sesRes.json();
+  document.getElementById('sesBanner').style.display = configured ? 'none' : 'block';
+}
+
+function renderChips(containerId, items, selectedIds, onToggle) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = items.map(item => `<span class="chip-option${selectedIds.includes(item.id) ? ' on' : ''}" data-id="${item.id}">${item.name}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
+  el.querySelectorAll('.chip-option').forEach(chip => chip.onclick = () => { onToggle(chip.dataset.id); renderAll(); saveDebounced(); });
+}
+
+function renderAll() {
+  renderChips('listChips', allLists, campaign.recipients.listIds, (id) => toggleId(campaign.recipients.listIds, id));
+  renderChips('tagChips', allTags, campaign.recipients.tagIds, (id) => toggleId(campaign.recipients.tagIds, id));
+  renderChips('excludeChips', allLists, campaign.recipients.excludeListIds, (id) => toggleId(campaign.recipients.excludeListIds, id));
+  const segSel = document.getElementById('segmentSelect');
+  segSel.innerHTML = '<option value="">None</option>' + allSegments.map(s => `<option value="${s.id}" ${campaign.recipients.segmentId === s.id ? 'selected' : ''}>${s.name}</option>`).join('');
+  const footerSel = document.getElementById('footerSelect');
+  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${campaign.footerTemplateId === f.id ? 'selected' : ''}>${f.name}</option>`).join('');
+  updateRecipientCount();
+}
+function toggleId(arr, id) {
+  const idx = arr.indexOf(id);
+  if (idx === -1) arr.push(id); else arr.splice(idx, 1);
+}
+
+async function updateRecipientCount() {
+  if (!campaign?.id) return;
+  const r = await fetch(`/api/campaigns/${campaign.id}/preview-recipients`);
+  if (r.ok) document.getElementById('recipientCount').textContent = (await r.json()).count + ' recipients match';
+}
+
+function saveDebounced() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(saveCampaign, 500);
+}
+async function saveCampaign() {
+  const r = await fetch('/api/campaigns/' + campaign.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, blocks: campaign.blocks, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients }),
+  });
+  if (r.ok) updateRecipientCount();
+}
+
+document.getElementById('campaignName').addEventListener('input', (e) => { campaign.name = e.target.value; saveDebounced(); });
+document.getElementById('subjectInput').addEventListener('input', (e) => { campaign.subject = e.target.value; saveDebounced(); });
+document.getElementById('segmentSelect').addEventListener('change', (e) => { campaign.recipients.segmentId = e.target.value || null; saveDebounced(); updateRecipientCount(); });
+document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); });
+
+document.getElementById('saveDraftBtn').onclick = async () => { await saveCampaign(); showToast('Draft saved'); };
+
+document.getElementById('sendNowBtn').onclick = async () => {
+  if (!confirm('Send this campaign now to all matching recipients?')) return;
+  await saveCampaign();
+  const msg = document.getElementById('sendMsg');
+  msg.textContent = 'Sending...';
+  const r = await fetch(`/api/campaigns/${campaign.id}/send`, { method: 'POST' });
+  const d = await r.json();
+  if (!r.ok) { msg.textContent = d.error || 'Send failed.'; return; }
+  msg.textContent = `Sent to ${d.recipientCount} recipients.`;
+  loadCampaign();
+};
+
+document.getElementById('scheduleBtn').onclick = async () => {
+  const val = document.getElementById('scheduleInput').value;
+  if (!val) { showToast('Pick a date/time first', true); return; }
+  await saveCampaign();
+  const r = await fetch(`/api/campaigns/${campaign.id}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scheduledAt: new Date(val).toISOString() }) });
+  const d = await r.json();
+  if (!r.ok) { showToast(d.error || 'Could not schedule', true); return; }
+  showToast('Scheduled');
+  loadCampaign();
+};
+
+document.getElementById('testSendBtn').onclick = async () => {
+  const to = document.getElementById('testEmailInput').value.trim();
+  if (!to) return;
+  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, blocks: campaign.blocks, footerTemplateId: campaign.footerTemplateId }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { showToast(d.error || 'Test send failed', true); return; }
+  showToast('Test sent');
+};
+
+async function loadCampaign() {
+  const r = await fetch('/api/campaigns/' + campaignId);
+  if (!r.ok) { document.getElementById('campaignName').value = 'Campaign not found'; return; }
+  campaign = (await r.json()).campaign;
+  document.getElementById('campaignName').value = campaign.name;
+  document.getElementById('subjectInput').value = campaign.subject || '';
+  document.getElementById('statusPill').textContent = campaign.status;
+  const editable = !['sending', 'sent'].includes(campaign.status);
+  document.querySelectorAll('.cb-layout input, .cb-layout select, .cb-layout button').forEach(el => { if (el.id !== 'testEmailInput' && el.id !== 'testSendBtn') el.disabled = !editable; });
+  if (!editor) editor = BlockEditor.init(document.getElementById('blockEditorRoot'), campaign.blocks, (blocks) => { campaign.blocks = blocks; saveDebounced(); });
+  else editor.setBlocks(campaign.blocks);
+  renderAll();
+  if (campaign.status === 'sent') {
+    document.getElementById('statsPanel').style.display = 'block';
+    const statsRes = await fetch(`/api/reporting/campaigns/${campaign.id}`);
+    if (statsRes.ok) {
+      const { stats } = await statsRes.json();
+      document.getElementById('statsBody').innerHTML = Object.entries(stats).map(([k, v]) => `${k}: <strong style="color:#fff">${v}</strong>`).join('<br/>');
+    }
+  }
+}
+
+(async function init() {
+  if (!campaignId) { document.getElementById('campaignName').value = 'No campaign selected'; return; }
+  await loadRefs();
+  await loadCampaign();
+})();
+</script>
+</body>
+</html>

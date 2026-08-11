@@ -28,6 +28,7 @@
         <button class="tab-btn active" data-tab="statuses">Statuses</button>
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
         <button class="tab-btn" data-tab="tagslists">Tags &amp; Lists</button>
+        <button class="tab-btn" data-tab="footers">Email Footers</button>
         <button class="tab-btn" data-tab="users">Users</button>
       </div>
 
@@ -66,6 +67,28 @@
             <div class="pra-h2" style="margin-bottom:14px">Lists</div>
             <div id="listsList"></div>
             <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-footers">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div class="pra-panel" style="padding:22px">
+            <div class="pra-h2" style="margin-bottom:6px">Footer Templates</div>
+            <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Reusable footer/signature blocks — pick one per campaign instead of setting it every time.</div>
+            <div id="footersList"></div>
+            <button class="pra-btn" id="newFooterBtn" style="margin-top:14px">+ New Footer Template</button>
+          </div>
+          <div class="pra-panel" id="footerEditorPanel" style="padding:22px;display:none">
+            <div class="pra-h2" style="margin-bottom:14px">Edit Footer</div>
+            <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="footerName"/></div>
+            <div class="field"><label class="pra-label">HTML (signature/content)</label><textarea class="pra-textarea" id="footerHtml" rows="4"></textarea></div>
+            <div class="field"><label class="pra-label">Physical address (CAN-SPAM)</label><input class="pra-input" id="footerAddress"/></div>
+            <div class="field"><label class="pra-label">Unsubscribe link text</label><input class="pra-input" id="footerUnsubText" value="Unsubscribe"/></div>
+            <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
+              <button class="pra-btn" id="saveFooterBtn" style="flex:1">Save</button>
+              <button class="pra-btn pra-btn-ghost" id="setDefaultFooterBtn">Make Default</button>
+            </div>
           </div>
         </div>
       </div>
@@ -246,11 +269,69 @@ document.getElementById('saveUserBtn').onclick = async () => {
   loadUsers();
 };
 
+// ── Email footer templates ──────────────────────────────────────────────
+let allFooters = [], editingFooterId = null;
+async function loadFooters() {
+  const r = await fetch('/api/footer-templates');
+  allFooters = (await r.json()).templates;
+  document.getElementById('footersList').innerHTML = allFooters.map(f => `
+    <div class="row-item" style="cursor:pointer" data-open-footer="${f.id}">
+      <span style="flex:1">${escapeHtml(f.name)} ${f.isDefault ? '<span class="pra-badge">Default</span>' : ''}</span>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-footer="${f.id}">Delete</button>
+    </div>
+  `).join('') || '<div class="pra-muted">No footer templates yet.</div>';
+  document.querySelectorAll('[data-open-footer]').forEach(el => el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-del-footer]')) return;
+    openFooterEditor(el.dataset.openFooter);
+  }));
+  document.querySelectorAll('[data-del-footer]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    await fetch('/api/footer-templates/' + btn.dataset.delFooter, { method: 'DELETE' });
+    loadFooters();
+  });
+}
+function openFooterEditor(id) {
+  const f = allFooters.find(x => x.id === id);
+  if (!f) return;
+  editingFooterId = id;
+  document.getElementById('footerEditorPanel').style.display = 'block';
+  document.getElementById('footerName').value = f.name;
+  document.getElementById('footerHtml').value = f.html || '';
+  document.getElementById('footerAddress').value = f.physicalAddress || '';
+  document.getElementById('footerUnsubText').value = f.unsubscribeLinkText || 'Unsubscribe';
+}
+document.getElementById('newFooterBtn').onclick = async () => {
+  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Footer' }) });
+  const d = await r.json();
+  await loadFooters();
+  if (r.ok) openFooterEditor(d.template.id);
+};
+document.getElementById('saveFooterBtn').onclick = async () => {
+  if (!editingFooterId) return;
+  const body = {
+    name: document.getElementById('footerName').value.trim(),
+    html: document.getElementById('footerHtml').value,
+    physicalAddress: document.getElementById('footerAddress').value.trim(),
+    unsubscribeLinkText: document.getElementById('footerUnsubText').value.trim(),
+  };
+  const r = await fetch('/api/footer-templates/' + editingFooterId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { showToast('Could not save', true); return; }
+  showToast('Saved');
+  loadFooters();
+};
+document.getElementById('setDefaultFooterBtn').onclick = async () => {
+  if (!editingFooterId) return;
+  await fetch('/api/footer-templates/' + editingFooterId + '/set-default', { method: 'POST' });
+  showToast('Set as default');
+  loadFooters();
+};
+
 loadStatuses();
 loadFields();
 loadTags();
 loadLists();
 loadUsers();
+loadFooters();
 </script>
 </body>
 </html>

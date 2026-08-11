@@ -168,6 +168,27 @@ body { margin: 0; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
 
+/* ── Email block editor (block-editor-client.js) ── */
+.be-shell { display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start; }
+.be-canvas-wrap { min-width: 0; }
+.be-toolbar { display: none; gap: 6px; align-items: center; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px 8px 0 0; padding: 8px 10px; flex-wrap: wrap; }
+.be-toolbar button { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 4px 9px; cursor: pointer; font-size: .8rem; }
+.be-toolbar button:hover { border-color: var(--pra-blue); }
+.be-toolbar select, .be-toolbar input[type="color"] { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 3px 6px; font-size: .78rem; }
+.be-canvas { background: #fff; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; min-height: 200px; overflow: hidden; }
+.be-shell:has(.be-toolbar[style*="flex"]) .be-canvas { border-radius: 0 0 8px 8px; }
+.be-block { position: relative; border: 2px dashed transparent; cursor: pointer; }
+.be-block:hover { border-color: rgba(0,155,255,0.3); }
+.be-block.selected { border-color: var(--pra-blue); }
+.be-block-actions { display: none; position: absolute; top: -1px; right: 0; background: var(--pra-blue); border-radius: 0 0 0 6px; z-index: 2; padding: 2px 6px; align-items: center; gap: 4px; }
+.be-block:hover .be-block-actions, .be-block.selected .be-block-actions { display: flex; }
+.be-block-actions button { background: none; border: none; color: #fff; cursor: pointer; font-size: .82rem; padding: 2px 4px; }
+.be-block-actions span { color: #fff; }
+.be-block-body { color: #111; }
+.be-block-body img { max-width: 100%; }
+.be-add-row { display: flex; gap: 8px; margin-top: 10px; }
+.be-style-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; position: sticky; top: 20px; }
+
 .pra-root ::-webkit-scrollbar { width: 8px; height: 8px; }
 .pra-root ::-webkit-scrollbar-track { background: transparent; }
 .pra-root ::-webkit-scrollbar-thumb { background: #2a2a33; border-radius: 8px; }
