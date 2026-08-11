@@ -1,41 +1,14 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
+import { fireTrigger } from "./automations_backend.js";
 
-export const CONTACTS_FILE = "crm_contacts.json";
+export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
 export const TAGS_FILE = "crm_tags.json";
-export const SEGMENTS_FILE = "crm_segments.json";
 export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 
 function publicContact(c) { return c; } // no sensitive fields to strip yet — placeholder for parity with auth's publicUser
-
-// ── Segment predicate evaluator ─────────────────────────────────────────
-// filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
-// field: "status" | "tags" | "listIds" | "customFields.<fieldId>"
-// op: "eq" | "neq" | "includes" | "excludes" | "exists"
-function evalCondition(contact, cond) {
-  const { field, op, value } = cond;
-  let actual;
-  if (field.startsWith("customFields.")) {
-    actual = contact.customFields?.[field.slice("customFields.".length)];
-  } else {
-    actual = contact[field];
-  }
-  switch (op) {
-    case "eq": return actual === value;
-    case "neq": return actual !== value;
-    case "includes": return Array.isArray(actual) && actual.includes(value);
-    case "excludes": return Array.isArray(actual) && !actual.includes(value);
-    case "exists": return actual !== undefined && actual !== null && actual !== "";
-    default: return false;
-  }
-}
-export function matchesSegment(contact, filter) {
-  if (!filter) return true;
-  if (filter.all) return filter.all.every(c => evalCondition(contact, c));
-  if (filter.any) return filter.any.some(c => evalCondition(contact, c));
-  return true;
-}
 
 function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {
   return {
@@ -92,6 +65,8 @@ export async function handleContactsRequest(req, res, url) {
     const record = newContactRecord(body);
     contacts.push(record);
     writeJson(CONTACTS_FILE, contacts);
+    record.listIds.forEach(listId => fireTrigger("list_subscribe", { contactId: record.id, listId }));
+    record.tags.forEach(tagId => fireTrigger("tag_added", { contactId: record.id, tagId }));
     return sendJson(res, 200, { ok: true, contact: record });
   }
   const contactMatch = p.match(/^\/api\/contacts\/([^/]+)$/);
@@ -105,10 +80,16 @@ export async function handleContactsRequest(req, res, url) {
     if (req.method === "PATCH") {
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       const body = await readJsonBody(req);
+      const prevListIds = [...contact.listIds], prevTags = [...contact.tags];
       const allowed = ["type", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
       for (const k of allowed) if (k in body) contact[k] = body[k];
       contact.updatedAt = new Date().toISOString();
       writeJson(CONTACTS_FILE, contacts);
+      // Only fire for genuinely NEW list/tag membership, not every patch --
+      // an automation shouldn't re-enroll someone just because their email
+      // was edited.
+      contact.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => fireTrigger("list_subscribe", { contactId: contact.id, listId }));
+      contact.tags.filter(id => !prevTags.includes(id)).forEach(tagId => fireTrigger("tag_added", { contactId: contact.id, tagId }));
       return sendJson(res, 200, { ok: true, contact: publicContact(contact) });
     }
     if (req.method === "DELETE") {

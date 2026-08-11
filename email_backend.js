@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { renderBlocksToHtml, applyMergeTags, rewriteLinksForTracking } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, MESSAGE_LOG_FILE } from "./message_log.js";
+import { fireTrigger } from "./automations_backend.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -119,7 +120,9 @@ export async function handleEmailRequest(req, res, url) {
         const eventType = msg.eventType || msg.notificationType;
         const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
         if (providerMessageId && statusMap[eventType]) {
-          updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
+          const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
+          if (row?.contactId && statusMap[eventType] === "opened") fireTrigger("email_opened", { contactId: row.contactId });
+          if (row?.contactId && statusMap[eventType] === "clicked") fireTrigger("email_clicked", { contactId: row.contactId });
         }
       } catch (e) { console.error("[SES webhook] parse failed", e.message); }
     }
@@ -132,7 +135,11 @@ export async function handleEmailRequest(req, res, url) {
     if (messageLogId) {
       const log = readJson(MESSAGE_LOG_FILE, []);
       const row = log.find(m => m.id === messageLogId);
-      if (row) { row.status = "clicked"; row.statusHistory.push({ status: "clicked", at: new Date().toISOString() }); writeJson(MESSAGE_LOG_FILE, log); }
+      if (row) {
+        row.status = "clicked"; row.statusHistory.push({ status: "clicked", at: new Date().toISOString() });
+        writeJson(MESSAGE_LOG_FILE, log);
+        if (row.contactId) fireTrigger("email_clicked", { contactId: row.contactId });
+      }
     }
     res.writeHead(302, { Location: dest || "/" });
     res.end();

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Automation — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .ab-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
+  .ab-name-input:focus { border-bottom-color: var(--pra-blue); }
+  .ab-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 18px; }
+  .ab-canvas-wrap { overflow-x: auto; padding: 20px 0; }
+  .ab-canvas { display: flex; flex-direction: column; align-items: center; min-width: 600px; }
+  .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
+  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; }
+  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; }
+  .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
+  .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
+  .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
+  .step-card .step-actions button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .8rem; }
+  .step-card .step-actions button:hover { color: #fff; }
+  .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; }
+  .add-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
+  .branch-row { display: flex; gap: 40px; margin-top: 4px; }
+  .branch-col { display: flex; flex-direction: column; align-items: center; }
+  .branch-label { font-family: var(--font-secondary); font-size: .68rem; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 6px; }
+  .type-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .type-picker button { background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: #fff; border-radius: 8px; padding: 12px; cursor: pointer; font-size: .82rem; text-align: left; }
+  .type-picker button:hover { border-color: var(--pra-blue); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <a class="pra-link" href="/automations.html">&larr; Back to Automations</a>
+      <div class="ab-header" style="margin-top:14px">
+        <input class="ab-name-input" id="autoName"/>
+        <button class="active-toggle" id="activeToggle"></button>
+        <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="viewContactsBtn">View Contacts</button>
+      </div>
+      <div class="ab-savedmsg" id="savedMsg">&nbsp;</div>
+
+      <div class="ab-canvas-wrap">
+        <div class="ab-canvas" id="canvas"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Trigger config modal -->
+<div class="modal-backdrop" id="triggerModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Start Automation When...</div>
+    <div class="field"><label class="pra-label">Trigger</label>
+      <select class="pra-select" id="triggerType">
+        <option value="list_subscribe">Contact subscribes to a list</option>
+        <option value="tag_added">Tag is added</option>
+        <option value="email_opened">Any tracked email is opened</option>
+        <option value="email_clicked">Any tracked email link is clicked</option>
+      </select>
+    </div>
+    <div class="field" id="triggerTargetField" style="display:none">
+      <label class="pra-label" id="triggerTargetLabel">List</label>
+      <select class="pra-select" id="triggerTarget"></select>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add-step type picker -->
+<div class="modal-backdrop" id="typePickerModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Add a Step</div>
+    <div class="type-picker">
+      <button data-type="send_email">📧 Send Email</button>
+      <button data-type="wait">⏱ Wait</button>
+      <button data-type="add_tag">🏷 Add Tag</button>
+      <button data-type="remove_tag">🏷 Remove Tag</button>
+      <button data-type="condition">🔀 Condition (Branch)</button>
+      <button data-type="jump_to_automation">↪ Jump to Automation</button>
+      <button data-type="end_automation">⏹ End an Automation</button>
+    </div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('typePickerModal')">Cancel</button>
+  </div>
+</div>
+
+<!-- Generic step config modal (non-email types) -->
+<div class="modal-backdrop" id="stepConfigModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" id="stepConfigTitle" style="margin-bottom:16px">Configure Step</div>
+    <div id="stepConfigBody"></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveStepBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('stepConfigModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Send-email step config (embeds the shared block editor) -->
+<div class="modal-backdrop" id="emailStepModal">
+  <div class="pra-panel modal-box" style="max-width:1000px">
+    <div class="pra-h2" style="margin-bottom:16px">Send Email Step</div>
+    <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="emailStepSubject"/></div>
+    <div class="field"><label class="pra-label">Footer</label><select class="pra-select" id="emailStepFooter"><option value="">Default</option></select></div>
+    <div id="emailStepEditorRoot" style="margin-top:10px"></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveEmailStepBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('emailStepModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Enrolled contacts -->
+<div class="modal-backdrop" id="contactsModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Enrolled Contacts</div>
+    <div id="enrollmentsBody"></div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('contactsModal')">Close</button>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script src="/block-editor-client.js"></script>
+<script>
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
+
+const automationId = new URLSearchParams(location.search).get('id');
+let automation = null, stepCounts = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [];
+let saveTimer, emailStepEditor = null, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
+
+async function loadRefs() {
+  const [listsRes, tagsRes, statusesRes, footersRes, autosRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations')
+  ]);
+  allLists = (await listsRes.json()).lists;
+  allTags = (await tagsRes.json()).tags;
+  allStatuses = (await statusesRes.json()).statuses;
+  allFooters = (await footersRes.json()).templates;
+  allAutomations = (await autosRes.json()).automations;
+}
+
+function stepSummary(step) {
+  if (step.type === 'send_email') return `Subject: ${escapeHtml(step.config.subject || '(empty)')}`;
+  if (step.type === 'wait') return `Wait ${step.config.amount || 0} ${step.config.unit || 'minutes'}`;
+  if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
+  if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
+  if (step.type === 'condition') {
+    const c = step.config.filter?.all?.[0];
+    return c ? `If ${c.field} ${c.op} ${escapeHtml(String(c.value))}` : 'No condition set';
+  }
+  if (step.type === 'jump_to_automation') return `Jump to: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
+  if (step.type === 'end_automation') return `End: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
+  return '';
+}
+const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', condition: 'Condition', jump_to_automation: 'Jump to Automation', end_automation: 'End Automation' };
+
+function stepCardHtml(stepId, isLast) {
+  const step = automation.steps[stepId];
+  const count = stepCounts[stepId] || 0;
+  return `
+    <div class="step-card">
+      <div class="step-actions">
+        ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
+      </div>
+      <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${count} here</div>
+      <div class="step-summary">${stepSummary(step)}</div>
+      <div style="margin-top:8px"><button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${stepId}">Edit</button></div>
+    </div>
+  `;
+}
+
+function renderChainHtml(startId, path) {
+  const ids = [];
+  let cur = startId;
+  while (cur) {
+    ids.push(cur);
+    const step = automation.steps[cur];
+    cur = step.type === 'condition' ? null : (step.nextStepId || null);
+  }
+  let html = ids.map((id, i) => stepCardHtml(id, i === ids.length - 1) + (i < ids.length - 1 ? '<div class="chain-arrow">&darr;</div>' : '')).join('');
+  const lastId = ids[ids.length - 1] || null;
+  const lastStep = lastId ? automation.steps[lastId] : null;
+
+  if (!lastStep || lastStep.type !== 'condition') {
+    if (html) html += '<div class="chain-arrow">&darr;</div>';
+    html += `<button class="add-step-btn" data-path="${path}" data-after="${lastId || ''}">+ Add Step</button>`;
+  } else {
+    html += `
+      <div class="branch-row">
+        <div class="branch-col"><div class="branch-label">YES</div>${renderChainHtml(lastStep.yesStepId, 'yes:' + lastId)}</div>
+        <div class="branch-col"><div class="branch-label">NO</div>${renderChainHtml(lastStep.noStepId, 'no:' + lastId)}</div>
+      </div>`;
+  }
+  return html;
+}
+
+function render() {
+  document.getElementById('autoName').value = automation.name;
+  document.getElementById('activeToggle').className = 'active-toggle' + (automation.active ? ' on' : '');
+  document.getElementById('activeLabel').textContent = automation.active ? 'Active' : 'Inactive';
+
+  const canvas = document.getElementById('canvas');
+  const trig = automation.trigger || { type: 'list_subscribe', config: {} };
+  const trigLabelMap = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked' };
+  canvas.innerHTML = `
+    <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
+      <div class="pra-label">Start automation when</div>
+      <div style="margin-top:4px">${trigLabelMap[trig.type]}</div>
+    </div>
+    <div class="chain-arrow">&darr;</div>
+    ${renderChainHtml(automation.startStepId, 'root')}
+  `;
+  document.getElementById('triggerCardBtn').onclick = openTriggerModal;
+  canvas.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => editStep(btn.dataset.edit));
+  canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = () => deleteStep(btn.dataset.delete));
+  canvas.querySelectorAll('[data-path]').forEach(btn => btn.onclick = () => {
+    pendingAddPath = btn.dataset.path;
+    pendingAddAfter = btn.dataset.after || null;
+    openModal('typePickerModal');
+  });
+}
+
+function saveDebounced() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveAutomation, 400);
+}
+async function saveAutomation() {
+  const r = await fetch('/api/automations/' + automation.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: automation.name, trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId }),
+  });
+  if (r.ok) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+}
+
+document.getElementById('autoName').addEventListener('input', (e) => { automation.name = e.target.value; saveDebounced(); });
+document.getElementById('activeToggle').onclick = async () => {
+  automation.active = !automation.active;
+  await fetch(`/api/automations/${automation.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: automation.active }) });
+  render();
+};
+
+// ── Trigger modal ─────────────────────────────────────────────────────────
+function openTriggerModal() {
+  const trig = automation.trigger || { type: 'list_subscribe', config: {} };
+  document.getElementById('triggerType').value = trig.type;
+  updateTriggerTargetField();
+  if (trig.type === 'list_subscribe') document.getElementById('triggerTarget').value = trig.config.listId || '';
+  if (trig.type === 'tag_added') document.getElementById('triggerTarget').value = trig.config.tagId || '';
+  openModal('triggerModal');
+}
+function updateTriggerTargetField() {
+  const type = document.getElementById('triggerType').value;
+  const field = document.getElementById('triggerTargetField');
+  const label = document.getElementById('triggerTargetLabel');
+  const select = document.getElementById('triggerTarget');
+  if (type === 'list_subscribe') {
+    field.style.display = 'block'; label.textContent = 'List (any list if left blank)';
+    select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+  } else if (type === 'tag_added') {
+    field.style.display = 'block'; label.textContent = 'Tag (any tag if left blank)';
+    select.innerHTML = '<option value="">Any tag</option>' + allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  } else {
+    field.style.display = 'none';
+  }
+}
+document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
+document.getElementById('saveTriggerBtn').onclick = () => {
+  const type = document.getElementById('triggerType').value;
+  const target = document.getElementById('triggerTarget').value;
+  const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null } : {};
+  automation.trigger = { type, config };
+  closeModal('triggerModal');
+  render(); saveDebounced();
+};
+
+// ── Add step: type picker -> config ─────────────────────────────────────
+function attachNewStep(step) {
+  automation.steps[step.id] = step;
+  if (pendingAddPath === 'root' && !pendingAddAfter) {
+    automation.startStepId = step.id;
+  } else if (pendingAddAfter) {
+    automation.steps[pendingAddAfter].nextStepId = step.id;
+  } else if (pendingAddPath.startsWith('yes:')) {
+    automation.steps[pendingAddPath.slice(4)].yesStepId = step.id;
+  } else if (pendingAddPath.startsWith('no:')) {
+    automation.steps[pendingAddPath.slice(3)].noStepId = step.id;
+  }
+}
+document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
+  btn.onclick = () => {
+    const type = btn.dataset.type;
+    closeModal('typePickerModal');
+    const step = { id: uid(), type, config: defaultConfig(type), nextStepId: null, yesStepId: null, noStepId: null, position: { x: 0, y: 0 } };
+    if (type === 'send_email') { openEmailStepEditor(step, true); return; }
+    openStepConfigModal(step, true);
+  };
+});
+function defaultConfig(type) {
+  if (type === 'send_email') return { subject: '', blocks: [], footerTemplateId: null };
+  if (type === 'wait') return { amount: 1, unit: 'hours' };
+  if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
+  if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
+  if (type === 'jump_to_automation' || type === 'end_automation') return { automationId: '' };
+  return {};
+}
+
+function editStep(stepId) {
+  const step = automation.steps[stepId];
+  if (step.type === 'send_email') { openEmailStepEditor(step, false); return; }
+  openStepConfigModal(step, false);
+}
+function deleteStep(stepId) {
+  if (!confirm('Delete this step?')) return;
+  // Only ever called on a chain's last step (see stepCardHtml), so no
+  // dangling pointer cleanup needed elsewhere -- just find whoever points
+  // at it and clear that pointer.
+  if (automation.startStepId === stepId) automation.startStepId = null;
+  Object.values(automation.steps).forEach(s => {
+    if (s.nextStepId === stepId) s.nextStepId = null;
+    if (s.yesStepId === stepId) s.yesStepId = null;
+    if (s.noStepId === stepId) s.noStepId = null;
+  });
+  delete automation.steps[stepId];
+  render(); saveDebounced();
+}
+
+// ── Generic (non-email) step config ─────────────────────────────────────
+function openStepConfigModal(step, isNew) {
+  editingStepId = step.id;
+  document.getElementById('stepConfigTitle').textContent = TYPE_LABELS[step.type];
+  const body = document.getElementById('stepConfigBody');
+  if (step.type === 'wait') {
+    body.innerHTML = `
+      <div class="field-row">
+        <div class="field"><label class="pra-label">Amount</label><input class="pra-input" type="number" min="1" id="cfgAmount" value="${step.config.amount || 1}"/></div>
+        <div class="field"><label class="pra-label">Unit</label><select class="pra-select" id="cfgUnit">
+          <option value="minutes" ${step.config.unit === 'minutes' ? 'selected' : ''}>Minutes</option>
+          <option value="hours" ${step.config.unit === 'hours' ? 'selected' : ''}>Hours</option>
+          <option value="days" ${step.config.unit === 'days' ? 'selected' : ''}>Days</option>
+        </select></div>
+      </div>`;
+  } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
+    body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
+  } else if (step.type === 'condition') {
+    const c = step.config.filter?.all?.[0] || { field: 'status', op: 'eq', value: '' };
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">If the contact matches this, they go down the YES path; otherwise NO.</div>
+      <div class="field"><label class="pra-label">Field</label><select class="pra-select" id="cfgField">
+        <option value="status" ${c.field === 'status' ? 'selected' : ''}>Status</option>
+        <option value="tags" ${c.field === 'tags' ? 'selected' : ''}>Has tag</option>
+      </select></div>
+      <div class="field"><label class="pra-label">Value</label><select class="pra-select" id="cfgValue"></select></div>
+    `;
+    const fieldSel = document.getElementById('cfgField');
+    function updateValueOptions() {
+      const valSel = document.getElementById('cfgValue');
+      if (fieldSel.value === 'status') valSel.innerHTML = allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.value === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
+      else valSel.innerHTML = allTags.map(t => `<option value="${t.id}" ${c.value === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
+    }
+    fieldSel.addEventListener('change', updateValueOptions);
+    updateValueOptions();
+  } else if (step.type === 'jump_to_automation' || step.type === 'end_automation') {
+    const others = allAutomations.filter(a => a.id !== automation.id);
+    body.innerHTML = `<div class="field"><label class="pra-label">Automation</label><select class="pra-select" id="cfgAutomation">${others.map(a => `<option value="${a.id}" ${step.config.automationId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>`;
+  }
+  document.getElementById('saveStepBtn').onclick = () => {
+    if (step.type === 'wait') { step.config.amount = Number(document.getElementById('cfgAmount').value) || 1; step.config.unit = document.getElementById('cfgUnit').value; }
+    else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
+    else if (step.type === 'condition') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
+    else if (step.type === 'jump_to_automation' || step.type === 'end_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
+    if (isNew) attachNewStep(step);
+    closeModal('stepConfigModal');
+    render(); saveDebounced();
+  };
+  openModal('stepConfigModal');
+}
+
+// ── Send-email step (shared block editor) ────────────────────────────────
+function openEmailStepEditor(step, isNew) {
+  editingStepId = step.id;
+  document.getElementById('emailStepSubject').value = step.config.subject || '';
+  const footerSel = document.getElementById('emailStepFooter');
+  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${step.config.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+  const root = document.getElementById('emailStepEditorRoot');
+  root.innerHTML = '';
+  emailStepEditor = BlockEditor.init(root, step.config.blocks || [], () => {});
+  document.getElementById('saveEmailStepBtn').onclick = () => {
+    step.config.subject = document.getElementById('emailStepSubject').value;
+    step.config.footerTemplateId = footerSel.value || null;
+    step.config.blocks = emailStepEditor.getBlocks();
+    if (isNew) attachNewStep(step);
+    closeModal('emailStepModal');
+    render(); saveDebounced();
+  };
+  openModal('emailStepModal');
+}
+
+// ── Enrolled contacts ─────────────────────────────────────────────────────
+document.getElementById('viewContactsBtn').onclick = async () => {
+  const r = await fetch(`/api/automations/${automation.id}/enrollments`);
+  const { enrollments } = await r.json();
+  document.getElementById('enrollmentsBody').innerHTML = enrollments.length ? enrollments.map(e => `
+    <div class="row-item">
+      <span style="flex:1">${escapeHtml(e.contact?.first || '')} ${escapeHtml(e.contact?.last || '')}</span>
+      <span class="pra-badge">${e.status}</span>
+    </div>
+  `).join('') : '<div class="pra-muted">No one enrolled yet.</div>';
+  openModal('contactsModal');
+};
+
+(async function init() {
+  if (!automationId) { document.getElementById('autoName').value = 'No automation selected'; return; }
+  await loadRefs();
+  const r = await fetch('/api/automations/' + automationId);
+  if (!r.ok) { document.getElementById('autoName').value = 'Automation not found'; return; }
+  const d = await r.json();
+  automation = d.automation;
+  stepCounts = d.stepCounts;
+  render();
+})();
+</script>
+</body>
+</html>

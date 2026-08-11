@@ -8,6 +8,7 @@ import { handleContactsRequest } from "./contacts_backend.js";
 import { handleStatusesRequest } from "./statuses_backend.js";
 import { handleEmailRequest } from "./email_backend.js";
 import { handleCampaignsRequest } from "./campaigns_backend.js";
+import { handleAutomationsRequest } from "./automations_backend.js";
 import { handleReportingRequest } from "./reporting_backend.js";
 import { startScheduler } from "./scheduler.js";
 
@@ -48,6 +49,7 @@ createServer(async (req, res) => {
   if (await handleStatusesRequest(req, res, url)) return;
   if (await handleEmailRequest(req, res, url)) return;
   if (await handleCampaignsRequest(req, res, url)) return;
+  if (await handleAutomationsRequest(req, res, url)) return;
   if (await handleReportingRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike

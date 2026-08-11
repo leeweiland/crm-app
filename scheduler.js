@@ -1,5 +1,6 @@
 import { readJson } from "./auth_backend.js";
 import { CAMPAIGNS_FILE, sendCampaignNow } from "./campaigns_backend.js";
+import { advanceDueEnrollments } from "./automations_backend.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
 // Phase 2 only checks scheduled campaigns; Phase 3 adds automation
@@ -16,6 +17,7 @@ async function tick() {
       console.log(`[scheduler] sending due campaign ${campaign.id} (${campaign.name})`);
       await sendCampaignNow(campaign.id).catch(e => console.error("[scheduler] campaign send failed", campaign.id, e.message));
     }
+    await advanceDueEnrollments();
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }
