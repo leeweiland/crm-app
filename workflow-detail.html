@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Workflow — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .wf-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .wf-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
+  .wf-name-input:focus { border-bottom-color: var(--pra-blue); }
+  .active-toggle { width: 38px; height: 20px; border-radius: 12px; background: var(--pra-border); position: relative; cursor: pointer; display: inline-block; border: none; }
+  .active-toggle.on { background: var(--pra-blue); }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .active-toggle.on::after { transform: translateX(18px); }
+  .tabs { display: flex; gap: 6px; margin: 16px 0; border-bottom: 1px solid var(--pra-border); }
+  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .84rem; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .wf-step { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--pra-border); cursor: grab; }
+  .wf-step:last-child { border-bottom: none; }
+  .wf-step .day-badge { font-family: var(--font-secondary); font-size: .68rem; color: var(--pra-blue); background: var(--pra-blue-dim); padding: 3px 8px; border-radius: 8px; white-space: nowrap; }
+  .wf-step .step-info { flex: 1; }
+  .day-checkboxes { display: flex; gap: 8px; flex-wrap: wrap; }
+  .day-checkboxes label { display: flex; align-items: center; gap: 4px; font-size: .82rem; cursor: pointer; }
+  .goal-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <a class="pra-link" href="/workflows.html">&larr; Back to Workflows</a>
+      <div class="wf-header" style="margin-top:14px">
+        <input class="wf-name-input" id="wfName"/>
+        <button class="active-toggle" id="activeToggle"></button>
+        <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
+      </div>
+      <div class="pra-muted" id="savedMsg" style="font-size:.76rem">&nbsp;</div>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="steps">Steps</button>
+        <button class="tab-btn" data-tab="trigger">Trigger</button>
+        <button class="tab-btn" data-tab="goals">Goals</button>
+        <button class="tab-btn" data-tab="recipients">Recipients &amp; Schedule</button>
+        <button class="tab-btn" data-tab="enrolled">Enrolled Contacts</button>
+      </div>
+
+      <div class="tab-panel active" id="tab-overview">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px" id="statsGrid"></div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-steps" style="padding:20px">
+        <div id="stepsList"></div>
+        <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
+          <button class="pra-btn pra-btn-ghost" data-add-step="sms">+ SMS Step</button>
+          <button class="pra-btn pra-btn-ghost" data-add-step="wait">+ Wait Step</button>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-trigger" style="padding:20px">
+        <div class="field"><label class="pra-label">Trigger</label>
+          <select class="pra-select" id="triggerType">
+            <option value="list_subscribe">Contact subscribes to a list</option>
+            <option value="tag_added">Tag is added</option>
+            <option value="email_opened">Any tracked email is opened</option>
+            <option value="email_clicked">Any tracked email link is clicked</option>
+          </select>
+        </div>
+        <div class="field" id="triggerTargetField" style="display:none">
+          <label class="pra-label" id="triggerTargetLabel">Target</label>
+          <select class="pra-select" id="triggerTarget"></select>
+        </div>
+        <button class="pra-btn" id="saveTriggerBtn">Save Trigger</button>
+        <hr style="border-color:var(--pra-border);margin:24px 0"/>
+        <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Manually Enroll a Contact</div>
+        <div class="field-row">
+          <div class="field"><select class="pra-select" id="manualEnrollContact"></select></div>
+          <button class="pra-btn pra-btn-ghost" id="manualEnrollBtn">Enroll</button>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-goals" style="padding:20px">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">When a goal is met, the contact's enrollment pauses and is marked converted.</div>
+        <div id="goalsList"></div>
+        <button class="pra-btn" id="saveGoalsBtn" style="margin-top:14px">Save Goals</button>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-recipients" style="padding:20px">
+        <div class="field"><label class="pra-label">How often should this run for each contact?</label>
+          <select class="pra-select" id="runMode"><option value="once">Run Once</option><option value="multiple">Run Multiple Times</option></select>
+        </div>
+        <div class="field"><label class="pra-label">Sending Days</label>
+          <div class="day-checkboxes" id="sendingDays"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label class="pra-label">Window Start</label><input class="pra-input" type="time" id="windowStart"/></div>
+          <div class="field"><label class="pra-label">Window End</label><input class="pra-input" type="time" id="windowEnd"/></div>
+        </div>
+        <div class="field"><label class="pra-label">Timezone</label>
+          <select class="pra-select" id="timezone">
+            <option value="America/Anchorage">America/Anchorage</option>
+            <option value="America/Los_Angeles">America/Los_Angeles</option>
+            <option value="America/Denver">America/Denver</option>
+            <option value="America/Chicago">America/Chicago</option>
+            <option value="America/New_York">America/New_York</option>
+          </select>
+        </div>
+        <div class="field"><label class="pra-label">Blackout Dates (comma-separated YYYY-MM-DD)</label><input class="pra-input" id="blackoutDates"/></div>
+        <button class="pra-btn" id="saveRecipientsBtn">Save</button>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-enrolled" style="padding:20px">
+        <div id="enrolledList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="smsStepModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">SMS Step</div>
+    <div class="field"><label class="pra-label">Day (0 = day of enrollment)</label><input class="pra-input" type="number" min="0" id="smsDayOffset" value="0"/></div>
+    <div class="field"><label class="pra-label">Template</label><select class="pra-select" id="smsTemplateSelect"></select></div>
+    <div class="field"><label class="pra-label">Or write a new template</label><textarea class="pra-textarea" id="smsNewBody" rows="3" placeholder="Leave blank to use the selected template"></textarea></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="pra-btn" id="saveSmsStepBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('smsStepModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+<div class="modal-backdrop" id="waitStepModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Wait Step</div>
+    <div class="field"><label class="pra-label">Day (0 = day of enrollment)</label><input class="pra-input" type="number" min="0" id="waitDayOffset" value="1"/></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="pra-btn" id="saveWaitStepBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('waitStepModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script>
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function uid() { return 'wst' + Math.random().toString(36).slice(2, 10); }
+
+const workflowId = new URLSearchParams(location.search).get('id');
+let workflow = null, allLists = [], allTags = [], allSmsTemplates = [], allContacts = [];
+let saveTimer;
+
+document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  if (btn.dataset.tab === 'enrolled') loadEnrolled();
+});
+
+async function loadRefs() {
+  const [listsRes, tagsRes, smsRes, contactsRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/sms-templates'), fetch('/api/contacts')
+  ]);
+  allLists = (await listsRes.json()).lists;
+  allTags = (await tagsRes.json()).tags;
+  allSmsTemplates = (await smsRes.json()).templates;
+  allContacts = (await contactsRes.json()).contacts;
+  document.getElementById('manualEnrollContact').innerHTML = allContacts.map(c => `<option value="${c.id}">${escapeHtml(c.first)} ${escapeHtml(c.last)}</option>`).join('');
+}
+
+function renderOverview() {
+  const r = window._wfStats || {};
+  const labels = { active: 'Active', enrolled: 'Enrolled', completed: 'Completed', goalMet: 'Goal Met', bounced: 'Bounced', errored: 'Errored' };
+  document.getElementById('statsGrid').innerHTML = Object.entries(labels).map(([k, l]) => `
+    <div class="pra-card" style="padding:16px"><div class="pra-label">${l}</div><div class="pra-h1">${r[k] ?? 0}</div></div>
+  `).join('');
+}
+
+function stepSummary(step) {
+  if (step.type === 'sms') {
+    const t = allSmsTemplates.find(x => x.id === step.config.smsTemplateId);
+    return `SMS: ${escapeHtml(t?.body?.slice(0, 60) || '(no template)')}`;
+  }
+  return `Wait until day ${step.dayOffset}`;
+}
+function renderSteps() {
+  const list = document.getElementById('stepsList');
+  const sorted = [...workflow.steps].sort((a, b) => a.dayOffset - b.dayOffset);
+  list.innerHTML = sorted.map(step => `
+    <div class="wf-step" data-id="${step.id}" draggable="true">
+      <span class="day-badge">DAY ${step.dayOffset}</span>
+      <div class="step-info">${stepSummary(step)}</div>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-step="${step.id}">Delete</button>
+    </div>
+  `).join('') || '<div class="pra-muted">No steps yet.</div>';
+  list.querySelectorAll('[data-del-step]').forEach(btn => btn.onclick = () => {
+    workflow.steps = workflow.steps.filter(s => s.id !== btn.dataset.delStep);
+    renderSteps(); saveDebounced();
+  });
+}
+
+document.querySelectorAll('[data-add-step]').forEach(btn => btn.onclick = () => {
+  if (btn.dataset.addStep === 'sms') {
+    document.getElementById('smsDayOffset').value = 0;
+    document.getElementById('smsTemplateSelect').innerHTML = '<option value="">-- choose --</option>' + allSmsTemplates.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+    document.getElementById('smsNewBody').value = '';
+    openModal('smsStepModal');
+  } else {
+    document.getElementById('waitDayOffset').value = 1;
+    openModal('waitStepModal');
+  }
+});
+document.getElementById('saveSmsStepBtn').onclick = async () => {
+  let templateId = document.getElementById('smsTemplateSelect').value;
+  const newBody = document.getElementById('smsNewBody').value.trim();
+  if (newBody) {
+    const r = await fetch('/api/sms-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Workflow template ' + new Date().toLocaleString(), body: newBody }) });
+    const d = await r.json();
+    if (r.ok) { templateId = d.template.id; allSmsTemplates.push(d.template); }
+  }
+  if (!templateId) { showToast('Choose or write a template', true); return; }
+  workflow.steps.push({ id: uid(), order: workflow.steps.length, dayOffset: Number(document.getElementById('smsDayOffset').value) || 0, type: 'sms', config: { smsTemplateId: templateId } });
+  closeModal('smsStepModal');
+  renderSteps(); saveDebounced();
+};
+document.getElementById('saveWaitStepBtn').onclick = () => {
+  workflow.steps.push({ id: uid(), order: workflow.steps.length, dayOffset: Number(document.getElementById('waitDayOffset').value) || 0, type: 'wait', config: {} });
+  closeModal('waitStepModal');
+  renderSteps(); saveDebounced();
+};
+
+function saveDebounced() { clearTimeout(saveTimer); saveTimer = setTimeout(saveWorkflow, 400); }
+async function saveWorkflow() {
+  const r = await fetch('/api/workflows/' + workflow.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: workflow.name, trigger: workflow.trigger, steps: workflow.steps, conversionGoals: workflow.conversionGoals, recipientSettings: workflow.recipientSettings }),
+  });
+  if (r.ok) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+}
+
+document.getElementById('wfName').addEventListener('input', (e) => { workflow.name = e.target.value; saveDebounced(); });
+document.getElementById('activeToggle').onclick = async () => {
+  workflow.active = !workflow.active;
+  await fetch(`/api/workflows/${workflow.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: workflow.active }) });
+  document.getElementById('activeToggle').className = 'active-toggle' + (workflow.active ? ' on' : '');
+  document.getElementById('activeLabel').textContent = workflow.active ? 'Active' : 'Inactive';
+};
+
+// ── Trigger ──────────────────────────────────────────────────────────────
+function updateTriggerTargetField() {
+  const type = document.getElementById('triggerType').value;
+  const field = document.getElementById('triggerTargetField');
+  const select = document.getElementById('triggerTarget');
+  if (type === 'list_subscribe') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'List (any if blank)'; select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join(''); }
+  else if (type === 'tag_added') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Tag (any if blank)'; select.innerHTML = '<option value="">Any tag</option>' + allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join(''); }
+  else field.style.display = 'none';
+}
+document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
+document.getElementById('saveTriggerBtn').onclick = () => {
+  const type = document.getElementById('triggerType').value;
+  const target = document.getElementById('triggerTarget').value;
+  workflow.trigger = { type, config: type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null } : {} };
+  saveDebounced();
+  showToast('Trigger saved');
+};
+document.getElementById('manualEnrollBtn').onclick = async () => {
+  const contactId = document.getElementById('manualEnrollContact').value;
+  if (!contactId) return;
+  await fetch(`/api/workflows/${workflow.id}/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId }) });
+  showToast('Enrolled');
+};
+
+// ── Goals ────────────────────────────────────────────────────────────────
+const GOAL_TYPES = [
+  { key: 'incoming_email', label: 'Incoming email (not yet wired -- no inbound email channel)' },
+  { key: 'incoming_sms', label: 'Incoming SMS' },
+  { key: 'incoming_call', label: 'Incoming call (not yet wired -- no call tracking)' },
+  { key: 'meeting_booked', label: 'Meeting booked (not yet wired -- no calendar integration)' },
+  { key: 'lead_status_change', label: 'Lead status change' },
+  { key: 'outcome_met', label: 'Outcome met (not yet wired)' },
+];
+function renderGoals() {
+  document.getElementById('goalsList').innerHTML = GOAL_TYPES.map(g => `
+    <label class="goal-row"><input type="checkbox" data-goal="${g.key}" ${workflow.conversionGoals.some(x => x.trigger === g.key) ? 'checked' : ''}/> ${g.label}</label>
+  `).join('');
+}
+document.getElementById('saveGoalsBtn').onclick = () => {
+  workflow.conversionGoals = [...document.querySelectorAll('[data-goal]')].filter(el => el.checked).map(el => ({ trigger: el.dataset.goal, config: {} }));
+  saveDebounced();
+  showToast('Goals saved');
+};
+
+// ── Recipients ───────────────────────────────────────────────────────────
+const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function renderRecipients() {
+  const rs = workflow.recipientSettings;
+  document.getElementById('runMode').value = rs.runMode;
+  document.getElementById('windowStart').value = rs.sendingWindow.start;
+  document.getElementById('windowEnd').value = rs.sendingWindow.end;
+  document.getElementById('timezone').value = rs.timezone;
+  document.getElementById('blackoutDates').value = (rs.blackoutDates || []).join(', ');
+  document.getElementById('sendingDays').innerHTML = DAYS.map(d => `<label><input type="checkbox" data-day="${d}" ${rs.sendingDays.includes(d) ? 'checked' : ''}/> ${d.toUpperCase()}</label>`).join('');
+}
+document.getElementById('saveRecipientsBtn').onclick = () => {
+  workflow.recipientSettings = {
+    runMode: document.getElementById('runMode').value,
+    sendingDays: [...document.querySelectorAll('[data-day]')].filter(el => el.checked).map(el => el.dataset.day),
+    sendingWindow: { start: document.getElementById('windowStart').value, end: document.getElementById('windowEnd').value },
+    timezone: document.getElementById('timezone').value,
+    blackoutDates: document.getElementById('blackoutDates').value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+  saveDebounced();
+  showToast('Recipients settings saved');
+};
+
+// ── Enrolled contacts ────────────────────────────────────────────────────
+async function loadEnrolled() {
+  const r = await fetch(`/api/workflows/${workflow.id}/enrollments`);
+  const { enrollments } = await r.json();
+  document.getElementById('enrolledList').innerHTML = enrollments.length ? enrollments.map(e => `
+    <div class="row-item">
+      <span style="flex:1">${escapeHtml(e.contact?.first || '')} ${escapeHtml(e.contact?.last || '')}</span>
+      <span class="pra-badge">${e.status}</span>
+    </div>
+  `).join('') : '<div class="pra-muted">No one enrolled yet.</div>';
+}
+
+(async function init() {
+  if (!workflowId) { document.getElementById('wfName').value = 'No workflow selected'; return; }
+  await loadRefs();
+  const r = await fetch('/api/workflows/' + workflowId);
+  if (!r.ok) { document.getElementById('wfName').value = 'Workflow not found'; return; }
+  const d = await r.json();
+  workflow = d.workflow;
+  window._wfStats = d.stats;
+  document.getElementById('wfName').value = workflow.name;
+  document.getElementById('activeToggle').className = 'active-toggle' + (workflow.active ? ' on' : '');
+  document.getElementById('activeLabel').textContent = workflow.active ? 'Active' : 'Inactive';
+  document.getElementById('triggerType').value = workflow.trigger.type;
+  updateTriggerTargetField();
+  if (workflow.trigger.type === 'list_subscribe') document.getElementById('triggerTarget').value = workflow.trigger.config.listId || '';
+  if (workflow.trigger.type === 'tag_added') document.getElementById('triggerTarget').value = workflow.trigger.config.tagId || '';
+  renderOverview();
+  renderSteps();
+  renderGoals();
+  renderRecipients();
+})();
+</script>
+</body>
+</html>

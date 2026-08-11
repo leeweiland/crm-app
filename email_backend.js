@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { renderBlocksToHtml, applyMergeTags, rewriteLinksForTracking } from "./block_editor_shared.js";
-import { logMessage, updateMessageStatusByProviderId, MESSAGE_LOG_FILE } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
+import { fireWorkflowTrigger } from "./workflows_backend.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -89,13 +90,11 @@ export async function sendEmail({ to, subject, blocks, footerTemplateId, contact
     const result = await client.send(cmd);
     // Store the real SES MessageId as the join key delivery/open/click
     // webhooks arrive with -- the log row was created before send()
-    // returned, so this is a follow-up write by row id, not by provider id.
-    const log = readJson(MESSAGE_LOG_FILE, []);
-    const row = log.find(m => m.id === logRow.id);
-    if (row) { row.providerMessageId = result.MessageId; row.status = "sent"; row.sentAt = new Date().toISOString(); writeJson(MESSAGE_LOG_FILE, log); }
+    // returned, so this is a follow-up write by our own row id.
+    updateMessageById(logRow.id, { providerMessageId: result.MessageId, status: "sent", sentAt: new Date().toISOString() });
     return { ok: true, messageId: result.MessageId };
   } catch (e) {
-    updateMessageStatusByProviderId(logRow.id, "failed", { error: e.message });
+    updateMessageById(logRow.id, { status: "failed" });
     return { ok: false, reason: e.message };
   }
 }
@@ -121,8 +120,8 @@ export async function handleEmailRequest(req, res, url) {
         const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
         if (providerMessageId && statusMap[eventType]) {
           const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
-          if (row?.contactId && statusMap[eventType] === "opened") fireTrigger("email_opened", { contactId: row.contactId });
-          if (row?.contactId && statusMap[eventType] === "clicked") fireTrigger("email_clicked", { contactId: row.contactId });
+          if (row?.contactId && statusMap[eventType] === "opened") { fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); }
+          if (row?.contactId && statusMap[eventType] === "clicked") { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
         }
       } catch (e) { console.error("[SES webhook] parse failed", e.message); }
     }
@@ -138,7 +137,7 @@ export async function handleEmailRequest(req, res, url) {
       if (row) {
         row.status = "clicked"; row.statusHistory.push({ status: "clicked", at: new Date().toISOString() });
         writeJson(MESSAGE_LOG_FILE, log);
-        if (row.contactId) fireTrigger("email_clicked", { contactId: row.contactId });
+        if (row.contactId) { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
       }
     }
     res.writeHead(302, { Location: dest || "/" });

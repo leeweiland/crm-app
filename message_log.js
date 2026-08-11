@@ -38,6 +38,20 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   return row;
 }
 
+// Same as above but keyed by OUR row id -- needed right after a send
+// attempt fails before a providerMessageId ever gets assigned (there'd be
+// nothing for updateMessageStatusByProviderId to match), and for setting
+// the providerMessageId itself once a send succeeds.
+export function updateMessageById(id, patch) {
+  const log = readJson(MESSAGE_LOG_FILE, []);
+  const row = log.find(m => m.id === id);
+  if (!row) return null;
+  Object.assign(row, patch);
+  if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
+  writeJson(MESSAGE_LOG_FILE, log);
+  return row;
+}
+
 export function getMessagesForSource(sourceType, sourceId) {
   return readJson(MESSAGE_LOG_FILE, []).filter(m => m.sourceType === sourceType && m.sourceId === sourceId);
 }

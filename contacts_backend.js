@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
 import { fireTrigger } from "./automations_backend.js";
+import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -65,8 +66,8 @@ export async function handleContactsRequest(req, res, url) {
     const record = newContactRecord(body);
     contacts.push(record);
     writeJson(CONTACTS_FILE, contacts);
-    record.listIds.forEach(listId => fireTrigger("list_subscribe", { contactId: record.id, listId }));
-    record.tags.forEach(tagId => fireTrigger("tag_added", { contactId: record.id, tagId }));
+    record.listIds.forEach(listId => { fireTrigger("list_subscribe", { contactId: record.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: record.id, listId }); });
+    record.tags.forEach(tagId => { fireTrigger("tag_added", { contactId: record.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: record.id, tagId }); });
     return sendJson(res, 200, { ok: true, contact: record });
   }
   const contactMatch = p.match(/^\/api\/contacts\/([^/]+)$/);
@@ -80,7 +81,7 @@ export async function handleContactsRequest(req, res, url) {
     if (req.method === "PATCH") {
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       const body = await readJsonBody(req);
-      const prevListIds = [...contact.listIds], prevTags = [...contact.tags];
+      const prevListIds = [...contact.listIds], prevTags = [...contact.tags], prevStatus = contact.status;
       const allowed = ["type", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
       for (const k of allowed) if (k in body) contact[k] = body[k];
       contact.updatedAt = new Date().toISOString();
@@ -88,8 +89,9 @@ export async function handleContactsRequest(req, res, url) {
       // Only fire for genuinely NEW list/tag membership, not every patch --
       // an automation shouldn't re-enroll someone just because their email
       // was edited.
-      contact.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => fireTrigger("list_subscribe", { contactId: contact.id, listId }));
-      contact.tags.filter(id => !prevTags.includes(id)).forEach(tagId => fireTrigger("tag_added", { contactId: contact.id, tagId }));
+      contact.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => { fireTrigger("list_subscribe", { contactId: contact.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: contact.id, listId }); });
+      contact.tags.filter(id => !prevTags.includes(id)).forEach(tagId => { fireTrigger("tag_added", { contactId: contact.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: contact.id, tagId }); });
+      if (contact.status !== prevStatus) checkConversionGoal("lead_status_change", contact.id);
       return sendJson(res, 200, { ok: true, contact: publicContact(contact) });
     }
     if (req.method === "DELETE") {

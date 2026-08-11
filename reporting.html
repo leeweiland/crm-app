@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Reporting — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .rep-section { margin-bottom: 28px; }
+  .rep-section-title { font-family: var(--font-secondary); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim); margin-bottom: 10px; }
+  .rep-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 12px; }
+</style>
 </head>
 <body>
 <div class="pra-root">
@@ -12,25 +17,43 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Reporting</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px" id="statsGrid"></div>
-      <div class="pra-muted" style="font-size:.85rem">
-        Email reporting is live. SMS, automations, and workflow reporting land in later phases,
-        all reading from the same activity log this already uses.
+
+      <div class="rep-section">
+        <div class="rep-section-title">Email</div>
+        <div class="rep-grid" id="emailGrid"></div>
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-title">SMS</div>
+        <div class="rep-grid" id="smsGrid"></div>
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-title">Automations</div>
+        <div class="rep-grid" id="automationsGrid"></div>
+      </div>
+      <div class="rep-section">
+        <div class="rep-section-title">Workflows</div>
+        <div class="rep-grid" id="workflowsGrid"></div>
       </div>
     </div>
   </div>
 </div>
 <script src="/crm-nav.js"></script>
 <script>
-const LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
+const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
+const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed' };
+function grid(el, labels, data) {
+  document.getElementById(el).innerHTML = Object.entries(labels).map(([key, label]) => `
+    <div class="pra-card" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
+  `).join('');
+}
 (async function load() {
   const r = await fetch('/api/reporting/overview');
-  const grid = document.getElementById('statsGrid');
-  if (!r.ok) { grid.innerHTML = '<div class="pra-muted">Could not load reporting.</div>'; return; }
-  const { email } = await r.json();
-  grid.innerHTML = Object.entries(LABELS).map(([key, label]) => `
-    <div class="pra-card" style="padding:18px"><div class="pra-label">${label}</div><div class="pra-h1">${email[key] ?? 0}</div></div>
-  `).join('');
+  if (!r.ok) return;
+  const { email, sms, automations, workflows, campaigns } = await r.json();
+  grid('emailGrid', EMAIL_LABELS, email);
+  grid('smsGrid', SMS_LABELS, sms);
+  grid('automationsGrid', { total: 'Total', active: 'Active', currentlyEnrolled: 'Currently Enrolled' }, automations);
+  grid('workflowsGrid', { total: 'Total', active: 'Active', currentlyEnrolled: 'Currently Enrolled' }, workflows);
 })();
 </script>
 </body>

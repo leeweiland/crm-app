@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Workflows — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
+  .active-toggle { width: 38px; height: 20px; border-radius: 12px; background: var(--pra-border); position: relative; cursor: pointer; display: inline-block; border: none; }
+  .active-toggle.on { background: var(--pra-blue); }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .active-toggle.on::after { transform: translateX(18px); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="toolbar">
+        <div class="pra-h1" style="flex:1">Workflows</div>
+        <button class="pra-btn" id="newWorkflowBtn">+ New Workflow</button>
+      </div>
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Steps</th><th>Active</th><th>Active Enrolled</th><th>Goal Met</th><th>Last Edited</th></tr></thead>
+          <tbody id="workflowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+
+async function loadWorkflows() {
+  const r = await fetch('/api/workflows');
+  const body = document.getElementById('workflowsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load.</td></tr>'; return; }
+  const { workflows } = await r.json();
+  if (!workflows.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No workflows yet.</td></tr>'; return; }
+  body.innerHTML = workflows.map(w => `
+    <tr>
+      <td class="clickable" onclick="location.href='/workflow-detail.html?id=${w.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(w.name)}</td>
+      <td class="pra-muted">${w.steps.length}</td>
+      <td><button class="active-toggle${w.active ? ' on' : ''}" data-id="${w.id}" data-active="${w.active}"></button></td>
+      <td>${w.stats.active}</td>
+      <td>${w.stats.goalMet}</td>
+      <td class="pra-muted">${fmtDate(w.updatedAt)}</td>
+    </tr>
+  `).join('');
+  document.querySelectorAll('.active-toggle').forEach(btn => btn.onclick = async () => {
+    const next = btn.dataset.active !== 'true';
+    await fetch(`/api/workflows/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });
+    loadWorkflows();
+  });
+}
+document.getElementById('newWorkflowBtn').onclick = async () => {
+  const r = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Workflow' }) });
+  const d = await r.json();
+  if (r.ok) location.href = '/workflow-detail.html?id=' + d.workflow.id;
+};
+loadWorkflows();
+</script>
+</body>
+</html>
