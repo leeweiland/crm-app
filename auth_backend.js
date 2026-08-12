@@ -85,12 +85,22 @@ function destroySession(token) {
   delete sessions[token];
   writeJson(SESSIONS_FILE, sessions);
 }
+// DEV_SKIP_LOGIN=1 (set in .env) auto-authenticates as the first admin
+// user when no valid session exists, so the app is reachable without
+// logging in on every local restart. Off unless explicitly set; unset
+// the env var (or delete this block) to restore normal login-required
+// behavior.
+function devAutoUser() {
+  if (process.env.DEV_SKIP_LOGIN !== "1") return null;
+  const users = readJson(USERS_FILE, []);
+  return users.find(u => !u.archived) || null;
+}
 export function getSessionUser(req) {
   const token = getCookie(req, "crm_session");
-  if (!token) return null;
+  if (!token) return devAutoUser();
   const sessions = readJson(SESSIONS_FILE, {});
   const session = sessions[token];
-  if (!session || session.expiresAt < Date.now()) return null;
+  if (!session || session.expiresAt < Date.now()) return devAutoUser();
   const users = readJson(USERS_FILE, []);
   const found = users.find(u => u.id === session.userId) || null;
   if (found?.archived) return null;

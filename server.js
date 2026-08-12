@@ -74,7 +74,8 @@ createServer(async (req, res) => {
   // chat-app, which shares a domain/nav with sibling apps), so there's no
   // URL prefix to strip.
   let pathname = url.pathname;
-  let filePath = join(__dirname, pathname === "/" ? "login.html" : pathname);
+  const rootPage = process.env.DEV_SKIP_LOGIN === "1" ? "inbox.html" : "login.html";
+  let filePath = join(__dirname, pathname === "/" ? rootPage : pathname);
   if (!existsSync(filePath)) {
     res.writeHead(404); res.end("Not found"); return;
   }
