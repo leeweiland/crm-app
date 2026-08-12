@@ -5,6 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Dashboard — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .dash-grid { display: grid; grid-template-columns: 1fr 360px; gap: 20px; align-items: start; }
+  .activity-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .74rem; flex-shrink: 0; }
+  .activity-icon.email { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+  .activity-icon.sms { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .activity-icon.call { background: rgba(255,59,59,0.15); color: var(--pra-red); }
+  .activity-icon.task, .activity-icon.reminder { background: rgba(255,193,7,0.15); color: #ffc107; }
+  .activity-body { flex: 1; min-width: 0; }
+  .activity-preview { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; }
+  .activity-time { font-size: .72rem; color: var(--pra-dim); white-space: nowrap; }
+  .quick-links { display: flex; flex-direction: column; gap: 8px; }
+  .quick-links a { color: var(--pra-white); text-decoration: none; font-size: .86rem; padding: 8px 10px; border-radius: 8px; }
+  .quick-links a:hover { background: rgba(255,255,255,0.04); }
+  @media (max-width: 900px) { .dash-grid { grid-template-columns: 1fr; } }
+</style>
 </head>
 <body>
 <div class="pra-root">
@@ -12,28 +29,78 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Dashboard</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px">
-        <div class="pra-card" style="padding:18px"><div class="pra-label">Contacts</div><div class="pra-h1" id="statContacts">–</div></div>
-        <div class="pra-card" style="padding:18px"><div class="pra-label">Lists</div><div class="pra-h1" id="statLists">–</div></div>
-        <div class="pra-card" style="padding:18px"><div class="pra-label">Tags</div><div class="pra-h1" id="statTags">–</div></div>
-      </div>
-      <div class="pra-muted" style="font-size:.85rem">
-        Campaigns, Automations, Workflows, and Reporting land in later phases —
-        Contacts and Settings are live now.
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px" id="statsGrid"></div>
+
+      <div class="dash-grid">
+        <div class="pra-panel" style="padding:22px">
+          <div class="pra-h2" style="margin-bottom:12px">Recent Activity</div>
+          <div id="activityFeed"></div>
+        </div>
+        <div class="pra-panel" style="padding:22px">
+          <div class="pra-h2" style="margin-bottom:12px">Quick Links</div>
+          <div class="quick-links">
+            <a href="/contacts.html">→ Add or search Contacts</a>
+            <a href="/campaigns.html">→ New Campaign</a>
+            <a href="/automations.html">→ New Automation</a>
+            <a href="/workflows.html">→ New Workflow</a>
+            <a href="/inbox.html">→ Check the Inbox</a>
+            <a href="/reporting.html">→ Full Reporting</a>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 <script src="/crm-nav.js"></script>
 <script>
-(async function loadStats() {
-  const [contactsRes, listsRes, tagsRes] = await Promise.all([
-    fetch('/api/contacts'), fetch('/api/lists'), fetch('/api/tags')
-  ]);
-  if (contactsRes.ok) document.getElementById('statContacts').textContent = (await contactsRes.json()).total;
-  if (listsRes.ok) document.getElementById('statLists').textContent = (await listsRes.json()).lists.length;
-  if (tagsRes.ok) document.getElementById('statTags').textContent = (await tagsRes.json()).tags.length;
-})();
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDateTime(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+const ACTIVITY_ICONS = { email: '✉', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
+
+async function loadStats() {
+  const [contactsRes, overviewRes] = await Promise.all([fetch('/api/contacts'), fetch('/api/reporting/overview')]);
+  const grid = document.getElementById('statsGrid');
+  const cards = [];
+  if (contactsRes.ok) cards.push(['Contacts', (await contactsRes.json()).total]);
+  if (overviewRes.ok) {
+    const { email, sms, campaigns, automations, workflows } = await overviewRes.json();
+    cards.push(['Emails Sent', email.sent]);
+    cards.push(['SMS Sent', sms.sent]);
+    cards.push(['Campaigns', campaigns.total]);
+    cards.push(['Active Automations', automations.active]);
+    cards.push(['Active Workflows', workflows.active]);
+  }
+  grid.innerHTML = cards.map(([label, val]) => `<div class="pra-card" style="padding:18px"><div class="pra-label">${label}</div><div class="pra-h1">${val}</div></div>`).join('');
+}
+
+async function loadActivity() {
+  const wrap = document.getElementById('activityFeed');
+  const r = await fetch('/api/inbox?tab=primary');
+  if (!r.ok) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">Could not load activity.</div>'; return; }
+  const { items } = await r.json();
+  const recent = items.slice(0, 12);
+  if (!recent.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">Nothing yet.</div>'; return; }
+  wrap.innerHTML = recent.map(item => {
+    const name = item.contact ? `${escapeHtml(item.contact.first)} ${escapeHtml(item.contact.last)}` : (item.from || item.to || 'Unknown');
+    let preview = '';
+    if (item.itemType === 'email' || item.itemType === 'sms') preview = `${name} — ${item.direction === 'inbound' ? 'received' : 'sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
+    else if (item.itemType === 'call') preview = `${name} — ${escapeHtml(item.direction)} call`;
+    else preview = `${name} — ${escapeHtml(item.title || '')}`;
+    return `
+      <div class="activity-item">
+        <div class="activity-icon ${item.itemType}">${ACTIVITY_ICONS[item.itemType] || '•'}</div>
+        <div class="activity-body">
+          <div class="activity-preview">${preview}</div>
+          <div class="activity-time">${fmtDateTime(item.at)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+loadStats();
+loadActivity();
 </script>
 </body>
 </html>

@@ -24,8 +24,8 @@
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Steps</th><th>Active</th><th>Active Enrolled</th><th>Goal Met</th><th>Last Edited</th></tr></thead>
-          <tbody id="workflowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+          <thead><tr><th>Name</th><th>Steps</th><th>Active</th><th>Active Enrolled</th><th>Goal Met</th><th>Last Edited</th><th></th></tr></thead>
+          <tbody id="workflowsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -39,9 +39,9 @@ function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 async function loadWorkflows() {
   const r = await fetch('/api/workflows');
   const body = document.getElementById('workflowsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load.</td></tr>'; return; }
   const { workflows } = await r.json();
-  if (!workflows.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No workflows yet.</td></tr>'; return; }
+  if (!workflows.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No workflows yet.</td></tr>'; return; }
   body.innerHTML = workflows.map(w => `
     <tr>
       <td class="clickable" onclick="location.href='/workflow-detail.html?id=${w.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(w.name)}</td>
@@ -50,8 +50,22 @@ async function loadWorkflows() {
       <td>${w.stats.active}</td>
       <td>${w.stats.goalMet}</td>
       <td class="pra-muted">${fmtDate(w.updatedAt)}</td>
+      <td style="white-space:nowrap">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${w.id}">Copy</button>
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${w.id}">Delete</button>
+      </td>
     </tr>
   `).join('');
+  document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async () => {
+    const r = await fetch(`/api/workflows/${btn.dataset.dup}/duplicate`, { method: 'POST' });
+    const d = await r.json();
+    if (r.ok) location.href = '/workflow-detail.html?id=' + d.workflow.id;
+  });
+  document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Delete this workflow?')) return;
+    await fetch('/api/workflows/' + btn.dataset.del, { method: 'DELETE' });
+    loadWorkflows();
+  });
   document.querySelectorAll('.active-toggle').forEach(btn => btn.onclick = async () => {
     const next = btn.dataset.active !== 'true';
     await fetch(`/api/workflows/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });

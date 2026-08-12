@@ -25,7 +25,7 @@
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Status</th><th>Subject</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Last Updated</th></tr></thead>
+          <thead><tr><th>Name</th><th>Status</th><th>Subject</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Last Updated</th><th></th></tr></thead>
           <tbody id="campaignsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -40,20 +40,36 @@ function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 async function loadCampaigns() {
   const r = await fetch('/api/campaigns');
   const body = document.getElementById('campaignsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
   const { campaigns } = await r.json();
-  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No campaigns yet.</td></tr>'; return; }
+  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No campaigns yet.</td></tr>'; return; }
   body.innerHTML = campaigns.map(c => `
-    <tr class="clickable" onclick="location.href='/campaign-builder.html?id=${c.id}'">
-      <td>${escapeHtml(c.name)}</td>
+    <tr>
+      <td class="clickable" onclick="location.href='/campaign-builder.html?id=${c.id}'" style="cursor:pointer">${escapeHtml(c.name)}</td>
       <td><span class="status-pill status-${c.status}">${c.status}</span></td>
       <td class="pra-muted">${escapeHtml(c.subject || '')}</td>
       <td>${c.stats?.sent ?? 0}</td>
       <td>${c.stats?.opened ?? 0}</td>
       <td>${c.stats?.clicked ?? 0}</td>
       <td class="pra-muted">${fmtDate(c.updatedAt)}</td>
+      <td style="white-space:nowrap">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${c.id}">Copy</button>
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${c.id}">Delete</button>
+      </td>
     </tr>
   `).join('');
+  document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    const r = await fetch(`/api/campaigns/${btn.dataset.dup}/duplicate`, { method: 'POST' });
+    const d = await r.json();
+    if (r.ok) location.href = '/campaign-builder.html?id=' + d.campaign.id;
+  });
+  document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this campaign?')) return;
+    await fetch('/api/campaigns/' + btn.dataset.del, { method: 'DELETE' });
+    loadCampaigns();
+  });
 }
 
 document.getElementById('newCampaignBtn').onclick = async () => {

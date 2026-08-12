@@ -183,6 +183,24 @@ export async function handleWorkflowsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, workflow });
   }
 
+  const duplicateMatch = p.match(/^\/api\/workflows\/([^/]+)\/duplicate$/);
+  if (duplicateMatch && req.method === "POST") {
+    const workflows = readJson(WORKFLOWS_FILE, []);
+    const source = workflows.find(w => w.id === duplicateMatch[1]);
+    if (!source) return sendJson(res, 404, { error: "Not found" });
+    const copy = {
+      id: randomUUID(), name: `Copy of ${source.name}`, active: false,
+      trigger: JSON.parse(JSON.stringify(source.trigger)),
+      steps: JSON.parse(JSON.stringify(source.steps)),
+      conversionGoals: JSON.parse(JSON.stringify(source.conversionGoals)),
+      recipientSettings: JSON.parse(JSON.stringify(source.recipientSettings)),
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    workflows.push(copy);
+    writeJson(WORKFLOWS_FILE, workflows);
+    return sendJson(res, 200, { ok: true, workflow: copy });
+  }
+
   const workflowMatch = p.match(/^\/api\/workflows\/([^/]+)$/);
   if (workflowMatch) {
     const workflows = readJson(WORKFLOWS_FILE, []);

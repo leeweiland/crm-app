@@ -87,6 +87,24 @@ export async function handleCampaignsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, campaign });
   }
 
+  const duplicateMatch = p.match(/^\/api\/campaigns\/([^/]+)\/duplicate$/);
+  if (duplicateMatch && req.method === "POST") {
+    const campaigns = readJson(CAMPAIGNS_FILE, []);
+    const source = campaigns.find(c => c.id === duplicateMatch[1]);
+    if (!source) return sendJson(res, 404, { error: "Not found" });
+    const copy = {
+      id: randomUUID(), name: `Copy of ${source.name}`, status: "draft",
+      subject: source.subject, blocks: JSON.parse(JSON.stringify(source.blocks)), footerTemplateId: source.footerTemplateId,
+      recipients: JSON.parse(JSON.stringify(source.recipients)),
+      scheduledAt: null, sentAt: null,
+      stats: { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 },
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    campaigns.push(copy);
+    writeJson(CAMPAIGNS_FILE, campaigns);
+    return sendJson(res, 200, { ok: true, campaign: copy });
+  }
+
   const campaignMatch = p.match(/^\/api\/campaigns\/([^/]+)$/);
   if (campaignMatch) {
     const campaigns = readJson(CAMPAIGNS_FILE, []);

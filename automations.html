@@ -24,7 +24,7 @@
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Trigger</th><th>Active</th><th>Currently Enrolled</th><th>Total Enrolled</th><th>Last Edited</th></tr></thead>
+          <thead><tr><th>Name</th><th>Trigger</th><th>Active</th><th>Currently Enrolled</th><th>Total Enrolled</th><th>Last Edited</th><th></th></tr></thead>
           <tbody id="automationsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -40,9 +40,9 @@ const TRIGGER_LABELS = { list_subscribe: 'Subscribes to list', tag_added: 'Tag a
 async function loadAutomations() {
   const r = await fetch('/api/automations');
   const body = document.getElementById('automationsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load.</td></tr>'; return; }
   const { automations } = await r.json();
-  if (!automations.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No automations yet.</td></tr>'; return; }
+  if (!automations.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No automations yet.</td></tr>'; return; }
   body.innerHTML = automations.map(a => `
     <tr>
       <td class="clickable" onclick="location.href='/automation-builder.html?id=${a.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(a.name)}</td>
@@ -51,11 +51,25 @@ async function loadAutomations() {
       <td>${a.enrolledCount}</td>
       <td>${a.totalEnrolled}</td>
       <td class="pra-muted">${fmtDate(a.updatedAt)}</td>
+      <td style="white-space:nowrap">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${a.id}">Copy</button>
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${a.id}">Delete</button>
+      </td>
     </tr>
   `).join('');
   document.querySelectorAll('.active-toggle').forEach(btn => btn.onclick = async () => {
     const next = btn.dataset.active !== 'true';
     await fetch(`/api/automations/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });
+    loadAutomations();
+  });
+  document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async () => {
+    const r = await fetch(`/api/automations/${btn.dataset.dup}/duplicate`, { method: 'POST' });
+    const d = await r.json();
+    if (r.ok) location.href = '/automation-builder.html?id=' + d.automation.id;
+  });
+  document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Delete this automation?')) return;
+    await fetch('/api/automations/' + btn.dataset.del, { method: 'DELETE' });
     loadAutomations();
   });
 }

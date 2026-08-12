@@ -10,6 +10,16 @@
   .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); margin: 0 6px 6px 0; }
   .tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
   @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+  .activity-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .74rem; flex-shrink: 0; }
+  .activity-icon.email { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+  .activity-icon.sms { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .activity-icon.call { background: rgba(255,59,59,0.15); color: var(--pra-red); }
+  .activity-icon.task, .activity-icon.reminder { background: rgba(255,193,7,0.15); color: #ffc107; }
+  .activity-body { flex: 1; min-width: 0; }
+  .activity-preview { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; }
+  .activity-time { font-size: .72rem; color: var(--pra-dim); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -21,25 +31,32 @@
       <div class="pra-h1" id="contactName" style="margin:10px 0 20px">Loading…</div>
 
       <div class="detail-grid">
-        <div class="pra-panel" style="padding:22px">
-          <div class="pra-h2" style="margin-bottom:14px">Details</div>
-          <div class="field-row">
-            <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="fFirst"/></div>
-            <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="fLast"/></div>
+        <div>
+          <div class="pra-panel" style="padding:22px;margin-bottom:16px">
+            <div class="pra-h2" style="margin-bottom:14px">Details</div>
+            <div class="field-row">
+              <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="fFirst"/></div>
+              <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="fLast"/></div>
+            </div>
+            <div class="field"><label class="pra-label">Account / Company</label><input class="pra-input" id="fAccount"/></div>
+            <div class="field-row">
+              <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="fEmail"/></div>
+              <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="fPhone"/></div>
+            </div>
+            <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="fStatus"></select></div>
+            <div class="field-row" style="margin:14px 0">
+              <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
+              <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fSmsOptOut"/> SMS opt-out</label>
+            </div>
+            <div id="customFieldsWrap"></div>
+            <button class="pra-btn" id="saveBtn" style="margin-top:10px">Save</button>
+            <button class="pra-btn pra-btn-danger" id="deleteBtn" style="margin-top:10px;margin-left:10px">Delete Contact</button>
           </div>
-          <div class="field"><label class="pra-label">Account / Company</label><input class="pra-input" id="fAccount"/></div>
-          <div class="field-row">
-            <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="fEmail"/></div>
-            <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="fPhone"/></div>
+
+          <div class="pra-panel" style="padding:22px">
+            <div class="pra-h2" style="margin-bottom:12px">Activity</div>
+            <div id="activityTimeline"></div>
           </div>
-          <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="fStatus"></select></div>
-          <div class="field-row" style="margin:14px 0">
-            <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
-            <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fSmsOptOut"/> SMS opt-out</label>
-          </div>
-          <div id="customFieldsWrap"></div>
-          <button class="pra-btn" id="saveBtn" style="margin-top:10px">Save</button>
-          <button class="pra-btn pra-btn-danger" id="deleteBtn" style="margin-top:10px;margin-left:10px">Delete Contact</button>
         </div>
 
         <div>
@@ -181,7 +198,33 @@ document.getElementById('deleteBtn').onclick = async () => {
   renderCustomFields();
   renderTags();
   renderLists();
+  loadActivity();
 })();
+
+const ACTIVITY_ICONS = { email: '✉', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
+function fmtDateTime(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+async function loadActivity() {
+  const wrap = document.getElementById('activityTimeline');
+  const r = await fetch('/api/inbox/contact/' + contactId);
+  if (!r.ok) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">Could not load activity.</div>'; return; }
+  const { items } = await r.json();
+  if (!items.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">No activity yet.</div>'; return; }
+  wrap.innerHTML = items.map(item => {
+    let preview = '';
+    if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
+    else if (item.itemType === 'call') preview = `${escapeHtml(item.direction)} call, ${item.duration}min${item.notes ? ' — ' + escapeHtml(item.notes) : ''}`;
+    else preview = escapeHtml(item.title || '');
+    return `
+      <div class="activity-item">
+        <div class="activity-icon ${item.itemType}">${ACTIVITY_ICONS[item.itemType] || '•'}</div>
+        <div class="activity-body">
+          <div class="activity-preview">${preview}</div>
+          <div class="activity-time">${fmtDateTime(item.at)}${item.status ? ' · ' + escapeHtml(item.status) : ''}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
 </script>
 </body>
 </html>

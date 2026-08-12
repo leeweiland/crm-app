@@ -183,6 +183,24 @@ export async function handleAutomationsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, automation });
   }
 
+  const duplicateMatch = p.match(/^\/api\/automations\/([^/]+)\/duplicate$/);
+  if (duplicateMatch && req.method === "POST") {
+    const automations = readJson(AUTOMATIONS_FILE, []);
+    const source = automations.find(a => a.id === duplicateMatch[1]);
+    if (!source) return sendJson(res, 404, { error: "Not found" });
+    const copy = {
+      id: randomUUID(), name: `Copy of ${source.name}`, active: false,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      versions: [],
+      trigger: JSON.parse(JSON.stringify(source.trigger)),
+      steps: JSON.parse(JSON.stringify(source.steps)),
+      startStepId: source.startStepId,
+    };
+    automations.push(copy);
+    writeJson(AUTOMATIONS_FILE, automations);
+    return sendJson(res, 200, { ok: true, automation: copy });
+  }
+
   const automationMatch = p.match(/^\/api\/automations\/([^/]+)$/);
   if (automationMatch) {
     const automations = readJson(AUTOMATIONS_FILE, []);

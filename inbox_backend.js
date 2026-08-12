@@ -16,10 +16,25 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p.startsWith("/api/calls") || p.startsWith("/api/tasks");
+  const owned = p === "/api/inbox" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // Same cross-source aggregation as the main Inbox above, scoped to one
+  // contact -- the activity timeline on their detail page. Every source
+  // (email/sms sends, inbound messages, manually-logged calls, tasks) is
+  // already just one flat record per event, so "everything about this
+  // contact" is a filter, not a new query shape.
+  const contactActivityMatch = p.match(/^\/api\/inbox\/contact\/([^/]+)$/);
+  if (contactActivityMatch && req.method === "GET") {
+    const contactId = contactActivityMatch[1];
+    const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt }));
+    const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt }));
+    const tasks = readJson(TASKS_FILE, []).filter(t => t.contactId === contactId).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
+    const items = [...messages, ...calls, ...tasks].sort((a, b) => new Date(b.at) - new Date(a.at));
+    return sendJson(res, 200, { items });
+  }
 
   if (p === "/api/inbox" && req.method === "GET") {
     const tab = url.searchParams.get("tab") || "primary";
