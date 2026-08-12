@@ -6,10 +6,14 @@
 // practical to keep both copies in sync by hand.
 //
 // Block shape:
-//   { id, type: "text", html, style: {background,border,margin,padding} }
-//   { id, type: "image", src, link, width, style: {...} }
-//   { id, type: "button", text, link, style: {...} }
-// Theme: { background, linkColor }
+//   { id, type: "text", html, style: {background,border,margin,padding,textAlign} }
+//   { id, type: "image", src, link, width, style: {...}, linkAction: null|{type:"add_tag",tagId} }
+//   { id, type: "button", text, link, style: {...}, linkAction: null|{type:"add_tag",tagId} }
+// Theme: { background, maxWidth }
+// linkAction is resolved and executed server-side at click time (see
+// email_backend.js's /api/email/click handler) -- it's not rendered into
+// the HTML itself, just carried on the block so the click handler can look
+// it up by matching the clicked URL back to its source block.
 
 function styleAttr(style) {
   if (!style) return "";
@@ -18,6 +22,7 @@ function styleAttr(style) {
   if (style.border) parts.push(`border:${style.border}`);
   if (style.margin) parts.push(`margin:${style.margin}`);
   if (style.padding) parts.push(`padding:${style.padding}`);
+  if (style.textAlign) parts.push(`text-align:${style.textAlign}`);
   return parts.length ? ` style="${parts.join(";")}"` : "";
 }
 
@@ -26,7 +31,7 @@ function renderBlock(block) {
     return `<div${styleAttr(block.style)}>${block.html || ""}</div>`;
   }
   if (block.type === "image") {
-    const img = `<img src="${block.src || ""}" width="${block.width || 600}" style="max-width:100%;display:block;border:0"/>`;
+    const img = `<img src="${block.src || ""}" width="${block.width || 600}" style="max-width:100%;display:inline-block;border:0"/>`;
     return `<div${styleAttr(block.style)}>${block.link ? `<a href="${block.link}">${img}</a>` : img}</div>`;
   }
   if (block.type === "button") {
@@ -36,9 +41,10 @@ function renderBlock(block) {
 }
 
 export function renderBlocksToHtml(blocks, theme) {
-  const bg = theme?.background || "#ffffff";
+  const bg = theme?.background || "#f4f4f4";
+  const maxWidth = theme?.maxWidth || 650;
   const body = (blocks || []).map(renderBlock).join("");
-  return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:650px;margin:0 auto">${body}</div></div>`;
+  return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:${maxWidth}px;margin:0 auto;background:#ffffff">${body}</div></div>`;
 }
 
 // AC-style %TOKEN% merge tags (not {{token}}) so Lee's existing AC email

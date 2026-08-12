@@ -193,8 +193,8 @@ async function loadCampaign() {
   document.getElementById('statusPill').textContent = campaign.status;
   const editable = !['sending', 'sent'].includes(campaign.status);
   document.querySelectorAll('.cb-layout input, .cb-layout select, .cb-layout button').forEach(el => { if (el.id !== 'testEmailInput' && el.id !== 'testSendBtn') el.disabled = !editable; });
-  if (!editor) editor = BlockEditor.init(document.getElementById('blockEditorRoot'), campaign.blocks, (blocks) => { campaign.blocks = blocks; saveDebounced(); });
-  else editor.setBlocks(campaign.blocks);
+  if (!editor) editor = BlockEditor.init(document.getElementById('blockEditorRoot'), { blocks: campaign.blocks, theme: campaign.theme }, (state) => { campaign.blocks = state.blocks; campaign.theme = state.theme; saveDebounced(); });
+  else editor.setState({ blocks: campaign.blocks, theme: campaign.theme });
   renderAll();
   if (campaign.status === 'sent') {
     document.getElementById('statsPanel').style.display = 'block';

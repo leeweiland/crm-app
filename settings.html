@@ -32,6 +32,7 @@
         <button class="tab-btn" data-tab="webhooks">Webhook Forms</button>
         <button class="tab-btn" data-tab="import">Data Import</button>
         <button class="tab-btn" data-tab="users">Users</button>
+        <button class="tab-btn" data-tab="account">My Account</button>
       </div>
 
       <div class="tab-panel active pra-panel" id="tab-statuses" style="padding:22px">
@@ -153,6 +154,15 @@
           <tbody id="usersBody"></tbody>
         </table>
         <button class="pra-btn" id="addUserBtn" style="margin-top:16px">+ Add User</button>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-account" style="padding:22px;max-width:420px">
+        <div class="pra-h2" style="margin-bottom:14px">Change Password</div>
+        <div class="field"><label class="pra-label">Current password</label><input class="pra-input" type="password" id="curPassword"/></div>
+        <div class="field"><label class="pra-label">New password (8+ characters)</label><input class="pra-input" type="password" id="newPassword"/></div>
+        <div class="field"><label class="pra-label">Confirm new password</label><input class="pra-input" type="password" id="confirmPassword"/></div>
+        <button class="pra-btn" id="changePasswordBtn">Update Password</button>
+        <div class="pra-muted" id="passwordMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
     </div>
   </div>
@@ -527,6 +537,23 @@ document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.onc
   btn.disabled = false;
   showToast(done ? 'Import complete' : 'Stopped');
 });
+
+// ── My Account ───────────────────────────────────────────────────────────
+document.getElementById('changePasswordBtn').onclick = async () => {
+  const currentPassword = document.getElementById('curPassword').value;
+  const newPassword = document.getElementById('newPassword').value;
+  const confirmPassword = document.getElementById('confirmPassword').value;
+  const msg = document.getElementById('passwordMsg');
+  if (newPassword !== confirmPassword) { msg.textContent = 'New passwords do not match.'; return; }
+  msg.textContent = 'Updating...';
+  const r = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { msg.textContent = d.error || 'Could not update password.'; return; }
+  msg.textContent = 'Password updated.';
+  document.getElementById('curPassword').value = '';
+  document.getElementById('newPassword').value = '';
+  document.getElementById('confirmPassword').value = '';
+};
 
 loadStatuses();
 loadFields();

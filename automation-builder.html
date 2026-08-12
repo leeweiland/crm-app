@@ -306,7 +306,7 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
   };
 });
 function defaultConfig(type) {
-  if (type === 'send_email') return { subject: '', blocks: [], footerTemplateId: null };
+  if (type === 'send_email') return { subject: '', blocks: [], theme: { background: '#f4f4f4', maxWidth: 650 }, footerTemplateId: null };
   if (type === 'wait') return { amount: 1, unit: 'hours' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
@@ -393,11 +393,13 @@ function openEmailStepEditor(step, isNew) {
   footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${step.config.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   const root = document.getElementById('emailStepEditorRoot');
   root.innerHTML = '';
-  emailStepEditor = BlockEditor.init(root, step.config.blocks || [], () => {});
+  emailStepEditor = BlockEditor.init(root, { blocks: step.config.blocks || [], theme: step.config.theme }, () => {});
   document.getElementById('saveEmailStepBtn').onclick = () => {
     step.config.subject = document.getElementById('emailStepSubject').value;
     step.config.footerTemplateId = footerSel.value || null;
-    step.config.blocks = emailStepEditor.getBlocks();
+    const state = emailStepEditor.getState();
+    step.config.blocks = state.blocks;
+    step.config.theme = state.theme;
     if (isNew) attachNewStep(step);
     closeModal('emailStepModal');
     render(); saveDebounced();

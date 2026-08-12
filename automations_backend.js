@@ -92,7 +92,7 @@ async function advanceEnrollment(enrollment, automation) {
       const contact = getContact(enrollment.contactId);
       if (contact) {
         await sendEmail({
-          to: contact.email, subject: step.config.subject || "", blocks: step.config.blocks || [],
+          to: contact.email, subject: step.config.subject || "", blocks: step.config.blocks || [], theme: step.config.theme,
           footerTemplateId: step.config.footerTemplateId, contactId: contact.id,
           sourceType: "automation_step", sourceId: `${automation.id}:${step.id}`,
         });

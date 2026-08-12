@@ -1,6 +1,6 @@
-// Drag-and-drop-ish email block editor -- shared by campaign-builder.html
-// (Phase 2) and, in Phase 3, the automation "send email" step's config
-// panel. Mirrors block_editor_shared.js's render algorithm by hand (this
+// Drag-and-drop email block editor -- shared by campaign-builder.html and
+// the automation "send email" step's config panel, so it's built once, not
+// twice. Mirrors block_editor_shared.js's render algorithm by hand (this
 // file runs in the browser, that one's an ESM server module) so the live
 // preview always matches what actually gets sent.
 window.BlockEditor = (function () {
@@ -13,12 +13,13 @@ window.BlockEditor = (function () {
     if (style.border) parts.push(`border:${style.border}`);
     if (style.margin) parts.push(`margin:${style.margin}`);
     if (style.padding) parts.push(`padding:${style.padding}`);
+    if (style.textAlign) parts.push(`text-align:${style.textAlign}`);
     return parts.length ? ` style="${parts.join(';')}"` : '';
   }
   function renderBlockHtml(block) {
     if (block.type === 'text') return `<div${styleAttr(block.style)}>${block.html || ''}</div>`;
     if (block.type === 'image') {
-      const img = `<img src="${block.src || ''}" width="${block.width || 600}" style="max-width:100%;display:block;border:0"/>`;
+      const img = `<img src="${block.src || ''}" width="${block.width || 600}" style="max-width:100%;display:inline-block;border:0"/>`;
       return `<div${styleAttr(block.style)}>${block.link ? `<a href="${block.link}">${img}</a>` : img}</div>`;
     }
     if (block.type === 'button') {
@@ -26,13 +27,25 @@ window.BlockEditor = (function () {
     }
     return '';
   }
-  function renderBlocksToHtml(blocks) {
-    return `<div style="background:#ffffff;padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:650px;margin:0 auto">${(blocks || []).map(renderBlockHtml).join('')}</div></div>`;
+  function renderBlocksToHtml(blocks, theme) {
+    const t = theme || {};
+    const bg = t.background || '#f4f4f4';
+    const maxWidth = t.maxWidth || 650;
+    return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:${maxWidth}px;margin:0 auto;background:#ffffff">${(blocks || []).map(renderBlockHtml).join('')}</div></div>`;
   }
 
-  function init(rootEl, initialBlocks, onChange) {
-    let blocks = (initialBlocks || []).map(b => ({ ...b, id: b.id || uid() }));
-    let selectedId = blocks[0]?.id || null;
+  // initialState: { blocks: [...], theme: {background, maxWidth} }
+  // onChange receives the full { blocks, theme } state on every edit.
+  function init(rootEl, initialState, onChange) {
+    initialState = initialState || {};
+    let blocks = (initialState.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
+    let theme = { background: '#f4f4f4', maxWidth: 650, ...(initialState.theme || {}) };
+    let selectedId = null;
+    let showingThemePanel = false;
+    let allTags = [];
+    let dragSourceId = null;
+
+    fetch('/api/tags').then(r => r.json()).then(d => { allTags = d.tags || []; if (selectedId) renderStylePanel(); }).catch(() => {});
 
     rootEl.innerHTML = `
       <div class="be-shell">
@@ -49,6 +62,9 @@ window.BlockEditor = (function () {
             <button type="button" id="beLinkBtn">Link</button>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option></select>
           </div>
+          <div class="be-canvas-toprow">
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="beThemeBtn">&#9881; Email Settings</button>
+          </div>
           <div class="be-canvas" id="beCanvas"></div>
           <div class="be-add-row">
             <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-add="text">+ Text</button>
@@ -64,14 +80,32 @@ window.BlockEditor = (function () {
     const stylePanel = rootEl.querySelector('#beStylePanel');
     const toolbar = rootEl.querySelector('#beToolbar');
 
-    function emit() { if (onChange) onChange(blocks); }
+    function emit() { if (onChange) onChange({ blocks, theme }); }
 
     function renderStylePanel() {
+      if (showingThemePanel) {
+        stylePanel.innerHTML = `
+          <div class="pra-label" style="margin-bottom:8px">Email Settings</div>
+          <div class="field"><label class="pra-label">Background</label><input class="pra-input" type="text" id="themeBg" value="${theme.background}"/></div>
+          <div class="field"><label class="pra-label">Content Width (px)</label><input class="pra-input" type="number" id="themeWidth" value="${theme.maxWidth}"/></div>
+        `;
+        stylePanel.querySelector('#themeBg').addEventListener('input', (e) => { theme.background = e.target.value; renderPreviewBg(); emit(); });
+        stylePanel.querySelector('#themeWidth').addEventListener('input', (e) => { theme.maxWidth = Number(e.target.value) || 650; renderPreviewBg(); emit(); });
+        return;
+      }
       const block = blocks.find(b => b.id === selectedId);
-      if (!block) { stylePanel.innerHTML = '<div class="pra-muted" style="font-size:.82rem">Select a block to edit its style.</div>'; return; }
+      if (!block) { stylePanel.innerHTML = '<div class="pra-muted" style="font-size:.82rem">Select a block to edit its style, or click Email Settings above.</div>'; return; }
       const s = block.style || {};
+      const linkAction = block.linkAction || null;
       stylePanel.innerHTML = `
         <div class="pra-label" style="margin-bottom:8px">Block Style</div>
+        <div class="field"><label class="pra-label">Alignment</label>
+          <div style="display:flex;gap:6px">
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-align="left">&#8676;</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-align="center">&#8596;</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-align="right">&#8677;</button>
+          </div>
+        </div>
         <div class="field"><label class="pra-label">Background</label><input class="pra-input" type="text" id="styleBg" placeholder="#ffffff" value="${s.background || ''}"/></div>
         <div class="field"><label class="pra-label">Border</label><input class="pra-input" type="text" id="styleBorder" placeholder="1px solid #eee" value="${s.border || ''}"/></div>
         <div class="field"><label class="pra-label">Margin</label><input class="pra-input" type="text" id="styleMargin" placeholder="0" value="${s.margin || ''}"/></div>
@@ -85,6 +119,18 @@ window.BlockEditor = (function () {
           <div class="field"><label class="pra-label">Button text</label><input class="pra-input" type="text" id="btnText" value="${block.text || ''}"/></div>
           <div class="field"><label class="pra-label">Link URL</label><input class="pra-input" type="text" id="btnLink" value="${block.link || ''}"/></div>
         ` : ''}
+        ${block.type === 'image' || block.type === 'button' ? `
+          <div class="field"><label class="pra-label">When clicked</label>
+            <select class="pra-select" id="linkActionType">
+              <option value="">Just open the link</option>
+              <option value="add_tag" ${linkAction?.type === 'add_tag' ? 'selected' : ''}>Add a tag</option>
+            </select>
+          </div>
+          <div class="field" id="linkActionTagField" style="${linkAction?.type === 'add_tag' ? '' : 'display:none'}">
+            <label class="pra-label">Tag</label>
+            <select class="pra-select" id="linkActionTag">${allTags.map(t => `<option value="${t.id}" ${linkAction?.tagId === t.id ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
+          </div>
+        ` : ''}
       `;
       const bind = (id, key, target) => { const el = stylePanel.querySelector('#' + id); if (el) el.addEventListener('input', () => { target[key] = el.value; render(); emit(); }); };
       bind('styleBg', 'background', block.style = block.style || {});
@@ -93,12 +139,33 @@ window.BlockEditor = (function () {
       bind('stylePadding', 'padding', block.style);
       if (block.type === 'image') { bind('imgSrc', 'src', block); bind('imgLink', 'link', block); bind('imgWidth', 'width', block); }
       if (block.type === 'button') { bind('btnText', 'text', block); bind('btnLink', 'link', block); }
+      stylePanel.querySelectorAll('[data-align]').forEach(btn => btn.onclick = () => { block.style = block.style || {}; block.style.textAlign = btn.dataset.align; render(); emit(); });
+      const actionTypeSel = stylePanel.querySelector('#linkActionType');
+      const tagField = stylePanel.querySelector('#linkActionTagField');
+      if (actionTypeSel) {
+        actionTypeSel.addEventListener('change', () => {
+          if (!actionTypeSel.value) { block.linkAction = null; tagField.style.display = 'none'; }
+          else { block.linkAction = { type: actionTypeSel.value, tagId: allTags[0]?.id || null }; tagField.style.display = ''; }
+          emit();
+        });
+        const tagSel = stylePanel.querySelector('#linkActionTag');
+        if (tagSel) tagSel.addEventListener('change', () => { block.linkAction = { type: 'add_tag', tagId: tagSel.value }; emit(); });
+      }
+    }
+
+    function renderPreviewBg() {
+      const canvasWrap = rootEl.querySelector('.be-canvas');
+      if (canvasWrap) canvasWrap.style.background = theme.background;
     }
 
     function render() {
+      canvas.style.maxWidth = theme.maxWidth + 'px';
+      canvas.style.margin = '0 auto';
+      renderPreviewBg();
       canvas.innerHTML = blocks.map((b, i) => `
-        <div class="be-block${b.id === selectedId ? ' selected' : ''}" data-id="${b.id}">
+        <div class="be-block${b.id === selectedId && !showingThemePanel ? ' selected' : ''}" data-id="${b.id}">
           <div class="be-block-actions">
+            <span class="be-drag-handle" draggable="true" data-drag="${b.id}" title="Drag to reorder">&#9776;</span>
             <span class="pra-muted" style="font-size:.7rem;text-transform:uppercase">${b.type}</span>
             <button type="button" data-move="up" data-id="${b.id}" ${i === 0 ? 'disabled' : ''}>&uarr;</button>
             <button type="button" data-move="down" data-id="${b.id}" ${i === blocks.length - 1 ? 'disabled' : ''}>&darr;</button>
@@ -110,11 +177,30 @@ window.BlockEditor = (function () {
 
       canvas.querySelectorAll('.be-block').forEach(el => {
         el.addEventListener('click', (e) => {
-          if (e.target.closest('[data-move],[data-remove]')) return;
+          if (e.target.closest('[data-move],[data-remove],[data-drag]')) return;
+          showingThemePanel = false;
           selectedId = el.dataset.id;
           toolbar.style.display = blocks.find(b => b.id === selectedId)?.type === 'text' ? 'flex' : 'none';
           render(); renderStylePanel();
         });
+        // Drop target -- reorders on drop, visual feedback on dragover.
+        el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
+        el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+        el.addEventListener('drop', (e) => {
+          e.preventDefault();
+          el.classList.remove('drag-over');
+          if (!dragSourceId || dragSourceId === el.dataset.id) return;
+          const fromIdx = blocks.findIndex(b => b.id === dragSourceId);
+          const toIdx = blocks.findIndex(b => b.id === el.dataset.id);
+          const [moved] = blocks.splice(fromIdx, 1);
+          blocks.splice(toIdx, 0, moved);
+          dragSourceId = null;
+          render(); emit();
+        });
+      });
+      canvas.querySelectorAll('[data-drag]').forEach(handle => {
+        handle.addEventListener('dragstart', (e) => { dragSourceId = handle.dataset.drag; e.dataTransfer.effectAllowed = 'move'; });
+        handle.addEventListener('dragend', () => { dragSourceId = null; canvas.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); });
       });
       canvas.querySelectorAll('[contenteditable="true"]').forEach(el => {
         el.addEventListener('input', () => {
@@ -143,13 +229,21 @@ window.BlockEditor = (function () {
       });
     }
 
+    rootEl.querySelector('#beThemeBtn').addEventListener('click', () => {
+      showingThemePanel = true;
+      selectedId = null;
+      toolbar.style.display = 'none';
+      render(); renderStylePanel();
+    });
+
     rootEl.querySelectorAll('[data-add]').forEach(btn => {
       btn.addEventListener('click', () => {
         const type = btn.dataset.add;
         const block = type === 'text' ? { id: uid(), type, html: 'New text block', style: { padding: '10px' } }
-          : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: { padding: '10px' } }
-          : { id: uid(), type, text: 'Click here', link: '', style: { padding: '10px', margin: '0 auto' } };
+          : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: { padding: '10px' }, linkAction: null }
+          : { id: uid(), type, text: 'Click here', link: '', style: { padding: '10px', textAlign: 'center' }, linkAction: null };
         blocks.push(block);
+        showingThemePanel = false;
         selectedId = block.id;
         toolbar.style.display = type === 'text' ? 'flex' : 'none';
         render(); renderStylePanel(); emit();
@@ -179,9 +273,14 @@ window.BlockEditor = (function () {
 
     render(); renderStylePanel();
     return {
-      getBlocks: () => blocks,
-      setBlocks: (newBlocks) => { blocks = (newBlocks || []).map(b => ({ ...b, id: b.id || uid() })); selectedId = blocks[0]?.id || null; render(); renderStylePanel(); },
-      previewHtml: () => renderBlocksToHtml(blocks),
+      getState: () => ({ blocks, theme }),
+      setState: (state) => {
+        blocks = (state?.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
+        theme = { background: '#f4f4f4', maxWidth: 650, ...(state?.theme || {}) };
+        selectedId = null; showingThemePanel = false;
+        render(); renderStylePanel();
+      },
+      previewHtml: () => renderBlocksToHtml(blocks, theme),
     };
   }
 

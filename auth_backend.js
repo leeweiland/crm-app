@@ -52,6 +52,7 @@ function verifyPassword(password, salt, hash) {
   const a = Buffer.from(check, "hex"), b = Buffer.from(hash, "hex");
   return a.length === b.length && timingSafeEqual(a, b);
 }
+export { hashPassword, verifyPassword };
 
 export function publicUser(u) {
   if (!u) return null;
@@ -151,6 +152,23 @@ export async function handleAuthRequest(req, res, url) {
     const user = getSessionUser(req);
     if (!user) return sendJson(res, 401, { error: "Not logged in" });
     return sendJson(res, 200, { user: publicUser(user) });
+  }
+
+  if (p === "/api/auth/change-password" && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    const { currentPassword, newPassword } = await readJsonBody(req);
+    if (!verifyPassword(currentPassword || "", me.passwordSalt, me.passwordHash)) {
+      return sendJson(res, 400, { error: "Current password is incorrect" });
+    }
+    if (!newPassword || newPassword.length < 8) return sendJson(res, 400, { error: "New password must be at least 8 characters" });
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === me.id);
+    const { salt, hash } = hashPassword(newPassword);
+    target.passwordSalt = salt;
+    target.passwordHash = hash;
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true });
   }
 
   // ── Admin-only user management ──────────────────────────────────────────

@@ -48,7 +48,7 @@ export async function sendCampaignNow(campaignId) {
   const recipients = resolveRecipients(campaign.recipients || {});
   for (const contact of recipients) {
     await sendEmail({
-      to: contact.email, subject: campaign.subject, blocks: campaign.blocks,
+      to: contact.email, subject: campaign.subject, blocks: campaign.blocks, theme: campaign.theme,
       footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
       sourceType: "campaign", sourceId: campaign.id,
     });
@@ -76,7 +76,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaigns = readJson(CAMPAIGNS_FILE, []);
     const campaign = {
       id: randomUUID(), name: name || "Untitled Campaign", status: "draft",
-      subject: "", blocks: [], footerTemplateId: null,
+      subject: "", blocks: [], theme: { background: "#f4f4f4", maxWidth: 650 }, footerTemplateId: null,
       recipients: { listIds: [], tagIds: [], segmentId: null, excludeListIds: [] },
       scheduledAt: null, sentAt: null,
       stats: { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 },
@@ -94,7 +94,9 @@ export async function handleCampaignsRequest(req, res, url) {
     if (!source) return sendJson(res, 404, { error: "Not found" });
     const copy = {
       id: randomUUID(), name: `Copy of ${source.name}`, status: "draft",
-      subject: source.subject, blocks: JSON.parse(JSON.stringify(source.blocks)), footerTemplateId: source.footerTemplateId,
+      subject: source.subject, blocks: JSON.parse(JSON.stringify(source.blocks)),
+      theme: JSON.parse(JSON.stringify(source.theme || { background: "#f4f4f4", maxWidth: 650 })),
+      footerTemplateId: source.footerTemplateId,
       recipients: JSON.parse(JSON.stringify(source.recipients)),
       scheduledAt: null, sentAt: null,
       stats: { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 },
@@ -117,7 +119,7 @@ export async function handleCampaignsRequest(req, res, url) {
       if (!campaign) return sendJson(res, 404, { error: "Not found" });
       if (campaign.status === "sent" || campaign.status === "sending") return sendJson(res, 400, { error: "Can't edit a campaign that's already sending or sent" });
       const body = await readJsonBody(req);
-      for (const k of ["name", "subject", "blocks", "footerTemplateId", "recipients"]) if (k in body) campaign[k] = body[k];
+      for (const k of ["name", "subject", "blocks", "theme", "footerTemplateId", "recipients"]) if (k in body) campaign[k] = body[k];
       campaign.updatedAt = new Date().toISOString();
       writeJson(CAMPAIGNS_FILE, campaigns);
       return sendJson(res, 200, { ok: true, campaign });

@@ -2,11 +2,45 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { renderBlocksToHtml, applyMergeTags, rewriteLinksForTracking } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
-import { fireTrigger } from "./automations_backend.js";
+import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
+import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
+
+// Resolves a clicked tracked link back to the source block that produced it
+// (matched by exact destination URL, same source campaign/automation-step the
+// message log row already points to) and executes its linkAction, if any.
+// Currently only "add_tag" is supported -- mirrors the automations engine's
+// own add_tag step so a tag added this way can itself re-trigger automations.
+function executeLinkClickAction(row, destUrl) {
+  if (!row?.contactId || !row?.sourceType || !row?.sourceId) return;
+  let blocks = null;
+  if (row.sourceType === "campaign") {
+    const campaign = readJson(CAMPAIGNS_FILE, []).find(c => c.id === row.sourceId);
+    blocks = campaign?.blocks || null;
+  } else if (row.sourceType === "automation_step") {
+    const [automationId, stepId] = String(row.sourceId).split(":");
+    const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === automationId);
+    blocks = automation?.steps?.[stepId]?.config?.blocks || null;
+  }
+  if (!blocks) return;
+  const block = blocks.find(b => (b.type === "image" || b.type === "button") && b.link === destUrl);
+  if (!block?.linkAction || block.linkAction.type !== "add_tag" || !block.linkAction.tagId) return;
+
+  const contacts = readJson(CONTACTS_FILE, []);
+  const contact = contacts.find(c => c.id === row.contactId);
+  if (!contact) return;
+  if (!contact.tags) contact.tags = [];
+  if (!contact.tags.includes(block.linkAction.tagId)) {
+    contact.tags.push(block.linkAction.tagId);
+    contact.updatedAt = new Date().toISOString();
+    writeJson(CONTACTS_FILE, contacts);
+    fireTrigger("tag_added", { contactId: contact.id, tagId: block.linkAction.tagId });
+    fireWorkflowTrigger("tag_added", { contactId: contact.id, tagId: block.linkAction.tagId });
+  }
+}
 
 let SESv2Client, SendEmailCommand;
 async function loadSesSdk() {
@@ -55,7 +89,7 @@ function resolveFooterHtml(footerTemplateId, contactId) {
 // campaigns_backend.js now and automations_backend.js in Phase 3, matching
 // chat-app's convention of small reusable async helpers rather than a
 // service-to-service HTTP layer.
-export async function sendEmail({ to, subject, blocks, footerTemplateId, contactId, sourceType, sourceId }) {
+export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, contactId, sourceType, sourceId }) {
   const client = await getSesClient();
   const contact = contactId ? getContact(contactId) : null;
 
@@ -63,7 +97,7 @@ export async function sendEmail({ to, subject, blocks, footerTemplateId, contact
     return { ok: false, reason: "opted_out" };
   }
 
-  let html = renderBlocksToHtml(blocks, {}) + resolveFooterHtml(footerTemplateId, contactId);
+  let html = renderBlocksToHtml(blocks, theme) + resolveFooterHtml(footerTemplateId, contactId);
   if (contact) html = applyMergeTags(html, contact);
   const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
 
@@ -138,6 +172,7 @@ export async function handleEmailRequest(req, res, url) {
         row.status = "clicked"; row.statusHistory.push({ status: "clicked", at: new Date().toISOString() });
         writeJson(MESSAGE_LOG_FILE, log);
         if (row.contactId) { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
+        if (dest) executeLinkClickAction(row, dest);
       }
     }
     res.writeHead(302, { Location: dest || "/" });
