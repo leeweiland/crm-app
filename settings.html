@@ -27,7 +27,6 @@
       <div class="tabs">
         <button class="tab-btn active" data-tab="statuses">Statuses</button>
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
-        <button class="tab-btn" data-tab="tagslists">Tags &amp; Lists</button>
         <button class="tab-btn" data-tab="footers">Email Footers</button>
         <button class="tab-btn" data-tab="webhooks">Webhook Forms</button>
         <button class="tab-btn" data-tab="import">Data Import</button>
@@ -56,21 +55,6 @@
         <div class="add-row">
           <input class="pra-input" id="newFieldLabel" placeholder="New field label..."/>
           <button class="pra-btn" id="addFieldBtn">Add</button>
-        </div>
-      </div>
-
-      <div class="tab-panel" id="tab-tagslists">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div class="pra-panel" style="padding:22px">
-            <div class="pra-h2" style="margin-bottom:14px">Tags</div>
-            <div id="tagsList"></div>
-            <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
-          </div>
-          <div class="pra-panel" style="padding:22px">
-            <div class="pra-h2" style="margin-bottom:14px">Lists</div>
-            <div id="listsList"></div>
-            <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
-          </div>
         </div>
       </div>
 
@@ -268,36 +252,6 @@ document.getElementById('addFieldBtn').onclick = async () => {
   await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entityType, label: input.value.trim() }) });
   input.value = '';
   loadFields();
-};
-
-// ── Tags & Lists ─────────────────────────────────────────────────────────
-async function loadTags() {
-  const r = await fetch('/api/tags');
-  const { tags } = await r.json();
-  document.getElementById('tagsList').innerHTML = tags.map(t => `
-    <div class="row-item"><span style="flex:1">${escapeHtml(t.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-tag="${t.id}">Delete</button></div>
-  `).join('') || '<div class="pra-muted">No tags yet.</div>';
-  document.querySelectorAll('[data-del-tag]').forEach(btn => btn.onclick = async () => { await fetch('/api/tags/' + btn.dataset.delTag, { method: 'DELETE' }); loadTags(); });
-}
-async function loadLists() {
-  const r = await fetch('/api/lists');
-  const { lists } = await r.json();
-  document.getElementById('listsList').innerHTML = lists.map(l => `
-    <div class="row-item"><span style="flex:1">${escapeHtml(l.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-list="${l.id}">Delete</button></div>
-  `).join('') || '<div class="pra-muted">No lists yet.</div>';
-  document.querySelectorAll('[data-del-list]').forEach(btn => btn.onclick = async () => { await fetch('/api/lists/' + btn.dataset.delList, { method: 'DELETE' }); loadLists(); });
-}
-document.getElementById('addTagBtn').onclick = async () => {
-  const input = document.getElementById('newTagName');
-  if (!input.value.trim()) return;
-  await fetch('/api/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.value.trim() }) });
-  input.value = ''; loadTags();
-};
-document.getElementById('addListBtn').onclick = async () => {
-  const input = document.getElementById('newListName');
-  if (!input.value.trim()) return;
-  await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.value.trim() }) });
-  input.value = ''; loadLists();
 };
 
 // ── Users ────────────────────────────────────────────────────────────────
@@ -557,8 +511,6 @@ document.getElementById('changePasswordBtn').onclick = async () => {
 
 loadStatuses();
 loadFields();
-loadTags();
-loadLists();
 loadUsers();
 loadFooters();
 loadWebhookRefs().then(loadWebhooks);

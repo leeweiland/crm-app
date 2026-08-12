@@ -2,12 +2,11 @@
 // same "one shared script, injected per page" pattern chat-app uses for chat-header.js.
 (async function () {
   const NAV_ITEMS = [
-    { href: "/dashboard.html", label: "Dashboard" },
+    { href: "/inbox.html", label: "Inbox" },
     { href: "/contacts.html", label: "Contacts" },
     { href: "/campaigns.html", label: "Campaigns" },
     { href: "/automations.html", label: "Automations" },
     { href: "/workflows.html", label: "Workflows" },
-    { href: "/inbox.html", label: "Inbox" },
     { href: "/reporting.html", label: "Reporting" },
     { href: "/settings.html", label: "Settings" },
   ];

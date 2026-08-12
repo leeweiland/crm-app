@@ -48,6 +48,7 @@ export async function handleContactsRequest(req, res, url) {
     const status = url.searchParams.get("status");
     const tag = url.searchParams.get("tag");
     const listId = url.searchParams.get("listId");
+    const filterParam = url.searchParams.get("filter");
     let filtered = contacts;
     if (q) filtered = filtered.filter(c =>
       `${c.first} ${c.last}`.toLowerCase().includes(q) ||
@@ -57,6 +58,13 @@ export async function handleContactsRequest(req, res, url) {
     if (status) filtered = filtered.filter(c => c.status === status);
     if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
     if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
+    // Advanced multi-condition filter (same {all:[...]}/{any:[...]} shape
+    // segments save) -- lets the Contacts filter builder preview results
+    // live before a user commits to saving it as a segment.
+    if (filterParam) {
+      try { const filter = JSON.parse(filterParam); filtered = filtered.filter(c => matchesSegment(c, filter)); }
+      catch { return sendJson(res, 400, { error: "filter must be valid JSON" }); }
+    }
     return sendJson(res, 200, { contacts: filtered.map(publicContact), total: filtered.length });
   }
   if (p === "/api/contacts" && req.method === "POST") {
@@ -146,10 +154,11 @@ export async function handleContactsRequest(req, res, url) {
     return sendJson(res, 200, { segments: readJson(SEGMENTS_FILE, []) });
   }
   if (p === "/api/segments" && req.method === "POST") {
-    const { name, filter } = await readJsonBody(req);
+    const { name, filter, channel } = await readJsonBody(req);
     if (!name || !filter) return sendJson(res, 400, { error: "name and filter are required" });
+    if (channel && !["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
     const segments = readJson(SEGMENTS_FILE, []);
-    const segment = { id: randomUUID(), name, filter, createdAt: new Date().toISOString() };
+    const segment = { id: randomUUID(), name, filter, channel: channel || "email", createdAt: new Date().toISOString() };
     segments.push(segment);
     writeJson(SEGMENTS_FILE, segments);
     return sendJson(res, 200, { ok: true, segment });

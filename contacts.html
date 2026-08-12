@@ -6,9 +6,24 @@
 <title>Contacts — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
-  .toolbar { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; }
+  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
   .tag-chip { display: inline-block; font-size: .68rem; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 4px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); }
+  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .row-item:last-child { border-bottom: none; }
+  .add-row { display: flex; gap: 10px; margin-top: 14px; }
+  .add-row input { flex: 1; }
+  .filter-toggle { font-size: .8rem; }
+  .filter-panel { display: none; margin-bottom: 16px; padding: 16px; }
+  .filter-panel.show { display: block; }
+  .cond-row { display: grid; grid-template-columns: 1fr 140px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+  .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
 </style>
 </head>
 <body>
@@ -16,17 +31,79 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <div class="toolbar">
-        <div class="pra-h1" style="flex:1">Contacts</div>
-        <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
-        <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
-        <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
+      <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="contacts">Contacts</button>
+        <button class="tab-btn" data-tab="lists">Email Lists</button>
+        <button class="tab-btn" data-tab="emailsegments">Email Segments</button>
+        <button class="tab-btn" data-tab="smssegments">SMS Segments</button>
+        <button class="tab-btn" data-tab="tags">Tags</button>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
-        <table class="data-table">
-          <thead><tr><th>Name</th><th>Account</th><th>Email</th><th>Phone</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead>
-          <tbody id="contactsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
-        </table>
+
+      <div class="tab-panel active" id="tab-contacts">
+        <div class="toolbar">
+          <div style="flex:1"></div>
+          <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
+          <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
+          <a class="pra-link filter-toggle" id="filterToggle">+ Filters</a>
+          <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
+        </div>
+
+        <div class="pra-panel filter-panel" id="filterPanel">
+          <div class="match-toggle" style="margin-bottom:12px">
+            Match
+            <select class="pra-select" id="matchMode" style="width:auto"><option value="all">ALL</option><option value="any">ANY</option></select>
+            of the following conditions:
+          </div>
+          <div id="condRows"></div>
+          <div class="filter-actions">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addCondBtn" type="button">+ Add Condition</button>
+            <button class="pra-btn pra-btn-sm" id="applyFilterBtn" type="button">Apply Filters</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="clearFilterBtn" type="button">Clear</button>
+            <span style="flex:1"></span>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="saveSegmentBtn" type="button">Save as Segment...</button>
+          </div>
+        </div>
+
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Account</th><th>Email</th><th>Phone</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead>
+            <tbody id="contactsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-lists">
+        <div class="pra-panel" style="padding:22px;max-width:520px">
+          <div class="pra-h2" style="margin-bottom:6px">Email Lists</div>
+          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Used to target campaigns and automations, same as ActiveCampaign lists.</div>
+          <div id="listsList"></div>
+          <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-emailsegments">
+        <div class="pra-panel" style="padding:22px">
+          <div class="pra-h2" style="margin-bottom:6px">Email Segments</div>
+          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters used to target campaigns and automation emails. Build one from the Contacts tab's filter panel.</div>
+          <div id="emailSegmentsList"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-smssegments">
+        <div class="pra-panel" style="padding:22px">
+          <div class="pra-h2" style="margin-bottom:6px">SMS Segments</div>
+          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters for SMS workflows. Build one from the Contacts tab's filter panel.</div>
+          <div id="smsSegmentsList"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-tags">
+        <div class="pra-panel" style="padding:22px;max-width:520px">
+          <div class="pra-h2" style="margin-bottom:14px">Tags</div>
+          <div id="tagsList"></div>
+          <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
+        </div>
       </div>
     </div>
   </div>
@@ -49,13 +126,42 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="saveSegmentModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Save as Segment</div>
+    <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="segmentName"/></div>
+    <div class="field">
+      <label class="pra-label">Channel</label>
+      <div style="display:flex;gap:20px;margin-top:6px">
+        <label class="pra-label" style="cursor:pointer;font-weight:400"><input type="radio" name="segmentChannel" value="email" checked/> Email</label>
+        <label class="pra-label" style="cursor:pointer;font-weight:400"><input type="radio" name="segmentChannel" value="sms"/> SMS</label>
+      </div>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="confirmSaveSegmentBtn" style="flex:1">Save Segment</button>
+      <button class="pra-btn pra-btn-ghost" id="cancelSaveSegmentBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script>
-let allStatuses = [];
+let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
+let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : ''; }
 
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  };
+});
+
+// ── Reference data ──────────────────────────────────────────────────────
 async function loadStatuses() {
   const r = await fetch('/api/statuses');
   allStatuses = r.ok ? (await r.json()).statuses : [];
@@ -66,18 +172,186 @@ async function loadStatuses() {
     newSel.innerHTML += `<option value="${s.label}">${escapeHtml(s.label)}</option>`;
   });
 }
+async function loadTags() {
+  const r = await fetch('/api/tags');
+  allTags = (await r.json()).tags;
+  document.getElementById('tagsList').innerHTML = allTags.map(t => `
+    <div class="row-item"><span style="flex:1">${escapeHtml(t.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-tag="${t.id}">Delete</button></div>
+  `).join('') || '<div class="pra-muted">No tags yet.</div>';
+  document.querySelectorAll('[data-del-tag]').forEach(btn => btn.onclick = async () => { await fetch('/api/tags/' + btn.dataset.delTag, { method: 'DELETE' }); loadTags(); });
+}
+async function loadLists() {
+  const r = await fetch('/api/lists');
+  allLists = (await r.json()).lists;
+  document.getElementById('listsList').innerHTML = allLists.map(l => `
+    <div class="row-item"><span style="flex:1">${escapeHtml(l.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-list="${l.id}">Delete</button></div>
+  `).join('') || '<div class="pra-muted">No lists yet.</div>';
+  document.querySelectorAll('[data-del-list]').forEach(btn => btn.onclick = async () => { await fetch('/api/lists/' + btn.dataset.delList, { method: 'DELETE' }); loadLists(); });
+}
+async function loadCustomFields() {
+  const r = await fetch('/api/custom-fields?entityType=contact');
+  allCustomFields = (await r.json()).fields;
+}
+document.getElementById('addTagBtn').onclick = async () => {
+  const input = document.getElementById('newTagName');
+  if (!input.value.trim()) return;
+  await fetch('/api/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.value.trim() }) });
+  input.value = ''; loadTags();
+};
+document.getElementById('addListBtn').onclick = async () => {
+  const input = document.getElementById('newListName');
+  if (!input.value.trim()) return;
+  await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: input.value.trim() }) });
+  input.value = ''; loadLists();
+};
 
+// ── Segments (Email/SMS tabs) ────────────────────────────────────────────
+function describeCondition(cond) {
+  const fieldLabel = cond.field === 'status' ? 'Status' : cond.field === 'tags' ? 'Tag' : cond.field === 'listIds' ? 'List'
+    : cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field;
+  const opLabel = { eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set' }[cond.op] || cond.op;
+  let valueLabel = cond.value;
+  if (cond.field === 'tags') valueLabel = allTags.find(t => t.id === cond.value)?.name || cond.value;
+  if (cond.field === 'listIds') valueLabel = allLists.find(l => l.id === cond.value)?.name || cond.value;
+  return `${fieldLabel} ${opLabel}${cond.op === 'exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
+}
+function describeFilter(filter) {
+  if (!filter) return '';
+  const conds = filter.all || filter.any || [];
+  const joiner = filter.all ? ' AND ' : ' OR ';
+  return conds.map(describeCondition).join(joiner);
+}
+async function loadSegments() {
+  const r = await fetch('/api/segments');
+  allSegments = (await r.json()).segments;
+  renderSegmentList('email', 'emailSegmentsList');
+  renderSegmentList('sms', 'smsSegmentsList');
+}
+function renderSegmentList(channel, elId) {
+  const segs = allSegments.filter(s => (s.channel || 'email') === channel);
+  document.getElementById(elId).innerHTML = segs.map(s => `
+    <div class="row-item">
+      <div style="flex:1">
+        <div>${escapeHtml(s.name)}</div>
+        <div class="pra-muted" style="font-size:.76rem">${describeFilter(s.filter)}</div>
+      </div>
+      <span class="pra-muted" style="font-size:.78rem" id="segcount-${s.id}">…</span>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-segment="${s.id}">Delete</button>
+    </div>
+  `).join('') || '<div class="pra-muted">No segments yet.</div>';
+  segs.forEach(s => fetch('/api/segments/' + s.id + '/contacts').then(r => r.json()).then(d => {
+    const el = document.getElementById('segcount-' + s.id);
+    if (el) el.textContent = d.total + ' contacts';
+  }));
+  document.querySelectorAll('[data-del-segment]').forEach(btn => btn.onclick = async () => {
+    await fetch('/api/segments/' + btn.dataset.delSegment, { method: 'DELETE' });
+    loadSegments();
+  });
+}
+
+// ── Advanced filter builder ─────────────────────────────────────────────
+function fieldOptionsHtml() {
+  return `
+    <option value="status">Status</option>
+    <option value="tags">Tag</option>
+    <option value="listIds">List</option>
+    ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
+  `;
+}
+function opOptionsHtml(field) {
+  if (field === 'tags' || field === 'listIds') return `<option value="includes">Includes</option><option value="excludes">Excludes</option>`;
+  if (field && field.startsWith('customFields.')) return `<option value="eq">Is</option><option value="neq">Is not</option><option value="exists">Is set</option>`;
+  return `<option value="eq">Is</option><option value="neq">Is not</option>`;
+}
+function valueInputHtml(field, op) {
+  if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
+  if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
+  if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
+  if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
+  return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
+}
+function addConditionRow(initial) {
+  const wrap = document.getElementById('condRows');
+  const row = document.createElement('div');
+  row.className = 'cond-row';
+  row.innerHTML = `
+    <select class="pra-select" data-cond-field>${fieldOptionsHtml()}</select>
+    <select class="pra-select" data-cond-op></select>
+    <span data-cond-value-wrap></span>
+    <button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-cond>&times;</button>
+  `;
+  wrap.appendChild(row);
+  const fieldSel = row.querySelector('[data-cond-field]');
+  const opSel = row.querySelector('[data-cond-op]');
+  const valueWrap = row.querySelector('[data-cond-value-wrap]');
+  function refreshOps() { opSel.innerHTML = opOptionsHtml(fieldSel.value); }
+  function refreshValue() { valueWrap.innerHTML = valueInputHtml(fieldSel.value, opSel.value); }
+  fieldSel.onchange = () => { refreshOps(); refreshValue(); };
+  opSel.onchange = refreshValue;
+  refreshOps(); refreshValue();
+  if (initial) {
+    fieldSel.value = initial.field; refreshOps();
+    opSel.value = initial.op; refreshValue();
+    const valEl = row.querySelector('[data-cond-value]');
+    if (valEl) valEl.value = initial.value ?? '';
+  }
+  row.querySelector('[data-remove-cond]').onclick = () => row.remove();
+}
+document.getElementById('addCondBtn').onclick = () => addConditionRow();
+document.getElementById('filterToggle').onclick = () => {
+  const panel = document.getElementById('filterPanel');
+  panel.classList.toggle('show');
+  if (panel.classList.contains('show') && !document.getElementById('condRows').children.length) addConditionRow();
+};
+function buildFilterFromRows() {
+  const conds = [...document.getElementById('condRows').children].map(row => {
+    const field = row.querySelector('[data-cond-field]').value;
+    const op = row.querySelector('[data-cond-op]').value;
+    const valueEl = row.querySelector('[data-cond-value]');
+    const value = op === 'exists' ? undefined : valueEl?.value;
+    return { field, op, value };
+  }).filter(c => c.op === 'exists' || (c.value !== undefined && c.value !== ''));
+  if (!conds.length) return null;
+  const mode = document.getElementById('matchMode').value;
+  return mode === 'any' ? { any: conds } : { all: conds };
+}
+document.getElementById('applyFilterBtn').onclick = () => { activeFilter = buildFilterFromRows(); loadContacts(); };
+document.getElementById('clearFilterBtn').onclick = () => {
+  document.getElementById('condRows').innerHTML = '';
+  activeFilter = null;
+  loadContacts();
+};
+document.getElementById('saveSegmentBtn').onclick = () => {
+  activeFilter = buildFilterFromRows();
+  if (!activeFilter) { showToast('Add at least one condition first', true); return; }
+  document.getElementById('segmentName').value = '';
+  document.getElementById('saveSegmentModal').classList.add('show');
+};
+document.getElementById('cancelSaveSegmentBtn').onclick = () => document.getElementById('saveSegmentModal').classList.remove('show');
+document.getElementById('confirmSaveSegmentBtn').onclick = async () => {
+  const name = document.getElementById('segmentName').value.trim();
+  if (!name) { showToast('Segment name is required', true); return; }
+  const channel = document.querySelector('input[name="segmentChannel"]:checked').value;
+  const r = await fetch('/api/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter: activeFilter, channel }) });
+  if (!r.ok) { showToast('Could not save segment', true); return; }
+  document.getElementById('saveSegmentModal').classList.remove('show');
+  showToast('Segment saved');
+  loadSegments();
+};
+
+// ── Contacts list ────────────────────────────────────────────────────────
 async function loadContacts() {
   const q = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (status) params.set('status', status);
+  if (activeFilter) params.set('filter', JSON.stringify(activeFilter));
   const r = await fetch('/api/contacts?' + params.toString());
   const body = document.getElementById('contactsBody');
   if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load contacts.</td></tr>'; return; }
   const { contacts } = await r.json();
-  if (!contacts.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No contacts yet.</td></tr>'; return; }
+  if (!contacts.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No contacts match.</td></tr>'; return; }
   body.innerHTML = contacts.map(c => `
     <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
       <td>${escapeHtml(c.first)} ${escapeHtml(c.last)}</td>
@@ -116,6 +390,9 @@ document.getElementById('saveContactBtn').onclick = async () => {
 
 (async function init() {
   await loadStatuses();
+  await loadCustomFields();
+  await Promise.all([loadTags(), loadLists()]);
+  await loadSegments();
   await loadContacts();
 })();
 </script>
