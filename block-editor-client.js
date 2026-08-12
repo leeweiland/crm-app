@@ -43,7 +43,20 @@ window.BlockEditor = (function () {
     let selectedId = null;
     let showingThemePanel = false;
     let allTags = [];
-    let dragSourceId = null;
+    let dragSourceId = null;   // set when dragging an existing block's handle (reorder)
+    let draggingNewType = null; // set when dragging a palette item (insert)
+
+    function newBlock(type) {
+      return type === 'text' ? { id: uid(), type, html: 'New text block', style: { padding: '10px' } }
+        : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: { padding: '10px' }, linkAction: null }
+        : { id: uid(), type, text: 'Click here', link: '', style: { padding: '10px', textAlign: 'center' }, linkAction: null };
+    }
+    function selectBlock(block) {
+      showingThemePanel = false;
+      selectedId = block.id;
+      toolbar.style.display = block.type === 'text' ? 'flex' : 'none';
+      render(); renderStylePanel(); emit();
+    }
 
     fetch('/api/tags').then(r => r.json()).then(d => { allTags = d.tags || []; if (selectedId) renderStylePanel(); }).catch(() => {});
 
@@ -67,9 +80,10 @@ window.BlockEditor = (function () {
           </div>
           <div class="be-canvas" id="beCanvas"></div>
           <div class="be-add-row">
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-add="text">+ Text</button>
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-add="image">+ Image</button>
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-add="button">+ Button</button>
+            <span class="pra-muted" style="font-size:.72rem;margin-right:4px">Drag a block onto the email, or click to add at the end:</span>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="text">&#9776; Text</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="image">&#9776; Image</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="button">&#9776; Button</button>
           </div>
         </div>
         <div class="be-style-panel" id="beStylePanel"></div>
@@ -158,11 +172,17 @@ window.BlockEditor = (function () {
       if (canvasWrap) canvasWrap.style.background = theme.background;
     }
 
+    // A drop-zone is a thin bar between blocks (and one before the first,
+    // one after the last) -- this is what makes drag-and-drop actually
+    // position-accurate, matching AC's builder, instead of just swapping
+    // with whatever block you happen to drop on.
+    function dropZoneHtml(index) { return `<div class="be-dropzone" data-zone="${index}"></div>`; }
+
     function render() {
       canvas.style.maxWidth = theme.maxWidth + 'px';
       canvas.style.margin = '0 auto';
       renderPreviewBg();
-      canvas.innerHTML = blocks.map((b, i) => `
+      const blockHtml = blocks.map((b, i) => `
         <div class="be-block${b.id === selectedId && !showingThemePanel ? ' selected' : ''}" data-id="${b.id}">
           <div class="be-block-actions">
             <span class="be-drag-handle" draggable="true" data-drag="${b.id}" title="Drag to reorder">&#9776;</span>
@@ -173,29 +193,38 @@ window.BlockEditor = (function () {
           </div>
           <div class="be-block-body" data-id="${b.id}" ${b.type === 'text' ? 'contenteditable="true"' : ''}>${renderBlockHtml(b)}</div>
         </div>
-      `).join('') || '<div class="pra-muted" style="padding:30px;text-align:center">No blocks yet — add one below.</div>';
+      `);
+      canvas.innerHTML = blocks.length
+        ? dropZoneHtml(0) + blockHtml.map((html, i) => html + dropZoneHtml(i + 1)).join('')
+        : `<div class="be-dropzone be-dropzone-empty" data-zone="0">Drag a block here, or click one below</div>`;
 
       canvas.querySelectorAll('.be-block').forEach(el => {
         el.addEventListener('click', (e) => {
           if (e.target.closest('[data-move],[data-remove],[data-drag]')) return;
-          showingThemePanel = false;
-          selectedId = el.dataset.id;
-          toolbar.style.display = blocks.find(b => b.id === selectedId)?.type === 'text' ? 'flex' : 'none';
-          render(); renderStylePanel();
+          selectBlock(blocks.find(b => b.id === el.dataset.id));
         });
-        // Drop target -- reorders on drop, visual feedback on dragover.
-        el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag-over'); });
-        el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
-        el.addEventListener('drop', (e) => {
+      });
+      canvas.querySelectorAll('.be-dropzone').forEach(zone => {
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+        zone.addEventListener('drop', (e) => {
           e.preventDefault();
-          el.classList.remove('drag-over');
-          if (!dragSourceId || dragSourceId === el.dataset.id) return;
-          const fromIdx = blocks.findIndex(b => b.id === dragSourceId);
-          const toIdx = blocks.findIndex(b => b.id === el.dataset.id);
-          const [moved] = blocks.splice(fromIdx, 1);
-          blocks.splice(toIdx, 0, moved);
-          dragSourceId = null;
-          render(); emit();
+          zone.classList.remove('drag-over');
+          let index = Number(zone.dataset.zone);
+          if (draggingNewType) {
+            const block = newBlock(draggingNewType);
+            blocks.splice(index, 0, block);
+            draggingNewType = null;
+            selectBlock(block);
+          } else if (dragSourceId) {
+            const fromIdx = blocks.findIndex(b => b.id === dragSourceId);
+            if (fromIdx === -1) return;
+            const [moved] = blocks.splice(fromIdx, 1);
+            if (fromIdx < index) index -= 1; // account for the shift from removing the source
+            blocks.splice(index, 0, moved);
+            dragSourceId = null;
+            render(); emit();
+          }
         });
       });
       canvas.querySelectorAll('[data-drag]').forEach(handle => {
@@ -236,18 +265,14 @@ window.BlockEditor = (function () {
       render(); renderStylePanel();
     });
 
-    rootEl.querySelectorAll('[data-add]').forEach(btn => {
+    rootEl.querySelectorAll('.be-palette-item').forEach(btn => {
       btn.addEventListener('click', () => {
-        const type = btn.dataset.add;
-        const block = type === 'text' ? { id: uid(), type, html: 'New text block', style: { padding: '10px' } }
-          : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: { padding: '10px' }, linkAction: null }
-          : { id: uid(), type, text: 'Click here', link: '', style: { padding: '10px', textAlign: 'center' }, linkAction: null };
+        const block = newBlock(btn.dataset.add);
         blocks.push(block);
-        showingThemePanel = false;
-        selectedId = block.id;
-        toolbar.style.display = type === 'text' ? 'flex' : 'none';
-        render(); renderStylePanel(); emit();
+        selectBlock(block);
       });
+      btn.addEventListener('dragstart', (e) => { draggingNewType = btn.dataset.add; e.dataTransfer.effectAllowed = 'copy'; });
+      btn.addEventListener('dragend', () => { draggingNewType = null; canvas.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); });
     });
 
     toolbar.querySelectorAll('[data-cmd]').forEach(btn => {
