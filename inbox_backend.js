@@ -3,6 +3,8 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 
+function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
+
 export const CALLS_FILE = "crm_calls.json";
 export const TASKS_FILE = "crm_tasks.json";
 
@@ -16,7 +18,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -49,10 +51,49 @@ export async function handleInboxRequest(req, res, url) {
     else if (tab === "calls") items = calls;
     else if (tab === "tasks") items = tasks.filter(t => t.type === "task" && !t.done);
     else if (tab === "reminders") items = tasks.filter(t => t.type === "reminder" && !t.done);
+    // Close's "Potential Contacts" -- inbound messages from a phone/email
+    // that didn't match any existing contact, so they were logged with
+    // contactId: null. Confirming one (see /api/inbox/confirm-potential)
+    // creates a real contact so future inbound from the same number
+    // matches automatically.
+    else if (tab === "potential") items = messages.filter(m => m.direction === "inbound" && !m.contactId);
     else items = [...messages, ...calls, ...tasks.filter(t => !t.done)]; // primary
 
     items = items.map(i => withContact(i, contacts)).sort((a, b) => new Date(b.at) - new Date(a.at));
     return sendJson(res, 200, { items });
+  }
+
+  // Turns a Potential Contact (an unmatched inbound message) into a real
+  // contact, then backfills every prior inbound message from that same
+  // phone number so they immediately disappear from Potential Contacts
+  // and show up correctly in the rest of the Inbox.
+  if (p === "/api/inbox/confirm-potential" && req.method === "POST") {
+    const { messageId, first, last } = await readJsonBody(req);
+    if (!first) return sendJson(res, 400, { error: "first name is required" });
+    const log = readJson(MESSAGE_LOG_FILE, []);
+    const row = log.find(m => m.id === messageId);
+    if (!row) return sendJson(res, 404, { error: "Message not found" });
+    const phone = row.channel === "sms" ? row.from : null;
+    const email = row.channel === "email" ? row.from : null;
+
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = {
+      id: randomUUID(), type: "lead", accountName: "",
+      first, last: last || "", email: email || "", phone: phone || "",
+      status: "", tags: [], listIds: [], customFields: {},
+      source: "inbound_confirmed", ownerId: null, emailOptOut: false, smsOptOut: false,
+      externalIds: { acContactId: null, closeLeadId: null },
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    contacts.push(contact);
+    writeJson(CONTACTS_FILE, contacts);
+
+    if (phone) {
+      const digits = digitsOnly(phone);
+      log.forEach(m => { if (!m.contactId && digitsOnly(m.from) === digits) m.contactId = contact.id; });
+      writeJson(MESSAGE_LOG_FILE, log);
+    }
+    return sendJson(res, 200, { ok: true, contact });
   }
 
   if (p === "/api/calls" && req.method === "GET") {

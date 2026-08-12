@@ -174,6 +174,12 @@ export async function handleEmailRequest(req, res, url) {
         if (row.contactId) { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
         if (dest) executeLinkClickAction(row, dest);
       }
+      // Identifies this browser for page-visit tracking (tracking_backend.js's
+      // /track.js snippet, embedded on the Framer site) -- 30 days, matching
+      // the click-tracking window a marketer would actually care about.
+      if (row?.contactId) {
+        res.setHeader("Set-Cookie", `crm_cid=${encodeURIComponent(row.contactId)}; Max-Age=2592000; Path=/; SameSite=Lax`);
+      }
     }
     res.writeHead(302, { Location: dest || "/" });
     res.end();

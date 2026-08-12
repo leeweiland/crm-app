@@ -2,18 +2,17 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE, matchesSegment } from "./segments_shared.js";
 import { sendEmail } from "./email_backend.js";
+import { addToCustomAudience } from "./facebook_backend.js";
 
 export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
 
-// Trigger types this v1 can actually fire on its own -- "page_visit" and
-// Facebook "add_to_audience" steps are deliberately not offered yet since
-// nothing in the app produces those events (no page-visit tracking snippet,
-// no Facebook Ads API credentials in .env). Adding them later just means
-// adding another fireTrigger() call site, same as list_subscribe/tag_added
-// below -- the engine doesn't change.
-export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked"];
-export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "condition", "jump_to_automation", "end_automation"];
+// "page_visit" fires from tracking_backend.js's /api/track/pageview (the
+// crm_cid cookie set on a tracked email-link click identifies the browser).
+// "add_to_facebook_audience" degrades gracefully -- see facebook_backend.js
+// -- same "not configured yet" pattern as SES/Twilio.
+export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit"];
+export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation"];
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function saveContact(contact) {
@@ -37,7 +36,7 @@ function completeEnrollment(enrollment) {
 // and email_backend.js (SES open/click webhook + click-tracking redirect).
 // This is the ONE place any future event source (Framer webhook, Twilio
 // inbound SMS) needs to call into to enroll contacts. ─────────────────
-export function fireTrigger(type, { contactId, listId, tagId }) {
+export function fireTrigger(type, { contactId, listId, tagId, path }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
   const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && a.trigger?.type === type);
   for (const automation of automations) {
@@ -45,6 +44,7 @@ export function fireTrigger(type, { contactId, listId, tagId }) {
     let matches = true;
     if (type === "list_subscribe" && cfg.listId) matches = cfg.listId === listId;
     if (type === "tag_added" && cfg.tagId) matches = cfg.tagId === tagId;
+    if (type === "page_visit" && cfg.urlContains) matches = String(path || "").includes(cfg.urlContains);
     // email_opened / email_clicked: any tracked email counts for v1 -- no
     // per-campaign trigger scoping yet.
     if (matches) enrollContact(automation, contactId);
@@ -105,6 +105,12 @@ async function advanceEnrollment(enrollment, automation) {
     } else if (step.type === "remove_tag") {
       const contact = getContact(enrollment.contactId);
       if (contact && step.config.tagId) { contact.tags = contact.tags.filter(t => t !== step.config.tagId); saveContact(contact); }
+      enrollment.currentStepId = step.nextStepId || null;
+    } else if (step.type === "add_to_facebook_audience") {
+      const contact = getContact(enrollment.contactId);
+      if (contact && step.config.audienceId) {
+        await addToCustomAudience({ email: contact.email, phone: contact.phone, audienceId: step.config.audienceId }).catch(e => console.error("[automations] facebook audience add failed", e.message));
+      }
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "condition") {
       const contact = getContact(enrollment.contactId);

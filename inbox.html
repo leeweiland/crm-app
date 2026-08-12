@@ -36,6 +36,7 @@
         <button class="tab-btn" data-tab="calls">Calls</button>
         <button class="tab-btn" data-tab="tasks">Tasks</button>
         <button class="tab-btn" data-tab="reminders">Reminders</button>
+        <button class="tab-btn" data-tab="potential">Potential Contacts</button>
         <div style="flex:1"></div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="logCallBtn">+ Log a Call</button>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newTaskBtn">+ New Task</button>
@@ -55,6 +56,21 @@
     <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
       <button class="pra-btn" id="saveCallBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('callModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="confirmPotentialModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Confirm Contact</div>
+    <div class="pra-muted" id="confirmPotentialFrom" style="font-size:.82rem;margin-bottom:14px"></div>
+    <div class="field-row">
+      <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="confirmFirst"/></div>
+      <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="confirmLast"/></div>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
+      <button class="pra-btn" id="saveConfirmBtn" style="flex:1">Create Contact</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('confirmPotentialModal')">Cancel</button>
     </div>
   </div>
 </div>
@@ -97,6 +113,8 @@ function itemHtml(item) {
   if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
   else if (item.itemType === 'call') preview = `${item.direction} call, ${item.duration}min — ${escapeHtml(item.notes || '')}`;
   else preview = escapeHtml(item.title || '');
+  const confirmBtn = (currentTab === 'potential' && !item.contactId)
+    ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-confirm-potential="${item.id}" data-from="${escapeHtml(item.from || '')}">+ Add Contact</button>` : '';
   return `
     <div class="inbox-item">
       <div class="item-icon ${item.itemType}">${ICONS[item.itemType] || '•'}</div>
@@ -104,6 +122,7 @@ function itemHtml(item) {
         <div class="item-name">${name}</div>
         <div class="item-preview">${preview}</div>
       </div>
+      ${confirmBtn}
       ${item.status ? `<span class="item-status">${escapeHtml(item.status)}</span>` : ''}
       <div class="item-time">${fmtDate(item.at)}</div>
     </div>
@@ -117,7 +136,25 @@ async function loadItems() {
   if (!r.ok) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Could not load.</div>'; return; }
   const { items } = await r.json();
   panel.innerHTML = items.length ? items.map(itemHtml).join('') : '<div class="pra-muted" style="padding:20px">Nothing here yet.</div>';
+  document.querySelectorAll('[data-confirm-potential]').forEach(btn => btn.onclick = () => {
+    document.getElementById('confirmPotentialModal').dataset.messageId = btn.dataset.confirmPotential;
+    document.getElementById('confirmPotentialFrom').textContent = 'From: ' + btn.dataset.from;
+    document.getElementById('confirmFirst').value = '';
+    document.getElementById('confirmLast').value = '';
+    openModal('confirmPotentialModal');
+  });
 }
+
+document.getElementById('saveConfirmBtn').onclick = async () => {
+  const first = document.getElementById('confirmFirst').value.trim();
+  if (!first) { showToast('First name is required', true); return; }
+  const body = { messageId: document.getElementById('confirmPotentialModal').dataset.messageId, first, last: document.getElementById('confirmLast').value.trim() };
+  const r = await fetch('/api/inbox/confirm-potential', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { showToast('Could not create contact', true); return; }
+  closeModal('confirmPotentialModal');
+  showToast('Contact created');
+  loadItems();
+};
 
 document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));

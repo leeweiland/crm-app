@@ -10,8 +10,14 @@
   .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
   .ab-name-input:focus { border-bottom-color: var(--pra-blue); }
   .ab-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 18px; }
-  .ab-canvas-wrap { overflow-x: auto; padding: 20px 0; }
-  .ab-canvas { display: flex; flex-direction: column; align-items: center; min-width: 600px; }
+  .ab-canvas-wrap { position: relative; overflow: hidden; padding: 20px 0; height: 68vh; border: 1px solid var(--pra-border); border-radius: 10px; background-image: radial-gradient(var(--pra-border) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; }
+  .ab-canvas-wrap.panning { cursor: grabbing; }
+  .ab-canvas-zoom-layer { transform-origin: 0 0; }
+  .ab-canvas { display: flex; flex-direction: column; align-items: center; min-width: 600px; width: max-content; padding: 0 40vw; }
+  .ab-zoom-controls { position: absolute; left: 14px; bottom: 14px; display: flex; align-items: center; gap: 6px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 4px 6px; }
+  .ab-zoom-controls button { background: none; border: none; color: #fff; width: 24px; height: 24px; cursor: pointer; font-size: 1rem; border-radius: 4px; }
+  .ab-zoom-controls button:hover { background: rgba(255,255,255,0.08); }
+  .ab-zoom-controls span { font-size: .74rem; color: var(--pra-dim); min-width: 34px; text-align: center; }
   .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
   .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; }
@@ -47,8 +53,16 @@
         <a class="pra-link" id="historyBtn" style="margin-left:8px;font-size:.76rem" title="Version history">&#8635; History</a>
       </div>
 
-      <div class="ab-canvas-wrap">
-        <div class="ab-canvas" id="canvas"></div>
+      <div class="ab-canvas-wrap" id="canvasWrap">
+        <div class="ab-canvas-zoom-layer" id="zoomLayer">
+          <div class="ab-canvas" id="canvas"></div>
+        </div>
+        <div class="ab-zoom-controls">
+          <button type="button" id="zoomOutBtn">&minus;</button>
+          <span id="zoomPct">100%</span>
+          <button type="button" id="zoomInBtn">+</button>
+          <button type="button" id="zoomResetBtn" title="Reset view">&#8690;</button>
+        </div>
       </div>
     </div>
   </div>
@@ -64,11 +78,17 @@
         <option value="tag_added">Tag is added</option>
         <option value="email_opened">Any tracked email is opened</option>
         <option value="email_clicked">Any tracked email link is clicked</option>
+        <option value="page_visit">Contact visits a page</option>
       </select>
     </div>
     <div class="field" id="triggerTargetField" style="display:none">
       <label class="pra-label" id="triggerTargetLabel">List</label>
       <select class="pra-select" id="triggerTarget"></select>
+    </div>
+    <div class="field" id="triggerPathField" style="display:none">
+      <label class="pra-label">Path contains (leave blank for any page)</label>
+      <input class="pra-input" id="triggerPath" placeholder="/gym-app"/>
+      <div class="pra-muted" style="font-size:.76rem;margin-top:6px">Only fires for contacts who've clicked a tracked email link (identifies their browser) and then visit a page on your site with <code>/track.js</code> embedded. See Settings for the snippet.</div>
     </div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
@@ -86,6 +106,7 @@
       <button data-type="wait">⏱ Wait</button>
       <button data-type="add_tag">🏷 Add Tag</button>
       <button data-type="remove_tag">🏷 Remove Tag</button>
+      <button data-type="add_to_facebook_audience">📘 Add to Facebook Audience</button>
       <button data-type="condition">🔀 Condition (Branch)</button>
       <button data-type="jump_to_automation">↪ Jump to Automation</button>
       <button data-type="end_automation">⏹ End an Automation</button>
@@ -151,14 +172,15 @@ let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allT
 let saveTimer, emailStepEditor = null, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
 
 async function loadRefs() {
-  const [listsRes, tagsRes, statusesRes, footersRes, autosRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations')
+  const [listsRes, tagsRes, statusesRes, footersRes, autosRes, fbRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations'), fetch('/api/facebook/config-status')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
   allStatuses = (await statusesRes.json()).statuses;
   allFooters = (await footersRes.json()).templates;
   allAutomations = (await autosRes.json()).automations;
+  facebookIsConfigured = fbRes.ok ? (await fbRes.json()).configured : false;
 }
 
 function stepSummary(step) {
@@ -166,6 +188,7 @@ function stepSummary(step) {
   if (step.type === 'wait') return `Wait ${step.config.amount || 0} ${step.config.unit || 'minutes'}`;
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
+  if (step.type === 'add_to_facebook_audience') return `Add to Custom Audience "${escapeHtml(step.config.audienceName || step.config.audienceId || '—')}"${facebookIsConfigured ? '' : ' (Facebook not configured yet)'}`;
   if (step.type === 'condition') {
     const c = step.config.filter?.all?.[0];
     return c ? `If ${c.field} ${c.op} ${escapeHtml(String(c.value))}` : 'No condition set';
@@ -174,7 +197,8 @@ function stepSummary(step) {
   if (step.type === 'end_automation') return `End: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
   return '';
 }
-const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', condition: 'Condition', jump_to_automation: 'Jump to Automation', end_automation: 'End Automation' };
+const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Jump to Automation', end_automation: 'End Automation' };
+let facebookIsConfigured = false;
 
 function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
 
@@ -234,7 +258,7 @@ function render() {
 
   const canvas = document.getElementById('canvas');
   const trig = automation.trigger || { type: 'list_subscribe', config: {} };
-  const trigLabelMap = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked' };
+  const trigLabelMap = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page' };
   canvas.innerHTML = `
     <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
       <div class="pra-label">Start automation when</div>
@@ -279,6 +303,7 @@ function openTriggerModal() {
   updateTriggerTargetField();
   if (trig.type === 'list_subscribe') document.getElementById('triggerTarget').value = trig.config.listId || '';
   if (trig.type === 'tag_added') document.getElementById('triggerTarget').value = trig.config.tagId || '';
+  if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
   openModal('triggerModal');
 }
 function updateTriggerTargetField() {
@@ -286,6 +311,7 @@ function updateTriggerTargetField() {
   const field = document.getElementById('triggerTargetField');
   const label = document.getElementById('triggerTargetLabel');
   const select = document.getElementById('triggerTarget');
+  document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
   if (type === 'list_subscribe') {
     field.style.display = 'block'; label.textContent = 'List (any list if left blank)';
     select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
@@ -300,7 +326,8 @@ document.getElementById('triggerType').addEventListener('change', updateTriggerT
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
-  const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null } : {};
+  const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
+    : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null } : {};
   automation.trigger = { type, config };
   closeModal('triggerModal');
   render(); saveDebounced();
@@ -332,6 +359,7 @@ function defaultConfig(type) {
   if (type === 'send_email') return { subject: '', blocks: [], theme: { background: '#f4f4f4', maxWidth: 650 }, footerTemplateId: null };
   if (type === 'wait') return { amount: 1, unit: 'hours' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
+  if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };
   if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
   if (type === 'jump_to_automation' || type === 'end_automation') return { automationId: '' };
   return {};
@@ -374,6 +402,12 @@ function openStepConfigModal(step, isNew) {
       </div>`;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
+  } else if (step.type === 'add_to_facebook_audience') {
+    body.innerHTML = `
+      ${facebookIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Facebook isn\'t configured yet -- add FACEBOOK_ACCESS_TOKEN and FACEBOOK_AD_ACCOUNT_ID to .env. The step still saves and will start working once those are set.</div>'}
+      <div class="field"><label class="pra-label">Audience Name (for display)</label><input class="pra-input" id="cfgFbName" value="${escapeHtml(step.config.audienceName || '')}"/></div>
+      <div class="field"><label class="pra-label">Custom Audience ID</label><input class="pra-input" id="cfgFbId" value="${escapeHtml(step.config.audienceId || '')}" placeholder="From Facebook Ads Manager"/></div>
+    `;
   } else if (step.type === 'condition') {
     const c = step.config.filter?.all?.[0] || { field: 'status', op: 'eq', value: '' };
     body.innerHTML = `
@@ -399,6 +433,7 @@ function openStepConfigModal(step, isNew) {
   document.getElementById('saveStepBtn').onclick = () => {
     if (step.type === 'wait') { step.config.amount = Number(document.getElementById('cfgAmount').value) || 1; step.config.unit = document.getElementById('cfgUnit').value; }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
+    else if (step.type === 'add_to_facebook_audience') { step.config.audienceName = document.getElementById('cfgFbName').value.trim(); step.config.audienceId = document.getElementById('cfgFbId').value.trim(); }
     else if (step.type === 'condition') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
     else if (step.type === 'jump_to_automation' || step.type === 'end_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
     if (isNew) attachNewStep(step);
@@ -443,6 +478,31 @@ document.getElementById('viewContactsBtn').onclick = async () => {
   openModal('contactsModal');
 };
 
+// ── Zoom / pan ─────────────────────────────────────────────────────────
+let zoom = 1, panX = 0, panY = 0;
+function applyTransform() {
+  document.getElementById('zoomLayer').style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  document.getElementById('zoomPct').textContent = Math.round(zoom * 100) + '%';
+}
+document.getElementById('zoomInBtn').onclick = () => { zoom = Math.min(1.5, +(zoom + 0.1).toFixed(2)); applyTransform(); };
+document.getElementById('zoomOutBtn').onclick = () => { zoom = Math.max(0.4, +(zoom - 0.1).toFixed(2)); applyTransform(); };
+document.getElementById('zoomResetBtn').onclick = () => { zoom = 1; panX = 0; panY = 0; applyTransform(); };
+
+const canvasWrap = document.getElementById('canvasWrap');
+let panning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
+canvasWrap.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.step-card, .trigger-card, .add-step-btn, .ab-zoom-controls')) return;
+  panning = true; canvasWrap.classList.add('panning');
+  panStartX = e.clientX; panStartY = e.clientY; panOrigX = panX; panOrigY = panY;
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panning) return;
+  panX = panOrigX + (e.clientX - panStartX);
+  panY = panOrigY + (e.clientY - panStartY);
+  applyTransform();
+});
+window.addEventListener('mouseup', () => { panning = false; canvasWrap.classList.remove('panning'); });
+
 document.getElementById('historyBtn').onclick = () => {
   const versions = (automation.versions || []).slice().reverse();
   document.getElementById('historyBody').innerHTML = versions.length ? versions.map(v => `
@@ -485,6 +545,7 @@ document.getElementById('historyBtn').onclick = () => {
     });
   }
   render();
+  applyTransform();
 })();
 </script>
 </body>

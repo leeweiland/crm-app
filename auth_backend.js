@@ -68,7 +68,7 @@ export function isAdmin(user) { return !!user && user.role === "admin"; }
 export function isSuperUser(user) { return !!user && (user.role === "superuser" || isAdmin(user)); }
 
 // ── Sessions ─────────────────────────────────────────────────────────────
-function getCookie(req, name) {
+export function getCookie(req, name) {
   const header = req.headers.cookie || "";
   const match = header.split(";").map(s => s.trim()).find(s => s.startsWith(name + "="));
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
