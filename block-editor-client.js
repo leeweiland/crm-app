@@ -74,6 +74,11 @@ window.BlockEditor = (function () {
             <select id="beFontSize"><option value="2">Small</option><option value="3" selected>Normal</option><option value="5">Large</option><option value="7">XL</option></select>
             <button type="button" id="beLinkBtn">Link</button>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option></select>
+            <span class="be-link-popover" id="beLinkPopover" style="display:none">
+              <input type="text" id="beLinkUrl" placeholder="https://"/>
+              <button type="button" id="beLinkApply">Apply</button>
+              <button type="button" id="beLinkCancel">Cancel</button>
+            </span>
           </div>
           <div class="be-canvas-toprow">
             <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="beThemeBtn">&#9881; Email Settings</button>
@@ -280,9 +285,36 @@ window.BlockEditor = (function () {
     });
     toolbar.querySelector('#beColor').addEventListener('input', (e) => { document.execCommand('foreColor', false, e.target.value); syncSelectedText(); });
     toolbar.querySelector('#beFontSize').addEventListener('change', (e) => { document.execCommand('fontSize', false, e.target.value); syncSelectedText(); });
+    // Inline popover instead of prompt() -- native prompt() is blocked in
+    // some embedded/sandboxed browser contexts (e.g. iframed previews),
+    // and a small popover matches the rest of this editor's UI anyway.
+    let savedRange = null;
+    const linkPopover = toolbar.querySelector('#beLinkPopover');
+    const linkUrlInput = toolbar.querySelector('#beLinkUrl');
     toolbar.querySelector('#beLinkBtn').addEventListener('click', () => {
-      const url = prompt('Link URL:', 'https://');
-      if (url) { document.execCommand('createLink', false, url); syncSelectedText(); }
+      const sel = window.getSelection();
+      savedRange = sel.rangeCount ? sel.getRangeAt(0) : null;
+      linkUrlInput.value = 'https://';
+      linkPopover.style.display = 'inline-flex';
+      linkUrlInput.focus();
+      linkUrlInput.select();
+    });
+    function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; }
+    toolbar.querySelector('#beLinkCancel').addEventListener('click', closeLinkPopover);
+    toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
+      const url = linkUrlInput.value.trim();
+      if (url && savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+        document.execCommand('createLink', false, url);
+        syncSelectedText();
+      }
+      closeLinkPopover();
+    });
+    linkUrlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); toolbar.querySelector('#beLinkApply').click(); }
+      if (e.key === 'Escape') closeLinkPopover();
     });
     toolbar.querySelector('#bePersonalize').addEventListener('change', (e) => {
       if (!e.target.value) return;

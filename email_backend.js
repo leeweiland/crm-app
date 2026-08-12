@@ -209,9 +209,9 @@ export async function handleEmailRequest(req, res, url) {
   }
 
   if (p === "/api/email/test-send" && req.method === "POST") {
-    const { to, subject, blocks, footerTemplateId } = await readJsonBody(req);
+    const { to, subject, blocks, theme, footerTemplateId } = await readJsonBody(req);
     if (!to || !subject) return sendJson(res, 400, { error: "to and subject are required" });
-    const result = await sendEmail({ to, subject, blocks: blocks || [], footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
+    const result = await sendEmail({ to, subject, blocks: blocks || [], theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
     if (!result.ok) return sendJson(res, 400, { error: result.reason === "ses_not_configured" ? "Amazon SES isn't configured yet -- add AWS credentials to .env first." : result.reason });
     return sendJson(res, 200, { ok: true });
   }

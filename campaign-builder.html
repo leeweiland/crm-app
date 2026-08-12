@@ -178,7 +178,7 @@ document.getElementById('scheduleBtn').onclick = async () => {
 document.getElementById('testSendBtn').onclick = async () => {
   const to = document.getElementById('testEmailInput').value.trim();
   if (!to) return;
-  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, blocks: campaign.blocks, footerTemplateId: campaign.footerTemplateId }) });
+  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { showToast(d.error || 'Test send failed', true); return; }
   showToast('Test sent');

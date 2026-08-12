@@ -181,6 +181,8 @@ body { margin: 0; }
 .be-toolbar button { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 4px 9px; cursor: pointer; font-size: .8rem; }
 .be-toolbar button:hover { border-color: var(--pra-blue); }
 .be-toolbar select, .be-toolbar input[type="color"] { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 3px 6px; font-size: .78rem; }
+.be-link-popover { display: inline-flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
+.be-link-popover input { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 4px; padding: 3px 6px; font-size: .78rem; width: 180px; }
 .be-canvas-toprow { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 .be-canvas { background: #f4f4f4; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; overflow: hidden; transition: background .15s; }
 .be-shell:has(.be-toolbar[style*="flex"]) .be-canvas { border-radius: 0 0 8px 8px; }
