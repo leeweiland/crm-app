@@ -24,6 +24,7 @@
   .cond-row { display: grid; grid-template-columns: 1fr 140px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
   .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
   .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
+  #typeToggle .pra-btn-ghost.active { color: var(--pra-white); background: var(--pra-blue-dim); border-color: rgba(0,155,255,0.3); }
 </style>
 </head>
 <body>
@@ -34,6 +35,7 @@
       <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
       <div class="tabs">
         <button class="tab-btn active" data-tab="contacts">Contacts</button>
+        <button class="tab-btn" data-tab="accounts">Accounts</button>
         <button class="tab-btn" data-tab="lists">Email Lists</button>
         <button class="tab-btn" data-tab="emailsegments">Email Segments</button>
         <button class="tab-btn" data-tab="smssegments">SMS Segments</button>
@@ -42,6 +44,11 @@
 
       <div class="tab-panel active" id="tab-contacts">
         <div class="toolbar">
+          <div class="type-toggle" id="typeToggle" style="display:flex;gap:4px">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm active" data-type-filter="">All</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-type-filter="lead">Leads</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-type-filter="contact">Contacts</button>
+          </div>
           <div style="flex:1"></div>
           <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
           <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
@@ -69,6 +76,15 @@
           <table class="data-table">
             <thead><tr><th>Name</th><th>Account</th><th>Email</th><th>Phone</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead>
             <tbody id="contactsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-accounts">
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr><th>Account</th><th>Contacts</th></tr></thead>
+            <tbody id="accountsBody"><tr><td colspan="2" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -148,6 +164,7 @@
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
 let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
+let activeTypeFilter = ''; // '' | 'lead' | 'contact' -- quick toggle above the Contacts table
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : ''; }
@@ -158,8 +175,31 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'accounts') loadAccounts();
   };
 });
+
+document.querySelectorAll('#typeToggle [data-type-filter]').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('#typeToggle [data-type-filter]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeTypeFilter = btn.dataset.typeFilter;
+    loadContacts();
+  };
+});
+
+async function loadAccounts() {
+  const r = await fetch('/api/contacts');
+  const body = document.getElementById('accountsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="2" class="pra-muted">Could not load.</td></tr>'; return; }
+  const { contacts } = await r.json();
+  const byAccount = {};
+  contacts.forEach(c => { if (c.accountName) (byAccount[c.accountName] = byAccount[c.accountName] || []).push(c); });
+  const accounts = Object.entries(byAccount).sort((a, b) => a[0].localeCompare(b[0]));
+  body.innerHTML = accounts.length ? accounts.map(([name, members]) => `
+    <tr><td>${escapeHtml(name)}</td><td>${members.length}</td></tr>
+  `).join('') : '<tr><td colspan="2" class="pra-muted">No accounts yet — set an account name on a contact to see it here.</td></tr>';
+}
 
 // ── Reference data ──────────────────────────────────────────────────────
 async function loadStatuses() {
@@ -207,7 +247,7 @@ document.getElementById('addListBtn').onclick = async () => {
 
 // ── Segments (Email/SMS tabs) ────────────────────────────────────────────
 function describeCondition(cond) {
-  const fieldLabel = cond.field === 'status' ? 'Status' : cond.field === 'tags' ? 'Tag' : cond.field === 'listIds' ? 'List'
+  const fieldLabel = cond.field === 'type' ? 'Type' : cond.field === 'status' ? 'Status' : cond.field === 'tags' ? 'Tag' : cond.field === 'listIds' ? 'List'
     : cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field;
   const opLabel = { eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set' }[cond.op] || cond.op;
   let valueLabel = cond.value;
@@ -252,6 +292,7 @@ function renderSegmentList(channel, elId) {
 // ── Advanced filter builder ─────────────────────────────────────────────
 function fieldOptionsHtml() {
   return `
+    <option value="type">Type (Lead/Contact)</option>
     <option value="status">Status</option>
     <option value="tags">Tag</option>
     <option value="listIds">List</option>
@@ -265,6 +306,7 @@ function opOptionsHtml(field) {
 }
 function valueInputHtml(field, op) {
   if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
+  if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`;
   if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
   if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
   if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
@@ -346,6 +388,7 @@ async function loadContacts() {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (status) params.set('status', status);
+  if (activeTypeFilter) params.set('type', activeTypeFilter);
   if (activeFilter) params.set('filter', JSON.stringify(activeFilter));
   const r = await fetch('/api/contacts?' + params.toString());
   const body = document.getElementById('contactsBody');

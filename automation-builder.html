@@ -42,7 +42,10 @@
         <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="viewContactsBtn">View Contacts</button>
       </div>
-      <div class="ab-savedmsg" id="savedMsg">&nbsp;</div>
+      <div class="ab-savedmsg">
+        <span id="savedMsg">&nbsp;</span>
+        <a class="pra-link" id="historyBtn" style="margin-left:8px;font-size:.76rem" title="Version history">&#8635; History</a>
+      </div>
 
       <div class="ab-canvas-wrap">
         <div class="ab-canvas" id="canvas"></div>
@@ -126,6 +129,15 @@
   </div>
 </div>
 
+<!-- Version history -->
+<div class="modal-backdrop" id="historyModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Version History</div>
+    <div id="historyBody"></div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('historyModal')">Close</button>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script src="/block-editor-client.js"></script>
 <script>
@@ -135,7 +147,7 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 
 const automationId = new URLSearchParams(location.search).get('id');
-let automation = null, stepCounts = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [];
+let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [];
 let saveTimer, emailStepEditor = null, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
 
 async function loadRefs() {
@@ -164,16 +176,27 @@ function stepSummary(step) {
 }
 const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', condition: 'Condition', jump_to_automation: 'Jump to Automation', end_automation: 'End Automation' };
 
+function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
+
 function stepCardHtml(stepId, isLast) {
   const step = automation.steps[stepId];
   const count = stepCounts[stepId] || 0;
+  const countLabel = step.type === 'wait' ? `${count} waiting` : `${count} here`;
+  const stats = step.type === 'send_email' ? stepEmailStats[stepId] : null;
+  const statsRow = stats ? `
+    <div style="margin-top:8px;display:flex;gap:14px;font-size:.76rem;color:var(--pra-dim)">
+      <span>&#9654; ${stats.sent} sent</span>
+      <span>&#9993; ${pct(stats.opened, stats.sent)} open</span>
+      <span>&#128073; ${pct(stats.clicked, stats.sent)} click</span>
+    </div>` : '';
   return `
     <div class="step-card">
       <div class="step-actions">
         ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
       </div>
-      <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${count} here</div>
+      <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${countLabel}</div>
       <div class="step-summary">${stepSummary(step)}</div>
+      ${statsRow}
       <div style="margin-top:8px"><button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${stepId}">Edit</button></div>
     </div>
   `;
@@ -420,6 +443,26 @@ document.getElementById('viewContactsBtn').onclick = async () => {
   openModal('contactsModal');
 };
 
+document.getElementById('historyBtn').onclick = () => {
+  const versions = (automation.versions || []).slice().reverse();
+  document.getElementById('historyBody').innerHTML = versions.length ? versions.map(v => `
+    <div class="row-item">
+      <span style="flex:1">${new Date(v.savedAt).toLocaleString()}</span>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-restore="${v.versionId}">Restore</button>
+    </div>
+  `).join('') : '<div class="pra-muted">No saved versions yet.</div>';
+  document.querySelectorAll('[data-restore]').forEach(btn => btn.onclick = () => {
+    const version = versions.find(v => v.versionId === btn.dataset.restore);
+    if (!version || !confirm('Restore this version? Current unsaved changes will be replaced.')) return;
+    automation.trigger = version.snapshot.trigger;
+    automation.steps = version.snapshot.steps;
+    automation.startStepId = version.snapshot.startStepId;
+    closeModal('historyModal');
+    render(); saveDebounced();
+  });
+  openModal('historyModal');
+};
+
 (async function init() {
   if (!automationId) { document.getElementById('autoName').value = 'No automation selected'; return; }
   await loadRefs();
@@ -428,6 +471,19 @@ document.getElementById('viewContactsBtn').onclick = async () => {
   const d = await r.json();
   automation = d.automation;
   stepCounts = d.stepCounts;
+  const reportRes = await fetch('/api/reporting/automations/' + automationId);
+  if (reportRes.ok) {
+    const { messages } = await reportRes.json();
+    stepEmailStats = {};
+    Object.keys(automation.steps).forEach(stepId => {
+      const stepMessages = messages.filter(m => m.sourceId === `${automation.id}:${stepId}`);
+      stepEmailStats[stepId] = {
+        sent: stepMessages.filter(m => ['sent','delivered','opened','clicked'].includes(m.status)).length,
+        opened: stepMessages.filter(m => ['opened','clicked'].includes(m.status)).length,
+        clicked: stepMessages.filter(m => m.status === 'clicked').length,
+      };
+    });
+  }
   render();
 })();
 </script>

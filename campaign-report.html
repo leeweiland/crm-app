@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campaign Report — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .rep-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 12px; margin-bottom: 26px; }
+  .rate-row { display: flex; gap: 30px; margin-bottom: 26px; }
+  .rate-card { text-align: center; }
+  .rate-card .big { font-family: var(--font-primary); font-weight: 700; font-size: 2rem; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <a class="pra-link" href="/campaigns.html">&larr; Back to Campaigns</a>
+      <div class="pra-h1" style="margin:10px 0 4px" id="campaignName">Loading…</div>
+      <div class="pra-muted" style="margin-bottom:20px" id="campaignSubject"></div>
+
+      <div class="rate-row">
+        <div class="rate-card"><div class="big" id="openRate">—</div><div class="pra-label">Open Rate</div></div>
+        <div class="rate-card"><div class="big" id="clickRate">—</div><div class="pra-label">Click Rate</div></div>
+        <div class="rate-card"><div class="big" id="bounceRate">—</div><div class="pra-label">Bounce Rate</div></div>
+      </div>
+
+      <div class="rep-grid" id="statsGrid"></div>
+
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>To</th><th>Status</th><th>Sent</th></tr></thead>
+          <tbody id="messagesBody"><tr><td colspan="3" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
+const LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
+
+const campaignId = new URLSearchParams(location.search).get('id');
+
+(async function load() {
+  if (!campaignId) return;
+  const [campaignRes, reportRes] = await Promise.all([
+    fetch('/api/campaigns/' + campaignId),
+    fetch('/api/reporting/campaigns/' + campaignId),
+  ]);
+  if (campaignRes.ok) {
+    const { campaign } = await campaignRes.json();
+    document.getElementById('campaignName').textContent = campaign.name;
+    document.getElementById('campaignSubject').textContent = campaign.subject || '';
+  }
+  if (!reportRes.ok) return;
+  const { stats, messages } = await reportRes.json();
+  document.getElementById('openRate').textContent = pct(stats.opened, stats.sent);
+  document.getElementById('clickRate').textContent = pct(stats.clicked, stats.sent);
+  document.getElementById('bounceRate').textContent = pct(stats.bounced, stats.sent);
+  document.getElementById('statsGrid').innerHTML = Object.entries(LABELS).map(([key, label]) => `
+    <div class="pra-card" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${stats[key] ?? 0}</div></div>
+  `).join('');
+  const body = document.getElementById('messagesBody');
+  body.innerHTML = messages.length ? messages.slice().reverse().map(m => `
+    <tr><td>${escapeHtml(m.to || '')}</td><td><span class="pra-badge">${escapeHtml(m.status)}</span></td><td class="pra-muted">${fmtDate(m.sentAt || m.createdAt)}</td></tr>
+  `).join('') : '<tr><td colspan="3" class="pra-muted">No sends yet.</td></tr>';
+})();
+</script>
+</body>
+</html>

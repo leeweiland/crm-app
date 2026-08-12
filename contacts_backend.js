@@ -48,6 +48,7 @@ export async function handleContactsRequest(req, res, url) {
     const status = url.searchParams.get("status");
     const tag = url.searchParams.get("tag");
     const listId = url.searchParams.get("listId");
+    const type = url.searchParams.get("type");
     const filterParam = url.searchParams.get("filter");
     let filtered = contacts;
     if (q) filtered = filtered.filter(c =>
@@ -58,6 +59,7 @@ export async function handleContactsRequest(req, res, url) {
     if (status) filtered = filtered.filter(c => c.status === status);
     if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
     if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
+    if (type) filtered = filtered.filter(c => c.type === type);
     // Advanced multi-condition filter (same {all:[...]}/{any:[...]} shape
     // segments save) -- lets the Contacts filter builder preview results
     // live before a user commits to saving it as a segment.

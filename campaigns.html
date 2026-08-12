@@ -53,6 +53,7 @@ async function loadCampaigns() {
       <td>${c.stats?.clicked ?? 0}</td>
       <td class="pra-muted">${fmtDate(c.updatedAt)}</td>
       <td style="white-space:nowrap">
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/campaign-report.html?id=${c.id}" onclick="event.stopPropagation()">View Report</a>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${c.id}">Copy</button>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${c.id}">Delete</button>
       </td>

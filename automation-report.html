@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Automation Report — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .rep-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 12px; margin-bottom: 26px; }
+  .step-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--pra-border); }
+  .step-row:last-child { border-bottom: none; }
+  .step-row .subj { flex: 1; }
+  .step-row .metric { font-size: .82rem; color: var(--pra-dim); min-width: 90px; text-align: right; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <a class="pra-link" href="/automations.html">&larr; Back to Automations</a>
+      <div class="pra-h1" style="margin:10px 0 4px" id="autoName">Loading…</div>
+      <div class="pra-muted" style="margin-bottom:20px" id="autoTrigger"></div>
+
+      <div class="rep-grid" id="statsGrid"></div>
+
+      <div class="pra-panel" style="padding:22px;margin-bottom:20px">
+        <div class="pra-h2" style="margin-bottom:10px">Emails in this Automation</div>
+        <div id="stepsList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
+const LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', failed: 'Failed' };
+const TRIGGER_LABELS = { list_subscribe: 'Subscribes to list', tag_added: 'Tag added', email_opened: 'Email opened', email_clicked: 'Email link clicked' };
+
+const automationId = new URLSearchParams(location.search).get('id');
+
+(async function load() {
+  if (!automationId) return;
+  const [autoRes, reportRes] = await Promise.all([
+    fetch('/api/automations/' + automationId),
+    fetch('/api/reporting/automations/' + automationId),
+  ]);
+  if (!autoRes.ok) return;
+  const { automation } = await autoRes.json();
+  document.getElementById('autoName').textContent = automation.name;
+  document.getElementById('autoTrigger').textContent = 'Trigger: ' + (TRIGGER_LABELS[automation.trigger?.type] || '—');
+
+  const { stats, messages } = reportRes.ok ? await reportRes.json() : { stats: {}, messages: [] };
+  document.getElementById('statsGrid').innerHTML = Object.entries(LABELS).map(([key, label]) => `
+    <div class="pra-card" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${stats[key] ?? 0}</div></div>
+  `).join('');
+
+  const emailSteps = Object.values(automation.steps).filter(s => s.type === 'send_email');
+  document.getElementById('stepsList').innerHTML = emailSteps.length ? emailSteps.map(step => {
+    const stepMessages = messages.filter(m => m.sourceId === `${automation.id}:${step.id}`);
+    const sent = stepMessages.filter(m => ['sent','delivered','opened','clicked'].includes(m.status)).length;
+    const opened = stepMessages.filter(m => ['opened','clicked'].includes(m.status)).length;
+    const clicked = stepMessages.filter(m => m.status === 'clicked').length;
+    return `
+      <div class="step-row">
+        <div class="subj">${escapeHtml(step.config.subject || '(no subject)')}</div>
+        <div class="metric">${sent} sent</div>
+        <div class="metric">${pct(opened, sent)} open</div>
+        <div class="metric">${pct(clicked, sent)} click</div>
+      </div>
+    `;
+  }).join('') : '<div class="pra-muted">No email steps in this automation.</div>';
+})();
+</script>
+</body>
+</html>

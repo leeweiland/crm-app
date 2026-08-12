@@ -24,8 +24,8 @@
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Trigger</th><th>Active</th><th>Currently Enrolled</th><th>Total Enrolled</th><th>Last Edited</th><th></th></tr></thead>
-          <tbody id="automationsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+          <thead><tr><th>Name</th><th>Trigger</th><th>Active</th><th>Total Emails</th><th>Currently Enrolled</th><th>Total Enrolled</th><th>Last Edited</th><th></th></tr></thead>
+          <tbody id="automationsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -40,18 +40,20 @@ const TRIGGER_LABELS = { list_subscribe: 'Subscribes to list', tag_added: 'Tag a
 async function loadAutomations() {
   const r = await fetch('/api/automations');
   const body = document.getElementById('automationsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load.</td></tr>'; return; }
   const { automations } = await r.json();
-  if (!automations.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No automations yet.</td></tr>'; return; }
+  if (!automations.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No automations yet.</td></tr>'; return; }
   body.innerHTML = automations.map(a => `
     <tr>
       <td class="clickable" onclick="location.href='/automation-builder.html?id=${a.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(a.name)}</td>
       <td class="pra-muted">${TRIGGER_LABELS[a.trigger?.type] || ''}</td>
       <td><button class="active-toggle${a.active ? ' on' : ''}" data-id="${a.id}" data-active="${a.active}"></button></td>
+      <td>${Object.values(a.steps || {}).filter(s => s.type === 'send_email').length}</td>
       <td>${a.enrolledCount}</td>
       <td>${a.totalEnrolled}</td>
       <td class="pra-muted">${fmtDate(a.updatedAt)}</td>
       <td style="white-space:nowrap">
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/automation-report.html?id=${a.id}" onclick="event.stopPropagation()">View Report</a>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${a.id}">Copy</button>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${a.id}">Delete</button>
       </td>
