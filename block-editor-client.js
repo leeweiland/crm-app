@@ -228,8 +228,8 @@ window.BlockEditor = (function () {
         });
       });
       canvas.querySelectorAll('[data-drag]').forEach(handle => {
-        handle.addEventListener('dragstart', (e) => { dragSourceId = handle.dataset.drag; e.dataTransfer.effectAllowed = 'move'; });
-        handle.addEventListener('dragend', () => { dragSourceId = null; canvas.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); });
+        handle.addEventListener('dragstart', (e) => { dragSourceId = handle.dataset.drag; e.dataTransfer.effectAllowed = 'move'; canvas.classList.add('dragging'); });
+        handle.addEventListener('dragend', () => { dragSourceId = null; canvas.classList.remove('dragging'); canvas.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); });
       });
       canvas.querySelectorAll('[contenteditable="true"]').forEach(el => {
         el.addEventListener('input', () => {
@@ -271,8 +271,8 @@ window.BlockEditor = (function () {
         blocks.push(block);
         selectBlock(block);
       });
-      btn.addEventListener('dragstart', (e) => { draggingNewType = btn.dataset.add; e.dataTransfer.effectAllowed = 'copy'; });
-      btn.addEventListener('dragend', () => { draggingNewType = null; canvas.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); });
+      btn.addEventListener('dragstart', (e) => { draggingNewType = btn.dataset.add; e.dataTransfer.effectAllowed = 'copy'; canvas.classList.add('dragging'); });
+      btn.addEventListener('dragend', () => { draggingNewType = null; canvas.classList.remove('dragging'); canvas.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); });
     });
 
     toolbar.querySelectorAll('[data-cmd]').forEach(btn => {

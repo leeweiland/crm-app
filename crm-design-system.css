@@ -182,7 +182,7 @@ body { margin: 0; }
 .be-toolbar button:hover { border-color: var(--pra-blue); }
 .be-toolbar select, .be-toolbar input[type="color"] { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 3px 6px; font-size: .78rem; }
 .be-canvas-toprow { display: flex; justify-content: flex-end; margin-bottom: 6px; }
-.be-canvas { background: #f4f4f4; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; min-height: 200px; overflow: hidden; transition: background .15s; }
+.be-canvas { background: #f4f4f4; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; overflow: hidden; transition: background .15s; }
 .be-shell:has(.be-toolbar[style*="flex"]) .be-canvas { border-radius: 0 0 8px 8px; }
 .be-block { position: relative; border: 2px dashed transparent; cursor: pointer; }
 .be-block:hover { border-color: rgba(0,155,255,0.3); }
@@ -197,7 +197,8 @@ body { margin: 0; }
 .be-block-body { color: #111; }
 .be-block-body img { max-width: 100%; }
 .be-add-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
-.be-dropzone { height: 8px; margin: -4px 0; position: relative; z-index: 1; transition: height .12s, background .12s; }
+.be-dropzone { height: 8px; margin: -4px 0; position: relative; z-index: 1; transition: height .12s, background .12s, border-color .12s; border-top: 2px dashed transparent; }
+.be-canvas.dragging .be-dropzone { border-top-color: rgba(0,155,255,0.35); }
 .be-dropzone.drag-over { height: 34px; background: rgba(0,155,255,0.18); border: 1px dashed var(--pra-blue); border-radius: 4px; margin: 4px 0; }
 .be-dropzone-empty { height: auto; padding: 30px; text-align: center; color: var(--pra-dim); font-size: .85rem; border: 2px dashed var(--pra-border); border-radius: 8px; margin: 10px; }
 .be-dropzone-empty.drag-over { border-color: var(--pra-blue); color: var(--pra-blue); background: rgba(0,155,255,0.08); }
