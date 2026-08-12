@@ -127,16 +127,31 @@
   </div>
 </div>
 
-<!-- Send-email step config (embeds the shared block editor) -->
+<!-- Send-email step config -- same cb-layout two-column shape and same
+     embedded BlockEditor as campaign-builder.html, just inside a
+     near-fullscreen modal instead of its own page, since a step's email
+     doesn't need its own URL/recipients panel. -->
 <div class="modal-backdrop" id="emailStepModal">
-  <div class="pra-panel modal-box" style="max-width:1000px">
+  <div class="pra-panel modal-box eb-fullscreen">
     <div class="pra-h2" style="margin-bottom:16px">Send Email Step</div>
-    <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="emailStepSubject"/></div>
-    <div class="field"><label class="pra-label">Footer</label><select class="pra-select" id="emailStepFooter"><option value="">Default</option></select></div>
-    <div id="emailStepEditorRoot" style="margin-top:10px"></div>
-    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
-      <button class="pra-btn" id="saveEmailStepBtn" style="flex:1">Save</button>
-      <button class="pra-btn pra-btn-ghost" onclick="closeModal('emailStepModal')">Cancel</button>
+    <div class="cb-layout">
+      <div>
+        <div class="field" style="margin-bottom:16px">
+          <label class="pra-label">Subject line</label>
+          <input class="pra-input" id="emailStepSubject" placeholder="Your session with Coach Lee..."/>
+        </div>
+        <div id="emailStepEditorRoot"></div>
+      </div>
+      <div class="cb-sidebar">
+        <div class="pra-panel">
+          <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
+          <select class="pra-select" id="emailStepFooter"><option value="">Default</option></select>
+        </div>
+        <div class="pra-panel">
+          <button class="pra-btn" id="saveEmailStepBtn" style="width:100%;margin-bottom:8px">Save</button>
+          <button class="pra-btn pra-btn-ghost" style="width:100%" onclick="closeModal('emailStepModal')">Cancel</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
