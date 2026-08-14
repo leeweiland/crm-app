@@ -18,6 +18,7 @@ import { handleImportRequest } from "./import_backend.js";
 import { handleFacebookRequest } from "./facebook_backend.js";
 import { handleTrackingRequest } from "./tracking_backend.js";
 import { handleIntegrationsRequest } from "./integrations_backend.js";
+import { handleUploadsRequest } from "./uploads_backend.js";
 import { startScheduler } from "./scheduler.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,7 @@ createServer(async (req, res) => {
   if (await handleFacebookRequest(req, res, url)) return;
   if (await handleTrackingRequest(req, res, url)) return;
   if (await handleIntegrationsRequest(req, res, url)) return;
+  if (await handleUploadsRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike
   // chat-app, which shares a domain/nav with sibling apps), so there's no

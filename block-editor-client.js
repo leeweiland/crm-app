@@ -133,6 +133,13 @@ window.BlockEditor = (function () {
         <div class="field"><label class="pra-label">Margin</label><input class="pra-input" type="text" id="styleMargin" placeholder="0" value="${s.margin || ''}"/></div>
         <div class="field"><label class="pra-label">Padding</label><input class="pra-input" type="text" id="stylePadding" placeholder="10px" value="${s.padding || ''}"/></div>
         ${block.type === 'image' ? `
+          <div class="field">
+            <label class="pra-label">Image</label>
+            ${block.src ? `<img src="${block.src}" style="max-width:100%;border-radius:4px;margin-bottom:6px;display:block"/>` : ''}
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" id="imgUpload" style="display:none"/>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="imgUploadBtn" style="width:100%">Upload Image</button>
+            <div class="pra-muted" id="imgUploadStatus" style="font-size:.72rem;margin-top:4px;min-height:1em"></div>
+          </div>
           <div class="field"><label class="pra-label">Image URL</label><input class="pra-input" type="text" id="imgSrc" value="${block.src || ''}"/></div>
           <div class="field"><label class="pra-label">Link (optional)</label><input class="pra-input" type="text" id="imgLink" value="${block.link || ''}"/></div>
           <div class="field"><label class="pra-label">Width (px)</label><input class="pra-input" type="number" id="imgWidth" value="${block.width || 600}"/></div>
@@ -159,7 +166,34 @@ window.BlockEditor = (function () {
       bind('styleBorder', 'border', block.style);
       bind('styleMargin', 'margin', block.style);
       bind('stylePadding', 'padding', block.style);
-      if (block.type === 'image') { bind('imgSrc', 'src', block); bind('imgLink', 'link', block); bind('imgWidth', 'width', block); }
+      if (block.type === 'image') {
+        bind('imgSrc', 'src', block); bind('imgLink', 'link', block); bind('imgWidth', 'width', block);
+        const uploadBtn = stylePanel.querySelector('#imgUploadBtn');
+        const uploadInput = stylePanel.querySelector('#imgUpload');
+        const uploadStatus = stylePanel.querySelector('#imgUploadStatus');
+        uploadBtn.addEventListener('click', () => uploadInput.click());
+        uploadInput.addEventListener('change', () => {
+          const file = uploadInput.files[0];
+          if (!file) return;
+          uploadStatus.textContent = 'Uploading...';
+          const reader = new FileReader();
+          reader.onload = () => {
+            fetch('/api/uploads/image', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dataUrl: reader.result }),
+            })
+              .then(r => r.json().then(d => ({ ok: r.ok, d })))
+              .then(({ ok, d }) => {
+                if (!ok) { uploadStatus.textContent = d.error || 'Upload failed'; return; }
+                block.src = d.url;
+                uploadStatus.textContent = 'Uploaded.';
+                render(); renderStylePanel(); emit();
+              })
+              .catch(() => { uploadStatus.textContent = 'Upload failed'; });
+          };
+          reader.readAsDataURL(file);
+        });
+      }
       if (block.type === 'button') { bind('btnText', 'text', block); bind('btnLink', 'link', block); }
       stylePanel.querySelectorAll('[data-align]').forEach(btn => btn.onclick = () => { block.style = block.style || {}; block.style.textAlign = btn.dataset.align; render(); emit(); });
       const actionTypeSel = stylePanel.querySelector('#linkActionType');
@@ -190,7 +224,15 @@ window.BlockEditor = (function () {
     // one after the last) -- this is what makes drag-and-drop actually
     // position-accurate, matching AC's builder, instead of just swapping
     // with whatever block you happen to drop on.
-    function dropZoneHtml(index) { return `<div class="be-dropzone" data-zone="${index}"></div>`; }
+    function dropZoneHtml(index) {
+      return `<div class="be-dropzone" data-zone="${index}">
+        <div class="be-dropzone-add" data-zone-add="${index}">
+          <button type="button" data-zone-add-type="text" data-zone="${index}" title="Add text">T</button>
+          <button type="button" data-zone-add-type="image" data-zone="${index}" title="Add image">&#128247;</button>
+          <button type="button" data-zone-add-type="button" data-zone="${index}" title="Add button">&#128433;</button>
+        </div>
+      </div>`;
+    }
 
     function render() {
       canvasInner.style.maxWidth = theme.maxWidth + 'px';
@@ -215,6 +257,15 @@ window.BlockEditor = (function () {
         el.addEventListener('click', (e) => {
           if (e.target.closest('[data-move],[data-remove],[data-drag]')) return;
           selectBlock(blocks.find(b => b.id === el.dataset.id));
+        });
+      });
+      canvas.querySelectorAll('[data-zone-add-type]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const index = Number(btn.dataset.zone);
+          const block = newBlock(btn.dataset.zoneAddType);
+          blocks.splice(index, 0, block);
+          selectBlock(block);
         });
       });
       canvas.querySelectorAll('.be-dropzone').forEach(zone => {

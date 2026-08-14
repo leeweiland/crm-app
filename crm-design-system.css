@@ -216,6 +216,14 @@ body { margin: 0; }
 .be-dropzone.drag-over { height: 34px; background: rgba(0,155,255,0.18); border: 1px dashed var(--pra-blue); border-radius: 4px; margin: 4px 0; }
 .be-dropzone-empty { height: auto; padding: 30px; text-align: center; color: var(--pra-dim); font-size: .85rem; border: 2px dashed var(--pra-border); border-radius: 8px; margin: 10px; }
 .be-dropzone-empty.drag-over { border-color: var(--pra-blue); color: var(--pra-blue); background: rgba(0,155,255,0.08); }
+/* Hover-reveal insert buttons on each dropzone -- click-to-insert-at-position,
+   matching AC's "+" affordance, as an alternative to drag-and-drop. */
+.be-dropzone-add { display: flex; gap: 4px; justify-content: center; align-items: center; opacity: 0; transition: opacity .12s; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); white-space: nowrap; }
+.be-dropzone:hover:not(.drag-over) { height: 24px; }
+.be-dropzone:hover:not(.drag-over) .be-dropzone-add { opacity: 1; }
+.be-canvas.dragging .be-dropzone-add { display: none; }
+.be-dropzone-add button { width: 20px; height: 20px; border-radius: 50%; background: var(--pra-blue); color: #fff; border: 2px solid var(--pra-panel-bg, #fff); font-size: .62rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+.be-dropzone-add button:hover { background: #0086e0; }
 .be-palette-item { cursor: grab; }
 .be-palette-item:active { cursor: grabbing; }
 .be-style-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; position: sticky; top: 20px; }

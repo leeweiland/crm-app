@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Same Railway-volume-persistence pattern as chat-app/chat_backend.js:
 // without a mounted Volume these files live at __dirname alongside the code
 // and reset to whatever's committed in git on every deploy.
-const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+export const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
 
 function migrateDataFile(file) {
   const dest = join(DATA_DIR, file);
