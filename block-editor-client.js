@@ -83,7 +83,9 @@ window.BlockEditor = (function () {
           <div class="be-canvas-toprow">
             <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="beThemeBtn">&#9881; Email Settings</button>
           </div>
-          <div class="be-canvas" id="beCanvas"></div>
+          <div class="be-canvas" id="beCanvas">
+            <div class="be-canvas-inner" id="beCanvasInner"></div>
+          </div>
           <div class="be-add-row">
             <span class="pra-muted" style="font-size:.72rem;margin-right:4px">Drag a block onto the email, or click to add at the end:</span>
             <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="text">&#9776; Text</button>
@@ -96,6 +98,7 @@ window.BlockEditor = (function () {
     `;
 
     const canvas = rootEl.querySelector('#beCanvas');
+    const canvasInner = rootEl.querySelector('#beCanvasInner');
     const stylePanel = rootEl.querySelector('#beStylePanel');
     const toolbar = rootEl.querySelector('#beToolbar');
 
@@ -172,9 +175,15 @@ window.BlockEditor = (function () {
       }
     }
 
+    // Mirrors block_editor_shared.js's actual structure -- a themed outer
+    // strip around a fixed-width WHITE content card -- so the live editor
+    // never shows something the real send wouldn't (the earlier version
+    // colored the entire canvas with theme.background, which made default
+    // dark block text invisible the moment someone picked a dark theme
+    // color, since there was no white card underneath it like the real
+    // email has).
     function renderPreviewBg() {
-      const canvasWrap = rootEl.querySelector('.be-canvas');
-      if (canvasWrap) canvasWrap.style.background = theme.background;
+      canvas.style.background = theme.background;
     }
 
     // A drop-zone is a thin bar between blocks (and one before the first,
@@ -184,8 +193,7 @@ window.BlockEditor = (function () {
     function dropZoneHtml(index) { return `<div class="be-dropzone" data-zone="${index}"></div>`; }
 
     function render() {
-      canvas.style.maxWidth = theme.maxWidth + 'px';
-      canvas.style.margin = '0 auto';
+      canvasInner.style.maxWidth = theme.maxWidth + 'px';
       renderPreviewBg();
       const blockHtml = blocks.map((b, i) => `
         <div class="be-block${b.id === selectedId && !showingThemePanel ? ' selected' : ''}" data-id="${b.id}">
@@ -199,7 +207,7 @@ window.BlockEditor = (function () {
           <div class="be-block-body" data-id="${b.id}" ${b.type === 'text' ? 'contenteditable="true"' : ''}>${renderBlockHtml(b)}</div>
         </div>
       `);
-      canvas.innerHTML = blocks.length
+      canvasInner.innerHTML = blocks.length
         ? dropZoneHtml(0) + blockHtml.map((html, i) => html + dropZoneHtml(i + 1)).join('')
         : `<div class="be-dropzone be-dropzone-empty" data-zone="0">Drag a block here, or click one below</div>`;
 

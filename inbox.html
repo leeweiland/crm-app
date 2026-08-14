@@ -21,6 +21,16 @@
   .item-preview { font-size: .8rem; color: var(--pra-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item-time { font-size: .74rem; color: var(--pra-dim); white-space: nowrap; }
   .item-status { font-size: .66rem; text-transform: uppercase; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,0.08); }
+  .inbox-item { cursor: pointer; transition: background .1s; }
+  .inbox-item:hover { background: rgba(255,255,255,0.03); }
+  .item-name-link { color: var(--pra-white); text-decoration: none; font-weight: 700; }
+  .item-name-link:hover { color: var(--pra-blue); text-decoration: underline; }
+  .msg-detail-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: .8rem; color: var(--pra-dim); margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--pra-border); }
+  .msg-detail-body { background: #fff; color: #111; border-radius: 8px; padding: 16px; max-height: 50vh; overflow-y: auto; font-size: .9rem; white-space: pre-wrap; }
+  .msg-detail-body iframe { width: 100%; min-height: 300px; border: none; }
+  .msg-track-badge { font-size: .7rem; padding: 3px 9px; border-radius: 8px; }
+  .msg-track-badge.on { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .msg-track-badge.off { background: rgba(255,255,255,0.06); color: var(--pra-dim); }
 </style>
 </head>
 <body>
@@ -33,29 +43,13 @@
         <button class="tab-btn active" data-tab="primary">Primary</button>
         <button class="tab-btn" data-tab="emails">Emails</button>
         <button class="tab-btn" data-tab="messages">Messages</button>
-        <button class="tab-btn" data-tab="calls">Calls</button>
         <button class="tab-btn" data-tab="tasks">Tasks</button>
         <button class="tab-btn" data-tab="reminders">Reminders</button>
         <button class="tab-btn" data-tab="potential">Potential Contacts</button>
         <div style="flex:1"></div>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="logCallBtn">+ Log a Call</button>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newTaskBtn">+ New Task</button>
       </div>
       <div class="pra-panel" id="itemsPanel"></div>
-    </div>
-  </div>
-</div>
-
-<div class="modal-backdrop" id="callModal">
-  <div class="pra-panel modal-box">
-    <div class="pra-h2" style="margin-bottom:16px">Log a Call</div>
-    <div class="field"><label class="pra-label">Contact</label><select class="pra-select" id="callContact"></select></div>
-    <div class="field"><label class="pra-label">Direction</label><select class="pra-select" id="callDirection"><option value="outbound">Outbound</option><option value="inbound">Inbound</option></select></div>
-    <div class="field"><label class="pra-label">Duration (minutes)</label><input class="pra-input" type="number" id="callDuration" value="0"/></div>
-    <div class="field"><label class="pra-label">Notes</label><textarea class="pra-textarea" id="callNotes" rows="3"></textarea></div>
-    <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
-      <button class="pra-btn" id="saveCallBtn" style="flex:1">Save</button>
-      <button class="pra-btn pra-btn-ghost" onclick="closeModal('callModal')">Cancel</button>
     </div>
   </div>
 </div>
@@ -72,6 +66,15 @@
       <button class="pra-btn" id="saveConfirmBtn" style="flex:1">Create Contact</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('confirmPotentialModal')">Cancel</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="messageDetailModal">
+  <div class="pra-panel modal-box eb-fullscreen" style="max-width:760px">
+    <div class="pra-h2" style="margin-bottom:6px" id="msgDetailTitle">Message</div>
+    <div class="msg-detail-meta" id="msgDetailMeta"></div>
+    <div class="msg-detail-body" id="msgDetailBody"></div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:16px" onclick="closeModal('messageDetailModal')">Close</button>
   </div>
 </div>
 
@@ -96,27 +99,26 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
-let currentTab = 'primary', allContacts = [];
-const ICONS = { email: '✉', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
+let currentTab = 'primary', allContacts = [], currentItems = [];
+const ICONS = { email: '✉', sms: '💬', task: '☑', reminder: '⏰' };
 
 async function loadContacts() {
   const r = await fetch('/api/contacts');
   allContacts = r.ok ? (await r.json()).contacts : [];
-  const opts = '<option value="">None</option>' + allContacts.map(c => `<option value="${c.id}">${escapeHtml(c.first)} ${escapeHtml(c.last)}</option>`).join('');
-  document.getElementById('callContact').innerHTML = opts.replace('<option value="">None</option>', '');
-  document.getElementById('taskContact').innerHTML = opts;
+  document.getElementById('taskContact').innerHTML = '<option value="">None</option>' + allContacts.map(c => `<option value="${c.id}">${escapeHtml(c.first)} ${escapeHtml(c.last)}</option>`).join('');
 }
 
 function itemHtml(item) {
-  const name = item.contact ? `${escapeHtml(item.contact.first)} ${escapeHtml(item.contact.last)}` : (item.from || item.to || 'Unknown');
+  const nameText = item.contact ? `${escapeHtml(item.contact.first)} ${escapeHtml(item.contact.last)}` : (item.from || item.to || 'Unknown');
+  const name = item.contactId ? `<a class="item-name-link" href="/contact-detail.html?id=${item.contactId}" onclick="event.stopPropagation()">${nameText}</a>` : `<span class="item-name-link" style="cursor:default">${nameText}</span>`;
   let preview = '';
   if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
-  else if (item.itemType === 'call') preview = `${item.direction} call, ${item.duration}min — ${escapeHtml(item.notes || '')}`;
   else preview = escapeHtml(item.title || '');
   const confirmBtn = (currentTab === 'potential' && !item.contactId)
-    ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-confirm-potential="${item.id}" data-from="${escapeHtml(item.from || '')}">+ Add Contact</button>` : '';
+    ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-confirm-potential="${item.id}" data-from="${escapeHtml(item.from || '')}" onclick="event.stopPropagation()">+ Add Contact</button>` : '';
+  const clickable = (item.itemType === 'email' || item.itemType === 'sms') ? `data-open-message="${item.id}"` : '';
   return `
-    <div class="inbox-item">
+    <div class="inbox-item" ${clickable}>
       <div class="item-icon ${item.itemType}">${ICONS[item.itemType] || '•'}</div>
       <div class="item-body">
         <div class="item-name">${name}</div>
@@ -129,12 +131,42 @@ function itemHtml(item) {
   `;
 }
 
+function openMessageDetail(id) {
+  const item = currentItems.find(i => i.id === id);
+  if (!item) return;
+  const nameText = item.contact ? `${item.contact.first} ${item.contact.last}` : (item.from || item.to || 'Unknown');
+  document.getElementById('msgDetailTitle').textContent = item.subject || (item.itemType === 'sms' ? 'SMS' : 'Email');
+  const opened = (item.statusHistory || []).find(h => h.status === 'opened');
+  const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
+  const meta = [
+    `<span><strong>${item.direction === 'inbound' ? 'From' : 'To'}:</strong> ${escapeHtml(nameText)}${item.contact ? ' &lt;' + escapeHtml(item.to || item.from || '') + '&gt;' : ''}</span>`,
+    `<span><strong>When:</strong> ${fmtDate(item.at)}</span>`,
+    `<span><strong>Status:</strong> ${escapeHtml(item.status || '')}</span>`,
+  ];
+  if (item.itemType === 'email' && item.direction === 'outbound') {
+    meta.push(`<span class="msg-track-badge ${opened ? 'on' : 'off'}">${opened ? 'Opened ' + fmtDate(opened.at) : 'Not opened'}</span>`);
+    meta.push(`<span class="msg-track-badge ${clicked ? 'on' : 'off'}">${clicked ? 'Clicked ' + fmtDate(clicked.at) : 'Not clicked'}</span>`);
+  }
+  document.getElementById('msgDetailMeta').innerHTML = meta.join('');
+  const bodyEl = document.getElementById('msgDetailBody');
+  if (item.itemType === 'email') {
+    bodyEl.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    bodyEl.appendChild(iframe);
+    iframe.srcdoc = item.body || '<p style="font-family:sans-serif;color:#888">(no content stored for this message)</p>';
+  } else {
+    bodyEl.textContent = item.body || item.bodyPreview || '(no content)';
+  }
+  openModal('messageDetailModal');
+}
+
 async function loadItems() {
   const panel = document.getElementById('itemsPanel');
   panel.innerHTML = '<div class="pra-muted" style="padding:20px">Loading…</div>';
   const r = await fetch('/api/inbox?tab=' + currentTab);
   if (!r.ok) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Could not load.</div>'; return; }
   const { items } = await r.json();
+  currentItems = items;
   panel.innerHTML = items.length ? items.map(itemHtml).join('') : '<div class="pra-muted" style="padding:20px">Nothing here yet.</div>';
   document.querySelectorAll('[data-confirm-potential]').forEach(btn => btn.onclick = () => {
     document.getElementById('confirmPotentialModal').dataset.messageId = btn.dataset.confirmPotential;
@@ -143,6 +175,7 @@ async function loadItems() {
     document.getElementById('confirmLast').value = '';
     openModal('confirmPotentialModal');
   });
+  document.querySelectorAll('[data-open-message]').forEach(row => row.onclick = () => openMessageDetail(row.dataset.openMessage));
 }
 
 document.getElementById('saveConfirmBtn').onclick = async () => {
@@ -162,20 +195,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   currentTab = btn.dataset.tab;
   loadItems();
 });
-
-document.getElementById('logCallBtn').onclick = () => openModal('callModal');
-document.getElementById('saveCallBtn').onclick = async () => {
-  const body = {
-    contactId: document.getElementById('callContact').value || null,
-    direction: document.getElementById('callDirection').value,
-    duration: Number(document.getElementById('callDuration').value) || 0,
-    notes: document.getElementById('callNotes').value,
-  };
-  await fetch('/api/calls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  closeModal('callModal');
-  showToast('Call logged');
-  loadItems();
-};
 
 document.getElementById('newTaskBtn').onclick = () => openModal('taskModal');
 document.getElementById('saveTaskBtn').onclick = async () => {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Automation — CRM</title>
+<title>Email Automation — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   .ab-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
@@ -20,7 +20,8 @@
   .ab-zoom-controls span { font-size: .74rem; color: var(--pra-dim); min-width: 34px; text-align: center; }
   .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
   .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; }
-  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; }
+  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; }
+  .step-card:hover { border-color: var(--pra-blue); }
   .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
   .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
   .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
@@ -41,7 +42,7 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <a class="pra-link" href="/automations.html">&larr; Back to Automations</a>
+      <a class="pra-link" href="/automations.html">&larr; Back to Email Automations</a>
       <div class="ab-header" style="margin-top:14px">
         <input class="ab-name-input" id="autoName"/>
         <button class="active-toggle" id="activeToggle"></button>
@@ -229,14 +230,13 @@ function stepCardHtml(stepId, isLast) {
       <span>&#128073; ${pct(stats.clicked, stats.sent)} click</span>
     </div>` : '';
   return `
-    <div class="step-card">
+    <div class="step-card" data-open-step="${stepId}" style="cursor:pointer">
       <div class="step-actions">
         ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
       </div>
       <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${countLabel}</div>
       <div class="step-summary">${stepSummary(step)}</div>
       ${statsRow}
-      <div style="margin-top:8px"><button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${stepId}">Edit</button></div>
     </div>
   `;
 }
@@ -283,8 +283,11 @@ function render() {
     ${renderChainHtml(automation.startStepId, 'root')}
   `;
   document.getElementById('triggerCardBtn').onclick = openTriggerModal;
-  canvas.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => editStep(btn.dataset.edit));
-  canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = () => deleteStep(btn.dataset.delete));
+  canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {
+    if (e.target.closest('[data-delete]')) return;
+    editStep(card.dataset.openStep);
+  }));
+  canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => { e.stopPropagation(); deleteStep(btn.dataset.delete); });
   canvas.querySelectorAll('[data-path]').forEach(btn => btn.onclick = () => {
     pendingAddPath = btn.dataset.path;
     pendingAddAfter = btn.dataset.after || null;

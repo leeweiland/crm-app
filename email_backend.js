@@ -5,6 +5,7 @@ import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
+import { getSesSettings } from "./integrations_backend.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -55,14 +56,16 @@ async function loadSesSdk() {
 // instead of throwing, keeping the rest of the app (composer, footer
 // templates, campaign drafting) usable before those credentials land.
 function sesConfigured() {
-  return !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.SES_FROM_ADDRESS);
+  const s = getSesSettings();
+  return !!(s.accessKeyId && s.secretAccessKey && s.fromAddress);
 }
 async function getSesClient() {
+  const s = getSesSettings();
   if (!sesConfigured()) return null;
   await loadSesSdk();
   return new SESv2Client({
-    region: process.env.AWS_REGION || "us-west-2",
-    credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY },
+    region: s.region || "us-east-2",
+    credentials: { accessKeyId: s.accessKeyId, secretAccessKey: s.secretAccessKey },
   });
 }
 
@@ -76,9 +79,12 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   if (!footer) return "";
   const unsubscribeUrl = `${process.env.PUBLIC_BASE_URL || ""}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
   const social = (footer.socialLinks || []).map(s => `<a href="${s.url}" style="margin:0 6px;color:#888">${s.platform}</a>`).join("");
+  // footer.blocks is the current (BlockEditor) format; footer.html is a
+  // fallback for footers created before the editor conversion.
+  const content = (footer.blocks && footer.blocks.length) ? renderBlocksToHtml(footer.blocks, footer.theme) : (footer.html || "");
   return `
     <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;font-size:11px;color:#888;text-align:center">
-      ${footer.html || ""}
+      ${content}
       ${footer.physicalAddress ? `<div style="margin-top:8px">${footer.physicalAddress}</div>` : ""}
       ${social ? `<div style="margin-top:8px">${social}</div>` : ""}
       <div style="margin-top:8px"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>
@@ -91,6 +97,7 @@ function resolveFooterHtml(footerTemplateId, contactId) {
 // service-to-service HTTP layer.
 export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, contactId, sourceType, sourceId }) {
   const client = await getSesClient();
+  const ses = getSesSettings();
   const contact = contactId ? getContact(contactId) : null;
 
   if (contact?.emailOptOut) {
@@ -103,7 +110,8 @@ export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, 
 
   const logRow = logMessage({
     channel: "email", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: process.env.SES_FROM_ADDRESS || null, subject: renderedSubject,
+    to, from: ses.fromAddress || null, subject: renderedSubject,
+    body: html, // full rendered HTML, captured before link-rewriting so it shows real destinations
     bodyPreview: (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "",
     status: client ? "queued" : "failed",
   });
@@ -116,10 +124,10 @@ export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, 
 
   try {
     const cmd = new SendEmailCommand({
-      FromEmailAddress: process.env.SES_FROM_ADDRESS,
+      FromEmailAddress: ses.fromAddress,
       Destination: { ToAddresses: [to] },
       Content: { Simple: { Subject: { Data: renderedSubject }, Body: { Html: { Data: html } } } },
-      ...(process.env.SES_CONFIGURATION_SET ? { ConfigurationSetName: process.env.SES_CONFIGURATION_SET } : {}),
+      ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
     });
     const result = await client.send(cmd);
     // Store the real SES MessageId as the join key delivery/open/click
@@ -220,11 +228,11 @@ export async function handleEmailRequest(req, res, url) {
     return sendJson(res, 200, { templates: readJson(FOOTER_TEMPLATES_FILE, []) });
   }
   if (p === "/api/footer-templates" && req.method === "POST") {
-    const { name, html, unsubscribeLinkText, physicalAddress, socialLinks } = await readJsonBody(req);
+    const { name, blocks, theme, unsubscribeLinkText, physicalAddress, socialLinks } = await readJsonBody(req);
     if (!name) return sendJson(res, 400, { error: "name is required" });
     const templates = readJson(FOOTER_TEMPLATES_FILE, []);
     const template = {
-      id: randomUUID(), name, html: html || "", unsubscribeLinkText: unsubscribeLinkText || "Unsubscribe",
+      id: randomUUID(), name, blocks: blocks || [], theme: theme || {}, unsubscribeLinkText: unsubscribeLinkText || "Unsubscribe",
       physicalAddress: physicalAddress || "", socialLinks: socialLinks || [],
       isDefault: templates.length === 0, // first one created becomes the default automatically
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -240,7 +248,7 @@ export async function handleEmailRequest(req, res, url) {
     if (req.method === "PATCH") {
       if (!template) return sendJson(res, 404, { error: "Not found" });
       const body = await readJsonBody(req);
-      for (const k of ["name", "html", "unsubscribeLinkText", "physicalAddress", "socialLinks"]) if (k in body) template[k] = body[k];
+      for (const k of ["name", "blocks", "theme", "unsubscribeLinkText", "physicalAddress", "socialLinks"]) if (k in body) template[k] = body[k];
       template.updatedAt = new Date().toISOString();
       writeJson(FOOTER_TEMPLATES_FILE, templates);
       return sendJson(res, 200, { ok: true, template });

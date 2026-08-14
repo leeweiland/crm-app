@@ -8,14 +8,16 @@ export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // automation step, workflow step, manual, inbound) -- reporting rolls up
 // from this one file by filtering on sourceType/sourceId, rather than each
 // feature keeping its own duplicate counters.
-export function logMessage({ channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, bodyPreview, status }) {
+export function logMessage({ channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status }) {
   const log = readJson(MESSAGE_LOG_FILE, []);
   const row = {
     id: randomUUID(), channel, direction,
     contactId: contactId || null,
     sourceType: sourceType || "manual", sourceId: sourceId || null,
     providerMessageId: providerMessageId || null,
-    to: to || null, from: from || null, subject: subject || null, bodyPreview: bodyPreview || "",
+    to: to || null, from: from || null, subject: subject || null,
+    body: body || "", // full HTML (email) or full text (sms) -- bodyPreview stays a truncated display copy
+    bodyPreview: bodyPreview || "",
     status: status || "queued",
     statusHistory: [{ status: status || "queued", at: new Date().toISOString() }],
     sentAt: status === "sent" ? new Date().toISOString() : null,

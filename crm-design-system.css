@@ -191,7 +191,12 @@ body { margin: 0; }
 .be-link-popover { display: inline-flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
 .be-link-popover input { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 4px; padding: 3px 6px; font-size: .78rem; width: 180px; }
 .be-canvas-toprow { display: flex; justify-content: flex-end; margin-bottom: 6px; }
-.be-canvas { background: #f4f4f4; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; overflow: hidden; transition: background .15s; }
+/* Outer themed strip + inner white content card -- mirrors
+   block_editor_shared.js's actual send-time render exactly, so picking a
+   dark Email Settings background never makes block text invisible in the
+   editor (there's always a white card under it, same as the real email). */
+.be-canvas { background: #f4f4f4; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; overflow: hidden; transition: background .15s; padding: 24px 16px; }
+.be-canvas-inner { margin: 0 auto; background: #ffffff; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden; }
 .be-shell:has(.be-toolbar[style*="flex"]) .be-canvas { border-radius: 0 0 8px 8px; }
 .be-block { position: relative; border: 2px dashed transparent; cursor: pointer; }
 .be-block:hover { border-color: rgba(0,155,255,0.3); }

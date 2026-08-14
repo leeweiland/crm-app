@@ -29,6 +29,8 @@
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
         <button class="tab-btn" data-tab="footers">Email Footers</button>
         <button class="tab-btn" data-tab="webhooks">Webhook Forms</button>
+        <button class="tab-btn" data-tab="ses">SMTP / SES</button>
+        <button class="tab-btn" data-tab="twilio">Twilio</button>
         <button class="tab-btn" data-tab="import">Data Import</button>
         <button class="tab-btn" data-tab="users">Users</button>
         <button class="tab-btn" data-tab="account">My Account</button>
@@ -59,24 +61,11 @@
       </div>
 
       <div class="tab-panel" id="tab-footers">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div class="pra-panel" style="padding:22px">
-            <div class="pra-h2" style="margin-bottom:6px">Footer Templates</div>
-            <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Reusable footer/signature blocks — pick one per campaign instead of setting it every time.</div>
-            <div id="footersList"></div>
-            <button class="pra-btn" id="newFooterBtn" style="margin-top:14px">+ New Footer Template</button>
-          </div>
-          <div class="pra-panel" id="footerEditorPanel" style="padding:22px;display:none">
-            <div class="pra-h2" style="margin-bottom:14px">Edit Footer</div>
-            <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="footerName"/></div>
-            <div class="field"><label class="pra-label">HTML (signature/content)</label><textarea class="pra-textarea" id="footerHtml" rows="4"></textarea></div>
-            <div class="field"><label class="pra-label">Physical address (CAN-SPAM)</label><input class="pra-input" id="footerAddress"/></div>
-            <div class="field"><label class="pra-label">Unsubscribe link text</label><input class="pra-input" id="footerUnsubText" value="Unsubscribe"/></div>
-            <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
-              <button class="pra-btn" id="saveFooterBtn" style="flex:1">Save</button>
-              <button class="pra-btn pra-btn-ghost" id="setDefaultFooterBtn">Make Default</button>
-            </div>
-          </div>
+        <div class="pra-panel" style="padding:22px">
+          <div class="pra-h2" style="margin-bottom:6px">Footer Templates</div>
+          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Reusable footer/signature blocks, built with the same drag-and-drop editor as campaigns and automations — pick one per email instead of setting it every time.</div>
+          <div id="footersList"></div>
+          <button class="pra-btn" id="newFooterBtn" style="margin-top:14px">+ New Footer Template</button>
         </div>
       </div>
 
@@ -108,6 +97,28 @@
             <button class="pra-btn" id="saveWebhookBtn" style="width:100%;margin-top:14px">Save</button>
           </div>
         </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-ses" style="padding:22px;max-width:520px">
+        <div class="pra-h2" style="margin-bottom:6px">Amazon SES (Bulk Email)</div>
+        <div class="pra-muted" id="sesStatusMsg" style="font-size:.82rem;margin-bottom:16px">Loading...</div>
+        <div class="field"><label class="pra-label">Access Key ID</label><input class="pra-input" id="sesAccessKeyId" autocomplete="off" placeholder="AKIA..."/></div>
+        <div class="field"><label class="pra-label">Secret Access Key</label><input class="pra-input" type="password" id="sesSecretAccessKey" autocomplete="off" placeholder="••••••••"/></div>
+        <div class="field"><label class="pra-label">Region</label><input class="pra-input" id="sesRegion" placeholder="us-east-2"/></div>
+        <div class="field"><label class="pra-label">From address</label><input class="pra-input" id="sesFromAddress" placeholder="lee@pacificrimathletics.com"/></div>
+        <div class="field"><label class="pra-label">Configuration set (optional, for open/click tracking)</label><input class="pra-input" id="sesConfigurationSet"/></div>
+        <button class="pra-btn" id="saveSesBtn">Save</button>
+        <div class="pra-muted" id="sesSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-twilio" style="padding:22px;max-width:520px">
+        <div class="pra-h2" style="margin-bottom:6px">Twilio (SMS)</div>
+        <div class="pra-muted" id="twilioStatusMsg" style="font-size:.82rem;margin-bottom:16px">Loading...</div>
+        <div class="field"><label class="pra-label">Account SID</label><input class="pra-input" id="twilioAccountSid" autocomplete="off" placeholder="AC..."/></div>
+        <div class="field"><label class="pra-label">Auth Token</label><input class="pra-input" type="password" id="twilioAuthToken" autocomplete="off" placeholder="••••••••"/></div>
+        <div class="field"><label class="pra-label">From number</label><input class="pra-input" id="twilioFromNumber" placeholder="+18087513803"/></div>
+        <button class="pra-btn" id="saveTwilioBtn">Save</button>
+        <div class="pra-muted" id="twilioSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
@@ -171,8 +182,36 @@
   </div>
 </div>
 
+<!-- Footer template editor -- same cb-layout two-column shape and same
+     embedded BlockEditor as campaign-builder.html / automation-builder.html's
+     email step, so footers get the exact same drag-and-drop editing UX. -->
+<div class="modal-backdrop" id="footerModal">
+  <div class="pra-panel modal-box eb-fullscreen">
+    <div class="pra-h2" style="margin-bottom:16px">Edit Footer Template</div>
+    <div class="cb-layout">
+      <div>
+        <div id="footerEditorRoot"></div>
+      </div>
+      <div class="cb-sidebar">
+        <div class="pra-panel">
+          <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="footerName"/></div>
+          <div class="field"><label class="pra-label">Physical address (CAN-SPAM)</label><input class="pra-input" id="footerAddress"/></div>
+          <div class="field"><label class="pra-label">Unsubscribe link text</label><input class="pra-input" id="footerUnsubText" value="Unsubscribe"/></div>
+        </div>
+        <div class="pra-panel">
+          <button class="pra-btn" id="saveFooterBtn" style="width:100%;margin-bottom:8px">Save</button>
+          <button class="pra-btn pra-btn-ghost" id="setDefaultFooterBtn" style="width:100%;margin-bottom:8px">Make Default</button>
+          <button class="pra-btn pra-btn-ghost" style="width:100%" onclick="closeModal('footerModal')">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
+<script src="/block-editor-client.js"></script>
 <script>
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -286,8 +325,53 @@ document.getElementById('saveUserBtn').onclick = async () => {
   loadUsers();
 };
 
+// ── SMTP/SES + Twilio settings ──────────────────────────────────────────
+async function loadSesSettings() {
+  const r = await fetch('/api/integrations/ses');
+  if (!r.ok) return;
+  const s = await r.json();
+  document.getElementById('sesStatusMsg').textContent = s.configured ? 'Configured — sending is enabled.' : 'Not configured yet — campaign/automation sends will fail until this is filled in.';
+  document.getElementById('sesAccessKeyId').value = s.accessKeyId || '';
+  document.getElementById('sesSecretAccessKey').value = s.secretAccessKey || '';
+  document.getElementById('sesRegion').value = s.region || '';
+  document.getElementById('sesFromAddress').value = s.fromAddress || '';
+  document.getElementById('sesConfigurationSet').value = s.configurationSet || '';
+}
+document.getElementById('saveSesBtn').onclick = async () => {
+  const body = {
+    accessKeyId: document.getElementById('sesAccessKeyId').value.trim(),
+    secretAccessKey: document.getElementById('sesSecretAccessKey').value.trim(),
+    region: document.getElementById('sesRegion').value.trim(),
+    fromAddress: document.getElementById('sesFromAddress').value.trim(),
+    configurationSet: document.getElementById('sesConfigurationSet').value.trim(),
+  };
+  const r = await fetch('/api/integrations/ses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('sesSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadSesSettings();
+};
+
+async function loadTwilioSettings() {
+  const r = await fetch('/api/integrations/twilio');
+  if (!r.ok) return;
+  const t = await r.json();
+  document.getElementById('twilioStatusMsg').textContent = t.configured ? 'Configured — sending is enabled.' : 'Not configured yet — SMS sends will fail until this is filled in.';
+  document.getElementById('twilioAccountSid').value = t.accountSid || '';
+  document.getElementById('twilioAuthToken').value = t.authToken || '';
+  document.getElementById('twilioFromNumber').value = t.fromNumber || '';
+}
+document.getElementById('saveTwilioBtn').onclick = async () => {
+  const body = {
+    accountSid: document.getElementById('twilioAccountSid').value.trim(),
+    authToken: document.getElementById('twilioAuthToken').value.trim(),
+    fromNumber: document.getElementById('twilioFromNumber').value.trim(),
+  };
+  const r = await fetch('/api/integrations/twilio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('twilioSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadTwilioSettings();
+};
+
 // ── Email footer templates ──────────────────────────────────────────────
-let allFooters = [], editingFooterId = null;
+let allFooters = [], editingFooterId = null, footerEditor = null;
 async function loadFooters() {
   const r = await fetch('/api/footer-templates');
   allFooters = (await r.json()).templates;
@@ -311,11 +395,13 @@ function openFooterEditor(id) {
   const f = allFooters.find(x => x.id === id);
   if (!f) return;
   editingFooterId = id;
-  document.getElementById('footerEditorPanel').style.display = 'block';
+  document.getElementById('footerModal').classList.add('show');
   document.getElementById('footerName').value = f.name;
-  document.getElementById('footerHtml').value = f.html || '';
   document.getElementById('footerAddress').value = f.physicalAddress || '';
   document.getElementById('footerUnsubText').value = f.unsubscribeLinkText || 'Unsubscribe';
+  const state = { blocks: f.blocks || [], theme: f.theme || {} };
+  if (!footerEditor) footerEditor = BlockEditor.init(document.getElementById('footerEditorRoot'), state, () => {});
+  else footerEditor.setState(state);
 }
 document.getElementById('newFooterBtn').onclick = async () => {
   const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Footer' }) });
@@ -324,10 +410,11 @@ document.getElementById('newFooterBtn').onclick = async () => {
   if (r.ok) openFooterEditor(d.template.id);
 };
 document.getElementById('saveFooterBtn').onclick = async () => {
-  if (!editingFooterId) return;
+  if (!editingFooterId || !footerEditor) return;
+  const state = footerEditor.getState ? footerEditor.getState() : { blocks: [], theme: {} };
   const body = {
     name: document.getElementById('footerName').value.trim(),
-    html: document.getElementById('footerHtml').value,
+    blocks: state.blocks, theme: state.theme,
     physicalAddress: document.getElementById('footerAddress').value.trim(),
     unsubscribeLinkText: document.getElementById('footerUnsubText').value.trim(),
   };
@@ -515,6 +602,8 @@ loadUsers();
 loadFooters();
 loadWebhookRefs().then(loadWebhooks);
 loadImportStatus();
+loadSesSettings();
+loadTwilioSettings();
 </script>
 </body>
 </html>

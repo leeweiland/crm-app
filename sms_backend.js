@@ -4,15 +4,18 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, updateMessageById, updateMessageStatusByProviderId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
+import { getTwilioSettings } from "./integrations_backend.js";
 
 export const SMS_TEMPLATES_FILE = "crm_sms_templates.json";
 
 function twilioConfigured() {
-  return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER);
+  const t = getTwilioSettings();
+  return !!(t.accountSid && t.authToken && t.fromNumber);
 }
 function getTwilioClient() {
+  const t = getTwilioSettings();
   if (!twilioConfigured()) return null;
-  return twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  return twilio(t.accountSid, t.authToken);
 }
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
@@ -31,16 +34,17 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   if (contact?.smsOptOut) return { ok: false, reason: "opted_out" };
 
   const client = getTwilioClient();
+  const twilioSettings = getTwilioSettings();
   const logRow = logMessage({
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: process.env.TWILIO_FROM_NUMBER || null, bodyPreview: (body || "").slice(0, 140),
+    to, from: twilioSettings.fromNumber || null, body: body || "", bodyPreview: (body || "").slice(0, 140),
     status: client ? "queued" : "failed",
   });
 
   if (!client) return { ok: false, reason: "twilio_not_configured" };
 
   try {
-    const msg = await client.messages.create({ to, from: process.env.TWILIO_FROM_NUMBER, body });
+    const msg = await client.messages.create({ to, from: twilioSettings.fromNumber, body });
     updateMessageById(logRow.id, { providerMessageId: msg.sid, status: msg.status || "sent", sentAt: new Date().toISOString() });
     return { ok: true, sid: msg.sid };
   } catch (e) {
@@ -70,13 +74,14 @@ export async function handleSmsRequest(req, res, url) {
     const params = Object.fromEntries(new URLSearchParams(raw));
     const signature = req.headers["x-twilio-signature"];
     const fullUrl = (process.env.PUBLIC_BASE_URL || "") + p;
-    if (twilioConfigured() && !twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, fullUrl, params)) {
+    const twilioSettings = getTwilioSettings();
+    if (twilioConfigured() && !twilio.validateRequest(twilioSettings.authToken, signature, fullUrl, params)) {
       res.writeHead(403); res.end(); return true;
     }
     const from = params.From, body = params.Body || "";
     const contact = findContactByPhone(from);
     if (contact) {
-      logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: process.env.TWILIO_FROM_NUMBER || null, from, bodyPreview: body.slice(0, 140), status: "received" });
+      logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
       checkConversionGoal("incoming_sms", contact.id);
       if (STOP_KEYWORDS.includes(body.trim().toLowerCase())) {
         const contacts = readJson(CONTACTS_FILE, []);
@@ -86,7 +91,7 @@ export async function handleSmsRequest(req, res, url) {
     } else {
       // Message from a number with no matching contact -- still logged
       // (contactId: null) so it's visible in the Inbox, just unattributed.
-      logMessage({ channel: "sms", direction: "inbound", contactId: null, sourceType: "inbound", sourceId: null, to: process.env.TWILIO_FROM_NUMBER || null, from, bodyPreview: body.slice(0, 140), status: "received" });
+      logMessage({ channel: "sms", direction: "inbound", contactId: null, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
     }
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>"); // empty TwiML -- no auto-reply
@@ -98,7 +103,7 @@ export async function handleSmsRequest(req, res, url) {
     const params = Object.fromEntries(new URLSearchParams(raw));
     const signature = req.headers["x-twilio-signature"];
     const fullUrl = (process.env.PUBLIC_BASE_URL || "") + p;
-    if (twilioConfigured() && !twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, fullUrl, params)) {
+    if (twilioConfigured() && !twilio.validateRequest(getTwilioSettings().authToken, signature, fullUrl, params)) {
       res.writeHead(403); res.end(); return true;
     }
     const statusMap = { queued: "queued", sent: "sent", delivered: "delivered", undelivered: "failed", failed: "failed" };

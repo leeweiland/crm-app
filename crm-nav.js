@@ -4,9 +4,9 @@
   const NAV_ITEMS = [
     { href: "/inbox.html", label: "Inbox" },
     { href: "/contacts.html", label: "Contacts" },
-    { href: "/campaigns.html", label: "Campaigns" },
-    { href: "/automations.html", label: "Automations" },
-    { href: "/workflows.html", label: "Workflows" },
+    { href: "/campaigns.html", label: "Email Campaigns" },
+    { href: "/automations.html", label: "Email Automations" },
+    { href: "/workflows.html", label: "SMS Sequences" },
     { href: "/reporting.html", label: "Reporting" },
     { href: "/settings.html", label: "Settings" },
   ];
