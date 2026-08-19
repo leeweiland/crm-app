@@ -12,16 +12,16 @@ export const WF_ENROLLMENTS_FILE = "crm_workflow_enrollments.json";
 // reason (nothing wires page_visit/Facebook events yet) -- workflows also
 // support direct manual enrollment via POST /api/workflows/:id/enroll,
 // matching how Close lets you drop a lead into a workflow by hand.
-const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked"];
+const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created"];
 
 // Conversion goals actually wired to a real event source in this v1:
-// incoming_sms (sms_backend.js's inbound webhook) and lead_status_change
-// (contacts_backend.js's PATCH handler). incoming_email, incoming_call,
-// meeting_booked, and outcome_met are selectable in the UI but won't fire
-// yet -- there's no inbound-email channel, call-tracking, calendar
-// integration, or generic "outcome" concept in the app to source them
-// from. Wiring one later is just a checkConversionGoal() call at that new
-// event's source, same as the two below.
+// incoming_sms (sms_backend.js's inbound webhook), lead_status_change
+// (contacts_backend.js's PATCH handler), and meeting_booked
+// (scheduling_backend.js's booking creation). incoming_email and
+// incoming_call are selectable in the UI but won't fire yet -- there's no
+// inbound-email channel or call-tracking in the app to source them from.
+// Wiring one later is just a checkConversionGoal() call at that new event's
+// source, same as the others.
 export const CONVERSION_GOAL_TYPES = ["incoming_email", "incoming_sms", "incoming_call", "meeting_booked", "lead_status_change", "outcome_met"];
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
@@ -80,7 +80,7 @@ export function enrollContactInWorkflow(workflow, contactId) {
   writeJson(WF_ENROLLMENTS_FILE, enrollments);
 }
 
-export function fireWorkflowTrigger(type, { contactId, listId, tagId }) {
+export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
   const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && w.trigger?.type === type);
   for (const workflow of workflows) {
@@ -88,6 +88,9 @@ export function fireWorkflowTrigger(type, { contactId, listId, tagId }) {
     let matches = true;
     if (type === "list_subscribe" && cfg.listId) matches = cfg.listId === listId;
     if (type === "tag_added" && cfg.tagId) matches = cfg.tagId === tagId;
+    if (type === "page_visit" && cfg.urlContains) matches = String(path || "").includes(cfg.urlContains);
+    if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
+    if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
     if (matches) enrollContactInWorkflow(workflow, contactId);
   }
 }

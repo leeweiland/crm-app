@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Forms — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
+  .status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
+  .status-draft { background: rgba(255,255,255,0.1); color: #fff; }
+  .status-published { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="toolbar">
+        <div class="pra-h1" style="flex:1">Forms</div>
+        <button class="pra-btn" id="newFormBtn">+ New Form</button>
+      </div>
+      <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Build lead-capture forms, publish them, and every submission lands in Contacts and can trigger automations/workflows.</div>
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Status</th><th>Responses</th><th>Last Updated</th><th></th>
+          </tr></thead>
+          <tbody id="formsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+
+async function loadForms() {
+  const r = await fetch('/api/forms');
+  const body = document.getElementById('formsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Could not load forms.</td></tr>'; return; }
+  const { forms } = await r.json();
+  if (!forms.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No forms yet — click "+ New Form" to build one.</td></tr>'; return; }
+  const sorted = [...forms].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  body.innerHTML = sorted.map(f => `
+    <tr>
+      <td class="clickable" onclick="location.href='/form-builder.html?id=${f.id}'" style="cursor:pointer">${escapeHtml(f.name)}</td>
+      <td><span class="status-pill status-${f.status}">${f.status}</span></td>
+      <td>${f.responseCount}</td>
+      <td class="pra-muted">${fmtDate(f.updatedAt)}</td>
+      <td style="white-space:nowrap">
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/form-builder.html?id=${f.id}" onclick="event.stopPropagation()">Edit</a>
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${f.id}">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+  document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this form and all its responses?')) return;
+    await fetch('/api/forms/' + btn.dataset.del, { method: 'DELETE' });
+    loadForms();
+  });
+}
+
+document.getElementById('newFormBtn').onclick = async () => {
+  const r = await fetch('/api/forms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Form' }) });
+  const d = await r.json();
+  if (r.ok) location.href = '/form-builder.html?id=' + d.form.id;
+};
+
+loadForms();
+</script>
+</body>
+</html>

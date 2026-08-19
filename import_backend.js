@@ -31,7 +31,7 @@ async function fetchCloseBatch(skip, limit) {
 // duplicate), falling back to email match (catches a contact that already
 // exists from a Framer form submission or manual entry, so importing
 // doesn't create a second copy of someone already in the system).
-function upsertFromAc(acContact) {
+function upsertFromAc(acContact, defaultStatus) {
   const contacts = readJson(CONTACTS_FILE, []);
   const email = (acContact.email || "").toLowerCase();
   let contact = contacts.find(c => c.externalIds?.acContactId === acContact.id) || (email ? contacts.find(c => c.email?.toLowerCase() === email) : null);
@@ -45,7 +45,7 @@ function upsertFromAc(acContact) {
     contact = {
       id: randomUUID(), type: "contact", accountName: "",
       first: acContact.firstName || "", last: acContact.lastName || "", email, phone: acContact.phone || "",
-      status: "", tags: [], listIds: [], customFields: {}, source: "ac_import", ownerId: null,
+      status: defaultStatus || "", tags: [], listIds: [], customFields: {}, source: "ac_import", ownerId: null,
       emailOptOut: false, smsOptOut: false, externalIds: { acContactId: acContact.id, closeLeadId: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
@@ -57,7 +57,7 @@ function upsertFromAc(acContact) {
 // Close's "Lead" is company-level with a nested contacts[] array -- flatten
 // each nested person into its own CRM contact, sharing the lead's
 // accountName/status.
-function upsertFromCloseLead(lead) {
+function upsertFromCloseLead(lead, defaultStatus) {
   const contacts = readJson(CONTACTS_FILE, []);
   const nested = lead.contacts?.length ? lead.contacts : [{ name: lead.display_name, emails: [], phones: [] }];
   let count = 0;
@@ -76,7 +76,7 @@ function upsertFromCloseLead(lead) {
       contact = {
         id: randomUUID(), type: "lead", accountName: lead.display_name || "",
         first, last, email, phone,
-        status: lead.status_label || "", tags: [], listIds: [], customFields: {}, source: "close_import", ownerId: null,
+        status: lead.status_label || defaultStatus || "", tags: [], listIds: [], customFields: {}, source: "close_import", ownerId: null,
         emailOptOut: false, smsOptOut: false, externalIds: { acContactId: null, closeLeadId: lead.id },
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
@@ -103,7 +103,7 @@ export async function handleImportRequest(req, res, url) {
     return sendJson(res, 200, { jobs: readJson(IMPORT_JOBS_FILE, []) });
   }
   if (p === "/api/import/jobs" && req.method === "POST") {
-    const { source } = await readJsonBody(req);
+    const { source, batchSize, defaultStatus } = await readJsonBody(req);
     if (!["activecampaign", "close"].includes(source)) return sendJson(res, 400, { error: "source must be 'activecampaign' or 'close'" });
     const jobs = readJson(IMPORT_JOBS_FILE, []);
     // Reuse an existing not-yet-completed job for this source rather than
@@ -114,7 +114,7 @@ export async function handleImportRequest(req, res, url) {
       // one batch per click, never an unattended loop that could import
       // (and then automatically enroll into automations/workflows) a huge
       // batch of contacts unattended.
-      job = { id: randomUUID(), source, status: "idle", cursor: 0, batchSize: 50, totalImported: 0, totalSkipped: 0, totalErrors: 0, errors: [], startedAt: new Date().toISOString(), lastRunAt: null, completedAt: null };
+      job = { id: randomUUID(), source, status: "idle", cursor: 0, batchSize: batchSize || 50, defaultStatus: defaultStatus || null, totalImported: 0, totalSkipped: 0, totalErrors: 0, errors: [], startedAt: new Date().toISOString(), lastRunAt: null, completedAt: null };
       jobs.push(job);
       writeJson(IMPORT_JOBS_FILE, jobs);
     }
@@ -136,7 +136,7 @@ export async function handleImportRequest(req, res, url) {
         const result = await fetchAcBatch(job.cursor, job.batchSize);
         if (!result.ok) { job.status = "error"; job.errors.push({ externalId: null, message: result.reason }); writeJson(IMPORT_JOBS_FILE, jobs); return sendJson(res, 400, { error: result.reason }); }
         result.contacts.forEach(c => {
-          try { upsertFromAc(c); job.totalImported++; } catch (e) { job.totalErrors++; job.errors.push({ externalId: c.id, message: e.message }); }
+          try { upsertFromAc(c, job.defaultStatus); job.totalImported++; } catch (e) { job.totalErrors++; job.errors.push({ externalId: c.id, message: e.message }); }
         });
         job.cursor += result.contacts.length;
         job.status = result.contacts.length < job.batchSize ? "completed" : "idle";
@@ -144,7 +144,7 @@ export async function handleImportRequest(req, res, url) {
         const result = await fetchCloseBatch(job.cursor, job.batchSize);
         if (!result.ok) { job.status = "error"; job.errors.push({ externalId: null, message: result.reason }); writeJson(IMPORT_JOBS_FILE, jobs); return sendJson(res, 400, { error: result.reason }); }
         result.leads.forEach(lead => {
-          try { job.totalImported += upsertFromCloseLead(lead); } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
+          try { job.totalImported += upsertFromCloseLead(lead, job.defaultStatus); } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
         });
         job.cursor += result.leads.length;
         job.status = result.hasMore ? "idle" : "completed";
@@ -159,6 +159,48 @@ export async function handleImportRequest(req, res, url) {
       writeJson(IMPORT_JOBS_FILE, jobs);
       return sendJson(res, 500, { error: e.message });
     }
+  }
+
+  // Manual import -- paste/CSV, no external API. Parsing happens client-side
+  // (settings.html builds the mapped `records` array so the user sees a
+  // live preview before importing); this endpoint just upserts, matched by
+  // email the same way the AC/Close importers do.
+  if (p === "/api/import/manual" && req.method === "POST") {
+    const { records, defaultStatus } = await readJsonBody(req);
+    if (!Array.isArray(records) || !records.length) return sendJson(res, 400, { error: "No records to import" });
+    const contacts = readJson(CONTACTS_FILE, []);
+    let imported = 0, skipped = 0;
+    const errors = [];
+    records.forEach((r, i) => {
+      try {
+        const email = (r.email || "").trim().toLowerCase();
+        const phone = (r.phone || "").trim();
+        if (!email && !phone) { skipped++; return; }
+        let contact = (email && contacts.find(c => c.email?.toLowerCase() === email)) || (!email && phone && contacts.find(c => c.phone === phone));
+        if (contact) {
+          if (r.first) contact.first = r.first;
+          if (r.last) contact.last = r.last;
+          if (email) contact.email = email;
+          if (phone) contact.phone = phone;
+          if (r.status) contact.status = r.status;
+          contact.customFields = { ...contact.customFields, ...(r.customFields || {}) };
+          contact.updatedAt = new Date().toISOString();
+        } else {
+          contact = {
+            id: randomUUID(), type: "contact", accountName: "",
+            first: r.first || "", last: r.last || "", email, phone,
+            status: r.status || defaultStatus || "", tags: [], listIds: [], customFields: r.customFields || {},
+            source: "manual_import", ownerId: null, emailOptOut: false, smsOptOut: false,
+            externalIds: { acContactId: null, closeLeadId: null },
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          };
+          contacts.push(contact);
+        }
+        imported++;
+      } catch (e) { errors.push({ row: i, message: e.message }); }
+    });
+    writeJson(CONTACTS_FILE, contacts);
+    return sendJson(res, 200, { ok: true, imported, skipped, errors });
   }
 
   return false;

@@ -22,6 +22,7 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
     statusHistory: [{ status: status || "queued", at: new Date().toISOString() }],
     sentAt: status === "sent" ? new Date().toISOString() : null,
     createdAt: new Date().toISOString(),
+    inboxDone: false, // Inbox "done" checkbox state -- independent of delivery status
   };
   log.push(row);
   writeJson(MESSAGE_LOG_FILE, log);

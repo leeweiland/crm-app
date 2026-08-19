@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Form</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  body { background: var(--pra-black-soft); }
+  .pf-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .pf-card { width: 100%; max-width: 560px; padding: 36px 32px; }
+  .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }
+  .pf-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--pra-border); }
+  .pf-progress span.done { background: var(--pra-blue); }
+  .pf-field { margin-bottom: 20px; }
+  .pf-label { font-family: var(--font-primary); font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; }
+  .pf-required { color: var(--pra-blue); margin-left: 3px; }
+  .pf-help { color: var(--pra-dim); font-size: .8rem; margin-bottom: 10px; }
+  .pf-statement { font-size: .95rem; line-height: 1.5; color: var(--pra-white); }
+  .pf-choice-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--pra-border); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+  .pf-choice-row:hover { border-color: var(--pra-blue); }
+  .pf-choice-row input { accent-color: var(--pra-blue); }
+  .pf-error { color: var(--pra-red); font-size: .8rem; margin-top: 6px; min-height: 1.2em; }
+  .pf-nav { display: flex; gap: 10px; margin-top: 8px; }
+  .pf-confirm { text-align: center; padding: 20px 0; }
+  .pf-confirm .big { margin-bottom: 12px; }
+  .pf-confirm .big svg { width: 48px; height: 48px; overflow: visible; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="pf-wrap">
+    <div class="pra-panel pf-card" id="pfCard">
+      <div class="pra-muted">Loading…</div>
+    </div>
+  </div>
+</div>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+// Same two-tone (white linework + #009bff accent) icon convention as
+// chat-app/chat.html and form-builder.html.
+const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.6"/><path d="M7.5 12.5l3 3 6-6.5" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const formId = location.pathname.split('/').filter(Boolean).pop();
+let form = null, steps = [], stepIndex = 0, answers = {};
+
+function buildSteps(fields) {
+  const out = [[]];
+  for (const f of fields) {
+    if (f.type === 'page_break') { out.push([]); continue; }
+    out[out.length - 1].push(f);
+  }
+  return out.filter(s => s.length);
+}
+
+function renderProgress() {
+  if (steps.length <= 1) return '';
+  return `<div class="pf-progress">${steps.map((_, i) => `<span class="${i <= stepIndex ? 'done' : ''}"></span>`).join('')}</div>`;
+}
+
+function renderField(f) {
+  const req = f.required ? '<span class="pf-required">*</span>' : '';
+  if (f.type === 'statement') {
+    return `<div class="pf-field"><div class="pf-statement">${escapeHtml(f.label)}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}</div>`;
+  }
+  const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
+  const val = answers[f.id];
+  if (f.type === 'long_text') {
+    return `<div class="pf-field">${label}<textarea class="pra-textarea" rows="4" data-field="${f.id}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(val || '')}</textarea><div class="pf-error" id="err-${f.id}"></div></div>`;
+  }
+  if (f.type === 'dropdown') {
+    return `<div class="pf-field">${label}<select class="pra-select" data-field="${f.id}">
+      <option value="">Select…</option>
+      ${f.options.map(o => `<option value="${escapeHtml(o.label)}" ${val === o.label ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+    </select><div class="pf-error" id="err-${f.id}"></div></div>`;
+  }
+  if (f.type === 'multiple_choice') {
+    return `<div class="pf-field">${label}${f.options.map(o => `
+      <label class="pf-choice-row"><input type="radio" name="f-${f.id}" data-field="${f.id}" value="${escapeHtml(o.label)}" ${val === o.label ? 'checked' : ''}/> ${escapeHtml(o.label)}</label>
+    `).join('')}<div class="pf-error" id="err-${f.id}"></div></div>`;
+  }
+  if (f.type === 'checkboxes') {
+    const arr = Array.isArray(val) ? val : [];
+    return `<div class="pf-field">${label}${f.options.map(o => `
+      <label class="pf-choice-row"><input type="checkbox" data-field="${f.id}" value="${escapeHtml(o.label)}" ${arr.includes(o.label) ? 'checked' : ''}/> ${escapeHtml(o.label)}</label>
+    `).join('')}<div class="pf-error" id="err-${f.id}"></div></div>`;
+  }
+  const inputType = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
+  return `<div class="pf-field">${label}<input class="pra-input" type="${inputType}" data-field="${f.id}" placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(val || '')}"/><div class="pf-error" id="err-${f.id}"></div></div>`;
+}
+
+function bindStepInputs() {
+  document.querySelectorAll('[data-field]').forEach(el => {
+    const id = el.dataset.field;
+    const handler = () => {
+      if (el.type === 'checkbox') {
+        const checked = document.querySelectorAll(`[data-field="${id}"]:checked`);
+        answers[id] = Array.from(checked).map(c => c.value);
+      } else if (el.type === 'radio') {
+        answers[id] = el.value;
+      } else {
+        answers[id] = el.value;
+      }
+      updateNextVisibility();
+    };
+    el.addEventListener('input', handler);
+    el.addEventListener('change', handler);
+  });
+}
+
+// ── Conditional logic — each field can carry rules evaluated against its
+// OWN answer (Tally-style per-question logic). "hide_next" toggles whether
+// the step's Next/Submit button is even clickable; "redirect" is checked at
+// click-time and, when matched, navigates away instead of advancing. ──────
+function evalCondition(rule, value) {
+  if (rule.op === 'is_answered') return Array.isArray(value) ? value.length > 0 : !!String(value || '').trim();
+  if (rule.op === 'is_empty') return Array.isArray(value) ? value.length === 0 : !String(value || '').trim();
+  const target = rule.value;
+  if (rule.op === 'equals') return Array.isArray(value) ? value.includes(target) : String(value || '') === target;
+  if (rule.op === 'not_equals') return Array.isArray(value) ? !value.includes(target) : String(value || '') !== target;
+  if (rule.op === 'contains') return Array.isArray(value) ? value.includes(target) : String(value || '').includes(target);
+  return false;
+}
+function matchingRule(fields, action) {
+  for (const f of fields) {
+    for (const rule of f.logic || []) {
+      if (rule.action === action && evalCondition(rule, answers[f.id])) return rule;
+    }
+  }
+  return null;
+}
+function updateNextVisibility() {
+  const btn = document.getElementById('pfNext');
+  if (!btn) return;
+  const hidden = !!matchingRule(steps[stepIndex], 'hide_next');
+  btn.style.display = hidden ? 'none' : '';
+  document.getElementById('pfHiddenMsg').style.display = hidden ? 'block' : 'none';
+}
+
+function validateStep(fields) {
+  let ok = true;
+  for (const f of fields) {
+    if (f.type === 'statement' || !f.required) continue;
+    const val = answers[f.id];
+    const empty = f.type === 'checkboxes' ? !Array.isArray(val) || !val.length : val === undefined || val === null || String(val).trim() === '';
+    const errEl = document.getElementById('err-' + f.id);
+    if (empty) { if (errEl) errEl.textContent = 'This field is required.'; ok = false; }
+    else if (errEl) errEl.textContent = '';
+  }
+  return ok;
+}
+
+function renderStep() {
+  const fields = steps[stepIndex];
+  const isLast = stepIndex === steps.length - 1;
+  document.getElementById('pfCard').innerHTML = `
+    ${renderProgress()}
+    ${fields.map(renderField).join('')}
+    <div class="pf-hidden-msg pra-muted" id="pfHiddenMsg" style="display:none;font-size:.82rem;margin-bottom:8px">Complete this step to continue.</div>
+    <div class="pf-nav">
+      ${stepIndex > 0 ? `<button class="pra-btn pra-btn-ghost" id="pfBack">Back</button>` : ''}
+      <button class="pra-btn" id="pfNext" style="flex:1">${isLast ? (form.settings.submitButtonText || 'Submit') : 'Next'}</button>
+    </div>
+  `;
+  bindStepInputs();
+  updateNextVisibility();
+  if (stepIndex > 0) document.getElementById('pfBack').onclick = () => { stepIndex--; renderStep(); };
+  document.getElementById('pfNext').onclick = async () => {
+    const redirect = matchingRule(fields, 'redirect');
+    if (redirect) { location.href = redirect.redirectUrl; return; }
+    if (matchingRule(fields, 'hide_next')) return; // safety net -- button should already be hidden
+    if (!validateStep(fields)) return;
+    if (!isLast) { stepIndex++; renderStep(); return; }
+    await submit();
+  };
+}
+
+async function submit() {
+  const btn = document.getElementById('pfNext');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const r = await fetch(`/api/public/forms/${formId}/submit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers }),
+    });
+    const d = await r.json();
+    if (!r.ok) { btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit'; alert(d.error || 'Something went wrong — please try again.'); return; }
+    if (d.redirectUrl) { location.href = d.redirectUrl; return; }
+    document.getElementById('pfCard').innerHTML = `<div class="pf-confirm"><div class="big">${CHECK_ICON}</div><div>${escapeHtml(d.confirmationMessage || 'Thanks!')}</div></div>`;
+  } catch {
+    btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit';
+    alert('Network error — please try again.');
+  }
+}
+
+(async function init() {
+  const r = await fetch(`/api/public/forms/${formId}`);
+  if (!r.ok) { document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form isn\'t available.</div>'; return; }
+  form = (await r.json()).form;
+  document.title = form.name;
+  steps = buildSteps(form.fields);
+  if (!steps.length) { document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form has no fields yet.</div>'; return; }
+  renderStep();
+})();
+</script>
+</body>
+</html>

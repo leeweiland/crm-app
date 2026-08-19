@@ -12,6 +12,11 @@
   .status-scheduled { background: rgba(255,193,7,0.15); color: #ffc107; }
   .status-sending { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .status-sent { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .toolbar input { max-width: 320px; margin-right: 12px; }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--pra-white); }
+  th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
+  th.sortable.sorted .sort-arrow { opacity: 1; }
 </style>
 </head>
 <body>
@@ -21,12 +26,22 @@
     <div class="app-main">
       <div class="toolbar">
         <div class="pra-h1" style="flex:1">Email Campaigns</div>
+        <input class="pra-input" id="campaignSearch" placeholder="Search name, subject, or content..."/>
         <button class="pra-btn" id="newCampaignBtn">+ New Campaign</button>
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Status</th><th>Subject</th><th>Sent</th><th>Opened</th><th>Clicked</th><th>Last Updated</th><th></th></tr></thead>
-          <tbody id="campaignsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+          <thead><tr>
+            <th class="sortable" data-sort="name">Name</th>
+            <th class="sortable" data-sort="status">Status</th>
+            <th>Subject</th>
+            <th class="sortable" data-sort="sent">Sent</th>
+            <th class="sortable" data-sort="opened">Opened</th>
+            <th class="sortable" data-sort="clicked">Clicked</th>
+            <th class="sortable" data-sort="updatedAt">Last Updated</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="campaignsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -37,13 +52,33 @@
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
-async function loadCampaigns() {
-  const r = await fetch('/api/campaigns');
+let allCampaigns = [];
+let campaignSort = { field: 'updatedAt', dir: -1 };
+function campaignSearchText(c) {
+  const blockText = (c.blocks || []).map(b => b.html || b.text || '').join(' ');
+  return `${c.name} ${c.subject || ''} ${blockText}`.replace(/<[^>]+>/g, ' ').toLowerCase();
+}
+function renderCampaignsTable() {
+  const q = document.getElementById('campaignSearch').value.trim().toLowerCase();
+  let rows = allCampaigns.filter(c => !q || campaignSearchText(c).includes(q));
+  const { field, dir } = campaignSort;
+  rows = [...rows].sort((a, b) => {
+    let av, bv;
+    if (field === 'sent') { av = a.stats?.sent ?? 0; bv = b.stats?.sent ?? 0; }
+    else if (field === 'opened') { av = a.stats?.opened ?? 0; bv = b.stats?.opened ?? 0; }
+    else if (field === 'clicked') { av = a.stats?.clicked ?? 0; bv = b.stats?.clicked ?? 0; }
+    else if (field === 'updatedAt') { av = a.updatedAt || ''; bv = b.updatedAt || ''; }
+    else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === field);
+    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
+    if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
+  });
   const body = document.getElementById('campaignsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
-  const { campaigns } = await r.json();
-  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No campaigns yet.</td></tr>'; return; }
-  body.innerHTML = campaigns.map(c => `
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No campaigns match.</td></tr>'; return; }
+  body.innerHTML = rows.map(c => `
     <tr>
       <td class="clickable" onclick="location.href='/campaign-builder.html?id=${c.id}'" style="cursor:pointer">${escapeHtml(c.name)}</td>
       <td><span class="status-pill status-${c.status}">${c.status}</span></td>
@@ -72,6 +107,18 @@ async function loadCampaigns() {
     loadCampaigns();
   });
 }
+async function loadCampaigns() {
+  const r = await fetch('/api/campaigns');
+  if (!r.ok) { document.getElementById('campaignsBody').innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
+  allCampaigns = (await r.json()).campaigns;
+  renderCampaignsTable();
+}
+document.getElementById('campaignSearch').addEventListener('input', () => { clearTimeout(window._cst); window._cst = setTimeout(renderCampaignsTable, 200); });
+document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+  if (campaignSort.field === th.dataset.sort) campaignSort.dir *= -1;
+  else campaignSort = { field: th.dataset.sort, dir: 1 };
+  renderCampaignsTable();
+}));
 
 document.getElementById('newCampaignBtn').onclick = async () => {
   const r = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Campaign' }) });

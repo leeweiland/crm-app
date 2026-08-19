@@ -6,9 +6,12 @@
 <title>Settings — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
-  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); }
-  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
-  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
+  .settings-shell { display: flex; align-items: flex-start; gap: 24px; }
+  .settings-nav { display: flex; flex-direction: column; gap: 2px; width: 190px; flex-shrink: 0; border-right: 1px solid var(--pra-border); padding-right: 10px; }
+  .tab-btn { background: none; border: none; border-left: 2px solid transparent; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 14px; cursor: pointer; text-align: left; border-radius: 4px; }
+  .tab-btn:hover { background: rgba(255,255,255,0.04); }
+  .tab-btn.active { color: var(--pra-white); background: rgba(0,155,255,0.1); border-left-color: var(--pra-blue); }
+  .settings-content { flex: 1; min-width: 0; }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -24,17 +27,21 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Settings</div>
-      <div class="tabs">
+      <div class="settings-shell">
+      <div class="settings-nav">
         <button class="tab-btn active" data-tab="statuses">Statuses</button>
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
         <button class="tab-btn" data-tab="footers">Email Footers</button>
         <button class="tab-btn" data-tab="webhooks">Webhook Forms</button>
         <button class="tab-btn" data-tab="ses">SMTP / SES</button>
         <button class="tab-btn" data-tab="twilio">Twilio</button>
+        <button class="tab-btn" data-tab="website">Website</button>
+        <button class="tab-btn" data-tab="ads">Ads</button>
         <button class="tab-btn" data-tab="import">Data Import</button>
         <button class="tab-btn" data-tab="users">Users</button>
         <button class="tab-btn" data-tab="account">My Account</button>
       </div>
+      <div class="settings-content">
 
       <div class="tab-panel active pra-panel" id="tab-statuses" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:6px">Lead Statuses</div>
@@ -121,6 +128,47 @@
         <div class="pra-muted" id="twilioSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
+      <div class="tab-panel pra-panel" id="tab-website" style="padding:22px;max-width:600px">
+        <div class="pra-h2" style="margin-bottom:6px">CRM Logo</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shown top-left of the sidebar on every page. Uploading a logo replaces the "Pacific Rim Athletics" text wordmark.</div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <div id="logoPreviewWrap" style="width:64px;height:64px;border:1px solid var(--pra-border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--pra-panel-2);flex-shrink:0;overflow:hidden">
+            <img id="logoPreview" style="max-width:100%;max-height:100%;object-fit:contain;display:none"/>
+            <span id="logoPreviewEmpty" class="pra-muted" style="font-size:.7rem">None</span>
+          </div>
+          <div>
+            <input type="file" accept="image/*" id="logoFileInput" style="display:none"/>
+            <button class="pra-btn pra-btn-sm" id="uploadLogoBtn">Upload Logo</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="removeLogoBtn">Remove</button>
+            <div class="pra-muted" id="logoMsg" style="font-size:.76rem;margin-top:6px;min-height:1em"></div>
+          </div>
+        </div>
+        <hr style="border-color:var(--pra-border);margin:18px 0"/>
+        <div class="pra-h2" style="margin-bottom:6px">Website &amp; Page-Visit Tracking</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Lets automations and SMS workflows trigger off a contact visiting a page on your site (Framer), after they've clicked a tracked email link.</div>
+        <div class="field"><label class="pra-label">Website URL</label><input class="pra-input" id="siteWebsiteUrl" placeholder="https://pacificrimathletics.com"/></div>
+        <div class="field"><label class="pra-label">Public URL of this CRM (needed for tracking links &amp; the SES webhook)</label><input class="pra-input" id="sitePublicBaseUrl" placeholder="https://crm.pacificrimathletics.com"/></div>
+        <button class="pra-btn" id="saveSiteBtn">Save</button>
+        <div class="pra-muted" id="siteSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+        <div class="pra-label" style="margin:18px 0 8px">Embed on your site</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">Paste this into a custom code / embed block on every page (e.g. Framer's Site Settings → Custom Code → End of &lt;body&gt; tag) you want page-visit triggers to work on. The full script is inlined here (not just a &lt;script src&gt; reference) so it works even where an external script tag wouldn't load reliably.</div>
+        <textarea class="pra-input" id="trackSnippetCode" readonly rows="9" style="font-family:monospace;font-size:.76rem;white-space:pre;resize:vertical"></textarea>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="copyTrackSnippetBtn" style="margin-top:8px">Copy</button>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-ads" style="padding:22px;max-width:520px">
+        <div class="pra-h2" style="margin-bottom:6px">Ads Dashboard</div>
+        <div class="pra-muted" id="adsStatusMsg" style="font-size:.82rem;margin-bottom:16px">Loading...</div>
+        <div class="field"><label class="pra-label">Google Sheet ID</label><input class="pra-input" id="adsSheetId"/></div>
+        <div class="field-row">
+          <div class="field"><label class="pra-label">Online tab prefix</label><input class="pra-input" id="adsOnlinePrefix"/></div>
+          <div class="field"><label class="pra-label">Gym tab prefix</label><input class="pra-input" id="adsGymPrefix"/></div>
+        </div>
+        <div class="field"><label class="pra-label">Google Sheets refresh token</label><input class="pra-input" type="password" id="adsGoogleToken" autocomplete="off" placeholder="Paste token here"/></div>
+        <button class="pra-btn" id="saveAdsBtn">Save</button>
+        <div class="pra-muted" id="adsSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+      </div>
+
       <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:6px">Data Import</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:18px">Batch-imports one page at a time -- click "Run Next Batch" repeatedly (or "Run Until Done") whenever you want to pull in more. Never runs unattended in the background.</div>
@@ -129,6 +177,10 @@
             <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">ActiveCampaign</div>
             <div class="pra-muted" id="acStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
             <div id="acJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <div class="field-row" style="margin-bottom:10px">
+              <div class="field"><label class="pra-label">Batch size</label><input class="pra-input" type="number" min="1" max="500" id="acBatchSize" value="50"/></div>
+              <div class="field"><label class="pra-label">Default status</label><select class="pra-select" id="acDefaultStatus"><option value="">None</option></select></div>
+            </div>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="activecampaign">Run Next Batch</button>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="activecampaign">Run Until Done</button>
           </div>
@@ -136,8 +188,31 @@
             <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">Close</div>
             <div class="pra-muted" id="closeStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
             <div id="closeJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <div class="field-row" style="margin-bottom:10px">
+              <div class="field"><label class="pra-label">Batch size</label><input class="pra-input" type="number" min="1" max="500" id="closeBatchSize" value="50"/></div>
+              <div class="field"><label class="pra-label">Default status</label><select class="pra-select" id="closeDefaultStatus"><option value="">None</option></select></div>
+            </div>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="close">Run Next Batch</button>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="close">Run Until Done</button>
+          </div>
+        </div>
+
+        <div class="pra-h2" style="margin:24px 0 6px;font-size:1rem">Manual Import (Paste / CSV)</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Paste rows copied from a spreadsheet (or CSV), or upload a .csv file. First row must be column headers.</div>
+        <div class="pra-card" style="padding:18px">
+          <textarea class="pra-input" id="manualImportText" rows="6" placeholder="First,Last,Email,Phone,Status&#10;Jane,Doe,jane@example.com,+19075551234,APPLICATION" style="width:100%;font-family:monospace;font-size:.8rem"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input type="file" accept=".csv,text/csv" id="manualImportFile" style="display:none"/>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="manualImportFileBtn">Upload .csv</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="manualImportParseBtn">Preview</button>
+          </div>
+          <div id="manualImportMapping" style="display:none;margin-top:14px">
+            <div class="pra-label" style="margin-bottom:8px">Map each column</div>
+            <div id="manualImportMapRows"></div>
+            <div class="field" style="margin-top:10px"><label class="pra-label">Default status (for rows with no status column)</label><select class="pra-select" id="manualDefaultStatus"><option value="">None</option></select></div>
+            <div class="pra-muted" id="manualImportPreviewCount" style="font-size:.8rem;margin:8px 0"></div>
+            <button class="pra-btn" id="manualImportRunBtn">Import</button>
+            <div class="pra-muted" id="manualImportResultMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
           </div>
         </div>
       </div>
@@ -158,6 +233,8 @@
         <div class="field"><label class="pra-label">Confirm new password</label><input class="pra-input" type="password" id="confirmPassword"/></div>
         <button class="pra-btn" id="changePasswordBtn">Update Password</button>
         <div class="pra-muted" id="passwordMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+      </div>
+      </div>
       </div>
     </div>
   </div>
@@ -370,6 +447,89 @@ document.getElementById('saveTwilioBtn').onclick = async () => {
   if (r.ok) loadTwilioSettings();
 };
 
+// ── Website / tracking ───────────────────────────────────────────────────
+let siteSettingsCache = {};
+async function loadSiteSettings() {
+  const r = await fetch('/api/integrations/site');
+  if (!r.ok) return;
+  const s = await r.json();
+  siteSettingsCache = s;
+  document.getElementById('siteWebsiteUrl').value = s.websiteUrl || '';
+  document.getElementById('sitePublicBaseUrl').value = s.publicBaseUrl || '';
+  const logoImg = document.getElementById('logoPreview'), logoEmpty = document.getElementById('logoPreviewEmpty');
+  if (s.logoUrl) { logoImg.src = s.logoUrl; logoImg.style.display = 'block'; logoEmpty.style.display = 'none'; }
+  else { logoImg.style.display = 'none'; logoEmpty.style.display = 'block'; }
+  // Inline the real, current /track.js source (not just a <script src> tag
+  // pointing back at this CRM) -- some embed hosts don't reliably load a
+  // cross-origin external script, and this way the pasted code is exactly
+  // what actually runs, resolved against whatever Public URL is set above.
+  const trackJsRes = await fetch('/track.js');
+  const trackJsCode = trackJsRes.ok ? await trackJsRes.text() : '';
+  document.getElementById('trackSnippetCode').value = '<scr' + 'ipt>\n' + trackJsCode + '\n</scr' + 'ipt>';
+}
+document.getElementById('uploadLogoBtn').onclick = () => document.getElementById('logoFileInput').click();
+document.getElementById('logoFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const msg = document.getElementById('logoMsg');
+  msg.textContent = 'Uploading…';
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  const upRes = await fetch('/api/uploads/image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+  const upData = await upRes.json();
+  if (!upRes.ok) { msg.textContent = upData.error || 'Upload failed.'; return; }
+  const saveRes = await fetch('/api/integrations/site', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ logoUrl: upData.url }) });
+  msg.textContent = saveRes.ok ? 'Logo updated.' : 'Uploaded, but could not save.';
+  if (saveRes.ok) loadSiteSettings();
+  e.target.value = '';
+});
+document.getElementById('removeLogoBtn').onclick = async () => {
+  const r = await fetch('/api/integrations/site', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ logoUrl: '' }) });
+  document.getElementById('logoMsg').textContent = r.ok ? 'Logo removed.' : 'Could not remove.';
+  if (r.ok) loadSiteSettings();
+};
+document.getElementById('saveSiteBtn').onclick = async () => {
+  const body = {
+    websiteUrl: document.getElementById('siteWebsiteUrl').value.trim(),
+    publicBaseUrl: document.getElementById('sitePublicBaseUrl').value.trim(),
+  };
+  const r = await fetch('/api/integrations/site', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('siteSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadSiteSettings();
+};
+document.getElementById('copyTrackSnippetBtn').onclick = () => {
+  document.getElementById('trackSnippetCode').select();
+  document.execCommand('copy');
+  showToast('Copied');
+};
+
+// ── Ads dashboard settings ───────────────────────────────────────────────
+async function loadAdsSettings() {
+  const r = await fetch('/api/ads/config-status');
+  if (!r.ok) return;
+  const a = await r.json();
+  document.getElementById('adsStatusMsg').textContent = a.configured ? 'Connected — Reporting > Ads will show live data.' : 'Not connected yet — paste the Google Sheets refresh token below.';
+  document.getElementById('adsSheetId').value = a.sheetId || '';
+  document.getElementById('adsOnlinePrefix').value = a.onlinePrefix || '';
+  document.getElementById('adsGymPrefix').value = a.gymPrefix || '';
+  document.getElementById('adsGoogleToken').value = a.googleRefreshToken || '';
+}
+document.getElementById('saveAdsBtn').onclick = async () => {
+  const body = {
+    sheetId: document.getElementById('adsSheetId').value.trim(),
+    onlinePrefix: document.getElementById('adsOnlinePrefix').value.trim(),
+    gymPrefix: document.getElementById('adsGymPrefix').value.trim(),
+    googleRefreshToken: document.getElementById('adsGoogleToken').value.trim(),
+  };
+  const r = await fetch('/api/ads/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('adsSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadAdsSettings();
+};
+
 // ── Email footer templates ──────────────────────────────────────────────
 let allFooters = [], editingFooterId = null, footerEditor = null;
 async function loadFooters() {
@@ -489,7 +649,7 @@ function openWebhookEditor(id) {
   editingWebhookId = id;
   document.getElementById('webhookEditorPanel').style.display = 'block';
   document.getElementById('webhookName').value = w.name;
-  document.getElementById('webhookUrl').value = location.origin + '/api/webhooks/framer/' + w.webhookToken;
+  document.getElementById('webhookUrl').value = (siteSettingsCache.publicBaseUrl || location.origin) + '/api/webhooks/framer/' + w.webhookToken;
   const rowsWrap = document.getElementById('fieldMapRows');
   rowsWrap.innerHTML = '';
   Object.entries(w.fieldMap || {}).forEach(([label, target]) => {
@@ -539,6 +699,10 @@ async function loadImportStatus() {
   document.querySelectorAll('[data-import-run]').forEach(btn => btn.disabled = (btn.dataset.importRun === 'activecampaign' ? !activecampaign : !close));
   document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.disabled = (btn.dataset.importRunUntilDone === 'activecampaign' ? !activecampaign : !close));
   await refreshImportJobStats();
+  const statusesRes = await fetch('/api/statuses');
+  const { statuses } = await statusesRes.json();
+  const opts = '<option value="">None</option>' + statuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
+  ['acDefaultStatus', 'closeDefaultStatus', 'manualDefaultStatus'].forEach(id => document.getElementById(id).innerHTML = opts);
 }
 async function refreshImportJobStats() {
   const r = await fetch('/api/import/jobs');
@@ -551,7 +715,9 @@ async function refreshImportJobStats() {
   });
 }
 async function ensureImportJob(source) {
-  const r = await fetch('/api/import/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }) });
+  const batchSize = Number(document.getElementById(source === 'activecampaign' ? 'acBatchSize' : 'closeBatchSize').value) || 50;
+  const defaultStatus = document.getElementById(source === 'activecampaign' ? 'acDefaultStatus' : 'closeDefaultStatus').value || null;
+  const r = await fetch('/api/import/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, batchSize, defaultStatus }) });
   const d = await r.json();
   return d.job;
 }
@@ -579,6 +745,65 @@ document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.onc
   showToast(done ? 'Import complete' : 'Stopped');
 });
 
+// ── Manual Import (paste / CSV) ─────────────────────────────────────────
+let manualImportRows = []; // parsed data rows (excludes header)
+function parseDelimited(text) {
+  const delim = text.includes('\t') ? '\t' : ',';
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  return lines.map(line => line.split(delim).map(cell => cell.trim().replace(/^"|"$/g, '')));
+}
+const MANUAL_TARGETS = [
+  { value: '', label: "Don't import" }, { value: 'first', label: 'First name' }, { value: 'last', label: 'Last name' },
+  { value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' }, { value: 'status', label: 'Status' },
+];
+document.getElementById('manualImportFileBtn').onclick = () => document.getElementById('manualImportFile').click();
+document.getElementById('manualImportFile').addEventListener('change', () => {
+  const file = document.getElementById('manualImportFile').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { document.getElementById('manualImportText').value = reader.result; };
+  reader.readAsText(file);
+});
+document.getElementById('manualImportParseBtn').onclick = () => {
+  const text = document.getElementById('manualImportText').value;
+  const rows = parseDelimited(text);
+  if (rows.length < 2) { showToast('Paste a header row plus at least one data row', true); return; }
+  const headers = rows[0];
+  manualImportRows = rows.slice(1);
+  const guess = (h) => {
+    const hl = h.toLowerCase();
+    if (hl.includes('first')) return 'first';
+    if (hl.includes('last')) return 'last';
+    if (hl.includes('email')) return 'email';
+    if (hl.includes('phone')) return 'phone';
+    if (hl.includes('status')) return 'status';
+    return '';
+  };
+  document.getElementById('manualImportMapRows').innerHTML = headers.map((h, i) => `
+    <div class="field-row" style="margin-bottom:8px" data-manual-map-row data-col="${i}">
+      <input class="pra-input" value="${escapeHtml(h)}" readonly/>
+      <select class="pra-select" data-manual-map-target>${MANUAL_TARGETS.map(t => `<option value="${t.value}" ${guess(h) === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}</select>
+    </div>
+  `).join('');
+  document.getElementById('manualImportPreviewCount').textContent = `${manualImportRows.length} rows detected.`;
+  document.getElementById('manualImportMapping').style.display = 'block';
+};
+document.getElementById('manualImportRunBtn').onclick = async () => {
+  const mapRows = [...document.querySelectorAll('[data-manual-map-row]')].map(el => ({ col: Number(el.dataset.col), target: el.querySelector('[data-manual-map-target]').value }));
+  const records = manualImportRows.map(row => {
+    const rec = {};
+    mapRows.forEach(({ col, target }) => { if (target && row[col] !== undefined) rec[target] = row[col]; });
+    return rec;
+  });
+  const defaultStatus = document.getElementById('manualDefaultStatus').value || null;
+  const r = await fetch('/api/import/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records, defaultStatus }) });
+  const d = await r.json().catch(() => ({}));
+  const msg = document.getElementById('manualImportResultMsg');
+  if (!r.ok) { msg.textContent = d.error || 'Import failed.'; return; }
+  msg.textContent = `Imported ${d.imported}, skipped ${d.skipped} (no email/phone)${d.errors?.length ? `, ${d.errors.length} errors` : ''}.`;
+  showToast('Import complete');
+};
+
 // ── My Account ───────────────────────────────────────────────────────────
 document.getElementById('changePasswordBtn').onclick = async () => {
   const currentPassword = document.getElementById('curPassword').value;
@@ -604,6 +829,8 @@ loadWebhookRefs().then(loadWebhooks);
 loadImportStatus();
 loadSesSettings();
 loadTwilioSettings();
+loadSiteSettings();
+loadAdsSettings();
 </script>
 </body>
 </html>

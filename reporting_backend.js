@@ -33,6 +33,50 @@ function smsStatsFromMessages(messages) {
   return stats;
 }
 
+// Day-bucketed counts for the Email/SMS UX dashboards -- same source rows
+// as everything else here (crm_message_log.json), just grouped by
+// createdAt's date instead of aggregated into one lifetime total, so the
+// dashboards can chart trend over the selected date range.
+function emailDailyBreakdown(messages, startMs, endMs) {
+  const byDate = {};
+  for (const m of messages) {
+    const t = new Date(m.createdAt).getTime();
+    if (t < startMs || t > endMs) continue;
+    const day = m.createdAt.slice(0, 10);
+    const c = byDate[day] || (byDate[day] = { sent: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 });
+    if (["sent", "delivered", "opened", "clicked"].includes(m.status)) c.sent++;
+    if (["opened", "clicked"].includes(m.status)) c.opened++;
+    if (m.status === "clicked") c.clicked++;
+    if (m.status === "bounced") c.bounced++;
+    if (m.status === "failed") c.failed++;
+  }
+  return Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, counts]) => ({ date, ...counts }));
+}
+function smsDailyBreakdown(messages, startMs, endMs) {
+  const byDate = {};
+  for (const m of messages) {
+    const t = new Date(m.createdAt).getTime();
+    if (t < startMs || t > endMs) continue;
+    const day = m.createdAt.slice(0, 10);
+    const c = byDate[day] || (byDate[day] = { sent: 0, delivered: 0, received: 0, failed: 0 });
+    if (m.direction === "inbound") { c.received++; continue; }
+    if (["queued", "sent", "delivered"].includes(m.status)) c.sent++;
+    if (m.status === "delivered") c.delivered++;
+    if (m.status === "failed") c.failed++;
+  }
+  return Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, counts]) => ({ date, ...counts }));
+}
+
+// Shared with ads_backend.js's period presets on the frontend -- the
+// frontend resolves a period to concrete start/end dates and passes them
+// here directly, so this endpoint just needs a plain date range, not the
+// preset logic itself.
+function parseRangeParams(url) {
+  const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
+  const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  return { startMs: new Date(startStr + "T00:00:00Z").getTime(), endMs: new Date(endStr + "T23:59:59Z").getTime() };
+}
+
 export async function handleReportingRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/reporting")) return false;
@@ -54,6 +98,19 @@ export async function handleReportingRequest(req, res, url) {
       automations: { total: automations.length, active: automations.filter(a => a.active).length, currentlyEnrolled: automationEnrollments.filter(e => e.status === "active").length },
       workflows: { total: workflows.length, active: workflows.filter(w => w.active).length, currentlyEnrolled: workflowEnrollments.filter(e => e.status === "active").length },
     });
+  }
+
+  if (p === "/api/reporting/email-daily" && req.method === "GET") {
+    const { startMs, endMs } = parseRangeParams(url);
+    const inRange = readJson(MESSAGE_LOG_FILE, []).filter(m => m.channel === "email" && m.direction === "outbound");
+    const totals = inRange.filter(m => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; });
+    return sendJson(res, 200, { days: emailDailyBreakdown(inRange, startMs, endMs), totals: statsFromMessages(totals) });
+  }
+  if (p === "/api/reporting/sms-daily" && req.method === "GET") {
+    const { startMs, endMs } = parseRangeParams(url);
+    const inRange = readJson(MESSAGE_LOG_FILE, []).filter(m => m.channel === "sms");
+    const totals = inRange.filter(m => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; });
+    return sendJson(res, 200, { days: smsDailyBreakdown(inRange, startMs, endMs), totals: smsStatsFromMessages(totals) });
   }
 
   const campaignMatch = p.match(/^\/api\/reporting\/campaigns\/([^/]+)$/);

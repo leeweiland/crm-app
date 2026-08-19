@@ -9,9 +9,13 @@ export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
 
 // "page_visit" fires from tracking_backend.js's /api/track/pageview (the
 // crm_cid cookie set on a tracked email-link click identifies the browser).
+// "form_submitted" fires from forms_backend.js once a public form submission
+// has been matched/upserted to a contact.
+// "booking_created" fires from scheduling_backend.js once a public booking
+// has been matched/upserted to a contact -- same shape as form_submitted.
 // "add_to_facebook_audience" degrades gracefully -- see facebook_backend.js
 // -- same "not configured yet" pattern as SES/Twilio.
-export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit"];
+export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created"];
 export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation"];
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
@@ -32,11 +36,30 @@ function completeEnrollment(enrollment) {
   saveEnrollment(enrollment);
 }
 
+// Goal: when a contact hits the automation's defined goal (currently just
+// "their status changed to X"), pull them straight to completed regardless
+// of which step they're on -- mirrors workflows_backend.js's
+// checkConversionGoal, called from the same contacts_backend.js status-PATCH
+// hook. A blank goal.status means "any status change counts."
+export function checkAutomationGoal(trigger, contactId, statusValue) {
+  if (!contactId || trigger !== "lead_status_change") return;
+  const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && a.goal?.trigger === "lead_status_change" && (!a.goal.status || a.goal.status === statusValue));
+  if (!automations.length) return;
+  const enrollments = readJson(ENROLLMENTS_FILE, []);
+  let changed = false;
+  automations.forEach(a => {
+    enrollments.filter(e => e.automationId === a.id && e.contactId === contactId && e.status === "active").forEach(e => {
+      e.status = "goal_met"; e.goalMetAt = new Date().toISOString(); changed = true;
+    });
+  });
+  if (changed) writeJson(ENROLLMENTS_FILE, enrollments);
+}
+
 // ── Trigger firing — called from contacts_backend.js (list/tag changes)
 // and email_backend.js (SES open/click webhook + click-tracking redirect).
 // This is the ONE place any future event source (Framer webhook, Twilio
 // inbound SMS) needs to call into to enroll contacts. ─────────────────
-export function fireTrigger(type, { contactId, listId, tagId, path }) {
+export function fireTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
   const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && a.trigger?.type === type);
   for (const automation of automations) {
@@ -45,6 +68,8 @@ export function fireTrigger(type, { contactId, listId, tagId, path }) {
     if (type === "list_subscribe" && cfg.listId) matches = cfg.listId === listId;
     if (type === "tag_added" && cfg.tagId) matches = cfg.tagId === tagId;
     if (type === "page_visit" && cfg.urlContains) matches = String(path || "").includes(cfg.urlContains);
+    if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
+    if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
     // email_opened / email_clicked: any tracked email counts for v1 -- no
     // per-campaign trigger scoping yet.
     if (matches) enrollContact(automation, contactId);
@@ -223,7 +248,7 @@ export async function handleAutomationsRequest(req, res, url) {
       automation.versions = automation.versions || [];
       automation.versions.push({ versionId: randomUUID(), savedAt: new Date().toISOString(), savedBy: me.id, snapshot: { trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId } });
       if (automation.versions.length > 20) automation.versions = automation.versions.slice(-20);
-      for (const k of ["name", "trigger", "steps", "startStepId"]) if (k in body) automation[k] = body[k];
+      for (const k of ["name", "trigger", "steps", "startStepId", "goal"]) if (k in body) automation[k] = body[k];
       automation.updatedAt = new Date().toISOString();
       writeJson(AUTOMATIONS_FILE, automations);
       return sendJson(res, 200, { ok: true, automation });

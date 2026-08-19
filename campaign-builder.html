@@ -14,6 +14,8 @@
   .chip-multiselect { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .chip-option { font-size: .74rem; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--pra-border); color: var(--pra-dim); cursor: pointer; }
   .chip-option.on { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-blue); }
+  .time-picker-row { display: flex; gap: 6px; margin-top: 6px; }
+  .time-picker-row select { flex: 1; min-width: 0; }
 </style>
 </head>
 <body>
@@ -63,7 +65,12 @@
             <button class="pra-btn pra-btn-ghost" id="saveDraftBtn" style="width:100%;margin-bottom:8px">Save Draft</button>
             <div class="field" style="margin-bottom:8px">
               <label class="pra-label">Schedule for later (optional)</label>
-              <input class="pra-input" type="datetime-local" id="scheduleInput"/>
+              <input class="pra-input" type="date" id="scheduleDate"/>
+              <div class="time-picker-row">
+                <select class="pra-select" id="scheduleHour"></select>
+                <select class="pra-select" id="scheduleMinute"></select>
+                <select class="pra-select" id="scheduleAmPm"><option value="AM">AM</option><option value="PM">PM</option></select>
+              </div>
             </div>
             <button class="pra-btn pra-btn-outline" id="scheduleBtn" style="width:100%;margin-bottom:8px">Schedule</button>
             <button class="pra-btn" id="sendNowBtn" style="width:100%">Send Now</button>
@@ -162,11 +169,28 @@ document.getElementById('sendNowBtn').onclick = async () => {
   loadCampaign();
 };
 
+(function populateTimePicker() {
+  const hourSel = document.getElementById('scheduleHour');
+  hourSel.innerHTML = Array.from({ length: 12 }, (_, i) => i + 1).map(h => `<option value="${h}">${h}</option>`).join('');
+  const minuteSel = document.getElementById('scheduleMinute');
+  minuteSel.innerHTML = Array.from({ length: 12 }, (_, i) => i * 5).map(m => `<option value="${m}">${String(m).padStart(2, '0')}</option>`).join('');
+})();
+function readScheduledAt() {
+  const dateVal = document.getElementById('scheduleDate').value;
+  if (!dateVal) return null;
+  let hour = Number(document.getElementById('scheduleHour').value);
+  const minute = Number(document.getElementById('scheduleMinute').value);
+  const ampm = document.getElementById('scheduleAmPm').value;
+  if (ampm === 'PM' && hour !== 12) hour += 12;
+  if (ampm === 'AM' && hour === 12) hour = 0;
+  const [y, m, d] = dateVal.split('-').map(Number);
+  return new Date(y, m - 1, d, hour, minute);
+}
 document.getElementById('scheduleBtn').onclick = async () => {
-  const val = document.getElementById('scheduleInput').value;
-  if (!val) { showToast('Pick a date/time first', true); return; }
+  const dt = readScheduledAt();
+  if (!dt) { showToast('Pick a date first', true); return; }
   await saveCampaign();
-  const r = await fetch(`/api/campaigns/${campaign.id}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scheduledAt: new Date(val).toISOString() }) });
+  const r = await fetch(`/api/campaigns/${campaign.id}/schedule`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scheduledAt: dt.toISOString() }) });
   const d = await r.json();
   if (!r.ok) { showToast(d.error || 'Could not schedule', true); return; }
   showToast('Scheduled');

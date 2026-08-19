@@ -82,6 +82,7 @@ body { margin: 0; }
   border-radius: 8px;
   padding: 10px 12px;
   width: 100%;
+  box-sizing: border-box;
   outline: none;
   transition: border-color .15s, box-shadow .15s;
 }
@@ -131,8 +132,10 @@ body { margin: 0; }
   border-right: 1px solid var(--pra-border);
   display: flex; flex-direction: column; padding: 18px 12px;
   position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
 .app-sidebar-logo { font-family: var(--font-secondary); font-size: .95rem; padding: 6px 10px 18px; color: var(--pra-white); }
+.app-sidebar-logo-img { display: block; max-width: 100%; max-height: 44px; object-fit: contain; }
 .app-nav-link {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px; border-radius: 8px; color: var(--pra-dim);
@@ -154,8 +157,15 @@ body { margin: 0; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
 .data-table tr.clickable { cursor: pointer; }
 
-/* ── Modal ── */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; box-sizing: border-box; }
+/* ── Modal ──
+   Every modal-backdrop is a direct child of <body>, not .pra-root (they're
+   appended after .pra-root closes in every page's markup) -- so without an
+   explicit color/font here they fall back to the browser default (black
+   text, serif), invisible against the dark panel background underneath.
+   This is the actual cause of the recurring "black text" reports; setting
+   it once here fixes every modal in the app without touching each page's
+   HTML structure. */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; box-sizing: border-box; font-family: var(--font-primary); font-weight: 700; color: var(--pra-white); }
 .modal-backdrop.show { display: flex; }
 .modal-box { max-width: 480px; width: 100%; max-height: 86vh; overflow-y: auto; padding: 24px; }
 .modal-box.eb-fullscreen { max-width: 1280px; width: 95vw; max-height: 92vh; }
@@ -173,7 +183,7 @@ body { margin: 0; }
 
 .field { margin-bottom: 14px; }
 .field-row { display: flex; gap: 10px; }
-.field-row .field { flex: 1; }
+.field-row .field { flex: 1; min-width: 0; }
 
 /* Toggleable chip picker -- lists/tags selection in the campaign builder,
    automation/workflow trigger targets, webhook-form default lists/tags. */
@@ -184,13 +194,17 @@ body { margin: 0; }
 /* ── Email block editor (block-editor-client.js) ── */
 .be-shell { display: grid; grid-template-columns: 1fr 260px; gap: 16px; align-items: start; }
 .be-canvas-wrap { min-width: 0; }
+.be-side-panel { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 20px; }
+.be-palette-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 14px; }
+.be-palette-panel .be-add-row { margin-top: 0; }
 .be-toolbar { display: none; gap: 6px; align-items: center; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px 8px 0 0; padding: 8px 10px; flex-wrap: wrap; }
 .be-toolbar button { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 4px 9px; cursor: pointer; font-size: .8rem; }
 .be-toolbar button:hover { border-color: var(--pra-blue); }
 .be-toolbar select, .be-toolbar input[type="color"] { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 3px 6px; font-size: .78rem; }
+.be-toolbar select option { background: var(--pra-panel); color: var(--pra-white); }
 .be-link-popover { display: inline-flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
 .be-link-popover input { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 4px; padding: 3px 6px; font-size: .78rem; width: 180px; }
-.be-canvas-toprow { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.be-canvas-toprow { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 6px; }
 /* Outer themed strip + inner white content card -- mirrors
    block_editor_shared.js's actual send-time render exactly, so picking a
    dark Email Settings background never makes block text invisible in the
@@ -211,24 +225,41 @@ body { margin: 0; }
 .be-block-body { color: #111; }
 .be-block-body img { max-width: 100%; }
 .be-add-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
-.be-dropzone { height: 8px; margin: -4px 0; position: relative; z-index: 1; transition: height .12s, background .12s, border-color .12s; border-top: 2px dashed transparent; }
-.be-canvas.dragging .be-dropzone { border-top-color: rgba(0,155,255,0.35); }
-.be-dropzone.drag-over { height: 34px; background: rgba(0,155,255,0.18); border: 1px dashed var(--pra-blue); border-radius: 4px; margin: 4px 0; }
+/* Fixed height always -- never changes on hover/drag-over, so hovering
+   never reflows sibling blocks and shoves the target out from under the
+   cursor (that was the cause of the "bounces around" drag jank). Only
+   background/border change to signal hover state. */
+.be-dropzone { height: 18px; margin: -9px 0; position: relative; z-index: 1; border-radius: 4px; transition: background .1s, border-color .1s; border: 1px dashed transparent; box-sizing: border-box; }
+.be-canvas.dragging .be-dropzone { border-color: rgba(0,155,255,0.35); }
+.be-dropzone:hover:not(.drag-over) { background: rgba(255,255,255,0.04); }
+.be-dropzone.drag-over { background: rgba(0,155,255,0.18); border-color: var(--pra-blue); }
 .be-dropzone-empty { height: auto; padding: 30px; text-align: center; color: var(--pra-dim); font-size: .85rem; border: 2px dashed var(--pra-border); border-radius: 8px; margin: 10px; }
 .be-dropzone-empty.drag-over { border-color: var(--pra-blue); color: var(--pra-blue); background: rgba(0,155,255,0.08); }
 /* Hover-reveal insert buttons on each dropzone -- click-to-insert-at-position,
    matching AC's "+" affordance, as an alternative to drag-and-drop. */
 .be-dropzone-add { display: flex; gap: 4px; justify-content: center; align-items: center; opacity: 0; transition: opacity .12s; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); white-space: nowrap; }
-.be-dropzone:hover:not(.drag-over) { height: 24px; }
 .be-dropzone:hover:not(.drag-over) .be-dropzone-add { opacity: 1; }
 .be-canvas.dragging .be-dropzone-add { display: none; }
 .be-dropzone-add button { width: 20px; height: 20px; border-radius: 50%; background: var(--pra-blue); color: #fff; border: 2px solid var(--pra-panel-bg, #fff); font-size: .62rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
 .be-dropzone-add button:hover { background: #0086e0; }
 .be-palette-item { cursor: grab; }
 .be-palette-item:active { cursor: grabbing; }
-.be-style-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; position: sticky; top: 20px; }
+.be-style-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; }
 
 .pra-root ::-webkit-scrollbar { width: 8px; height: 8px; }
 .pra-root ::-webkit-scrollbar-track { background: transparent; }
 .pra-root ::-webkit-scrollbar-thumb { background: #2a2a33; border-radius: 8px; }
 .pra-root ::-webkit-scrollbar-thumb:hover { background: #3a3a45; }
+
+/* Below this width, stack the whole campaign creator vertically in the
+   requested order: visual editor (be-canvas-wrap) -> elements palette
+   (be-palette-panel) -> element editor (be-style-panel) -> campaign
+   settings (cb-sidebar). be-shell's own DOM order already puts the palette
+   before the style panel, so collapsing both grids to a single column
+   produces that order for free. Placed at the end of the file so it wins
+   the cascade over the unconditional base rules above regardless of source
+   order within those rules. */
+@media (max-width: 900px) {
+  .cb-layout, .be-shell { grid-template-columns: 1fr; }
+  .be-side-panel { position: static; }
+}

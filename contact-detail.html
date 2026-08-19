@@ -20,6 +20,9 @@
   .activity-body { flex: 1; min-width: 0; }
   .activity-preview { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; }
   .activity-time { font-size: .72rem; color: var(--pra-dim); white-space: nowrap; }
+  .contact-header { display: flex; align-items: center; gap: 12px; margin: 10px 0 20px; }
+  .status-pill-select { font-family: var(--font-primary); font-weight: 700; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-blue); background: var(--pra-blue-dim); border: none; border-radius: 12px; padding: 5px 12px; cursor: pointer; }
+  .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
 </style>
 </head>
 <body>
@@ -28,7 +31,10 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <a class="pra-link" href="/contacts.html">&larr; Back to Contacts</a>
-      <div class="pra-h1" id="contactName" style="margin:10px 0 20px">Loading…</div>
+      <div class="contact-header">
+        <div class="pra-h1" id="contactName">Loading…</div>
+        <select class="status-pill-select" id="fStatus"></select>
+      </div>
 
       <div class="detail-grid">
         <div>
@@ -43,8 +49,16 @@
               <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="fEmail"/></div>
               <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="fPhone"/></div>
             </div>
-            <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="fStatus"></select></div>
-            <div class="field-row" style="margin:14px 0">
+
+            <div class="sub-section-label">Tags</div>
+            <div id="tagsWrap"></div>
+            <select class="pra-select" id="addTagSelect" style="margin-top:8px"><option value="">+ Add a tag...</option></select>
+
+            <div class="sub-section-label">Lists</div>
+            <div id="listsWrap"></div>
+            <select class="pra-select" id="addListSelect" style="margin-top:8px"><option value="">+ Add to a list...</option></select>
+
+            <div class="field-row" style="margin:16px 0 0">
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fSmsOptOut"/> SMS opt-out</label>
             </div>
@@ -52,23 +66,12 @@
             <button class="pra-btn" id="saveBtn" style="margin-top:10px">Save</button>
             <button class="pra-btn pra-btn-danger" id="deleteBtn" style="margin-top:10px;margin-left:10px">Delete Contact</button>
           </div>
-
-          <div class="pra-panel" style="padding:22px">
-            <div class="pra-h2" style="margin-bottom:12px">Activity</div>
-            <div id="activityTimeline"></div>
-          </div>
         </div>
 
         <div>
-          <div class="pra-panel" style="padding:18px;margin-bottom:16px">
-            <div class="pra-h2" style="margin-bottom:12px">Tags</div>
-            <div id="tagsWrap"></div>
-            <select class="pra-select" id="addTagSelect" style="margin-top:8px"><option value="">+ Add a tag...</option></select>
-          </div>
-          <div class="pra-panel" style="padding:18px">
-            <div class="pra-h2" style="margin-bottom:12px">Lists</div>
-            <div id="listsWrap"></div>
-            <select class="pra-select" id="addListSelect" style="margin-top:8px"><option value="">+ Add to a list...</option></select>
+          <div class="pra-panel" style="padding:22px">
+            <div class="pra-h2" style="margin-bottom:12px">Activity</div>
+            <div id="activityTimeline"></div>
           </div>
         </div>
       </div>
@@ -201,7 +204,7 @@ document.getElementById('deleteBtn').onclick = async () => {
   loadActivity();
 })();
 
-const ACTIVITY_ICONS = { email: '✉', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
+const ACTIVITY_ICONS = { email: '📧', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
 function fmtDateTime(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 async function loadActivity() {
   const wrap = document.getElementById('activityTimeline');

@@ -9,22 +9,33 @@
   .wf-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
   .wf-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
   .wf-name-input:focus { border-bottom-color: var(--pra-blue); }
-  .active-toggle { width: 38px; height: 20px; border-radius: 12px; background: var(--pra-border); position: relative; cursor: pointer; display: inline-block; border: none; }
-  .active-toggle.on { background: var(--pra-blue); }
-  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
-  .active-toggle.on::after { transform: translateX(18px); }
-  .tabs { display: flex; gap: 6px; margin: 16px 0; border-bottom: 1px solid var(--pra-border); }
-  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .84rem; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
-  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
-  .wf-step { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--pra-border); cursor: grab; }
-  .wf-step:last-child { border-bottom: none; }
-  .wf-step .day-badge { font-family: var(--font-secondary); font-size: .68rem; color: var(--pra-blue); background: var(--pra-blue-dim); padding: 3px 8px; border-radius: 8px; white-space: nowrap; }
-  .wf-step .step-info { flex: 1; }
+  .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .active-toggle.on { background: var(--pra-green); }
+  .active-toggle.on::after { left: 20px; }
+  .wf-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 16px; }
+  .wf-stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 12px; margin-bottom: 18px; }
+  .wf-submenu { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); flex-wrap: wrap; }
+  .wf-submenu button { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .84rem; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .wf-submenu button:hover { color: var(--pra-white); }
+  .wf-canvas { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; cursor: pointer; margin-bottom: 4px; }
+  .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
+  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; cursor: pointer; }
+  .step-card:hover { border-color: var(--pra-blue); }
+  .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
+  .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
+  .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
+  .step-card .step-actions button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .8rem; }
+  .step-card .step-actions button:hover { color: #fff; }
+  .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; }
+  .add-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .day-checkboxes { display: flex; gap: 8px; flex-wrap: wrap; }
   .day-checkboxes label { display: flex; align-items: center; gap: 4px; font-size: .82rem; cursor: pointer; }
   .goal-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+  .type-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .type-picker button { background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: #fff; border-radius: 8px; padding: 12px; cursor: pointer; font-size: .82rem; text-align: left; }
+  .type-picker button:hover { border-color: var(--pra-blue); }
 </style>
 </head>
 <body>
@@ -38,96 +49,128 @@
         <button class="active-toggle" id="activeToggle"></button>
         <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
       </div>
-      <div class="pra-muted" id="savedMsg" style="font-size:.76rem">&nbsp;</div>
+      <div class="wf-savedmsg" id="savedMsg">&nbsp;</div>
 
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="overview">Overview</button>
-        <button class="tab-btn" data-tab="steps">Steps</button>
-        <button class="tab-btn" data-tab="trigger">Trigger</button>
-        <button class="tab-btn" data-tab="goals">Goals</button>
-        <button class="tab-btn" data-tab="recipients">Recipients &amp; Schedule</button>
-        <button class="tab-btn" data-tab="enrolled">Enrolled Contacts</button>
+      <div class="wf-stats" id="statsGrid"></div>
+
+      <div class="wf-submenu">
+        <button id="triggerMenuBtn">Trigger</button>
+        <button id="goalsMenuBtn">Goals</button>
+        <button id="recipientsMenuBtn">Recipients &amp; Schedule</button>
+        <button id="enrolledMenuBtn">Enrolled Contacts</button>
       </div>
 
-      <div class="tab-panel active" id="tab-overview">
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px" id="statsGrid"></div>
-      </div>
-
-      <div class="tab-panel pra-panel" id="tab-steps" style="padding:20px">
-        <div id="stepsList"></div>
-        <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
-          <button class="pra-btn pra-btn-ghost" data-add-step="sms">+ SMS Step</button>
-          <button class="pra-btn pra-btn-ghost" data-add-step="wait">+ Wait Step</button>
-        </div>
-      </div>
-
-      <div class="tab-panel pra-panel" id="tab-trigger" style="padding:20px">
-        <div class="field"><label class="pra-label">Trigger</label>
-          <select class="pra-select" id="triggerType">
-            <option value="list_subscribe">Contact subscribes to a list</option>
-            <option value="tag_added">Tag is added</option>
-            <option value="email_opened">Any tracked email is opened</option>
-            <option value="email_clicked">Any tracked email link is clicked</option>
-          </select>
-        </div>
-        <div class="field" id="triggerTargetField" style="display:none">
-          <label class="pra-label" id="triggerTargetLabel">Target</label>
-          <select class="pra-select" id="triggerTarget"></select>
-        </div>
-        <button class="pra-btn" id="saveTriggerBtn">Save Trigger</button>
-        <hr style="border-color:var(--pra-border);margin:24px 0"/>
-        <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Manually Enroll a Contact</div>
-        <div class="field-row">
-          <div class="field"><select class="pra-select" id="manualEnrollContact"></select></div>
-          <button class="pra-btn pra-btn-ghost" id="manualEnrollBtn">Enroll</button>
-        </div>
-      </div>
-
-      <div class="tab-panel pra-panel" id="tab-goals" style="padding:20px">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">When a goal is met, the contact's enrollment pauses and is marked converted.</div>
-        <div id="goalsList"></div>
-        <button class="pra-btn" id="saveGoalsBtn" style="margin-top:14px">Save Goals</button>
-      </div>
-
-      <div class="tab-panel pra-panel" id="tab-recipients" style="padding:20px">
-        <div class="field"><label class="pra-label">How often should this run for each contact?</label>
-          <select class="pra-select" id="runMode"><option value="once">Run Once</option><option value="multiple">Run Multiple Times</option></select>
-        </div>
-        <div class="field"><label class="pra-label">Sending Days</label>
-          <div class="day-checkboxes" id="sendingDays"></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label class="pra-label">Window Start</label><input class="pra-input" type="time" id="windowStart"/></div>
-          <div class="field"><label class="pra-label">Window End</label><input class="pra-input" type="time" id="windowEnd"/></div>
-        </div>
-        <div class="field"><label class="pra-label">Timezone</label>
-          <select class="pra-select" id="timezone">
-            <option value="America/Anchorage">America/Anchorage</option>
-            <option value="America/Los_Angeles">America/Los_Angeles</option>
-            <option value="America/Denver">America/Denver</option>
-            <option value="America/Chicago">America/Chicago</option>
-            <option value="America/New_York">America/New_York</option>
-          </select>
-        </div>
-        <div class="field"><label class="pra-label">Blackout Dates (comma-separated YYYY-MM-DD)</label><input class="pra-input" id="blackoutDates"/></div>
-        <button class="pra-btn" id="saveRecipientsBtn">Save</button>
-      </div>
-
-      <div class="tab-panel pra-panel" id="tab-enrolled" style="padding:20px">
-        <div id="enrolledList"></div>
-      </div>
+      <div class="wf-canvas" id="wfCanvas"></div>
     </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="triggerModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Start Sequence When...</div>
+    <div class="field"><label class="pra-label">Trigger</label>
+      <select class="pra-select" id="triggerType">
+        <option value="list_subscribe">Contact subscribes to a list</option>
+        <option value="tag_added">Tag is added</option>
+        <option value="email_opened">Any tracked email is opened</option>
+        <option value="email_clicked">Any tracked email link is clicked</option>
+        <option value="page_visit">Contact visits a page</option>
+        <option value="booking_created">Booking is created</option>
+      </select>
+    </div>
+    <div class="field" id="triggerTargetField" style="display:none">
+      <label class="pra-label" id="triggerTargetLabel">Target</label>
+      <select class="pra-select" id="triggerTarget"></select>
+    </div>
+    <div class="field" id="triggerPathField" style="display:none">
+      <label class="pra-label">Path contains (leave blank for any page)</label>
+      <input class="pra-input" id="triggerPath" placeholder="/gym-app"/>
+      <div class="pra-muted" style="font-size:.76rem;margin-top:6px">Only fires for contacts who've clicked a tracked email link (identifies their browser) and then visit a page with the <a href="/track.js" target="_blank">/track.js</a> snippet installed. See Settings &rarr; Website.</div>
+    </div>
+    <hr style="border-color:var(--pra-border);margin:20px 0"/>
+    <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Manually Enroll a Contact</div>
+    <div class="field-row">
+      <div class="field"><select class="pra-select" id="manualEnrollContact"></select></div>
+      <button class="pra-btn pra-btn-ghost" id="manualEnrollBtn" type="button">Enroll</button>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="goalsModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:6px">Goals</div>
+    <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">When a goal is met, the contact's enrollment pauses and is marked converted -- they stop receiving further steps.</div>
+    <div id="goalsList"></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveGoalsBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('goalsModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="recipientsModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Recipients &amp; Schedule</div>
+    <div class="field"><label class="pra-label">How often should this run for each contact?</label>
+      <select class="pra-select" id="runMode"><option value="once">Run Once</option><option value="multiple">Run Multiple Times</option></select>
+    </div>
+    <div class="field"><label class="pra-label">Sending Days</label>
+      <div class="day-checkboxes" id="sendingDays"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label class="pra-label">Window Start</label><input class="pra-input" type="time" id="windowStart"/></div>
+      <div class="field"><label class="pra-label">Window End</label><input class="pra-input" type="time" id="windowEnd"/></div>
+    </div>
+    <div class="field"><label class="pra-label">Timezone</label>
+      <select class="pra-select" id="timezone">
+        <option value="America/Anchorage">America/Anchorage</option>
+        <option value="America/Los_Angeles">America/Los_Angeles</option>
+        <option value="America/Denver">America/Denver</option>
+        <option value="America/Chicago">America/Chicago</option>
+        <option value="America/New_York">America/New_York</option>
+      </select>
+    </div>
+    <div class="field"><label class="pra-label">Blackout Dates (comma-separated YYYY-MM-DD)</label><input class="pra-input" id="blackoutDates"/></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveRecipientsBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('recipientsModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="enrolledModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Enrolled Contacts</div>
+    <div id="enrolledList"></div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:16px" onclick="closeModal('enrolledModal')">Close</button>
+  </div>
+</div>
+
+<!-- Add-step type picker -->
+<div class="modal-backdrop" id="typePickerModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Add a Step</div>
+    <div class="type-picker">
+      <button data-type="sms">&#128172; SMS</button>
+      <button data-type="wait">&#9201; Wait</button>
+    </div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:12px" onclick="closeModal('typePickerModal')">Cancel</button>
   </div>
 </div>
 
 <div class="modal-backdrop" id="smsStepModal">
   <div class="pra-panel modal-box">
     <div class="pra-h2" style="margin-bottom:16px">SMS Step</div>
-    <div class="field"><label class="pra-label">Day (0 = day of enrollment)</label><input class="pra-input" type="number" min="0" id="smsDayOffset" value="0"/></div>
+    <div class="field"><label class="pra-label">Send this many days after enrollment (0 = same day)</label><input class="pra-input" type="number" min="0" id="smsDayOffset" value="0"/></div>
     <div class="field"><label class="pra-label">Template</label><select class="pra-select" id="smsTemplateSelect"></select></div>
     <div class="field"><label class="pra-label">Or write a new template</label><textarea class="pra-textarea" id="smsNewBody" rows="3" placeholder="Leave blank to use the selected template"></textarea></div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
       <button class="pra-btn" id="saveSmsStepBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-danger" id="deleteSmsStepBtn" style="display:none">Delete</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('smsStepModal')">Cancel</button>
     </div>
   </div>
@@ -135,9 +178,10 @@
 <div class="modal-backdrop" id="waitStepModal">
   <div class="pra-panel modal-box">
     <div class="pra-h2" style="margin-bottom:16px">Wait Step</div>
-    <div class="field"><label class="pra-label">Day (0 = day of enrollment)</label><input class="pra-input" type="number" min="0" id="waitDayOffset" value="1"/></div>
+    <div class="field"><label class="pra-label">Wait until this many days after enrollment (0 = same day)</label><input class="pra-input" type="number" min="0" id="waitDayOffset" value="1"/></div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
       <button class="pra-btn" id="saveWaitStepBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-danger" id="deleteWaitStepBtn" style="display:none">Delete</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('waitStepModal')">Cancel</button>
     </div>
   </div>
@@ -151,25 +195,18 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function uid() { return 'wst' + Math.random().toString(36).slice(2, 10); }
 
 const workflowId = new URLSearchParams(location.search).get('id');
-let workflow = null, allLists = [], allTags = [], allSmsTemplates = [], allContacts = [];
-let saveTimer;
-
-document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-  if (btn.dataset.tab === 'enrolled') loadEnrolled();
-});
+let workflow = null, allLists = [], allTags = [], allSmsTemplates = [], allContacts = [], allEventTypes = [];
+let saveTimer, editingStepId = null;
 
 async function loadRefs() {
-  const [listsRes, tagsRes, smsRes, contactsRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/sms-templates'), fetch('/api/contacts')
+  const [listsRes, tagsRes, smsRes, contactsRes, eventTypesRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/sms-templates'), fetch('/api/contacts'), fetch('/api/scheduling/admin/event-types')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
   allSmsTemplates = (await smsRes.json()).templates;
   allContacts = (await contactsRes.json()).contacts;
+  allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes : [];
   document.getElementById('manualEnrollContact').innerHTML = allContacts.map(c => `<option value="${c.id}">${escapeHtml(c.first)} ${escapeHtml(c.last)}</option>`).join('');
 }
 
@@ -188,30 +225,71 @@ function stepSummary(step) {
   }
   return `Wait until day ${step.dayOffset}`;
 }
-function renderSteps() {
-  const list = document.getElementById('stepsList');
+const TRIG_LABELS = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: 'Contact visits a page', booking_created: 'Booking is created' };
+
+function renderCanvas() {
+  const canvas = document.getElementById('wfCanvas');
   const sorted = [...workflow.steps].sort((a, b) => a.dayOffset - b.dayOffset);
-  list.innerHTML = sorted.map(step => `
-    <div class="wf-step" data-id="${step.id}" draggable="true">
-      <span class="day-badge">DAY ${step.dayOffset}</span>
-      <div class="step-info">${stepSummary(step)}</div>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-step="${step.id}">Delete</button>
+  const stepHtml = sorted.map((step) => `
+    <div class="step-card" data-open-step="${step.id}">
+      <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>
+      <div class="step-type">DAY ${step.dayOffset} &middot; ${step.type === 'sms' ? 'SMS' : 'Wait'}</div>
+      <div class="step-summary">${stepSummary(step)}</div>
     </div>
-  `).join('') || '<div class="pra-muted">No steps yet.</div>';
-  list.querySelectorAll('[data-del-step]').forEach(btn => btn.onclick = () => {
-    workflow.steps = workflow.steps.filter(s => s.id !== btn.dataset.delStep);
-    renderSteps(); saveDebounced();
+    <div class="chain-arrow">&darr;</div>
+  `).join('');
+  canvas.innerHTML = `
+    <div class="trigger-card" id="triggerCardBtn">
+      <div class="pra-label">Start sequence when</div>
+      <div style="margin-top:4px">${TRIG_LABELS[workflow.trigger?.type] || ''}</div>
+    </div>
+    <div class="chain-arrow">&darr;</div>
+    ${stepHtml}
+    <button class="add-step-btn" id="addStepBtn">+ Add Step</button>
+  `;
+  document.getElementById('triggerCardBtn').onclick = () => openModal('triggerModal');
+  document.getElementById('addStepBtn').onclick = () => openModal('typePickerModal');
+  canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {
+    if (e.target.closest('[data-delete]')) return;
+    editStep(card.dataset.openStep);
+  }));
+  canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this step?')) return;
+    workflow.steps = workflow.steps.filter(s => s.id !== btn.dataset.delete);
+    renderCanvas(); saveDebounced();
   });
 }
 
-document.querySelectorAll('[data-add-step]').forEach(btn => btn.onclick = () => {
-  if (btn.dataset.addStep === 'sms') {
+function editStep(stepId) {
+  const step = workflow.steps.find(s => s.id === stepId);
+  if (!step) return;
+  editingStepId = stepId;
+  if (step.type === 'sms') {
+    document.getElementById('smsDayOffset').value = step.dayOffset;
+    document.getElementById('smsTemplateSelect').innerHTML = '<option value="">-- choose --</option>' + allSmsTemplates.map(t => `<option value="${t.id}" ${t.id === step.config.smsTemplateId ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
+    document.getElementById('smsNewBody').value = '';
+    document.getElementById('deleteSmsStepBtn').style.display = 'block';
+    openModal('smsStepModal');
+  } else {
+    document.getElementById('waitDayOffset').value = step.dayOffset;
+    document.getElementById('deleteWaitStepBtn').style.display = 'block';
+    openModal('waitStepModal');
+  }
+}
+
+document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => btn.onclick = () => {
+  editingStepId = null;
+  closeModal('typePickerModal');
+  if (btn.dataset.type === 'sms') {
     document.getElementById('smsDayOffset').value = 0;
     document.getElementById('smsTemplateSelect').innerHTML = '<option value="">-- choose --</option>' + allSmsTemplates.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
     document.getElementById('smsNewBody').value = '';
+    document.getElementById('deleteSmsStepBtn').style.display = 'none';
     openModal('smsStepModal');
   } else {
     document.getElementById('waitDayOffset').value = 1;
+    document.getElementById('deleteWaitStepBtn').style.display = 'none';
     openModal('waitStepModal');
   }
 });
@@ -224,14 +302,39 @@ document.getElementById('saveSmsStepBtn').onclick = async () => {
     if (r.ok) { templateId = d.template.id; allSmsTemplates.push(d.template); }
   }
   if (!templateId) { showToast('Choose or write a template', true); return; }
-  workflow.steps.push({ id: uid(), order: workflow.steps.length, dayOffset: Number(document.getElementById('smsDayOffset').value) || 0, type: 'sms', config: { smsTemplateId: templateId } });
+  const dayOffset = Number(document.getElementById('smsDayOffset').value) || 0;
+  if (editingStepId) {
+    const step = workflow.steps.find(s => s.id === editingStepId);
+    step.dayOffset = dayOffset;
+    step.config = { smsTemplateId: templateId };
+  } else {
+    workflow.steps.push({ id: uid(), order: workflow.steps.length, dayOffset, type: 'sms', config: { smsTemplateId: templateId } });
+  }
   closeModal('smsStepModal');
-  renderSteps(); saveDebounced();
+  renderCanvas(); saveDebounced();
+};
+document.getElementById('deleteSmsStepBtn').onclick = () => {
+  if (!editingStepId || !confirm('Delete this step?')) return;
+  workflow.steps = workflow.steps.filter(s => s.id !== editingStepId);
+  closeModal('smsStepModal');
+  renderCanvas(); saveDebounced();
 };
 document.getElementById('saveWaitStepBtn').onclick = () => {
-  workflow.steps.push({ id: uid(), order: workflow.steps.length, dayOffset: Number(document.getElementById('waitDayOffset').value) || 0, type: 'wait', config: {} });
+  const dayOffset = Number(document.getElementById('waitDayOffset').value) || 0;
+  if (editingStepId) {
+    const step = workflow.steps.find(s => s.id === editingStepId);
+    step.dayOffset = dayOffset;
+  } else {
+    workflow.steps.push({ id: uid(), order: workflow.steps.length, dayOffset, type: 'wait', config: {} });
+  }
   closeModal('waitStepModal');
-  renderSteps(); saveDebounced();
+  renderCanvas(); saveDebounced();
+};
+document.getElementById('deleteWaitStepBtn').onclick = () => {
+  if (!editingStepId || !confirm('Delete this step?')) return;
+  workflow.steps = workflow.steps.filter(s => s.id !== editingStepId);
+  closeModal('waitStepModal');
+  renderCanvas(); saveDebounced();
 };
 
 function saveDebounced() { clearTimeout(saveTimer); saveTimer = setTimeout(saveWorkflow, 400); }
@@ -258,14 +361,28 @@ function updateTriggerTargetField() {
   const select = document.getElementById('triggerTarget');
   if (type === 'list_subscribe') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'List (any if blank)'; select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join(''); }
   else if (type === 'tag_added') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Tag (any if blank)'; select.innerHTML = '<option value="">Any tag</option>' + allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join(''); }
+  else if (type === 'booking_created') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Event type (any if blank)'; select.innerHTML = '<option value="">Any event type</option>' + allEventTypes.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join(''); }
   else field.style.display = 'none';
+  document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
 }
 document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
+document.getElementById('triggerMenuBtn').onclick = () => {
+  document.getElementById('triggerType').value = workflow.trigger.type;
+  updateTriggerTargetField();
+  if (workflow.trigger.type === 'list_subscribe') document.getElementById('triggerTarget').value = workflow.trigger.config.listId || '';
+  if (workflow.trigger.type === 'tag_added') document.getElementById('triggerTarget').value = workflow.trigger.config.tagId || '';
+  if (workflow.trigger.type === 'page_visit') document.getElementById('triggerPath').value = workflow.trigger.config.urlContains || '';
+  if (workflow.trigger.type === 'booking_created') document.getElementById('triggerTarget').value = workflow.trigger.config.eventTypeId || '';
+  openModal('triggerModal');
+};
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
-  workflow.trigger = { type, config: type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null } : {} };
-  saveDebounced();
+  workflow.trigger = { type, config: type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
+    : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
+    : type === 'booking_created' ? { eventTypeId: target || null } : {} };
+  closeModal('triggerModal');
+  renderCanvas(); saveDebounced();
   showToast('Trigger saved');
 };
 document.getElementById('manualEnrollBtn').onclick = async () => {
@@ -284,20 +401,22 @@ const GOAL_TYPES = [
   { key: 'lead_status_change', label: 'Lead status change' },
   { key: 'outcome_met', label: 'Outcome met (not yet wired)' },
 ];
-function renderGoals() {
+document.getElementById('goalsMenuBtn').onclick = () => {
   document.getElementById('goalsList').innerHTML = GOAL_TYPES.map(g => `
     <label class="goal-row"><input type="checkbox" data-goal="${g.key}" ${workflow.conversionGoals.some(x => x.trigger === g.key) ? 'checked' : ''}/> ${g.label}</label>
   `).join('');
-}
+  openModal('goalsModal');
+};
 document.getElementById('saveGoalsBtn').onclick = () => {
   workflow.conversionGoals = [...document.querySelectorAll('[data-goal]')].filter(el => el.checked).map(el => ({ trigger: el.dataset.goal, config: {} }));
+  closeModal('goalsModal');
   saveDebounced();
   showToast('Goals saved');
 };
 
 // ── Recipients ───────────────────────────────────────────────────────────
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-function renderRecipients() {
+document.getElementById('recipientsMenuBtn').onclick = () => {
   const rs = workflow.recipientSettings;
   document.getElementById('runMode').value = rs.runMode;
   document.getElementById('windowStart').value = rs.sendingWindow.start;
@@ -305,7 +424,8 @@ function renderRecipients() {
   document.getElementById('timezone').value = rs.timezone;
   document.getElementById('blackoutDates').value = (rs.blackoutDates || []).join(', ');
   document.getElementById('sendingDays').innerHTML = DAYS.map(d => `<label><input type="checkbox" data-day="${d}" ${rs.sendingDays.includes(d) ? 'checked' : ''}/> ${d.toUpperCase()}</label>`).join('');
-}
+  openModal('recipientsModal');
+};
 document.getElementById('saveRecipientsBtn').onclick = () => {
   workflow.recipientSettings = {
     runMode: document.getElementById('runMode').value,
@@ -314,12 +434,13 @@ document.getElementById('saveRecipientsBtn').onclick = () => {
     timezone: document.getElementById('timezone').value,
     blackoutDates: document.getElementById('blackoutDates').value.split(',').map(s => s.trim()).filter(Boolean),
   };
+  closeModal('recipientsModal');
   saveDebounced();
   showToast('Recipients settings saved');
 };
 
 // ── Enrolled contacts ────────────────────────────────────────────────────
-async function loadEnrolled() {
+document.getElementById('enrolledMenuBtn').onclick = async () => {
   const r = await fetch(`/api/workflows/${workflow.id}/enrollments`);
   const { enrollments } = await r.json();
   document.getElementById('enrolledList').innerHTML = enrollments.length ? enrollments.map(e => `
@@ -328,7 +449,8 @@ async function loadEnrolled() {
       <span class="pra-badge">${e.status}</span>
     </div>
   `).join('') : '<div class="pra-muted">No one enrolled yet.</div>';
-}
+  openModal('enrolledModal');
+};
 
 (async function init() {
   if (!workflowId) { document.getElementById('wfName').value = 'No workflow selected'; return; }
@@ -341,14 +463,8 @@ async function loadEnrolled() {
   document.getElementById('wfName').value = workflow.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (workflow.active ? ' on' : '');
   document.getElementById('activeLabel').textContent = workflow.active ? 'Active' : 'Inactive';
-  document.getElementById('triggerType').value = workflow.trigger.type;
-  updateTriggerTargetField();
-  if (workflow.trigger.type === 'list_subscribe') document.getElementById('triggerTarget').value = workflow.trigger.config.listId || '';
-  if (workflow.trigger.type === 'tag_added') document.getElementById('triggerTarget').value = workflow.trigger.config.tagId || '';
   renderOverview();
-  renderSteps();
-  renderGoals();
-  renderRecipients();
+  renderCanvas();
 })();
 </script>
 </body>

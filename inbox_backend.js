@@ -18,7 +18,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -40,27 +40,59 @@ export async function handleInboxRequest(req, res, url) {
 
   if (p === "/api/inbox" && req.method === "GET") {
     const tab = url.searchParams.get("tab") || "primary";
+    // view: 'new' (default, not yet handled) | 'past' (marked done) | 'all'
+    const view = url.searchParams.get("view") || "new";
     const contacts = readJson(CONTACTS_FILE, []);
-    const messages = readJson(MESSAGE_LOG_FILE, []).map(m => ({ ...m, itemType: m.channel, at: m.createdAt }));
-    const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt }));
+    const messages = readJson(MESSAGE_LOG_FILE, []).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
+    const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
 
+    // Inbox is for things that need a human's attention -- incoming
+    // messages, calls, and open tasks/reminders -- not a log of the CRM's
+    // own outbound sends (those belong in Contacts/Campaigns reporting).
+    const inbound = messages.filter(m => m.direction === "inbound");
+
     let items;
-    if (tab === "emails") items = messages.filter(m => m.channel === "email");
-    else if (tab === "messages") items = messages.filter(m => m.channel === "sms");
+    if (tab === "emails") items = inbound.filter(m => m.channel === "email");
+    else if (tab === "messages") items = inbound.filter(m => m.channel === "sms");
     else if (tab === "calls") items = calls;
-    else if (tab === "tasks") items = tasks.filter(t => t.type === "task" && !t.done);
-    else if (tab === "reminders") items = tasks.filter(t => t.type === "reminder" && !t.done);
-    // Close's "Potential Contacts" -- inbound messages from a phone/email
-    // that didn't match any existing contact, so they were logged with
-    // contactId: null. Confirming one (see /api/inbox/confirm-potential)
-    // creates a real contact so future inbound from the same number
-    // matches automatically.
-    else if (tab === "potential") items = messages.filter(m => m.direction === "inbound" && !m.contactId);
-    else items = [...messages, ...calls, ...tasks.filter(t => !t.done)]; // primary
+    else if (tab === "tasks") items = tasks.filter(t => t.type === "task");
+    else if (tab === "reminders") items = tasks.filter(t => t.type === "reminder");
+    else items = [...inbound, ...calls, ...tasks]; // primary
+
+    if (view === "new") items = items.filter(i => !i.done);
+    else if (view === "past") items = items.filter(i => i.done);
 
     items = items.map(i => withContact(i, contacts)).sort((a, b) => new Date(b.at) - new Date(a.at));
     return sendJson(res, 200, { items });
+  }
+
+  // Bulk (or single, with a 1-item array) mark-done -- items come from the
+  // inbox's mixed message/call/task stream, so this matches by id across
+  // all three stores rather than requiring the caller to know which file
+  // each id lives in.
+  if (p === "/api/inbox/mark-done" && req.method === "POST") {
+    const { ids, done } = await readJsonBody(req);
+    if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
+    const idSet = new Set(ids);
+    const value = done !== false;
+
+    const log = readJson(MESSAGE_LOG_FILE, []);
+    let changed = false;
+    log.forEach(m => { if (idSet.has(m.id)) { m.inboxDone = value; changed = true; } });
+    if (changed) writeJson(MESSAGE_LOG_FILE, log);
+
+    const calls = readJson(CALLS_FILE, []);
+    changed = false;
+    calls.forEach(c => { if (idSet.has(c.id)) { c.inboxDone = value; changed = true; } });
+    if (changed) writeJson(CALLS_FILE, calls);
+
+    const tasks = readJson(TASKS_FILE, []);
+    changed = false;
+    tasks.forEach(t => { if (idSet.has(t.id)) { t.done = value; changed = true; } });
+    if (changed) writeJson(TASKS_FILE, tasks);
+
+    return sendJson(res, 200, { ok: true });
   }
 
   // Turns a Potential Contact (an unmatched inbound message) into a real

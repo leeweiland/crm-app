@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Book a time</title>
+<style>
+  :root { --bk-bg: #ffffff; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f2f2f5; color: var(--bk-text); }
+  .bk-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .bk-card { width: 100%; max-width: 900px; background: var(--bk-bg); color: var(--bk-text); border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); overflow: hidden; }
+  .bk-grid { display: grid; grid-template-columns: 260px 1fr; }
+  .bk-grid.with-times { grid-template-columns: 260px 1fr 220px; }
+  .bk-info { padding: 32px 28px; border-right: 1px solid var(--bk-border); }
+  .bk-logo { max-width: 140px; max-height: 56px; object-fit: contain; margin-bottom: 14px; display: block; }
+  .bk-brand { font-size: .8rem; font-weight: 600; color: var(--bk-accent); margin-bottom: 4px; }
+  .bk-title { font-size: 1.25rem; font-weight: 700; margin-bottom: 14px; line-height: 1.3; }
+  .bk-meta-row { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--bk-dim); margin-bottom: 10px; }
+  .bk-desc { font-size: .84rem; color: var(--bk-dim); margin-top: 14px; line-height: 1.5; white-space: pre-wrap; }
+  .bk-body { padding: 28px 26px; min-width: 0; }
+  .bk-times-col { padding: 28px 16px 28px 0; border-left: 1px solid var(--bk-border); min-width: 0; }
+  .bk-h2 { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+  .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .cal-month-label { font-weight: 700; font-size: .92rem; }
+  .cal-nav-btn { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: var(--bk-text); padding: 4px 8px; border-radius: 6px; }
+  .cal-nav-btn:hover:not(:disabled) { background: rgba(0,0,0,0.06); }
+  .cal-nav-btn:disabled { opacity: .25; cursor: default; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+  .cal-dow { font-size: .68rem; font-weight: 700; color: var(--bk-dim); padding: 6px 0; text-transform: uppercase; }
+  .cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: .84rem; cursor: default; color: #c9ccd1; }
+  .cal-day.available { color: var(--bk-accent); cursor: pointer; font-weight: 600; }
+  .cal-day.available:hover { background: color-mix(in srgb, var(--bk-accent) 14%, transparent); }
+  .cal-day.selected { background: var(--bk-accent); color: #fff; }
+  .tz-row { margin-top: 18px; }
+  .tz-row label { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bk-dim); display: block; margin-bottom: 4px; }
+  .tz-select { width: 100%; padding: 8px 10px; border: 1px solid var(--bk-border); border-radius: 8px; font-size: .84rem; color: var(--bk-text); background: var(--bk-bg); }
+  .time-slots { display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto; }
+  .time-slot { padding: 10px 14px; border: 1px solid var(--bk-accent); color: var(--bk-accent); border-radius: 8px; font-size: .86rem; cursor: pointer; text-align: center; background: none; font-family: inherit; }
+  .time-slot:hover { background: var(--bk-accent); color: #fff; }
+  .time-placeholder { color: var(--bk-dim); font-size: .84rem; text-align: center; padding: 40px 8px; }
+  .bk-field { margin-bottom: 16px; }
+  .bk-label { font-size: .78rem; font-weight: 600; margin-bottom: 5px; display: block; }
+  .bk-input, .bk-textarea { width: 100%; padding: 9px 12px; border: 1px solid var(--bk-border); border-radius: 8px; font-size: .88rem; font-family: inherit; color: var(--bk-text); background: var(--bk-bg); }
+  .bk-input:focus, .bk-textarea:focus { outline: none; border-color: var(--bk-accent); }
+  .bk-btn { background: var(--bk-accent); color: #fff; border: none; border-radius: 8px; padding: 11px 18px; font-size: .88rem; font-weight: 700; cursor: pointer; font-family: inherit; width: 100%; }
+  .bk-btn:hover { opacity: .9; }
+  .bk-btn:disabled { opacity: .5; cursor: default; }
+  .bk-btn-outline { background: transparent; color: var(--bk-accent); border: 1.5px solid var(--bk-accent); }
+  .bk-btn-ghost { background: transparent; color: var(--bk-dim); border: 1px solid var(--bk-border); }
+  .bk-error { color: #dc2626; font-size: .82rem; margin-top: 8px; min-height: 1.2em; }
+  .back-link { font-size: .82rem; color: var(--bk-dim); margin-bottom: 16px; display: inline-block; cursor: pointer; text-decoration: none; }
+  .bk-confirm { text-align: center; padding: 48px 32px; }
+  .bk-confirm .big { font-size: 2.4rem; margin-bottom: 10px; }
+  .cal-links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 20px; }
+  .status-badge { display: inline-block; margin-top: 12px; padding: 4px 14px; border-radius: 12px; font-size: .78rem; font-weight: 600; }
+  @media (max-width: 720px) { .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; } .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); } .bk-times-col { border-left: none; border-top: 1px solid var(--bk-border); } }
+</style>
+</head>
+<body>
+  <div class="bk-wrap">
+    <div class="bk-card" id="bkCard">
+      <div style="padding:60px;text-align:center;color:var(--bk-dim)">Loading…</div>
+    </div>
+  </div>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+const pathParts = location.pathname.split('/').filter(Boolean); // ["book", ":slug", "manage"?]
+const slug = pathParts[1];
+const isManage = pathParts[2] === 'manage';
+const qs = new URLSearchParams(location.search);
+
+const TZ_OPTIONS = [
+  { id: 'America/Anchorage', label: 'Alaska Time' },
+  { id: 'America/Los_Angeles', label: 'Pacific Time' },
+  { id: 'America/Denver', label: 'Mountain Time' },
+  { id: 'America/Chicago', label: 'Central Time' },
+  { id: 'America/New_York', label: 'Eastern Time' },
+  { id: 'Pacific/Honolulu', label: 'Hawaii Time' },
+  { id: 'UTC', label: 'UTC' },
+];
+const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+if (!TZ_OPTIONS.some(t => t.id === browserTz)) TZ_OPTIONS.unshift({ id: browserTz, label: 'Your timezone' });
+let selectedTz = browserTz;
+
+let eventType = null, rawSlotIsos = [], slotsByLocalDate = {}, selectedDate = null, selectedSlot = null;
+let viewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function card() { return document.getElementById('bkCard'); }
+function applyBranding(branding) {
+  const root = document.documentElement.style;
+  root.setProperty('--bk-bg', branding.backgroundColor || '#ffffff');
+  root.setProperty('--bk-text', branding.textColor || '#0a0a0a');
+  root.setProperty('--bk-accent', branding.accentColor || '#009bff');
+}
+function renderError(msg) { card().innerHTML = `<div style="padding:60px;text-align:center;color:#dc2626">${escapeHtml(msg)}</div>`; }
+function locationLabel(loc) {
+  if (!loc) return '';
+  if (loc.type === 'zoom') return '📹 ' + (loc.detail || 'Zoom (link sent by email)');
+  if (loc.type === 'phone') return '📞 Phone call';
+  if (loc.type === 'in_person') return '📍 ' + (loc.detail || 'In person');
+  return loc.detail || '';
+}
+function tzLabel(tzId) {
+  const opt = TZ_OPTIONS.find(t => t.id === tzId);
+  const time = new Date().toLocaleTimeString('en-US', { timeZone: tzId, hour: 'numeric', minute: '2-digit' });
+  return `${opt ? opt.label : tzId} (${time})`;
+}
+
+async function loadEventType() {
+  const r = await fetch(`/api/scheduling/event-types/${slug}`);
+  if (!r.ok) { renderError('This booking page is not available.'); return false; }
+  eventType = (await r.json()).eventType;
+  applyBranding(eventType.branding || {});
+  return true;
+}
+
+async function loadSlots() {
+  const start = new Date().toISOString().slice(0, 10);
+  const end = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+  const r = await fetch(`/api/scheduling/availability?slug=${slug}&start=${start}&end=${end}`);
+  if (!r.ok) { rawSlotIsos = []; return; }
+  const { slots } = await r.json();
+  rawSlotIsos = Object.values(slots).flat();
+  regroupSlots();
+}
+function regroupSlots() {
+  slotsByLocalDate = {};
+  rawSlotIsos.forEach(iso => {
+    const localDate = new Date(iso).toLocaleDateString('en-CA', { timeZone: selectedTz });
+    (slotsByLocalDate[localDate] = slotsByLocalDate[localDate] || []).push(iso);
+  });
+  Object.values(slotsByLocalDate).forEach(arr => arr.sort());
+}
+
+function infoPanelHtml() {
+  const b = eventType.branding || {};
+  return `
+    ${b.logoUrl ? `<img class="bk-logo" src="${escapeHtml(b.logoUrl)}" alt=""/>` : ''}
+    <div class="bk-brand">${escapeHtml(b.brandName || '')}</div>
+    <div class="bk-title">${escapeHtml(eventType.name)}</div>
+    <div class="bk-meta-row">⏱ ${eventType.durationMinutes} min</div>
+    <div class="bk-meta-row">${locationLabel(eventType.location)}</div>
+    ${eventType.description ? `<div class="bk-desc">${escapeHtml(eventType.description)}</div>` : ''}
+  `;
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function monthLabel(d) { return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
+
+function renderPicker() {
+  const dates = Object.keys(slotsByLocalDate).sort();
+  const minMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const maxMonth = dates.length ? new Date(dates[dates.length - 1] + 'T00:00:00') : minMonth;
+  if (!selectedDate && dates.length) { selectedDate = dates[0]; viewMonth = new Date(selectedDate + 'T00:00:00'); viewMonth.setDate(1); }
+
+  const year = viewMonth.getFullYear(), month = viewMonth.getMonth();
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const availSet = new Set(dates);
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${pad2(month + 1)}-${pad2(d)}`;
+    const available = availSet.has(dateStr);
+    const cls = ['cal-day'];
+    if (available) cls.push('available');
+    if (dateStr === selectedDate) cls.push('selected');
+    cells += `<div class="${cls.join(' ')}" ${available ? `data-date="${dateStr}"` : ''}>${d}</div>`;
+  }
+
+  const canPrev = new Date(year, month, 1) > minMonth;
+  const canNext = new Date(year, month, 1) < new Date(maxMonth.getFullYear(), maxMonth.getMonth(), 1);
+  const times = (slotsByLocalDate[selectedDate] || []).map(iso => {
+    const label = new Date(iso).toLocaleTimeString('en-US', { timeZone: selectedTz, hour: 'numeric', minute: '2-digit' });
+    return `<button class="time-slot" data-iso="${iso}">${label}</button>`;
+  }).join('');
+
+  card().innerHTML = `
+    <div class="bk-grid ${selectedDate ? 'with-times' : ''}">
+      <div class="bk-info">${infoPanelHtml()}</div>
+      <div class="bk-body">
+        <div class="bk-h2">Select a Date</div>
+        <div class="cal-header">
+          <button class="cal-nav-btn" id="prevMonth" ${canPrev ? '' : 'disabled'}>&larr;</button>
+          <div class="cal-month-label">${monthLabel(viewMonth)}</div>
+          <button class="cal-nav-btn" id="nextMonth" ${canNext ? '' : 'disabled'}>&rarr;</button>
+        </div>
+        <div class="cal-grid">
+          ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+          ${cells}
+        </div>
+        <div class="tz-row">
+          <label>Time zone</label>
+          <select class="tz-select" id="tzSelect">
+            ${TZ_OPTIONS.map(t => `<option value="${t.id}" ${t.id === selectedTz ? 'selected' : ''}>${escapeHtml(tzLabel(t.id))}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      ${selectedDate ? `
+        <div class="bk-times-col">
+          <div class="bk-h2">${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+          <div class="time-slots">${times || '<div class="time-placeholder">No times this day</div>'}</div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+  if (!dates.length) card().querySelector('.bk-body').insertAdjacentHTML('beforeend', '<div class="time-placeholder">No times available in the next 3 months — check back soon.</div>');
+
+  card().querySelectorAll('[data-date]').forEach(el => el.onclick = () => { selectedDate = el.dataset.date; renderPicker(); });
+  card().querySelectorAll('[data-iso]').forEach(el => el.onclick = () => { selectedSlot = el.dataset.iso; renderForm(); });
+  const prevBtn = document.getElementById('prevMonth'), nextBtn = document.getElementById('nextMonth');
+  if (prevBtn) prevBtn.onclick = () => { viewMonth = new Date(year, month - 1, 1); renderPicker(); };
+  if (nextBtn) nextBtn.onclick = () => { viewMonth = new Date(year, month + 1, 1); renderPicker(); };
+  const tzSelect = document.getElementById('tzSelect');
+  if (tzSelect) tzSelect.onchange = () => { selectedTz = tzSelect.value; regroupSlots(); renderPicker(); };
+}
+
+function renderForm() {
+  const when = new Date(selectedSlot).toLocaleString('en-US', { timeZone: selectedTz, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  card().innerHTML = `
+    <div class="bk-grid">
+      <div class="bk-info">${infoPanelHtml()}<div class="bk-meta-row" style="margin-top:14px">🕐 ${when}</div></div>
+      <div class="bk-body">
+        <a class="back-link" id="backToPicker">&larr; Back</a>
+        <div class="bk-field"><label class="bk-label">Name</label><input class="bk-input" id="bkName"/></div>
+        <div class="bk-field"><label class="bk-label">Email</label><input class="bk-input" type="email" id="bkEmail"/></div>
+        <div class="bk-field"><label class="bk-label">Phone (optional)</label><input class="bk-input" id="bkPhone"/></div>
+        <div class="bk-field"><label class="bk-label">Anything we should know? (optional)</label><textarea class="bk-textarea" id="bkNotes" rows="2"></textarea></div>
+        <button class="bk-btn" id="bkSubmit">Confirm Booking</button>
+        <div class="bk-error" id="bkError"></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('backToPicker').onclick = () => { selectedSlot = null; renderPicker(); };
+  document.getElementById('bkSubmit').onclick = submitBooking;
+}
+
+async function submitBooking() {
+  const name = document.getElementById('bkName').value.trim();
+  const email = document.getElementById('bkEmail').value.trim();
+  const phone = document.getElementById('bkPhone').value.trim();
+  const notes = document.getElementById('bkNotes').value.trim();
+  const errEl = document.getElementById('bkError');
+  if (!name || !email) { errEl.textContent = 'Name and email are required.'; return; }
+  const btn = document.getElementById('bkSubmit');
+  btn.disabled = true; btn.textContent = 'Booking…';
+  const r = await fetch('/api/scheduling/bookings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, startAt: selectedSlot, name, email, phone, notes, timezone: selectedTz }),
+  });
+  const d = await r.json();
+  if (!r.ok) {
+    errEl.textContent = d.error || 'Something went wrong.';
+    btn.disabled = false; btn.textContent = 'Confirm Booking';
+    if (r.status === 409) { await loadSlots(); selectedDate = null; selectedSlot = null; renderPicker(); }
+    return;
+  }
+  const redirectUrl = eventType.branding?.redirectUrl;
+  if (redirectUrl) {
+    const u = new URL(redirectUrl, location.origin);
+    u.searchParams.set('name', name); u.searchParams.set('email', email); u.searchParams.set('event_start', d.booking.startAt);
+    location.href = u.toString();
+    return;
+  }
+  renderConfirmed(d);
+}
+
+function renderConfirmed(d) {
+  const when = new Date(d.booking.startAt).toLocaleString('en-US', { timeZone: selectedTz, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  card().innerHTML = `
+    <div class="bk-confirm">
+      <div class="big">✅</div>
+      <div class="bk-title" style="justify-content:center">You're booked!</div>
+      <div style="color:var(--bk-dim)">${escapeHtml(d.eventType.name)} — ${when}</div>
+      <div style="color:var(--bk-dim);font-size:.8rem;margin-top:4px">A confirmation has been sent to your email.</div>
+      <div class="cal-links">
+        <a class="bk-btn" style="width:auto" href="${d.addToCalendar.google}" target="_blank">Add to Google Calendar</a>
+        <a class="bk-btn bk-btn-outline" style="width:auto" href="${d.addToCalendar.outlook}" target="_blank">Add to Outlook</a>
+        <a class="bk-btn bk-btn-ghost" style="width:auto" href="${d.addToCalendar.icsUrl}">Download .ics</a>
+      </div>
+      <div style="margin-top:20px"><a class="back-link" href="/book/${slug}/manage?booking=${d.booking.id}&token=${d.booking.cancelToken}">Need to cancel?</a></div>
+    </div>
+  `;
+}
+
+async function renderManage() {
+  const bookingId = qs.get('booking'), token = qs.get('token');
+  if (!bookingId || !token) { renderError('Missing booking link details.'); return; }
+  const r = await fetch(`/api/scheduling/bookings/${bookingId}?token=${token}`);
+  if (!r.ok) { renderError('Booking not found.'); return; }
+  const { booking, eventType: et } = await r.json();
+  applyBranding(et?.branding || {});
+  const when = new Date(booking.startAt).toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const confirmed = booking.status === 'confirmed';
+  card().innerHTML = `
+    <div class="bk-confirm">
+      <div class="bk-title" style="justify-content:center">${escapeHtml(et?.name || 'Booking')}</div>
+      <div style="color:var(--bk-dim)">${when}</div>
+      <div class="status-badge" style="background:${confirmed ? '#dcfce7' : '#fee2e2'};color:${confirmed ? '#16a34a' : '#dc2626'}">${booking.status}</div>
+      ${confirmed ? `<div style="margin-top:24px"><button class="bk-btn" style="width:auto;background:#dc2626" id="cancelBtn">Cancel Booking</button></div>` : ''}
+    </div>
+  `;
+  const cancelBtn = document.getElementById('cancelBtn');
+  if (cancelBtn) cancelBtn.onclick = async () => {
+    if (!confirm('Cancel this booking?')) return;
+    await fetch(`/api/scheduling/bookings/${bookingId}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    renderManage();
+  };
+}
+
+(async function init() {
+  if (isManage) { await renderManage(); return; }
+  const ok = await loadEventType();
+  if (!ok) return;
+  await loadSlots();
+  renderPicker();
+})();
+</script>
+</body>
+</html>

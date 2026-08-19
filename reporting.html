@@ -9,6 +9,46 @@
   .rep-section { margin-bottom: 28px; }
   .rep-section-title { font-family: var(--font-secondary); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim); margin-bottom: 10px; }
   .rep-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 12px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); flex-wrap: wrap; }
+  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .rep-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .rep-toolbar select { max-width: 220px; }
+  .rep-toolbar input[type="date"] { max-width: 150px; }
+  .chart-wrap { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 20px; overflow-x: auto; }
+  .chart-bars { display: flex; align-items: flex-end; gap: 6px; height: 200px; min-width: max-content; }
+  .chart-col { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 28px; flex-shrink: 0; }
+  .chart-col-bars { display: flex; align-items: flex-end; gap: 2px; height: 160px; }
+  .chart-bar { width: 10px; border-radius: 2px 2px 0 0; min-height: 1px; }
+  .chart-bar.sent { background: var(--pra-blue); }
+  .chart-bar.opened { background: var(--pra-green); }
+  .chart-bar.clicked { background: #ffc107; }
+  .chart-bar.delivered { background: var(--pra-blue); }
+  .chart-bar.received { background: var(--pra-green); }
+  .chart-bar.failed { background: var(--pra-red); }
+  .chart-date { font-size: .62rem; color: var(--pra-dim); writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+  .chart-legend { display: flex; gap: 16px; margin-top: 14px; font-size: .78rem; color: var(--pra-dim); flex-wrap: wrap; }
+  .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .journey-layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
+  .journey-contact-row { padding: 10px 12px; border-bottom: 1px solid var(--pra-border); cursor: pointer; font-size: .86rem; }
+  .journey-contact-row:hover { background: rgba(255,255,255,0.03); }
+  .journey-contact-row.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
+  .journey-timeline-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .journey-timeline-item:last-child { border-bottom: none; }
+  .journey-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .74rem; flex-shrink: 0; }
+  .journey-icon.email { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+  .journey-icon.sms { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .journey-icon.call { background: rgba(255,59,59,0.15); color: var(--pra-red); }
+  .journey-icon.task, .journey-icon.reminder { background: rgba(255,193,7,0.15); color: #ffc107; }
+  .ads-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+  .ads-segment-card { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
+  .ads-segment-card .seg-title { font-family: var(--font-secondary); font-size: .8rem; letter-spacing: .06em; margin-bottom: 12px; color: var(--pra-blue); }
+  .ads-stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--pra-border); font-size: .84rem; }
+  .ads-stat-row:last-child { border-bottom: none; }
+  .ads-stat-row .lbl { color: var(--pra-dim); }
 </style>
 </head>
 <body>
@@ -18,27 +58,162 @@
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Reporting</div>
 
-      <div class="rep-section">
-        <div class="rep-section-title">Email</div>
-        <div class="rep-grid" id="emailGrid"></div>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="email">Email</button>
+        <button class="tab-btn" data-tab="sms">SMS</button>
+        <button class="tab-btn" data-tab="ads">Ads</button>
+        <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
       </div>
-      <div class="rep-section">
-        <div class="rep-section-title">SMS</div>
-        <div class="rep-grid" id="smsGrid"></div>
+
+      <!-- Shared date-range selector -- same options, same math, used by
+           Overview/Email/SMS/Ads. Customer Journeys doesn't use it (it's a
+           lifetime timeline per contact, not a period rollup). -->
+      <div class="rep-toolbar">
+        <select class="pra-select" id="periodSelect"></select>
+        <input class="pra-input" type="date" id="customStart" style="display:none"/>
+        <input class="pra-input" type="date" id="customEnd" style="display:none"/>
+        <button class="pra-btn pra-btn-sm" id="updateReportBtn">Update</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="refreshAdsBtn" title="Ads data comes from a Google Sheet updated separately">Refresh Data</button>
+        <span class="pra-muted" id="periodRangeMsg" style="font-size:.8rem"></span>
       </div>
-      <div class="rep-section">
-        <div class="rep-section-title">Email Automations</div>
-        <div class="rep-grid" id="automationsGrid"></div>
+
+      <div class="tab-panel active" id="tab-overview">
+        <div class="rep-section">
+          <div class="rep-section-title">Ads</div>
+          <div class="rep-grid" id="overviewAdsGrid"></div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">Email</div>
+          <div class="rep-grid" id="emailGrid"></div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">SMS</div>
+          <div class="rep-grid" id="smsGrid"></div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">Email Automations</div>
+          <div class="rep-grid" id="automationsGrid"></div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">SMS Sequences</div>
+          <div class="rep-grid" id="workflowsGrid"></div>
+        </div>
       </div>
-      <div class="rep-section">
-        <div class="rep-section-title">SMS Sequences</div>
-        <div class="rep-grid" id="workflowsGrid"></div>
+
+      <div class="tab-panel" id="tab-email">
+        <div class="rep-grid" id="emailTotalsGrid" style="margin-bottom:18px"></div>
+        <div class="chart-wrap">
+          <div class="chart-bars" id="emailChart"></div>
+          <div class="chart-legend">
+            <span><span class="legend-dot" style="background:var(--pra-blue)"></span> Sent</span>
+            <span><span class="legend-dot" style="background:var(--pra-green)"></span> Opened</span>
+            <span><span class="legend-dot" style="background:#ffc107"></span> Clicked</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-sms">
+        <div class="rep-grid" id="smsTotalsGrid" style="margin-bottom:18px"></div>
+        <div class="chart-wrap">
+          <div class="chart-bars" id="smsChart"></div>
+          <div class="chart-legend">
+            <span><span class="legend-dot" style="background:var(--pra-blue)"></span> Sent</span>
+            <span><span class="legend-dot" style="background:var(--pra-green)"></span> Received</span>
+            <span><span class="legend-dot" style="background:var(--pra-red)"></span> Failed</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-ads">
+        <div class="pra-muted" id="adsMsg" style="font-size:.82rem;margin-bottom:14px"></div>
+        <div class="ads-cards" id="adsCards"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-journeys">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shows every tracked email/SMS/call/task touchpoint for a contact, oldest to newest. Ad-click-level attribution (which ad/creative brought them in) isn't tracked yet -- that needs the click-ID capture work discussed separately.</div>
+        <div class="journey-layout">
+          <div class="pra-panel" style="padding:0;overflow-y:auto;max-height:75vh">
+            <div style="padding:12px"><input class="pra-input" id="journeySearch" placeholder="Search contacts..."/></div>
+            <div id="journeyContactList"></div>
+          </div>
+          <div class="pra-panel" style="padding:20px;min-height:200px">
+            <div id="journeyTimeline" class="pra-muted">Select a contact to see their journey.</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </div>
 <script src="/crm-nav.js"></script>
 <script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+function fmtDay(d) { return new Date(d + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+function fmtMoney(n) { return '$' + (n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
+
+document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  if (btn.dataset.tab === 'journeys' && !journeysLoaded) loadJourneyContacts();
+});
+
+// ── Shared date-range selector -- same preset list/math as ads_backend.js
+// (fetched from /api/ads/periods so both stay in sync), resolved client-
+// side into concrete start/end dates and passed to every tab's endpoint. ──
+let currentPeriod = 'last30', currentStart = null, currentEnd = null;
+function resolvePeriodRange(period, customStartVal, customEndVal) {
+  const now = new Date();
+  const anchorageTodayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Anchorage', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  const todayUTC = new Date(anchorageTodayStr + 'T00:00:00Z');
+  const yesterday = new Date(todayUTC.getTime() - 86400000);
+  const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
+  const y0 = yesterday.getUTCFullYear(), m0 = yesterday.getUTCMonth();
+  const mk = (yy, mm, dd) => new Date(Date.UTC(yy, mm, dd));
+  const eom = (yy, mm) => new Date(Date.UTC(yy, mm + 1, 0));
+  if (period === 'custom') {
+    return [new Date((customStartVal || yesterday.toISOString().slice(0, 10)) + 'T00:00:00Z'), new Date((customEndVal || yesterday.toISOString().slice(0, 10)) + 'T00:00:00Z')];
+  }
+  const RANGES = {
+    yesterday: () => [yesterday, yesterday],
+    last7: () => [addDays(yesterday, -6), yesterday],
+    week1: () => [mk(y0, m0, 1), mk(y0, m0, 7)],
+    week2: () => [mk(y0, m0, 8), mk(y0, m0, 14)],
+    week3: () => [mk(y0, m0, 15), mk(y0, m0, 21)],
+    week4: () => [mk(y0, m0, 22), mk(y0, m0, 28)],
+    week5: () => [mk(y0, m0, 29), eom(y0, m0)],
+    month: () => [mk(y0, m0, 1), eom(y0, m0)],
+    last30: () => [addDays(yesterday, -29), yesterday],
+    last60: () => [addDays(yesterday, -59), yesterday],
+    last90: () => [addDays(yesterday, -89), yesterday],
+    last180: () => [addDays(yesterday, -179), yesterday],
+    last365: () => [addDays(yesterday, -364), yesterday],
+    lastyear: () => [mk(y0, 0, 1), yesterday],
+  };
+  return (RANGES[period] || RANGES.last30)();
+}
+async function initPeriodSelector() {
+  const r = await fetch('/api/ads/periods');
+  const { periods } = r.ok ? await r.json() : { periods: [] };
+  document.getElementById('periodSelect').innerHTML = periods.map(p => `<option value="${p.value}" ${p.value === currentPeriod ? 'selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
+}
+function applyPeriod() {
+  currentPeriod = document.getElementById('periodSelect').value;
+  const isCustom = currentPeriod === 'custom';
+  document.getElementById('customStart').style.display = isCustom ? 'inline-block' : 'none';
+  document.getElementById('customEnd').style.display = isCustom ? 'inline-block' : 'none';
+  const [start, end] = resolvePeriodRange(currentPeriod, document.getElementById('customStart').value, document.getElementById('customEnd').value);
+  currentStart = start.toISOString().slice(0, 10);
+  currentEnd = end.toISOString().slice(0, 10);
+  document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
+  loadEmailReport(); loadSmsReport(); loadAdsReport();
+  if (document.getElementById('tab-overview').classList.contains('active')) loadOverview();
+}
+document.getElementById('periodSelect').addEventListener('change', applyPeriod);
+document.getElementById('updateReportBtn').onclick = applyPeriod;
+
 const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
 const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed' };
 function grid(el, labels, data) {
@@ -46,14 +221,127 @@ function grid(el, labels, data) {
     <div class="pra-card" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
   `).join('');
 }
-(async function load() {
+async function loadOverview() {
   const r = await fetch('/api/reporting/overview');
   if (!r.ok) return;
-  const { email, sms, automations, workflows, campaigns } = await r.json();
+  const { email, sms, automations, workflows } = await r.json();
   grid('emailGrid', EMAIL_LABELS, email);
   grid('smsGrid', SMS_LABELS, sms);
   grid('automationsGrid', { total: 'Total', active: 'Active', currentlyEnrolled: 'Currently Enrolled' }, automations);
   grid('workflowsGrid', { total: 'Total', active: 'Active', currentlyEnrolled: 'Currently Enrolled' }, workflows);
+  const adsR = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);
+  const ads = adsR.ok ? await adsR.json() : { ok: false };
+  grid('overviewAdsGrid',
+    { spend: 'Spend', emails: 'Leads', closes: 'Closes', coll: 'Collected' },
+    ads.ok ? { spend: fmtMoney(ads.combined.spend), emails: ads.combined.emails, closes: ads.combined.closes, coll: fmtMoney(ads.combined.coll) } : { spend: '—', emails: '—', closes: '—', coll: '—' }
+  );
+}
+
+// ── Email / SMS daily charts ────────────────────────────────────────────
+function renderChart(elId, days, keys) {
+  const max = Math.max(1, ...days.flatMap(d => keys.map(k => d[k] || 0)));
+  document.getElementById(elId).innerHTML = days.map(d => `
+    <div class="chart-col">
+      <div class="chart-col-bars">
+        ${keys.map(k => `<div class="chart-bar ${k}" style="height:${Math.round((d[k] || 0) / max * 160)}px" title="${k}: ${d[k] || 0}"></div>`).join('')}
+      </div>
+      <div class="chart-date">${fmtDay(d.date)}</div>
+    </div>
+  `).join('') || '<div class="pra-muted">No data in this range.</div>';
+}
+async function loadEmailReport() {
+  const r = await fetch(`/api/reporting/email-daily?start=${currentStart}&end=${currentEnd}`);
+  if (!r.ok) return;
+  const d = await r.json();
+  grid('emailTotalsGrid', EMAIL_LABELS, d.totals);
+  renderChart('emailChart', d.days, ['sent', 'opened', 'clicked']);
+}
+async function loadSmsReport() {
+  const r = await fetch(`/api/reporting/sms-daily?start=${currentStart}&end=${currentEnd}`);
+  if (!r.ok) return;
+  const d = await r.json();
+  grid('smsTotalsGrid', SMS_LABELS, d.totals);
+  renderChart('smsChart', d.days, ['sent', 'received', 'failed']);
+}
+
+// ── Ads ──────────────────────────────────────────────────────────────────
+function adsSegmentCardHtml(title, data) {
+  if (!data) return `<div class="ads-segment-card"><div class="seg-title">${title}</div><div class="pra-muted" style="font-size:.8rem">No data.</div></div>`;
+  const rows = [
+    ['Spend', fmtMoney(data.spend)], ['Meta', fmtMoney(data.metaSpend)], ['Google', fmtMoney(data.googleSpend)],
+    ['Leads', data.emails], ['Bookings/Apps', data.bookM], ['Closes', data.closes], ['Sales (incl. renewals)', data.sales], ['Collected', fmtMoney(data.coll)],
+  ];
+  return `
+    <div class="ads-segment-card">
+      <div class="seg-title">${title}</div>
+      ${rows.map(([lbl, val]) => `<div class="ads-stat-row"><span class="lbl">${lbl}</span><span>${val}</span></div>`).join('')}
+    </div>
+  `;
+}
+async function loadAdsReport() {
+  const msg = document.getElementById('adsMsg');
+  const cards = document.getElementById('adsCards');
+  msg.textContent = 'Loading…';
+  const r = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);
+  const d = await r.json().catch(() => ({ ok: false, error: 'Request failed' }));
+  if (!d.ok) {
+    msg.innerHTML = `${escapeHtml(d.error || 'Could not load ads data.')} Configure this under <a class="pra-link" href="/settings.html">Settings &rarr; Ads</a>.`;
+    cards.innerHTML = '';
+    return;
+  }
+  msg.textContent = `${d.start} to ${d.end}`;
+  cards.innerHTML = adsSegmentCardHtml('Online', d.online) + adsSegmentCardHtml('Gym', d.gym) + adsSegmentCardHtml('Combined', d.combined);
+}
+document.getElementById('refreshAdsBtn').onclick = () => {
+  showToast('Ads data updates from the Google Sheet -- refresh it there, then click Update here to re-pull.');
+};
+
+// ── Customer Journeys ────────────────────────────────────────────────────
+let journeysLoaded = false, allJourneyContacts = [], activeJourneyContactId = null;
+const JOURNEY_ICONS = { email: '📧', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
+async function loadJourneyContacts() {
+  journeysLoaded = true;
+  const r = await fetch('/api/contacts');
+  allJourneyContacts = r.ok ? (await r.json()).contacts : [];
+  renderJourneyContactList();
+}
+function renderJourneyContactList() {
+  const q = document.getElementById('journeySearch').value.trim().toLowerCase();
+  const filtered = q ? allJourneyContacts.filter(c => `${c.first} ${c.last} ${c.email || ''}`.toLowerCase().includes(q)) : allJourneyContacts;
+  document.getElementById('journeyContactList').innerHTML = filtered.slice(0, 200).map(c => `
+    <div class="journey-contact-row${c.id === activeJourneyContactId ? ' active' : ''}" data-contact="${c.id}">${escapeHtml(c.first)} ${escapeHtml(c.last)}</div>
+  `).join('') || '<div class="pra-muted" style="padding:12px">No contacts match.</div>';
+  document.querySelectorAll('[data-contact]').forEach(row => row.onclick = () => openJourney(row.dataset.contact));
+}
+document.getElementById('journeySearch').addEventListener('input', renderJourneyContactList);
+async function openJourney(contactId) {
+  activeJourneyContactId = contactId;
+  renderJourneyContactList();
+  const r = await fetch('/api/inbox/contact/' + contactId);
+  const timeline = document.getElementById('journeyTimeline');
+  if (!r.ok) { timeline.innerHTML = '<div class="pra-muted">Could not load.</div>'; return; }
+  const { items } = await r.json();
+  const sorted = [...items].sort((a, b) => new Date(a.at) - new Date(b.at));
+  timeline.innerHTML = sorted.length ? sorted.map(item => {
+    let preview = '';
+    if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
+    else if (item.itemType === 'call') preview = `${escapeHtml(item.direction || '')} call${item.duration ? ', ' + item.duration + 'min' : ''}`;
+    else preview = escapeHtml(item.title || '');
+    return `
+      <div class="journey-timeline-item">
+        <div class="journey-icon ${item.itemType}">${JOURNEY_ICONS[item.itemType] || '•'}</div>
+        <div style="flex:1">
+          <div style="font-size:.86rem">${preview}</div>
+          <div class="pra-muted" style="font-size:.74rem">${fmtDate(item.at)}${item.status ? ' · ' + escapeHtml(item.status) : ''}</div>
+        </div>
+      </div>
+    `;
+  }).join('') : '<div class="pra-muted">No activity yet.</div>';
+}
+
+(async function init() {
+  await initPeriodSelector();
+  applyPeriod();
 })();
 </script>
 </body>

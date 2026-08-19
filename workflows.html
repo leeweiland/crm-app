@@ -11,6 +11,10 @@
   .active-toggle.on { background: var(--pra-blue); }
   .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
   .active-toggle.on::after { transform: translateX(18px); }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--pra-white); }
+  th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
+  th.sortable.sorted .sort-arrow { opacity: 1; }
 </style>
 </head>
 <body>
@@ -24,7 +28,15 @@
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Steps</th><th>Active</th><th>Active Enrolled</th><th>Goal Met</th><th>Last Edited</th><th></th></tr></thead>
+          <thead><tr>
+            <th class="sortable" data-sort="name">Name</th>
+            <th class="sortable" data-sort="steps">Steps</th>
+            <th class="sortable" data-sort="active">Active</th>
+            <th class="sortable" data-sort="activeEnrolled">Active Enrolled</th>
+            <th class="sortable" data-sort="goalMet">Goal Met</th>
+            <th class="sortable" data-sort="updatedAt">Last Edited</th>
+            <th></th>
+          </tr></thead>
           <tbody id="workflowsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -36,13 +48,28 @@
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
-async function loadWorkflows() {
-  const r = await fetch('/api/workflows');
+let allWorkflows = [];
+let workflowSort = { field: 'updatedAt', dir: -1 };
+function renderWorkflowsTable() {
+  const { field, dir } = workflowSort;
+  const rows = [...allWorkflows].sort((a, b) => {
+    let av, bv;
+    if (field === 'steps') { av = a.steps.length; bv = b.steps.length; }
+    else if (field === 'active') { av = a.active ? 1 : 0; bv = b.active ? 1 : 0; }
+    else if (field === 'activeEnrolled') { av = a.stats.active; bv = b.stats.active; }
+    else if (field === 'goalMet') { av = a.stats.goalMet; bv = b.stats.goalMet; }
+    else if (field === 'updatedAt') { av = a.updatedAt || ''; bv = b.updatedAt || ''; }
+    else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === field);
+    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
+    if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
+  });
   const body = document.getElementById('workflowsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load.</td></tr>'; return; }
-  const { workflows } = await r.json();
-  if (!workflows.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No workflows yet.</td></tr>'; return; }
-  body.innerHTML = workflows.map(w => `
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No workflows yet.</td></tr>'; return; }
+  body.innerHTML = rows.map(w => `
     <tr>
       <td class="clickable" onclick="location.href='/workflow-detail.html?id=${w.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(w.name)}</td>
       <td class="pra-muted">${w.steps.length}</td>
@@ -72,6 +99,17 @@ async function loadWorkflows() {
     loadWorkflows();
   });
 }
+async function loadWorkflows() {
+  const r = await fetch('/api/workflows');
+  if (!r.ok) { document.getElementById('workflowsBody').innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load.</td></tr>'; return; }
+  allWorkflows = (await r.json()).workflows;
+  renderWorkflowsTable();
+}
+document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+  if (workflowSort.field === th.dataset.sort) workflowSort.dir *= -1;
+  else workflowSort = { field: th.dataset.sort, dir: 1 };
+  renderWorkflowsTable();
+}));
 document.getElementById('newWorkflowBtn').onclick = async () => {
   const r = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Workflow' }) });
   const d = await r.json();

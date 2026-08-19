@@ -10,6 +10,10 @@
   .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
   .ab-name-input:focus { border-bottom-color: var(--pra-blue); }
   .ab-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 18px; }
+  .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .active-toggle.on { background: var(--pra-green); }
+  .active-toggle.on::after { left: 20px; }
   .ab-canvas-wrap { position: relative; overflow: hidden; padding: 20px 0; height: 68vh; border: 1px solid var(--pra-border); border-radius: 10px; background-image: radial-gradient(var(--pra-border) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; }
   .ab-canvas-wrap.panning { cursor: grabbing; }
   .ab-canvas-zoom-layer { transform-origin: 0 0; }
@@ -19,6 +23,10 @@
   .ab-zoom-controls button:hover { background: rgba(255,255,255,0.08); }
   .ab-zoom-controls span { font-size: .74rem; color: var(--pra-dim); min-width: 34px; text-align: center; }
   .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
+  .chain-arrow-wrap { position: relative; display: flex; align-items: center; justify-content: center; height: 26px; }
+  .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s; }
+  .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
+  .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; }
   .step-card:hover { border-color: var(--pra-blue); }
@@ -48,6 +56,7 @@
         <button class="active-toggle" id="activeToggle"></button>
         <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="viewContactsBtn">View Contacts</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="goalBtn">&#127919; Goal</button>
       </div>
       <div class="ab-savedmsg">
         <span id="savedMsg">&nbsp;</span>
@@ -80,6 +89,8 @@
         <option value="email_opened">Any tracked email is opened</option>
         <option value="email_clicked">Any tracked email link is clicked</option>
         <option value="page_visit">Contact visits a page</option>
+        <option value="form_submitted">Form is submitted</option>
+        <option value="booking_created">Booking is created</option>
       </select>
     </div>
     <div class="field" id="triggerTargetField" style="display:none">
@@ -98,6 +109,21 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="goalModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:6px">Goal</div>
+    <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">When a contact hits this, they're pulled straight to Completed -- skipping any remaining steps -- no matter where they are in the automation.</div>
+    <div class="field"><label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="goalEnabled"/> Enable a goal for this automation</label></div>
+    <div id="goalConfigFields">
+      <div class="field"><label class="pra-label">Status changes to (leave blank for any status change)</label><select class="pra-select" id="goalStatus"><option value="">Any status change</option></select></div>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveGoalBtn" style="flex:1">Save</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('goalModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add-step type picker -->
 <div class="modal-backdrop" id="typePickerModal">
   <div class="pra-panel modal-box">
@@ -109,7 +135,7 @@
       <button data-type="remove_tag">🏷 Remove Tag</button>
       <button data-type="add_to_facebook_audience">📘 Add to Facebook Audience</button>
       <button data-type="condition">🔀 Condition (Branch)</button>
-      <button data-type="jump_to_automation">↪ Jump to Automation</button>
+      <button data-type="jump_to_automation">↪ Add to Automation</button>
       <button data-type="end_automation">⏹ End an Automation</button>
     </div>
     <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('typePickerModal')">Cancel</button>
@@ -184,12 +210,12 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 
 const automationId = new URLSearchParams(location.search).get('id');
-let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [];
+let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [], allForms = [], allEventTypes = [];
 let saveTimer, emailStepEditor = null, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
 
 async function loadRefs() {
-  const [listsRes, tagsRes, statusesRes, footersRes, autosRes, fbRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations'), fetch('/api/facebook/config-status')
+  const [listsRes, tagsRes, statusesRes, footersRes, autosRes, fbRes, formsRes, eventTypesRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations'), fetch('/api/facebook/config-status'), fetch('/api/forms'), fetch('/api/scheduling/admin/event-types')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
@@ -197,6 +223,8 @@ async function loadRefs() {
   allFooters = (await footersRes.json()).templates;
   allAutomations = (await autosRes.json()).automations;
   facebookIsConfigured = fbRes.ok ? (await fbRes.json()).configured : false;
+  allForms = formsRes.ok ? (await formsRes.json()).forms : [];
+  allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes : [];
 }
 
 function stepSummary(step) {
@@ -209,11 +237,11 @@ function stepSummary(step) {
     const c = step.config.filter?.all?.[0];
     return c ? `If ${c.field} ${c.op} ${escapeHtml(String(c.value))}` : 'No condition set';
   }
-  if (step.type === 'jump_to_automation') return `Jump to: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
+  if (step.type === 'jump_to_automation') return `Add to: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
   if (step.type === 'end_automation') return `End: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
   return '';
 }
-const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Jump to Automation', end_automation: 'End Automation' };
+const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation' };
 let facebookIsConfigured = false;
 
 function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
@@ -249,7 +277,9 @@ function renderChainHtml(startId, path) {
     const step = automation.steps[cur];
     cur = step.type === 'condition' ? null : (step.nextStepId || null);
   }
-  let html = ids.map((id, i) => stepCardHtml(id, i === ids.length - 1) + (i < ids.length - 1 ? '<div class="chain-arrow">&darr;</div>' : '')).join('');
+  let html = ids.map((id, i) => stepCardHtml(id, i === ids.length - 1) + (i < ids.length - 1
+    ? `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-path="${path}" data-after="${id}" title="Insert a step here">+</button></div>`
+    : '')).join('');
   const lastId = ids[ids.length - 1] || null;
   const lastStep = lastId ? automation.steps[lastId] : null;
 
@@ -273,7 +303,7 @@ function render() {
 
   const canvas = document.getElementById('canvas');
   const trig = automation.trigger || { type: 'list_subscribe', config: {} };
-  const trigLabelMap = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page' };
+  const trigLabelMap = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page', form_submitted: trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted', booking_created: trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created' };
   canvas.innerHTML = `
     <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
       <div class="pra-label">Start automation when</div>
@@ -302,7 +332,7 @@ function saveDebounced() {
 async function saveAutomation() {
   const r = await fetch('/api/automations/' + automation.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: automation.name, trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId }),
+    body: JSON.stringify({ name: automation.name, trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal }),
   });
   if (r.ok) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
 }
@@ -322,6 +352,8 @@ function openTriggerModal() {
   if (trig.type === 'list_subscribe') document.getElementById('triggerTarget').value = trig.config.listId || '';
   if (trig.type === 'tag_added') document.getElementById('triggerTarget').value = trig.config.tagId || '';
   if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
+  if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
+  if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
   openModal('triggerModal');
 }
 function updateTriggerTargetField() {
@@ -336,16 +368,43 @@ function updateTriggerTargetField() {
   } else if (type === 'tag_added') {
     field.style.display = 'block'; label.textContent = 'Tag (any tag if left blank)';
     select.innerHTML = '<option value="">Any tag</option>' + allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  } else if (type === 'form_submitted') {
+    field.style.display = 'block'; label.textContent = 'Form (any form if left blank)';
+    select.innerHTML = '<option value="">Any form</option>' + allForms.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+  } else if (type === 'booking_created') {
+    field.style.display = 'block'; label.textContent = 'Event type (any if left blank)';
+    select.innerHTML = '<option value="">Any event type</option>' + allEventTypes.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
   } else {
     field.style.display = 'none';
   }
 }
 document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
+
+// ── Goal ───────────────────────────────────────────────────────────────
+function openGoalModal() {
+  document.getElementById('goalStatus').innerHTML = '<option value="">Any status change</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
+  const goal = automation.goal || null;
+  document.getElementById('goalEnabled').checked = !!goal;
+  document.getElementById('goalConfigFields').style.display = goal ? 'block' : 'none';
+  document.getElementById('goalStatus').value = goal?.status || '';
+  openModal('goalModal');
+}
+document.getElementById('goalBtn').onclick = openGoalModal;
+document.getElementById('goalEnabled').addEventListener('change', (e) => { document.getElementById('goalConfigFields').style.display = e.target.checked ? 'block' : 'none'; });
+document.getElementById('saveGoalBtn').onclick = () => {
+  const enabled = document.getElementById('goalEnabled').checked;
+  automation.goal = enabled ? { trigger: 'lead_status_change', status: document.getElementById('goalStatus').value || null } : null;
+  closeModal('goalModal');
+  saveDebounced();
+  showToast('Goal saved');
+};
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
   const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
-    : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null } : {};
+    : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
+    : type === 'form_submitted' ? { formId: target || null }
+    : type === 'booking_created' ? { eventTypeId: target || null } : {};
   automation.trigger = { type, config };
   closeModal('triggerModal');
   render(); saveDebounced();
@@ -357,7 +416,9 @@ function attachNewStep(step) {
   if (pendingAddPath === 'root' && !pendingAddAfter) {
     automation.startStepId = step.id;
   } else if (pendingAddAfter) {
-    automation.steps[pendingAddAfter].nextStepId = step.id;
+    const prevStep = automation.steps[pendingAddAfter];
+    step.nextStepId = prevStep.nextStepId || null; // splice in: whatever came after prevStep now comes after the new step
+    prevStep.nextStepId = step.id;
   } else if (pendingAddPath.startsWith('yes:')) {
     automation.steps[pendingAddPath.slice(4)].yesStepId = step.id;
   } else if (pendingAddPath.startsWith('no:')) {

@@ -71,6 +71,13 @@ window.BlockEditor = (function () {
             <button type="button" data-cmd="justifyCenter">&#8596;</button>
             <button type="button" data-cmd="justifyRight">&#8677;</button>
             <input type="color" id="beColor" title="Text color"/>
+            <select id="beFontFamily" title="Font">
+              <option value="">Font...</option>
+              <option value="Arial, Helvetica, sans-serif">Arial</option>
+              <option value="'Century Gothic', 'Apple Gothic', sans-serif">Century Gothic</option>
+              <option value="'Century Gothic Bold', 'Century Gothic', sans-serif" style="font-weight:bold">Century Gothic Bold</option>
+              <option value="Aldrich, Arial, sans-serif">Aldrich</option>
+            </select>
             <select id="beFontSize"><option value="2">Small</option><option value="3" selected>Normal</option><option value="5">Large</option><option value="7">XL</option></select>
             <button type="button" id="beLinkBtn">Link</button>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option></select>
@@ -86,14 +93,18 @@ window.BlockEditor = (function () {
           <div class="be-canvas" id="beCanvas">
             <div class="be-canvas-inner" id="beCanvasInner"></div>
           </div>
-          <div class="be-add-row">
-            <span class="pra-muted" style="font-size:.72rem;margin-right:4px">Drag a block onto the email, or click to add at the end:</span>
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="text">&#9776; Text</button>
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="image">&#9776; Image</button>
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="button">&#9776; Button</button>
-          </div>
         </div>
-        <div class="be-style-panel" id="beStylePanel"></div>
+        <div class="be-side-panel">
+          <div class="be-palette-panel">
+            <div class="pra-label" style="margin-bottom:8px">Drag onto the email, or click to add at the end</div>
+            <div class="be-add-row">
+              <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="text">&#9776; Text</button>
+              <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="image">&#9776; Image</button>
+              <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="button">&#9776; Button</button>
+            </div>
+          </div>
+          <div class="be-style-panel" id="beStylePanel"></div>
+        </div>
       </div>
     `;
 
@@ -344,6 +355,12 @@ window.BlockEditor = (function () {
     });
     toolbar.querySelector('#beColor').addEventListener('input', (e) => { document.execCommand('foreColor', false, e.target.value); syncSelectedText(); });
     toolbar.querySelector('#beFontSize').addEventListener('change', (e) => { document.execCommand('fontSize', false, e.target.value); syncSelectedText(); });
+    toolbar.querySelector('#beFontFamily').addEventListener('change', (e) => {
+      if (!e.target.value) return;
+      document.execCommand('fontName', false, e.target.value);
+      e.target.value = '';
+      syncSelectedText();
+    });
     // Inline popover instead of prompt() -- native prompt() is blocked in
     // some embedded/sandboxed browser contexts (e.g. iframed previews),
     // and a small popover matches the rest of this editor's UI anyway.

@@ -1,5 +1,7 @@
 import { getCookie } from "./auth_backend.js";
 import { fireTrigger } from "./automations_backend.js";
+import { fireWorkflowTrigger } from "./workflows_backend.js";
+import { getPublicBaseUrl } from "./integrations_backend.js";
 
 // Simplified page-visit tracking: rather than a fully anonymous
 // visitor-identity system (cookie sync before a contact is even known),
@@ -25,7 +27,7 @@ export async function handleTrackingRequest(req, res, url) {
   const p = url.pathname;
 
   if (p === "/track.js" && req.method === "GET") {
-    const baseUrl = process.env.PUBLIC_BASE_URL || `${url.protocol}//${url.host}`;
+    const baseUrl = getPublicBaseUrl() || `${url.protocol}//${url.host}`;
     res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" });
     res.end(TRACK_SNIPPET.replace("__BASE_URL__", baseUrl));
     return true;
@@ -37,7 +39,10 @@ export async function handleTrackingRequest(req, res, url) {
     let parsed = {};
     try { parsed = JSON.parse(body || "{}"); } catch { /* ignore malformed beacon */ }
     const cid = parsed.cid || getCookie(req, "crm_cid");
-    if (cid) fireTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
+    if (cid) {
+      fireTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
+      fireWorkflowTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
+    }
     res.writeHead(204); res.end();
     return true;
   }

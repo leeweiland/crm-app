@@ -5,7 +5,7 @@ import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
-import { getSesSettings } from "./integrations_backend.js";
+import { getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -77,7 +77,7 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   const templates = readJson(FOOTER_TEMPLATES_FILE, []);
   const footer = templates.find(f => f.id === footerTemplateId) || templates.find(f => f.isDefault) || null;
   if (!footer) return "";
-  const unsubscribeUrl = `${process.env.PUBLIC_BASE_URL || ""}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
+  const unsubscribeUrl = `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
   const social = (footer.socialLinks || []).map(s => `<a href="${s.url}" style="margin:0 6px;color:#888">${s.platform}</a>`).join("");
   // footer.blocks is the current (BlockEditor) format; footer.html is a
   // fallback for footers created before the editor conversion.
@@ -120,7 +120,7 @@ export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, 
     return { ok: false, reason: "ses_not_configured" };
   }
 
-  html = rewriteLinksForTracking(html, { messageLogId: logRow.id, baseUrl: process.env.PUBLIC_BASE_URL || "" });
+  html = rewriteLinksForTracking(html, { messageLogId: logRow.id, baseUrl: getPublicBaseUrl() });
 
   try {
     const cmd = new SendEmailCommand({

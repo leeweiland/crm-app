@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
-import { fireTrigger } from "./automations_backend.js";
+import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
@@ -11,7 +11,7 @@ export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 
 function publicContact(c) { return c; } // no sensitive fields to strip yet — placeholder for parity with auth's publicUser
 
-function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {
+export function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {
   return {
     id: randomUUID(),
     type: type === "lead" ? "lead" : "contact",
@@ -101,7 +101,7 @@ export async function handleContactsRequest(req, res, url) {
       // was edited.
       contact.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => { fireTrigger("list_subscribe", { contactId: contact.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: contact.id, listId }); });
       contact.tags.filter(id => !prevTags.includes(id)).forEach(tagId => { fireTrigger("tag_added", { contactId: contact.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: contact.id, tagId }); });
-      if (contact.status !== prevStatus) checkConversionGoal("lead_status_change", contact.id);
+      if (contact.status !== prevStatus) { checkConversionGoal("lead_status_change", contact.id); checkAutomationGoal("lead_status_change", contact.id, contact.status); }
       return sendJson(res, 200, { ok: true, contact: publicContact(contact) });
     }
     if (req.method === "DELETE") {

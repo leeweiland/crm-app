@@ -25,6 +25,10 @@
   .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
   .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
   #typeToggle .pra-btn-ghost.active { color: var(--pra-white); background: var(--pra-blue-dim); border-color: rgba(0,155,255,0.3); }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--pra-white); }
+  th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
+  th.sortable.sorted .sort-arrow { opacity: 1; }
 </style>
 </head>
 <body>
@@ -74,8 +78,15 @@
 
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th>Name</th><th>Account</th><th>Email</th><th>Phone</th><th>Status</th><th>Tags</th><th>Created</th></tr></thead>
-            <tbody id="contactsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+            <thead><tr>
+              <th class="sortable" data-sort="name">Name</th>
+              <th class="sortable" data-sort="email">Email</th>
+              <th class="sortable" data-sort="phone">Phone</th>
+              <th class="sortable" data-sort="status">Status</th>
+              <th>Tags</th>
+              <th class="sortable" data-sort="createdAt">Created</th>
+            </tr></thead>
+            <tbody id="contactsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -222,7 +233,7 @@ async function loadTags() {
 }
 async function loadLists() {
   const r = await fetch('/api/lists');
-  allLists = (await r.json()).lists;
+  allLists = (await r.json()).lists.sort((a, b) => a.name.localeCompare(b.name));
   document.getElementById('listsList').innerHTML = allLists.map(l => `
     <div class="row-item"><span style="flex:1">${escapeHtml(l.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-list="${l.id}">Delete</button></div>
   `).join('') || '<div class="pra-muted">No lists yet.</div>';
@@ -382,6 +393,42 @@ document.getElementById('confirmSaveSegmentBtn').onclick = async () => {
 };
 
 // ── Contacts list ────────────────────────────────────────────────────────
+let currentContacts = [];
+let contactSort = { field: 'name', dir: 1 };
+function sortContacts(contacts) {
+  const { field, dir } = contactSort;
+  return [...contacts].sort((a, b) => {
+    let av, bv;
+    if (field === 'name') { av = `${a.first} ${a.last}`.toLowerCase(); bv = `${b.first} ${b.last}`.toLowerCase(); }
+    else if (field === 'createdAt') { av = a.createdAt || ''; bv = b.createdAt || ''; }
+    else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+}
+function renderContactsTable() {
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === contactSort.field);
+    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
+    if (th.dataset.sort === contactSort.field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${contactSort.dir === 1 ? '▲' : '▼'}</span>`);
+  });
+  const body = document.getElementById('contactsBody');
+  if (!currentContacts.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No contacts match.</td></tr>'; return; }
+  body.innerHTML = sortContacts(currentContacts).map(c => `
+    <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
+      <td>${escapeHtml(c.first)} ${escapeHtml(c.last)}</td>
+      <td>${escapeHtml(c.email || '')}</td>
+      <td>${escapeHtml(c.phone || '')}</td>
+      <td>${c.status ? `<span class="pra-badge">${escapeHtml(c.status)}</span>` : ''}</td>
+      <td>${(c.tags || []).length ? c.tags.length + ' tag(s)' : ''}</td>
+      <td class="pra-muted">${fmtDate(c.createdAt)}</td>
+    </tr>
+  `).join('');
+}
+document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+  if (contactSort.field === th.dataset.sort) contactSort.dir *= -1;
+  else contactSort = { field: th.dataset.sort, dir: 1 };
+  renderContactsTable();
+}));
 async function loadContacts() {
   const q = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
@@ -392,20 +439,9 @@ async function loadContacts() {
   if (activeFilter) params.set('filter', JSON.stringify(activeFilter));
   const r = await fetch('/api/contacts?' + params.toString());
   const body = document.getElementById('contactsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Could not load contacts.</td></tr>'; return; }
-  const { contacts } = await r.json();
-  if (!contacts.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No contacts match.</td></tr>'; return; }
-  body.innerHTML = contacts.map(c => `
-    <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
-      <td>${escapeHtml(c.first)} ${escapeHtml(c.last)}</td>
-      <td class="pra-muted">${escapeHtml(c.accountName || '')}</td>
-      <td>${escapeHtml(c.email || '')}</td>
-      <td>${escapeHtml(c.phone || '')}</td>
-      <td>${c.status ? `<span class="pra-badge">${escapeHtml(c.status)}</span>` : ''}</td>
-      <td>${(c.tags || []).length ? c.tags.length + ' tag(s)' : ''}</td>
-      <td class="pra-muted">${fmtDate(c.createdAt)}</td>
-    </tr>
-  `).join('');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load contacts.</td></tr>'; return; }
+  currentContacts = (await r.json()).contacts;
+  renderContactsTable();
 }
 
 document.getElementById('searchInput').addEventListener('input', () => { clearTimeout(window._st); window._st = setTimeout(loadContacts, 250); });

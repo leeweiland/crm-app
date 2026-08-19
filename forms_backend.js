@@ -1,0 +1,248 @@
+import { randomUUID } from "crypto";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { CONTACTS_FILE } from "./segments_shared.js";
+import { fireTrigger } from "./automations_backend.js";
+import { fireWorkflowTrigger } from "./workflows_backend.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+export const FORMS_FILE = "crm_forms.json";
+export const RESPONSES_FILE = "crm_form_responses.json";
+
+// "statement" is display-only (no answer), "page_break" is a layout marker
+// (splits the public renderer into steps, Tally's one-question-at-a-time
+// feel) -- neither is validated as required and neither ever has an answer.
+export const FIELD_TYPES = [
+  "short_text", "long_text", "email", "phone", "first_name", "last_name",
+  "number", "dropdown", "multiple_choice", "checkboxes", "date",
+  "statement", "page_break",
+];
+const CHOICE_TYPES = ["dropdown", "multiple_choice", "checkboxes"];
+const ANSWERABLE_TYPES = FIELD_TYPES.filter(t => t !== "statement" && t !== "page_break");
+
+function slugField(field) {
+  const base = String(field.label || field.type || field.id).toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return base || field.id;
+}
+
+function newField(type) {
+  const id = randomUUID();
+  const field = { id, type, label: "", placeholder: "", required: false, helpText: "" };
+  if (CHOICE_TYPES.includes(type)) field.options = [{ id: randomUUID(), label: "Option 1" }];
+  if (type === "statement") { field.label = "Statement"; field.helpText = ""; delete field.required; }
+  if (type === "page_break") { delete field.label; delete field.placeholder; delete field.required; delete field.helpText; }
+  return field;
+}
+
+function newForm(name) {
+  const emailField = newField("email");
+  emailField.label = "Email"; emailField.required = true;
+  return {
+    id: randomUUID(),
+    name: name || "Untitled Form",
+    status: "draft",
+    fields: [emailField],
+    settings: {
+      submitButtonText: "Submit",
+      confirmationMessage: "Thanks — we got it!",
+      redirectUrl: "",
+      defaultStatus: "",
+      addTagIds: [],
+      addListIds: [],
+    },
+    theme: { accentColor: "#009bff" },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function publicForm(form) {
+  // Strips internal routing config (defaultStatus/addTagIds/addListIds) —
+  // the public renderer only needs what it displays and submits against.
+  return {
+    id: form.id, name: form.name, fields: form.fields, theme: form.theme,
+    settings: {
+      submitButtonText: form.settings.submitButtonText,
+      confirmationMessage: form.settings.confirmationMessage,
+      redirectUrl: form.settings.redirectUrl,
+    },
+  };
+}
+
+function validateAnswers(fields, answers) {
+  for (const field of fields) {
+    if (!ANSWERABLE_TYPES.includes(field.type) || !field.required) continue;
+    const val = answers[field.id];
+    const empty = field.type === "checkboxes" ? !Array.isArray(val) || val.length === 0 : val === undefined || val === null || String(val).trim() === "";
+    if (empty) return `"${field.label || field.type}" is required`;
+  }
+  return null;
+}
+
+// Upserts a CRM contact from a submission the same way import_backend.js's
+// manual importer does — matched by email first, then phone, so a repeat
+// submission (or a contact who already exists from another channel) merges
+// instead of duplicating. Returns null if the form carried neither an email
+// nor a phone field with a value, since there's nothing to key a contact on.
+function upsertContactFromSubmission(form, answers) {
+  const emailField = form.fields.find(f => f.type === "email");
+  const phoneField = form.fields.find(f => f.type === "phone");
+  const firstField = form.fields.find(f => f.type === "first_name");
+  const lastField = form.fields.find(f => f.type === "last_name");
+  const email = emailField ? String(answers[emailField.id] || "").trim().toLowerCase() : "";
+  const phone = phoneField ? String(answers[phoneField.id] || "").trim() : "";
+  if (!email && !phone) return null;
+
+  const contacts = readJson(CONTACTS_FILE, []);
+  let contact = (email && contacts.find(c => c.email?.toLowerCase() === email)) || (!email && phone && contacts.find(c => c.phone === phone));
+  const prevTags = contact ? [...contact.tags] : [];
+  const prevListIds = contact ? [...contact.listIds] : [];
+  const isNew = !contact;
+
+  const customFields = {};
+  for (const f of form.fields) {
+    if (!ANSWERABLE_TYPES.includes(f.type)) continue;
+    if ([emailField?.id, phoneField?.id, firstField?.id, lastField?.id].includes(f.id)) continue;
+    if (answers[f.id] !== undefined && answers[f.id] !== "") customFields[slugField(f)] = answers[f.id];
+  }
+
+  if (contact) {
+    if (firstField && answers[firstField.id]) contact.first = answers[firstField.id];
+    if (lastField && answers[lastField.id]) contact.last = answers[lastField.id];
+    if (email) contact.email = email;
+    if (phone) contact.phone = phone;
+    contact.customFields = { ...contact.customFields, ...customFields };
+    if (form.settings.defaultStatus && !contact.status) contact.status = form.settings.defaultStatus;
+  } else {
+    contact = {
+      id: randomUUID(), type: "lead", accountName: "",
+      first: firstField ? (answers[firstField.id] || "") : "", last: lastField ? (answers[lastField.id] || "") : "",
+      email, phone, status: form.settings.defaultStatus || "", tags: [], listIds: [], customFields,
+      source: "form", ownerId: null, emailOptOut: false, smsOptOut: false,
+      externalIds: { acContactId: null, closeLeadId: null },
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    contacts.push(contact);
+  }
+
+  (form.settings.addTagIds || []).forEach(tagId => { if (!contact.tags.includes(tagId)) contact.tags.push(tagId); });
+  (form.settings.addListIds || []).forEach(listId => { if (!contact.listIds.includes(listId)) contact.listIds.push(listId); });
+  contact.updatedAt = new Date().toISOString();
+  writeJson(CONTACTS_FILE, contacts);
+
+  // Same "only fire for genuinely new membership" rule contacts_backend.js
+  // uses for its PATCH handler, so a repeat form submission from an already
+  // subscribed contact doesn't re-enroll them into a list-subscribe automation.
+  contact.tags.filter(id => !prevTags.includes(id)).forEach(tagId => { fireTrigger("tag_added", { contactId: contact.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: contact.id, tagId }); });
+  contact.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => { fireTrigger("list_subscribe", { contactId: contact.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: contact.id, listId }); });
+
+  return { contact, isNew };
+}
+
+export async function handleFormsRequest(req, res, url) {
+  const p = url.pathname;
+
+  // ── Public: form renderer + submission — no auth, only published forms ──
+  const publicFormMatch = p.match(/^\/api\/public\/forms\/([^/]+)$/);
+  if (publicFormMatch && req.method === "GET") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === publicFormMatch[1]);
+    if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    return sendJson(res, 200, { form: publicForm(form) });
+  }
+  const submitMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/submit$/);
+  if (submitMatch && req.method === "POST") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === submitMatch[1]);
+    if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    const { answers } = await readJsonBody(req);
+    const cleanAnswers = answers && typeof answers === "object" ? answers : {};
+    const validationError = validateAnswers(form.fields, cleanAnswers);
+    if (validationError) return sendJson(res, 400, { error: validationError });
+
+    const result = upsertContactFromSubmission(form, cleanAnswers);
+    const responses = readJson(RESPONSES_FILE, []);
+    const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, submittedAt: new Date().toISOString() };
+    responses.push(response);
+    writeJson(RESPONSES_FILE, responses);
+
+    if (result?.contact.id) { fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id }); fireWorkflowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id }); }
+
+    return sendJson(res, 200, { ok: true, confirmationMessage: form.settings.confirmationMessage, redirectUrl: form.settings.redirectUrl || null });
+  }
+
+  // Clean public URL (/f/:id) -- just hands back the same static SPA shell
+  // as the file route below would; the form id is read client-side from
+  // location.pathname, so no server-side templating is needed.
+  const shareMatch = p.match(/^\/f\/[^/]+$/);
+  if (shareMatch && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(readFileSync(join(__dirname, "public-form.html")));
+    return true;
+  }
+
+  // ── Authed: form + response management ──────────────────────────────────
+  if (!p.startsWith("/api/forms")) return false;
+  const me = getSessionUser(req);
+  if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  if (p === "/api/forms" && req.method === "GET") {
+    const forms = readJson(FORMS_FILE, []);
+    const responses = readJson(RESPONSES_FILE, []);
+    const withCounts = forms.map(f => ({ ...f, responseCount: responses.filter(r => r.formId === f.id).length }));
+    return sendJson(res, 200, { forms: withCounts });
+  }
+  if (p === "/api/forms" && req.method === "POST") {
+    const { name } = await readJsonBody(req);
+    const forms = readJson(FORMS_FILE, []);
+    const form = newForm(name);
+    forms.push(form);
+    writeJson(FORMS_FILE, forms);
+    return sendJson(res, 200, { ok: true, form });
+  }
+
+  const formMatch = p.match(/^\/api\/forms\/([^/]+)$/);
+  if (formMatch) {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === formMatch[1]);
+    if (req.method === "GET") {
+      if (!form) return sendJson(res, 404, { error: "Form not found" });
+      return sendJson(res, 200, { form });
+    }
+    if (req.method === "PATCH") {
+      if (!form) return sendJson(res, 404, { error: "Form not found" });
+      const body = await readJsonBody(req);
+      if ("status" in body && !["draft", "published"].includes(body.status)) return sendJson(res, 400, { error: "status must be 'draft' or 'published'" });
+      for (const k of ["name", "status", "fields", "settings", "theme"]) if (k in body) form[k] = body[k];
+      form.updatedAt = new Date().toISOString();
+      writeJson(FORMS_FILE, forms);
+      return sendJson(res, 200, { ok: true, form });
+    }
+    if (req.method === "DELETE") {
+      if (!form) return sendJson(res, 404, { error: "Form not found" });
+      writeJson(FORMS_FILE, forms.filter(f => f.id !== formMatch[1]));
+      writeJson(RESPONSES_FILE, readJson(RESPONSES_FILE, []).filter(r => r.formId !== formMatch[1]));
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  const responsesMatch = p.match(/^\/api\/forms\/([^/]+)\/responses$/);
+  if (responsesMatch && req.method === "GET") {
+    const responses = readJson(RESPONSES_FILE, []).filter(r => r.formId === responsesMatch[1]);
+    const contacts = readJson(CONTACTS_FILE, []);
+    const withContact = responses.map(r => ({ ...r, contact: contacts.find(c => c.id === r.contactId) ? { first: contacts.find(c => c.id === r.contactId).first, last: contacts.find(c => c.id === r.contactId).last, email: contacts.find(c => c.id === r.contactId).email } : null }));
+    withContact.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+    return sendJson(res, 200, { responses: withContact });
+  }
+  const deleteResponseMatch = p.match(/^\/api\/forms\/([^/]+)\/responses\/([^/]+)$/);
+  if (deleteResponseMatch && req.method === "DELETE") {
+    const responses = readJson(RESPONSES_FILE, []);
+    writeJson(RESPONSES_FILE, responses.filter(r => !(r.formId === deleteResponseMatch[1] && r.id === deleteResponseMatch[2])));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  return false;
+}

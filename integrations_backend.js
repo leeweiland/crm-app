@@ -8,7 +8,19 @@ export const INTEGRATIONS_FILE = "crm_integrations.json";
 // process.env stays as the zero-config fallback (e.g. Railway env vars) for
 // deployments where nobody has touched this UI yet.
 function readSettings() {
-  return readJson(INTEGRATIONS_FILE, { ses: {}, twilio: {} });
+  return readJson(INTEGRATIONS_FILE, { ses: {}, twilio: {}, site: {} });
+}
+
+export function getPublicBaseUrl() {
+  return readSettings().site?.publicBaseUrl || process.env.PUBLIC_BASE_URL || "";
+}
+
+// Defaults to the real Pacific Rim Athletics logo until someone uploads a
+// different one or explicitly clears it (an explicitly-saved "" is left
+// alone -- that's "no logo", distinct from "never configured").
+export function getLogoUrl() {
+  const v = readSettings().site?.logoUrl;
+  return v !== undefined ? v : "/assets/pra-logo.png";
 }
 
 export function getSesSettings() {
@@ -43,6 +55,15 @@ export async function handleIntegrationsRequest(req, res, url) {
 
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // Site branding (logo/publicBaseUrl/websiteUrl) is readable by any
+  // logged-in user, not just admins -- crm-nav.js needs it to render the
+  // sidebar for every role. Everything else below (AWS/Twilio secrets,
+  // and writing site settings) stays admin-only.
+  if (p === "/api/integrations/site" && req.method === "GET") {
+    return sendJson(res, 200, { publicBaseUrl: getPublicBaseUrl(), websiteUrl: readSettings().site?.websiteUrl || "", logoUrl: getLogoUrl() });
+  }
+
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
 
   if (p === "/api/integrations/ses" && req.method === "GET") {
@@ -82,6 +103,16 @@ export async function handleIntegrationsRequest(req, res, url) {
     for (const k of ["accountSid", "authToken", "fromNumber"]) {
       if (k in body && !String(body[k]).startsWith("****")) all.twilio[k] = body[k];
     }
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === "/api/integrations/site" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const all = readSettings();
+    all.site = all.site || {};
+    for (const k of ["publicBaseUrl", "websiteUrl"]) if (k in body) all.site[k] = String(body[k]).trim().replace(/\/+$/, "");
+    if ("logoUrl" in body) all.site.logoUrl = String(body.logoUrl).trim();
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
   }
