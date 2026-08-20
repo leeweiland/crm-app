@@ -465,6 +465,21 @@ export async function handleImportRequest(req, res, url) {
     return sendJson(res, 200, { activecampaign: acConfigured(), close: closeConfigured(), hyros: hyrosConfigured() });
   }
 
+  // One-off (re-runnable) catch-up: fills in status for any AC/Hyros
+  // contact that's missing one, via the same live Close cross-reference the
+  // import loop now runs automatically -- needed for contacts imported
+  // BEFORE that cross-reference existed, or before their matching Close
+  // lead existed yet.
+  if (p === "/api/import/backfill-status" && req.method === "POST") {
+    const targets = readJson(CONTACTS_FILE, []).filter(c => ["ac_import", "hyros_import"].includes(c.source) && !c.status);
+    let updated = 0;
+    for (const contact of targets) {
+      await enrichStatusFromClose(contact);
+      if (contact.status) updated++;
+    }
+    return sendJson(res, 200, { ok: true, checked: targets.length, updated });
+  }
+
   if (p === "/api/import/jobs" && req.method === "GET") {
     return sendJson(res, 200, { jobs: readJson(IMPORT_JOBS_FILE, []) });
   }
