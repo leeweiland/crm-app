@@ -29,7 +29,11 @@
   .inbox-row:hover { background: rgba(255,255,255,0.03); }
 
   /* ── Chat shell ── */
-  .chat-shell { display: flex; height: calc(100vh - 190px); min-height: 420px; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; }
+  /* height set twice on purpose -- vh fallback, dvh (real visible
+     viewport, not mobile's "largest possible" 100vh) wins when supported.
+     Without this the compose bar at the bottom can render below the
+     actually-visible screen whenever the address bar is showing. */
+  .chat-shell { display: flex; height: calc(100vh - 190px); height: calc(100dvh - 190px); min-height: 420px; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; }
   .chat-sidebar { width: 300px; flex-shrink: 0; background: var(--pra-panel); display: flex; flex-direction: column; min-width: 0; }
   /* Drag handle between the conversation list and the chat panel -- the
      border that used to sit on .chat-sidebar itself moved onto this, since
@@ -74,7 +78,10 @@
 
   /* ── Mobile: single-pane, same pattern as chat-app's chat.html ── */
   @media (max-width: 900px) {
-    .chat-shell { height: calc(100vh - 160px); }
+    /* 195px, not the desktop rule's 160px -- .mobile-sticky-header adds
+       ~28px of padding/margin below the title+tabs that the 160px estimate
+       predates. dvh (real visible viewport) wins over vh when supported. */
+    .chat-shell { height: calc(100vh - 195px); height: calc(100dvh - 195px); }
     .chat-sidebar { width: 100% !important; }
     .chat-resize-handle { display: none; }
     #chatView.thread-open .chat-sidebar { display: none; }
@@ -302,7 +309,7 @@
      Click the dimmed backdrop (outside the box) to dismiss, same as reading
      it and moving on. -->
 <div class="modal-backdrop" id="contactOverlayModal">
-  <div class="pra-panel modal-box" style="max-width:520px;max-height:88vh;overflow-y:auto">
+  <div class="pra-panel modal-box" style="max-width:520px;max-height:88vh;max-height:88dvh;overflow-y:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:10px">
       <div class="pra-h2" id="contactOverlayName" style="flex:1;min-width:0">Contact</div>
       <a class="pra-btn pra-btn-ghost pra-btn-sm" id="ovFullPageLink" href="#">Open Full Page</a>
@@ -616,9 +623,9 @@ function fmtDueCompact(iso) {
 function taskPanelRowHtml(t) {
   return `
     <div class="task-panel-row${t.done ? ' done' : ''}" data-task-row="${t.id}">
+      <button type="button" data-task-delete="${t.id}" title="Delete">&times;</button>
       ${t.dueAt ? `<span class="task-panel-due">${fmtDueCompact(t.dueAt)}</span>` : '<span class="task-panel-due">No date</span>'}
       <input type="text" data-task-title="${t.id}" value="${escapeHtml(t.title)}"/>
-      <button type="button" data-task-delete="${t.id}" title="Delete">&times;</button>
     </div>
   `;
 }
@@ -677,9 +684,9 @@ async function submitNewTask() {
 function notePanelRowHtml(n) {
   return `
     <div class="task-panel-row" data-note-row="${n.id}">
-      <input type="text" data-note-text="${n.id}" value="${escapeHtml(n.text)}"/>
-      <span class="task-panel-due">${fmtDueCompact(n.at)}</span>
       <button type="button" data-note-delete="${n.id}" title="Delete">&times;</button>
+      <span class="task-panel-due">${fmtDueCompact(n.at)}</span>
+      <input type="text" data-note-text="${n.id}" value="${escapeHtml(n.text)}"/>
     </div>
   `;
 }

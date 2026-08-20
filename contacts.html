@@ -8,8 +8,21 @@
 <style>
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
+  .toolbar-row2 { display: flex; align-items: center; gap: 10px; }
+  #statusFilter { max-width: 200px; }
+  @media (max-width: 900px) {
+    /* Status/Filters/Add Contact fit on one row together instead of each
+       wrapping to its own line -- the select shrinks (flex + a smaller
+       cap), the button's label/padding tighten a bit, same idea. */
+    .toolbar-row2 { flex-wrap: nowrap; width: 100%; }
+    #statusFilter { flex: 1; min-width: 0; max-width: 140px; }
+    .filter-toggle { flex-shrink: 0; white-space: nowrap; }
+    #addContactBtn { flex-shrink: 0; padding: 8px 12px; font-size: .82rem; white-space: nowrap; }
+  }
   .tag-chip { display: inline-block; font-size: .68rem; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 4px; }
   .tabs { display: flex; flex-wrap: nowrap; gap: 8px; margin-bottom: 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .import-cards-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .import-cards-grid { grid-template-columns: 1fr; } }
   .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
@@ -59,9 +72,11 @@
         </div>
         <div class="toolbar" id="contactsToolbar">
           <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
-          <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
-          <a class="pra-link filter-toggle" id="filterToggle">+ Filters</a>
-          <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
+          <div class="toolbar-row2">
+            <select class="pra-select" id="statusFilter"><option value="">All statuses</option></select>
+            <a class="pra-link filter-toggle" id="filterToggle">+ Filters</a>
+            <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
+          </div>
         </div>
       </div>
 
@@ -134,7 +149,7 @@
       <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:6px">Data Import</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:18px">Batch-imports one page at a time -- click "Run Next Batch" repeatedly (or "Run Until Done") whenever you want to pull in more. Never runs unattended in the background.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+        <div class="import-cards-grid">
           <div class="pra-card" style="padding:18px" id="acImportCard">
             <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">ActiveCampaign</div>
             <div class="pra-muted" id="acStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>

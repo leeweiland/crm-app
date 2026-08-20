@@ -6,8 +6,8 @@
 <title>Flow — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
-  .ab-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-  .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
+  .ab-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; min-width: 120px; border-bottom: 1px solid transparent; }
   .ab-name-input:focus { border-bottom-color: var(--pra-blue); }
   .ab-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 18px; }
   .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
@@ -78,7 +78,7 @@
 
 <!-- Trigger config modal -->
 <div class="modal-backdrop" id="triggerModal">
-  <div class="pra-panel modal-box" style="max-width:600px;max-height:88vh;overflow-y:auto">
+  <div class="pra-panel modal-box" style="max-width:600px;max-height:88vh;max-height:88dvh;overflow-y:auto">
     <div class="pra-h2" style="margin-bottom:16px">Start Flow When...</div>
     <div class="field"><label class="pra-label">Trigger</label>
       <select class="pra-select" id="triggerType">
