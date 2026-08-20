@@ -4,7 +4,7 @@ import { CONTACTS_FILE, findContactMatch, markFirstSeen } from "./segments_share
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE } from "./inbox_backend.js";
 import { recheckStopStatus } from "./compliance_backend.js";
-import { getOrCreateTag, getOrCreateList } from "./contacts_backend.js";
+import { getOrCreateTag, getOrCreateList, getOrCreateCustomField } from "./contacts_backend.js";
 import { hyrosConfigured, fetchHyrosLeadsPage, upsertFromHyros, mergeHyrosActivity, searchHyrosLeadByIdentity } from "./hyros_backend.js";
 
 export const IMPORT_JOBS_FILE = "crm_import_jobs.json";
@@ -107,6 +107,11 @@ async function fetchCloseSequenceSubscriptions(leadId) {
 // from Close yet) so a person who already has a real Close status keeps
 // it, instead of showing up blank. Only ever fills in a MISSING status --
 // never overwrites one a human (or the Close importer) already set.
+async function fetchCloseLeadById(leadId) {
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  const r = await fetch(`${CLOSE_BASE}/lead/${leadId}/`, { headers: { Authorization: auth } });
+  return r.ok ? await r.json() : null;
+}
 async function searchCloseLeadByIdentity(email, phone) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   for (const [field, value] of [["email", email], ["phone", phone]]) {
@@ -121,14 +126,37 @@ async function searchCloseLeadByIdentity(email, phone) {
 // Applied only when Close has no record of this person at all -- persists
 // straight to disk since the in-memory `contact` object may be a stale
 // snapshot from an earlier readJson call by this point in the loop.
-function applyFallbackStatus(contact, status) {
-  contact.status = status;
+function persistContact(contact) {
   const contacts = readJson(CONTACTS_FILE, []);
   const stored = contacts.find(c => c.id === contact.id);
-  if (stored) { stored.status = status; writeJson(CONTACTS_FILE, contacts); }
+  if (stored) { Object.assign(stored, contact); writeJson(CONTACTS_FILE, contacts); }
+}
+function applyFallbackStatus(contact, status) {
+  contact.status = status;
+  persistContact(contact);
+}
+// Close's "custom" object is real application-form data (age/height/goals/
+// injuries/readiness/etc) -- worth pulling onto ANY contact linked to that
+// lead, not just ones actually imported FROM Close, since AC/Hyros have
+// nothing like it. Array-valued fields (Close's "BLAST" multi-select, etc)
+// get joined into one text value since every CRM custom field is type
+// "text". entityType follows the contact's own type so a "lead" record's
+// fields don't collide with a "contact" record's fields of the same label.
+function mergeCloseCustomFields(contact, closeCustom) {
+  if (!closeCustom) return;
+  Object.entries(closeCustom).forEach(([label, value]) => {
+    if (value == null || value === "") return;
+    const field = getOrCreateCustomField(contact.type === "contact" ? "contact" : "lead", label);
+    if (!field) return;
+    contact.customFields[field.id] = Array.isArray(value) ? value.join(", ") : String(value);
+  });
 }
 export async function enrichStatusFromClose(contact) {
-  if ((contact.status && contact.first) || !closeConfigured()) return;
+  if (!closeConfigured()) return;
+  // Already fully linked -- nothing left for a live search to find. (A
+  // contact with a closeLeadId but missing custom fields is backfilled by
+  // /api/import/backfill-status instead, via a direct by-id fetch.)
+  if (contact.status && contact.first && contact.externalIds.closeLeadId) return;
   const lead = await searchCloseLeadByIdentity(contact.email, contact.phone);
   if (!lead) return;
   if (!contact.status) contact.status = lead.status_label || contact.status;
@@ -141,9 +169,8 @@ export async function enrichStatusFromClose(contact) {
   }
   if (!contact.externalIds.closeLeadId) contact.externalIds.closeLeadId = lead.id;
   markFirstSeen(contact, lead.date_created);
-  const contacts = readJson(CONTACTS_FILE, []);
-  const stored = contacts.find(c => c.id === contact.id);
-  if (stored) { Object.assign(stored, contact); writeJson(CONTACTS_FILE, contacts); }
+  mergeCloseCustomFields(contact, lead.custom);
+  persistContact(contact);
 }
 export async function mergeCloseSequences(contact) {
   const leadId = contact.externalIds?.closeLeadId;
@@ -485,6 +512,8 @@ export async function importCloseSegment(query, limit) {
     for (const contact of touched) {
       await pullCloseHistoryForContact(contact);
       await mergeCloseSequences(contact);
+      mergeCloseCustomFields(contact, lead.custom);
+      persistContact(contact);
 
       const acContact = await fetchAcContactByEmail(contact.email);
       if (acContact) {
@@ -557,14 +586,29 @@ export async function handleImportRequest(req, res, url) {
   // BEFORE that cross-reference existed, or before their matching Close
   // lead existed yet.
   if (p === "/api/import/backfill-status" && req.method === "POST") {
-    const targets = readJson(CONTACTS_FILE, []).filter(c => ["ac_import", "hyros_import"].includes(c.source) && (!c.status || (!c.first && !c.last)));
-    let updated = 0;
-    for (const contact of targets) {
+    if (!closeConfigured()) return sendJson(res, 400, { error: "CLOSE_API_KEY isn't set yet." });
+    const all = readJson(CONTACTS_FILE, []);
+    const statusTargets = all.filter(c => ["ac_import", "hyros_import"].includes(c.source) && (!c.status || (!c.first && !c.last)));
+    let statusUpdated = 0;
+    for (const contact of statusTargets) {
       const before = `${contact.status}|${contact.first}`;
       await enrichStatusFromClose(contact);
-      if (`${contact.status}|${contact.first}` !== before) updated++;
+      if (`${contact.status}|${contact.first}` !== before) statusUpdated++;
     }
-    return sendJson(res, 200, { ok: true, checked: targets.length, updated });
+    // Separate pass, by closeLeadId directly (not email/phone search) --
+    // covers every Close-linked contact regardless of source, including
+    // ones the status pass above just linked and ones already linked
+    // before this feature existed.
+    const fieldTargets = readJson(CONTACTS_FILE, []).filter(c => c.externalIds?.closeLeadId);
+    let fieldsUpdated = 0;
+    for (const contact of fieldTargets) {
+      const lead = await fetchCloseLeadById(contact.externalIds.closeLeadId);
+      if (!lead?.custom) continue;
+      const before = JSON.stringify(contact.customFields);
+      mergeCloseCustomFields(contact, lead.custom);
+      if (JSON.stringify(contact.customFields) !== before) { persistContact(contact); fieldsUpdated++; }
+    }
+    return sendJson(res, 200, { ok: true, statusChecked: statusTargets.length, statusUpdated, fieldsChecked: fieldTargets.length, fieldsUpdated });
   }
 
   // Close-first segment import, e.g. { query: 'status:"ENROLLED" custom.TYPE:"ONLINE"', limit: 10 }
@@ -654,6 +698,8 @@ export async function handleImportRequest(req, res, url) {
             for (const contact of touched) {
               await pullCloseHistoryForContact(contact);
               await mergeCloseSequences(contact);
+              mergeCloseCustomFields(contact, lead.custom);
+              persistContact(contact);
             }
           } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
         }

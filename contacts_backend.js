@@ -26,6 +26,23 @@ export function getOrCreateTag(name) {
   }
   return tag;
 }
+// Matched by exact label (case-insensitive) within the same entityType --
+// used by the Close importer to map its freeform "custom" application-data
+// object (age/height/goals/injuries/etc) onto real CRM custom fields
+// without creating a duplicate field on every re-import.
+export function getOrCreateCustomField(entityType, label) {
+  const clean = String(label || "").trim();
+  if (!clean || !["lead", "contact", "opportunity"].includes(entityType)) return null;
+  const fields = readJson(CUSTOM_FIELDS_FILE, []);
+  let field = fields.find(f => f.entityType === entityType && f.label.toLowerCase() === clean.toLowerCase());
+  if (!field) {
+    const order = fields.filter(f => f.entityType === entityType).length;
+    field = { id: randomUUID(), entityType, label: clean, type: "text", order, createdAt: new Date().toISOString() };
+    fields.push(field);
+    writeJson(CUSTOM_FIELDS_FILE, fields);
+  }
+  return field;
+}
 export function getOrCreateList(name) {
   const clean = String(name || "").trim();
   if (!clean) return null;
