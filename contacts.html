@@ -9,9 +9,12 @@
   .toolbar { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
   .tag-chip { display: inline-block; font-size: .68rem; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 4px; }
-  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); }
-  .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
-  .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
+  .contacts-shell { display: flex; align-items: flex-start; gap: 24px; }
+  .contacts-nav { display: flex; flex-direction: column; gap: 2px; width: 190px; flex-shrink: 0; border-right: 1px solid var(--pra-border); padding-right: 10px; }
+  .contacts-content { flex: 1; min-width: 0; }
+  .tab-btn { background: none; border: none; border-left: 2px solid transparent; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 14px; cursor: pointer; text-align: left; border-radius: 4px; }
+  .tab-btn:hover { background: rgba(255,255,255,0.04); }
+  .tab-btn.active { color: var(--pra-white); background: rgba(0,155,255,0.1); border-left-color: var(--pra-blue); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -37,14 +40,18 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
-      <div class="tabs">
+      <div class="contacts-shell">
+      <div class="contacts-nav">
         <button class="tab-btn active" data-tab="contacts">Contacts</button>
         <button class="tab-btn" data-tab="accounts">Accounts</button>
         <button class="tab-btn" data-tab="lists">Email Lists</button>
         <button class="tab-btn" data-tab="emailsegments">Email Segments</button>
         <button class="tab-btn" data-tab="smssegments">SMS Segments</button>
         <button class="tab-btn" data-tab="tags">Tags</button>
+        <button class="tab-btn" data-tab="import">Data Import</button>
+        <button class="tab-btn" data-tab="duplicates">Duplicates</button>
       </div>
+      <div class="contacts-content">
 
       <div class="tab-panel active" id="tab-contacts">
         <div class="toolbar">
@@ -131,6 +138,75 @@
           <div id="tagsList"></div>
           <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
         </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:6px">Data Import</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:18px">Batch-imports one page at a time -- click "Run Next Batch" repeatedly (or "Run Until Done") whenever you want to pull in more. Never runs unattended in the background.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+          <div class="pra-card" style="padding:18px" id="acImportCard">
+            <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">ActiveCampaign</div>
+            <div class="pra-muted" id="acStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
+            <div id="acJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <div class="field-row" style="margin-bottom:10px">
+              <div class="field"><label class="pra-label">Batch size</label><input class="pra-input" type="number" min="1" max="500" id="acBatchSize" value="50"/></div>
+              <div class="field"><label class="pra-label">Default status</label><select class="pra-select" id="acDefaultStatus"><option value="">None</option></select></div>
+            </div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="activecampaign">Run Next Batch</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="activecampaign">Run Until Done</button>
+          </div>
+          <div class="pra-card" style="padding:18px" id="closeImportCard">
+            <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">Close</div>
+            <div class="pra-muted" id="closeStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
+            <div id="closeJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <div class="field-row" style="margin-bottom:10px">
+              <div class="field"><label class="pra-label">Batch size</label><input class="pra-input" type="number" min="1" max="500" id="closeBatchSize" value="50"/></div>
+              <div class="field"><label class="pra-label">Default status</label><select class="pra-select" id="closeDefaultStatus"><option value="">None</option></select></div>
+            </div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="close">Run Next Batch</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="close">Run Until Done</button>
+          </div>
+          <div class="pra-card" style="padding:18px" id="hyrosImportCard">
+            <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">Hyros</div>
+            <div class="pra-muted" id="hyrosStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
+            <div id="hyrosJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <div class="field-row" style="margin-bottom:10px">
+              <div class="field"><label class="pra-label">Batch size</label><input class="pra-input" type="number" min="1" max="250" id="hyrosBatchSize" value="50"/></div>
+              <div class="field"><label class="pra-label">Default status</label><select class="pra-select" id="hyrosDefaultStatus"><option value="">None</option></select></div>
+            </div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="hyros">Run Next Batch</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="hyros">Run Until Done</button>
+          </div>
+        </div>
+
+        <div class="pra-h2" style="margin:24px 0 6px;font-size:1rem">Manual Import (Paste / CSV)</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Paste rows copied from a spreadsheet (or CSV), or upload a .csv file. First row must be column headers.</div>
+        <div class="pra-card" style="padding:18px">
+          <textarea class="pra-input" id="manualImportText" rows="6" placeholder="First,Last,Email,Phone,Status&#10;Jane,Doe,jane@example.com,+19075551234,APPLICATION" style="width:100%;font-family:monospace;font-size:.8rem"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input type="file" accept=".csv,text/csv" id="manualImportFile" style="display:none"/>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="manualImportFileBtn">Upload .csv</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="manualImportParseBtn">Preview</button>
+          </div>
+          <div id="manualImportMapping" style="display:none;margin-top:14px">
+            <div class="pra-label" style="margin-bottom:8px">Map each column</div>
+            <div id="manualImportMapRows"></div>
+            <div class="field" style="margin-top:10px"><label class="pra-label">Default status (for rows with no status column)</label><select class="pra-select" id="manualDefaultStatus"><option value="">None</option></select></div>
+            <div class="pra-muted" id="manualImportPreviewCount" style="font-size:.8rem;margin:8px 0"></div>
+            <button class="pra-btn" id="manualImportRunBtn">Import</button>
+            <div class="pra-muted" id="manualImportResultMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-duplicates" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:6px">Possible Duplicate Contacts</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Flags two separate contact records that share an exact email or phone, or that share a name plus a tracked website visit's IP address or rough location. Never merges automatically -- even an exact match could be two different people (e.g. a shared office phone line), so every merge is a deliberate choice below.</div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanDuplicatesBtn">Scan for Duplicates</button>
+        <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
+        <div id="duplicatesList" style="margin-top:18px"></div>
+      </div>
+
       </div>
     </div>
   </div>
@@ -491,12 +567,175 @@ document.getElementById('saveContactBtn').onclick = async () => {
   loadContacts();
 };
 
+// ── Data Import ──────────────────────────────────────────────────────────
+const IMPORT_SOURCE_PREFIX = { activecampaign: 'ac', close: 'close', hyros: 'hyros' };
+async function loadImportStatus() {
+  const r = await fetch('/api/import/config-status');
+  if (!r.ok) return; // non-admin -- tab just stays empty
+  const { activecampaign, close, hyros } = await r.json();
+  document.getElementById('acStatusMsg').textContent = activecampaign ? 'AC_API_KEY configured.' : 'AC_API_KEY not set in .env yet.';
+  document.getElementById('closeStatusMsg').textContent = close ? 'CLOSE_API_KEY configured.' : 'CLOSE_API_KEY not set in .env yet.';
+  document.getElementById('hyrosStatusMsg').textContent = hyros ? 'HYROS_API_KEY configured.' : 'HYROS_API_KEY not set in .env yet.';
+  const configured = { activecampaign, close, hyros };
+  document.querySelectorAll('[data-import-run]').forEach(btn => btn.disabled = !configured[btn.dataset.importRun]);
+  document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.disabled = !configured[btn.dataset.importRunUntilDone]);
+  await refreshImportJobStats();
+  const statusesRes = await fetch('/api/statuses');
+  const { statuses } = await statusesRes.json();
+  const opts = '<option value="">None</option>' + statuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
+  ['acDefaultStatus', 'closeDefaultStatus', 'hyrosDefaultStatus', 'manualDefaultStatus'].forEach(id => document.getElementById(id).innerHTML = opts);
+}
+async function refreshImportJobStats() {
+  const r = await fetch('/api/import/jobs');
+  if (!r.ok) return;
+  const { jobs } = await r.json();
+  ['activecampaign', 'close', 'hyros'].forEach(source => {
+    const job = jobs.filter(j => j.source === source).slice(-1)[0];
+    const el = document.getElementById(IMPORT_SOURCE_PREFIX[source] + 'JobStats');
+    el.textContent = job ? `Status: ${job.status} · Imported: ${job.totalImported} · Errors: ${job.totalErrors}` : 'No import started yet.';
+  });
+}
+async function ensureImportJob(source) {
+  const prefix = IMPORT_SOURCE_PREFIX[source];
+  const batchSize = Number(document.getElementById(prefix + 'BatchSize').value) || 50;
+  const defaultStatus = document.getElementById(prefix + 'DefaultStatus').value || null;
+  const r = await fetch('/api/import/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, batchSize, defaultStatus }) });
+  const d = await r.json();
+  return d.job;
+}
+document.querySelectorAll('[data-import-run]').forEach(btn => btn.onclick = async () => {
+  const job = await ensureImportJob(btn.dataset.importRun);
+  const r = await fetch(`/api/import/jobs/${job.id}/run`, { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { showToast(d.error || 'Import batch failed', true); return; }
+  showToast(d.done ? 'Import complete' : 'Batch imported');
+  refreshImportJobStats();
+});
+document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.onclick = async () => {
+  btn.disabled = true;
+  const source = btn.dataset.importRunUntilDone;
+  const job = await ensureImportJob(source);
+  let done = false, guard = 0;
+  while (!done && guard++ < 500) {
+    const r = await fetch(`/api/import/jobs/${job.id}/run`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Import failed', true); break; }
+    done = d.done;
+    await refreshImportJobStats();
+  }
+  btn.disabled = false;
+  showToast(done ? 'Import complete' : 'Stopped');
+});
+
+// ── Manual Import (paste / CSV) ─────────────────────────────────────────
+let manualImportRows = []; // parsed data rows (excludes header)
+function parseDelimited(text) {
+  const delim = text.includes('\t') ? '\t' : ',';
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  return lines.map(line => line.split(delim).map(cell => cell.trim().replace(/^"|"$/g, '')));
+}
+const MANUAL_TARGETS = [
+  { value: '', label: "Don't import" }, { value: 'first', label: 'First name' }, { value: 'last', label: 'Last name' },
+  { value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' }, { value: 'status', label: 'Status' },
+];
+document.getElementById('manualImportFileBtn').onclick = () => document.getElementById('manualImportFile').click();
+document.getElementById('manualImportFile').addEventListener('change', () => {
+  const file = document.getElementById('manualImportFile').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { document.getElementById('manualImportText').value = reader.result; };
+  reader.readAsText(file);
+});
+document.getElementById('manualImportParseBtn').onclick = () => {
+  const text = document.getElementById('manualImportText').value;
+  const rows = parseDelimited(text);
+  if (rows.length < 2) { showToast('Paste a header row plus at least one data row', true); return; }
+  const headers = rows[0];
+  manualImportRows = rows.slice(1);
+  const guess = (h) => {
+    const hl = h.toLowerCase();
+    if (hl.includes('first')) return 'first';
+    if (hl.includes('last')) return 'last';
+    if (hl.includes('email')) return 'email';
+    if (hl.includes('phone')) return 'phone';
+    if (hl.includes('status')) return 'status';
+    return '';
+  };
+  document.getElementById('manualImportMapRows').innerHTML = headers.map((h, i) => `
+    <div class="field-row" style="margin-bottom:8px" data-manual-map-row data-col="${i}">
+      <input class="pra-input" value="${escapeHtml(h)}" readonly/>
+      <select class="pra-select" data-manual-map-target>${MANUAL_TARGETS.map(t => `<option value="${t.value}" ${guess(h) === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}</select>
+    </div>
+  `).join('');
+  document.getElementById('manualImportPreviewCount').textContent = `${manualImportRows.length} rows detected.`;
+  document.getElementById('manualImportMapping').style.display = 'block';
+};
+document.getElementById('manualImportRunBtn').onclick = async () => {
+  const mapRows = [...document.querySelectorAll('[data-manual-map-row]')].map(el => ({ col: Number(el.dataset.col), target: el.querySelector('[data-manual-map-target]').value }));
+  const records = manualImportRows.map(row => {
+    const rec = {};
+    mapRows.forEach(({ col, target }) => { if (target && row[col] !== undefined) rec[target] = row[col]; });
+    return rec;
+  });
+  const defaultStatus = document.getElementById('manualDefaultStatus').value || null;
+  const r = await fetch('/api/import/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records, defaultStatus }) });
+  const d = await r.json().catch(() => ({}));
+  const msg = document.getElementById('manualImportResultMsg');
+  if (!r.ok) { msg.textContent = d.error || 'Import failed.'; return; }
+  msg.textContent = `Imported ${d.imported}, skipped ${d.skipped} (no email/phone)${d.errors?.length ? `, ${d.errors.length} errors` : ''}.`;
+  showToast('Import complete');
+};
+
+// ── Possible duplicate contacts ──────────────────────────────────────────
+async function loadDuplicates() {
+  const r = await fetch('/api/duplicates');
+  if (!r.ok) return;
+  const { pairs } = await r.json();
+  const wrap = document.getElementById('duplicatesList');
+  if (!pairs.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">No possible duplicates flagged. Click "Scan for Duplicates" to check.</div>'; return; }
+  wrap.innerHTML = pairs.map(d => `
+    <div class="pra-card" style="padding:16px;margin-bottom:12px">
+      <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${d.reason === 'email' ? 'same email address' : d.reason === 'phone' ? 'same phone number' : d.reason === 'ip' ? 'same name + shared IP address' : 'same name + shared rough location'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        ${[d.contactA, d.contactB].map(c => `
+          <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px">
+            <div style="font-weight:700">${escapeHtml(c.first)} ${escapeHtml(c.last)}</div>
+            <div class="pra-muted" style="font-size:.8rem">${escapeHtml(c.email || '')}${c.email && c.phone ? ' · ' : ''}${escapeHtml(c.phone || '')}</div>
+            <div class="pra-muted" style="font-size:.78rem;margin-top:4px">${escapeHtml(c.status || '(no status)')}</div>
+            <button class="pra-btn pra-btn-sm" style="margin-top:10px;width:100%" data-keep="${c.id}" data-dupid="${d.id}">Keep This One</button>
+          </div>
+        `).join('')}
+      </div>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" style="margin-top:10px" data-dismiss="${d.id}">Not a Duplicate</button>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('[data-keep]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Merge these two contacts? Every message, call, and task moves onto the kept contact, and the other contact record is deleted. This cannot be undone.')) return;
+    const r = await fetch(`/api/duplicates/${btn.dataset.dupid}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepId: btn.dataset.keep }) });
+    if (r.ok) { showToast('Merged'); loadDuplicates(); } else showToast('Could not merge', true);
+  });
+  wrap.querySelectorAll('[data-dismiss]').forEach(btn => btn.onclick = async () => {
+    const r = await fetch(`/api/duplicates/${btn.dataset.dismiss}/dismiss`, { method: 'POST' });
+    if (r.ok) { showToast('Dismissed'); loadDuplicates(); } else showToast('Could not dismiss', true);
+  });
+}
+document.getElementById('scanDuplicatesBtn').onclick = async () => {
+  const msg = document.getElementById('duplicatesScanMsg');
+  msg.textContent = 'Scanning…';
+  const r = await fetch('/api/duplicates/scan', { method: 'POST' });
+  const d = await r.json();
+  msg.textContent = r.ok ? `Found ${d.added} new possible duplicate${d.added === 1 ? '' : 's'}.` : 'Scan failed.';
+  if (r.ok) loadDuplicates();
+};
+
 (async function init() {
   await loadStatuses();
   await loadCustomFields();
   await Promise.all([loadTags(), loadLists()]);
   await loadSegments();
   await loadContacts();
+  loadImportStatus();
+  loadDuplicates();
 })();
 </script>
 </body>
