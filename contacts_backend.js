@@ -10,6 +10,35 @@ export const LISTS_FILE = "crm_lists.json";
 export const TAGS_FILE = "crm_tags.json";
 export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 
+// Matched by exact name (case-insensitive) -- used by every importer
+// (AC tags, Hyros tags, AC lists) so re-running an import never creates a
+// second "VIP" tag just because of casing, and a tag/list that already
+// exists from manual use in the CRM gets reused instead of duplicated.
+export function getOrCreateTag(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return null;
+  const tags = readJson(TAGS_FILE, []);
+  let tag = tags.find(t => t.name.toLowerCase() === clean.toLowerCase());
+  if (!tag) {
+    tag = { id: randomUUID(), name: clean, color: "#009bff", createdAt: new Date().toISOString() };
+    tags.push(tag);
+    writeJson(TAGS_FILE, tags);
+  }
+  return tag;
+}
+export function getOrCreateList(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return null;
+  const lists = readJson(LISTS_FILE, []);
+  let list = lists.find(l => l.name.toLowerCase() === clean.toLowerCase());
+  if (!list) {
+    list = { id: randomUUID(), name: clean, createdAt: new Date().toISOString() };
+    lists.push(list);
+    writeJson(LISTS_FILE, lists);
+  }
+  return list;
+}
+
 function publicContact(c) { return c; } // no sensitive fields to strip yet — placeholder for parity with auth's publicUser
 
 export function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {

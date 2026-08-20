@@ -49,7 +49,7 @@ export async function handleInboxRequest(req, res, url) {
     const channel = url.searchParams.get("channel"); // 'email' | 'sms' | null (both, plus form/booking activity)
     const contacts = readJson(CONTACTS_FILE, []);
     const messages = readJson(MESSAGE_LOG_FILE, [])
-      .filter(m => ["email", "sms", "form", "booking"].includes(m.channel))
+      .filter(m => ["email", "sms", "form", "booking", "activity"].includes(m.channel))
       .filter(m => !channel || m.channel === channel);
 
     const groups = new Map(); // key -> { contactId, key, contact, messages: [] }

@@ -164,6 +164,39 @@
         <hr style="border-color:var(--pra-border);margin:24px 0 18px"/>
         <div class="pra-h2" style="margin-bottom:6px">CRM Email/SMS Link Tagging</div>
         <div class="pra-muted" style="font-size:.82rem">Nothing to configure here -- every link this CRM sends in email or SMS is automatically tagged <code>?el=email-&lt;campaign-or-automation-name&gt;</code> or <code>?el=sms-&lt;workflow-name&gt;</code>, matching the <code>el=</code> convention already used on your ads, social posts, and YouTube links.</div>
+
+        <hr style="border-color:var(--pra-border);margin:24px 0 18px"/>
+        <div class="pra-h2" style="margin-bottom:6px">Conversion Tracking (Meta &amp; Google Ads)</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Pushes real conversions (lead, booking, sale...) back to Meta and Google so their ad algorithms can optimize toward them -- matched by hashed email/phone, no click id needed. This is what Hyros used to do.</div>
+
+        <div class="pra-label" style="margin-bottom:6px">Meta <span id="metaConfigBadge" class="pra-muted" style="font-size:.74rem"></span></div>
+        <div class="field"><label class="pra-label">Pixel ID</label><input class="pra-input" id="convMetaPixelId" placeholder="From Events Manager → Data Sources"/></div>
+        <div class="field"><label class="pra-label">Access Token</label><input class="pra-input" type="password" id="convMetaAccessToken" autocomplete="off" placeholder="Paste access token"/></div>
+        <div class="field"><label class="pra-label">Test Event Code (optional)</label><input class="pra-input" id="convMetaTestCode" placeholder="From Events Manager → Test Events"/></div>
+
+        <div class="pra-label" style="margin:18px 0 6px">Google Ads <span id="googleConfigBadge" class="pra-muted" style="font-size:.74rem"></span></div>
+        <div class="field"><label class="pra-label">Customer ID</label><input class="pra-input" id="convGoogleCustomerId" placeholder="123-456-7890"/></div>
+        <div class="field"><label class="pra-label">Developer Token</label><input class="pra-input" type="password" id="convGoogleDevToken" autocomplete="off" placeholder="Paste developer token"/></div>
+        <div class="field"><label class="pra-label">Refresh Token</label><input class="pra-input" type="password" id="convGoogleRefreshToken" autocomplete="off" placeholder="Paste refresh token"/></div>
+        <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Reuses this app's existing Google OAuth client. Need a refresh token with Ads API access? Run <code>node get_ads_token.js</code> from the project folder and paste the result here.</div>
+        <button class="pra-btn" id="saveConversionTokensBtn">Save Tokens</button>
+        <div class="pra-muted" id="conversionTokensMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+
+        <div class="pra-label" style="margin:20px 0 8px">Conversion Events</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Define the events worth tracking. Nothing fires automatically -- wire each one into a Flow with a "Send Conversion Event" step wherever it actually happens (form submitted, booking created, status changed, etc).</div>
+        <div id="conversionEventRows"></div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addConversionEventBtn" style="margin-top:8px">+ Add Event</button>
+        <button class="pra-btn" id="saveConversionEventsBtn" style="margin-top:14px">Save Events</button>
+        <div class="pra-muted" id="conversionEventsMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+
+        <div class="pra-label" style="margin:20px 0 8px">Send Test Event</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Fires against both platforms regardless of the event's own toggles, so you can check the connection before wiring anything real.</div>
+        <div class="field-row">
+          <div class="field"><label class="pra-label">Event</label><select class="pra-select" id="testEventSelect"></select></div>
+          <div class="field"><label class="pra-label">Test email</label><input class="pra-input" id="testEventEmail" placeholder="you@example.com"/></div>
+        </div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="sendTestEventBtn">Send Test Event</button>
+        <pre id="testEventResult" class="pra-muted" style="font-size:.76rem;margin-top:10px;white-space:pre-wrap;max-height:220px;overflow:auto"></pre>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-ads" style="padding:22px;max-width:520px">
@@ -182,7 +215,7 @@
       <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:6px">Data Import</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:18px">Batch-imports one page at a time -- click "Run Next Batch" repeatedly (or "Run Until Done") whenever you want to pull in more. Never runs unattended in the background.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
           <div class="pra-card" style="padding:18px" id="acImportCard">
             <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">ActiveCampaign</div>
             <div class="pra-muted" id="acStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
@@ -204,6 +237,17 @@
             </div>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="close">Run Next Batch</button>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="close">Run Until Done</button>
+          </div>
+          <div class="pra-card" style="padding:18px" id="hyrosImportCard">
+            <div class="pra-h2" style="font-size:1rem;margin-bottom:8px">Hyros</div>
+            <div class="pra-muted" id="hyrosStatusMsg" style="font-size:.8rem;margin-bottom:10px"></div>
+            <div id="hyrosJobStats" class="pra-muted" style="font-size:.82rem;margin-bottom:10px"></div>
+            <div class="field-row" style="margin-bottom:10px">
+              <div class="field"><label class="pra-label">Batch size</label><input class="pra-input" type="number" min="1" max="250" id="hyrosBatchSize" value="50"/></div>
+              <div class="field"><label class="pra-label">Default status</label><select class="pra-select" id="hyrosDefaultStatus"><option value="">None</option></select></div>
+            </div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run="hyros">Run Next Batch</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-import-run-until-done="hyros">Run Until Done</button>
           </div>
         </div>
 
@@ -562,6 +606,101 @@ document.getElementById('saveTrackingBtn').onclick = async () => {
   if (r.ok) loadTrackingSettings();
 };
 
+// ── Conversion tracking (Meta CAPI + Google Ads Enhanced Conversions) ──────
+let conversionEventsCache = [];
+function conversionEventRowHtml(e) {
+  e = e || { id: '', key: '', label: '', metaEventName: '', sendToMeta: false, googleConversionActionId: '', sendToGoogle: false };
+  return `
+    <div class="pra-card" data-conv-event-row style="padding:12px;margin-bottom:10px">
+      <input type="hidden" data-ce-id value="${escapeHtml(e.id || '')}"/>
+      <input type="hidden" data-ce-key value="${escapeHtml(e.key || '')}"/>
+      <div class="field-row">
+        <div class="field"><label class="pra-label">Label</label><input class="pra-input" data-ce-label value="${escapeHtml(e.label || '')}" placeholder="Lead"/></div>
+        <div class="field"><label class="pra-label">Meta event name</label><input class="pra-input" data-ce-meta-name value="${escapeHtml(e.metaEventName || '')}" placeholder="Lead"/></div>
+      </div>
+      <div class="field-row" style="align-items:flex-end">
+        <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;padding-bottom:10px"><input type="checkbox" data-ce-send-meta ${e.sendToMeta ? 'checked' : ''}/> Send to Meta</label>
+        <div class="field"><label class="pra-label">Google Conversion Action ID</label><input class="pra-input" data-ce-google-action value="${escapeHtml(e.googleConversionActionId || '')}" placeholder="From Google Ads → Goals → Conversions"/></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;margin-top:6px"><input type="checkbox" data-ce-send-google ${e.sendToGoogle ? 'checked' : ''}/> Send to Google</label>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-conv-event style="margin-top:10px">&times; Remove</button>
+    </div>
+  `;
+}
+function wireConvEventRemove(el) { el.querySelector('[data-remove-conv-event]').onclick = () => el.remove(); }
+function renderConversionEventRows() {
+  const wrap = document.getElementById('conversionEventRows');
+  wrap.innerHTML = conversionEventsCache.map(conversionEventRowHtml).join('');
+  wrap.querySelectorAll('[data-conv-event-row]').forEach(wireConvEventRemove);
+}
+function renderTestEventOptions() {
+  document.getElementById('testEventSelect').innerHTML = conversionEventsCache.map(e => `<option value="${escapeHtml(e.key)}">${escapeHtml(e.label)}</option>`).join('') || '<option value="">No events defined yet</option>';
+}
+async function loadConversionSettings() {
+  const r = await fetch('/api/conversions/settings');
+  if (!r.ok) return;
+  const s = await r.json();
+  document.getElementById('convMetaPixelId').value = s.metaPixelId || '';
+  document.getElementById('convMetaTestCode').value = s.metaTestEventCode || '';
+  document.getElementById('convGoogleCustomerId').value = s.googleAdsCustomerId || '';
+  document.getElementById('metaConfigBadge').textContent = s.metaConfigured ? '(connected)' : '(not connected)';
+  document.getElementById('googleConfigBadge').textContent = s.googleAdsConfigured ? '(connected)' : '(not connected)';
+  document.getElementById('convMetaAccessToken').placeholder = s.metaAccessTokenSet ? 'Saved — leave blank to keep it' : 'Paste access token';
+  document.getElementById('convGoogleDevToken').placeholder = s.googleAdsDeveloperTokenSet ? 'Saved — leave blank to keep it' : 'Paste developer token';
+  document.getElementById('convGoogleRefreshToken').placeholder = s.googleAdsRefreshTokenSet ? 'Saved — leave blank to keep it' : 'Paste refresh token';
+  conversionEventsCache = s.events || [];
+  renderConversionEventRows();
+  renderTestEventOptions();
+}
+document.getElementById('addConversionEventBtn').onclick = () => {
+  const wrap = document.getElementById('conversionEventRows');
+  wrap.insertAdjacentHTML('beforeend', conversionEventRowHtml());
+  wireConvEventRemove(wrap.lastElementChild);
+};
+document.getElementById('saveConversionTokensBtn').onclick = async () => {
+  const body = {
+    metaPixelId: document.getElementById('convMetaPixelId').value.trim(),
+    metaTestEventCode: document.getElementById('convMetaTestCode').value.trim(),
+    googleAdsCustomerId: document.getElementById('convGoogleCustomerId').value.trim(),
+  };
+  const metaToken = document.getElementById('convMetaAccessToken').value.trim();
+  const devToken = document.getElementById('convGoogleDevToken').value.trim();
+  const refreshToken = document.getElementById('convGoogleRefreshToken').value.trim();
+  if (metaToken) body.metaAccessToken = metaToken;
+  if (devToken) body.googleAdsDeveloperToken = devToken;
+  if (refreshToken) body.googleAdsRefreshToken = refreshToken;
+  const r = await fetch('/api/conversions/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('conversionTokensMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  document.getElementById('convMetaAccessToken').value = '';
+  document.getElementById('convGoogleDevToken').value = '';
+  document.getElementById('convGoogleRefreshToken').value = '';
+  if (r.ok) loadConversionSettings();
+};
+document.getElementById('saveConversionEventsBtn').onclick = async () => {
+  const rows = [...document.querySelectorAll('#conversionEventRows [data-conv-event-row]')];
+  const events = rows.map(row => ({
+    id: row.querySelector('[data-ce-id]').value || undefined,
+    key: row.querySelector('[data-ce-key]').value || undefined,
+    label: row.querySelector('[data-ce-label]').value.trim(),
+    metaEventName: row.querySelector('[data-ce-meta-name]').value.trim(),
+    sendToMeta: row.querySelector('[data-ce-send-meta]').checked,
+    googleConversionActionId: row.querySelector('[data-ce-google-action]').value.trim(),
+    sendToGoogle: row.querySelector('[data-ce-send-google]').checked,
+  })).filter(e => e.label);
+  const r = await fetch('/api/conversions/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }) });
+  document.getElementById('conversionEventsMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadConversionSettings();
+};
+document.getElementById('sendTestEventBtn').onclick = async () => {
+  const eventKey = document.getElementById('testEventSelect').value;
+  const email = document.getElementById('testEventEmail').value.trim();
+  if (!eventKey || !email) { showToast('Pick an event and enter a test email', true); return; }
+  document.getElementById('testEventResult').textContent = 'Sending...';
+  const r = await fetch('/api/conversions/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventKey, email }) });
+  const d = await r.json().catch(() => ({}));
+  document.getElementById('testEventResult').textContent = JSON.stringify(d, null, 2);
+};
+
 // ── Possible duplicate contacts ──────────────────────────────────────────
 async function loadDuplicates() {
   const r = await fetch('/api/duplicates');
@@ -689,33 +828,37 @@ document.getElementById('setDefaultFooterBtn').onclick = async () => {
 
 
 // ── Data Import ──────────────────────────────────────────────────────────
+const IMPORT_SOURCE_PREFIX = { activecampaign: 'ac', close: 'close', hyros: 'hyros' };
 async function loadImportStatus() {
   const r = await fetch('/api/import/config-status');
   if (!r.ok) return; // non-admin -- tab just stays empty
-  const { activecampaign, close } = await r.json();
+  const { activecampaign, close, hyros } = await r.json();
   document.getElementById('acStatusMsg').textContent = activecampaign ? 'AC_API_KEY configured.' : 'AC_API_KEY not set in .env yet.';
   document.getElementById('closeStatusMsg').textContent = close ? 'CLOSE_API_KEY configured.' : 'CLOSE_API_KEY not set in .env yet.';
-  document.querySelectorAll('[data-import-run]').forEach(btn => btn.disabled = (btn.dataset.importRun === 'activecampaign' ? !activecampaign : !close));
-  document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.disabled = (btn.dataset.importRunUntilDone === 'activecampaign' ? !activecampaign : !close));
+  document.getElementById('hyrosStatusMsg').textContent = hyros ? 'HYROS_API_KEY configured.' : 'HYROS_API_KEY not set in .env yet.';
+  const configured = { activecampaign, close, hyros };
+  document.querySelectorAll('[data-import-run]').forEach(btn => btn.disabled = !configured[btn.dataset.importRun]);
+  document.querySelectorAll('[data-import-run-until-done]').forEach(btn => btn.disabled = !configured[btn.dataset.importRunUntilDone]);
   await refreshImportJobStats();
   const statusesRes = await fetch('/api/statuses');
   const { statuses } = await statusesRes.json();
   const opts = '<option value="">None</option>' + statuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
-  ['acDefaultStatus', 'closeDefaultStatus', 'manualDefaultStatus'].forEach(id => document.getElementById(id).innerHTML = opts);
+  ['acDefaultStatus', 'closeDefaultStatus', 'hyrosDefaultStatus', 'manualDefaultStatus'].forEach(id => document.getElementById(id).innerHTML = opts);
 }
 async function refreshImportJobStats() {
   const r = await fetch('/api/import/jobs');
   if (!r.ok) return;
   const { jobs } = await r.json();
-  ['activecampaign', 'close'].forEach(source => {
+  ['activecampaign', 'close', 'hyros'].forEach(source => {
     const job = jobs.filter(j => j.source === source).slice(-1)[0];
-    const el = document.getElementById(source === 'activecampaign' ? 'acJobStats' : 'closeJobStats');
+    const el = document.getElementById(IMPORT_SOURCE_PREFIX[source] + 'JobStats');
     el.textContent = job ? `Status: ${job.status} · Imported: ${job.totalImported} · Errors: ${job.totalErrors}` : 'No import started yet.';
   });
 }
 async function ensureImportJob(source) {
-  const batchSize = Number(document.getElementById(source === 'activecampaign' ? 'acBatchSize' : 'closeBatchSize').value) || 50;
-  const defaultStatus = document.getElementById(source === 'activecampaign' ? 'acDefaultStatus' : 'closeDefaultStatus').value || null;
+  const prefix = IMPORT_SOURCE_PREFIX[source];
+  const batchSize = Number(document.getElementById(prefix + 'BatchSize').value) || 50;
+  const defaultStatus = document.getElementById(prefix + 'DefaultStatus').value || null;
   const r = await fetch('/api/import/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, batchSize, defaultStatus }) });
   const d = await r.json();
   return d.job;
@@ -830,6 +973,7 @@ loadTwilioSettings();
 loadComplianceSettings();
 loadSiteSettings();
 loadTrackingSettings();
+loadConversionSettings();
 loadDuplicates();
 loadAdsSettings();
 </script>

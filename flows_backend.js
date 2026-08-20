@@ -3,6 +3,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
+import { pushConversionEvent } from "./conversions_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -12,7 +13,7 @@ export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet",
   "enroll_automation", "enroll_workflow", "change_status",
-  "add_tag", "remove_tag", "add_to_list",
+  "add_tag", "remove_tag", "add_to_list", "send_conversion_event",
 ];
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
@@ -180,6 +181,11 @@ async function advanceFlowRun(run, flow) {
         const row = (step.config.columns || []).map(tpl => resolveTemplate(tpl, ctx));
         try { await appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row); }
         catch (e) { console.error("[flows] sheet append failed", e.message); }
+      }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "send_conversion_event") {
+      if (contact && step.config.eventKey) {
+        await pushConversionEvent(step.config.eventKey, contact.id).catch(e => console.error("[flows] conversion push failed", e.message));
       }
       run.currentStepId = step.nextStepId || null;
     } else {

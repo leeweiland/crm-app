@@ -4,6 +4,8 @@ import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE } from "./inbox_backend.js";
 import { recheckStopStatus } from "./compliance_backend.js";
+import { getOrCreateTag, getOrCreateList } from "./contacts_backend.js";
+import { hyrosConfigured, fetchHyrosLeadsPage, upsertFromHyros, mergeHyrosActivity } from "./hyros_backend.js";
 
 export const IMPORT_JOBS_FILE = "crm_import_jobs.json";
 
@@ -28,6 +30,102 @@ async function fetchCloseBatch(skip, limit) {
   if (!r.ok) return { ok: false, reason: `Close API error ${r.status}` };
   const data = await r.json();
   return { ok: true, leads: data.data || [], hasMore: !!data.has_more };
+}
+
+// AC's v3 API never expands tag/list NAMES onto a contact's own record --
+// only their numeric ids come back from /contactTags and /contactLists, so
+// resolving what they're actually called takes a separate full account-wide
+// fetch of /tags and /lists (paginated, done ONCE per import run and reused
+// across every contact in the batch, not re-fetched per contact).
+async function fetchAcIdNameMap(resource) {
+  const headers = { "Api-Token": process.env.AC_API_KEY };
+  const map = new Map();
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${AC_BASE}/api/3/${resource}?limit=100&offset=${offset}`, { headers });
+    if (!r.ok) throw new Error(`ActiveCampaign ${resource} API error ${r.status}`);
+    const data = await r.json();
+    const rows = data[resource] || [];
+    rows.forEach(row => map.set(String(row.id), row.name || row.tag));
+    if (!rows.length || map.size >= +data.meta.total) break;
+    offset += 100;
+  }
+  return map;
+}
+async function fetchAcContactTagIds(acContactId) {
+  const r = await fetch(`${AC_BASE}/api/3/contacts/${acContactId}/contactTags`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+  if (!r.ok) return [];
+  const data = await r.json();
+  return (data.contactTags || []).map(ct => String(ct.tag));
+}
+async function fetchAcContactListIds(acContactId) {
+  const r = await fetch(`${AC_BASE}/api/3/contacts/${acContactId}/contactLists`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+  if (!r.ok) return [];
+  const data = await r.json();
+  return (data.contactLists || []).map(cl => String(cl.list));
+}
+// Applies AC's tags/lists onto the matching CRM contact, translating AC's
+// numeric ids to real names via the pre-fetched maps, then get-or-create so
+// re-running an import never creates duplicate CRM tags/lists.
+async function enrichAcContact(contact, acContactId, tagMap, listMap) {
+  const [tagIds, listIds] = await Promise.all([fetchAcContactTagIds(acContactId), fetchAcContactListIds(acContactId)]);
+  tagIds.forEach(id => {
+    const name = tagMap.get(id);
+    const tag = name ? getOrCreateTag(name) : null;
+    if (tag && !contact.tags.includes(tag.id)) contact.tags.push(tag.id);
+  });
+  listIds.forEach(id => {
+    const name = listMap.get(id);
+    const list = name ? getOrCreateList(name) : null;
+    if (list && !contact.listIds.includes(list.id)) contact.listIds.push(list.id);
+  });
+}
+
+// Close doesn't have AC-style freeform tags, but sequence enrollment
+// ("SMS workflows") is the closest analog the user asked to import --
+// pulled per-lead (no bulk/flat endpoint exists) and logged as an
+// "activity" timeline entry, same treatment as Hyros ad-click attribution.
+const closeSequenceNameCache = new Map();
+async function closeSequenceName(id, auth) {
+  if (closeSequenceNameCache.has(id)) return closeSequenceNameCache.get(id);
+  const r = await fetch(`${CLOSE_BASE}/sequence/${id}/`, { headers: { Authorization: auth } });
+  const name = r.ok ? (await r.json()).name : id;
+  closeSequenceNameCache.set(id, name);
+  return name;
+}
+async function fetchCloseSequenceSubscriptions(leadId) {
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  const r = await fetch(`${CLOSE_BASE}/sequence_subscription/?lead_id=${leadId}`, { headers: { Authorization: auth } });
+  if (!r.ok) return [];
+  const data = await r.json();
+  return data.data || [];
+}
+export async function mergeCloseSequences(contact) {
+  const leadId = contact.externalIds?.closeLeadId;
+  if (!leadId || !closeConfigured()) return 0;
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  const subs = await fetchCloseSequenceSubscriptions(leadId);
+  const log = readJson(MESSAGE_LOG_FILE, []);
+  const existingIds = new Set(log.filter(m => m.closeSequenceSubId).map(m => m.closeSequenceSubId));
+  let added = 0;
+  for (const s of subs) {
+    if (existingIds.has(s.id)) continue;
+    const name = await closeSequenceName(s.sequence_id, auth);
+    log.push({
+      id: randomUUID(), channel: "activity", direction: "inbound",
+      contactId: contact.id, sourceType: "close_import", sourceId: null, providerMessageId: null,
+      to: null, from: null,
+      subject: `SMS/Email Sequence: ${name} (${s.status})`,
+      body: "", bodyPreview: s.status,
+      status: "logged", statusHistory: [{ status: "logged", at: s.date_created }],
+      sentAt: null, createdAt: s.date_created || new Date().toISOString(),
+      inboxDone: true,
+      closeSequenceSubId: s.id,
+    });
+    added++;
+  }
+  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  return added;
 }
 
 // ActiveCampaign's v3 REST API doesn't expose per-recipient engagement for
@@ -107,7 +205,7 @@ function markFirstSeen(contact, candidateISO) {
 // duplicate), falling back to email match (catches a contact that already
 // exists from a Framer form submission or manual entry, so importing
 // doesn't create a second copy of someone already in the system).
-function upsertFromAc(acContact, defaultStatus) {
+async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
   const contacts = readJson(CONTACTS_FILE, []);
   const email = (acContact.email || "").toLowerCase();
   let contact = contacts.find(c => c.externalIds?.acContactId === acContact.id) || findContactMatch(contacts, email, acContact.phone);
@@ -129,7 +227,9 @@ function upsertFromAc(acContact, defaultStatus) {
     };
     contacts.push(contact);
   }
+  if (tagMap && listMap) await enrichAcContact(contact, acContact.id, tagMap, listMap);
   writeJson(CONTACTS_FILE, contacts);
+  return contact;
 }
 
 // Close's "Lead" is company-level with a nested contacts[] array -- flatten
@@ -139,6 +239,7 @@ function upsertFromCloseLead(lead, defaultStatus) {
   const contacts = readJson(CONTACTS_FILE, []);
   const nested = lead.contacts?.length ? lead.contacts : [{ name: lead.display_name, emails: [], phones: [] }];
   let count = 0;
+  const touched = [];
   nested.forEach(nc => {
     const email = (nc.emails?.[0]?.email || "").toLowerCase();
     const phone = nc.phones?.[0]?.phone || "";
@@ -163,9 +264,10 @@ function upsertFromCloseLead(lead, defaultStatus) {
       contacts.push(contact);
     }
     count++;
+    touched.push(contact);
   });
   writeJson(CONTACTS_FILE, contacts);
-  return count;
+  return { count, contacts: touched };
 }
 
 // Pulls every email/SMS/call activity Close has on a lead and merges it
@@ -332,7 +434,7 @@ export async function handleImportRequest(req, res, url) {
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
 
   if (p === "/api/import/config-status" && req.method === "GET") {
-    return sendJson(res, 200, { activecampaign: acConfigured(), close: closeConfigured() });
+    return sendJson(res, 200, { activecampaign: acConfigured(), close: closeConfigured(), hyros: hyrosConfigured() });
   }
 
   if (p === "/api/import/jobs" && req.method === "GET") {
@@ -340,7 +442,7 @@ export async function handleImportRequest(req, res, url) {
   }
   if (p === "/api/import/jobs" && req.method === "POST") {
     const { source, batchSize, defaultStatus } = await readJsonBody(req);
-    if (!["activecampaign", "close"].includes(source)) return sendJson(res, 400, { error: "source must be 'activecampaign' or 'close'" });
+    if (!["activecampaign", "close", "hyros"].includes(source)) return sendJson(res, 400, { error: "source must be 'activecampaign', 'close', or 'hyros'" });
     const jobs = readJson(IMPORT_JOBS_FILE, []);
     // Reuse an existing not-yet-completed job for this source rather than
     // starting a second parallel one -- "Start Import" is really "resume".
@@ -349,7 +451,10 @@ export async function handleImportRequest(req, res, url) {
       // Deliberately small default batch size -- this is manual-triggered,
       // one batch per click, never an unattended loop that could import
       // (and then automatically enroll into automations/workflows) a huge
-      // batch of contacts unattended.
+      // batch of contacts unattended. cursor is a numeric offset for
+      // AC/Close, but a Hyros pageId (string) for hyros -- same field,
+      // different meaning per source, since job storage doesn't need a
+      // stricter shape than that.
       job = { id: randomUUID(), source, status: "idle", cursor: 0, batchSize: batchSize || 50, defaultStatus: defaultStatus || null, totalImported: 0, totalSkipped: 0, totalErrors: 0, errors: [], startedAt: new Date().toISOString(), lastRunAt: null, completedAt: null };
       jobs.push(job);
       writeJson(IMPORT_JOBS_FILE, jobs);
@@ -366,24 +471,57 @@ export async function handleImportRequest(req, res, url) {
 
     if (job.source === "activecampaign" && !acConfigured()) return sendJson(res, 400, { error: "AC_API_KEY isn't set yet." });
     if (job.source === "close" && !closeConfigured()) return sendJson(res, 400, { error: "CLOSE_API_KEY isn't set yet." });
+    if (job.source === "hyros" && !hyrosConfigured()) return sendJson(res, 400, { error: "HYROS_API_KEY isn't set yet." });
 
     try {
       if (job.source === "activecampaign") {
         const result = await fetchAcBatch(job.cursor, job.batchSize);
         if (!result.ok) { job.status = "error"; job.errors.push({ externalId: null, message: result.reason }); writeJson(IMPORT_JOBS_FILE, jobs); return sendJson(res, 400, { error: result.reason }); }
-        result.contacts.forEach(c => {
-          try { upsertFromAc(c, job.defaultStatus); job.totalImported++; } catch (e) { job.totalErrors++; job.errors.push({ externalId: c.id, message: e.message }); }
-        });
+        // Fetched once per batch run and reused across every contact in it
+        // -- tag/list names and the 1:1-campaign email history don't need
+        // re-fetching per contact.
+        const [tagMap, listMap, oneToOneCampaigns] = await Promise.all([
+          fetchAcIdNameMap("tags"), fetchAcIdNameMap("lists"), fetchAcOneToOneCampaigns(),
+        ]);
+        for (const c of result.contacts) {
+          try {
+            const contact = await upsertFromAc(c, job.defaultStatus, tagMap, listMap);
+            mergeAcCampaigns(contact, oneToOneCampaigns);
+            job.totalImported++;
+          } catch (e) { job.totalErrors++; job.errors.push({ externalId: c.id, message: e.message }); }
+        }
         job.cursor += result.contacts.length;
         job.status = result.contacts.length < job.batchSize ? "completed" : "idle";
-      } else {
+      } else if (job.source === "close") {
         const result = await fetchCloseBatch(job.cursor, job.batchSize);
         if (!result.ok) { job.status = "error"; job.errors.push({ externalId: null, message: result.reason }); writeJson(IMPORT_JOBS_FILE, jobs); return sendJson(res, 400, { error: result.reason }); }
-        result.leads.forEach(lead => {
-          try { job.totalImported += upsertFromCloseLead(lead, job.defaultStatus); } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
-        });
+        for (const lead of result.leads) {
+          try {
+            const { count, contacts: touched } = upsertFromCloseLead(lead, job.defaultStatus);
+            job.totalImported += count;
+            for (const contact of touched) {
+              await pullCloseHistoryForContact(contact);
+              await mergeCloseSequences(contact);
+            }
+          } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
+        }
         job.cursor += result.leads.length;
         job.status = result.hasMore ? "idle" : "completed";
+      } else {
+        // Hyros paginates by cursor (pageId), not numeric offset -- job.cursor
+        // holds whatever nextPageId came back last run, or 0 (falsy) to start
+        // from the first page.
+        const result = await fetchHyrosLeadsPage(job.cursor || null, job.batchSize);
+        if (!result.ok) { job.status = "error"; job.errors.push({ externalId: null, message: result.reason }); writeJson(IMPORT_JOBS_FILE, jobs); return sendJson(res, 400, { error: result.reason }); }
+        result.leads.forEach(lead => {
+          try {
+            const contact = upsertFromHyros(lead, job.defaultStatus);
+            mergeHyrosActivity(contact, lead);
+            job.totalImported++;
+          } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
+        });
+        job.cursor = result.nextPageId || 0;
+        job.status = result.nextPageId ? "idle" : "completed";
       }
       if (job.status === "completed") job.completedAt = new Date().toISOString();
       job.lastRunAt = new Date().toISOString();
