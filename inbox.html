@@ -208,12 +208,16 @@
               <option value="all">All</option>
               <option value="unresponded">Unresponded</option>
               <option value="done">Done</option>
+              <option value="favorites">Favorites</option>
               <option value="archived">Archived</option>
             </select>
             <select class="pra-select" id="convoChannelSelect">
               <option value="">Email &amp; SMS</option>
               <option value="email">Email</option>
               <option value="sms">SMS</option>
+            </select>
+            <select class="pra-select" id="convoStatusSelect">
+              <option value="">All statuses</option>
             </select>
             <select class="pra-select" id="convoSortSelect">
               <option value="newest">Newest first</option>
@@ -341,7 +345,7 @@ function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([],
 let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allContacts = [], allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
-let convoFilter = 'all', convoSort = 'newest', convoChannel = '', ctxMenuConvo = null, longPressTimer = null;
+let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', ctxMenuConvo = null, longPressTimer = null;
 const STOP_STATUSES = ['stop', 'bad fit / blacklist', 'bad fit', 'blacklist'];
 const initialContactId = new URLSearchParams(location.search).get('contact');
 
@@ -388,6 +392,8 @@ async function loadRefs() {
   allContacts = contactsRes.ok ? (await contactsRes.json()).contacts : [];
   allStatuses = statusesRes.ok ? (await statusesRes.json()).statuses : [];
   allUsers = usersRes.ok ? (await usersRes.json()).users : []; // 403s for a non-admin -- avatarStyle() just falls back to status-only glow
+  const statusSel = document.getElementById('convoStatusSelect');
+  statusSel.innerHTML = '<option value="">All statuses</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
 }
 
 // ── Tab switching ───────────────────────────────────────────────────────
@@ -437,7 +443,9 @@ function renderSidebar() {
     rows = rows.filter(c => !c.archived);
     if (convoFilter === 'done') rows = rows.filter(c => c.done);
     else if (convoFilter === 'unresponded') rows = rows.filter(c => c.unreadCount > 0);
+    else if (convoFilter === 'favorites') rows = rows.filter(c => c.starred);
   }
+  if (convoStatus) rows = rows.filter(c => c.contact?.status === convoStatus);
   // Sorts by last REPLY (lastInboundAt), not last activity of any kind --
   // an automated drip send shouldn't be able to bump a cold lead above
   // someone who actually just texted back. Threads with no reply yet sort
@@ -521,6 +529,7 @@ document.getElementById('convoSearchInput').addEventListener('input', (e) => { c
 document.getElementById('convoFilterSelect').addEventListener('change', (e) => { convoFilter = e.target.value; renderSidebar(); });
 document.getElementById('convoSortSelect').addEventListener('change', (e) => { convoSort = e.target.value; renderSidebar(); });
 document.getElementById('convoChannelSelect').addEventListener('change', (e) => { convoChannel = e.target.value; loadConversations(); });
+document.getElementById('convoStatusSelect').addEventListener('change', (e) => { convoStatus = e.target.value; renderSidebar(); });
 
 // ── Chat: right-click (desktop) / long-press (mobile) row menu ──────────
 function openContextMenu(c, x, y) {
