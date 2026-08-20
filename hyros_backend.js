@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch, markFirstSeen } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { getOrCreateTag } from "./contacts_backend.js";
 
@@ -38,6 +38,7 @@ export function upsertFromHyros(hyrosLead, defaultStatus) {
     contact.phone = contact.phone || phone;
     if (!contact.status && hyrosLead.currentStage) contact.status = hyrosLead.currentStage;
     contact.externalIds.hyrosLeadId = hyrosLead.id;
+    markFirstSeen(contact, hyrosLead.creationDate);
     contact.updatedAt = new Date().toISOString();
   } else {
     contact = {

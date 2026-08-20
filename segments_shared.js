@@ -26,6 +26,20 @@ export function findContactMatch(contacts, email, phone) {
   ) || null;
 }
 
+// firstSeenAt is "when this person first appeared in ANY connected system"
+// (AC contact created / Close lead created / Hyros lead created), distinct
+// from our own createdAt (just when WE imported them) -- the Contacts list
+// "Created" column shows firstSeenAt so it reflects the real oldest date
+// across sources, not whichever day someone happened to click Import. Only
+// ever moves earlier -- an older date discovered later (re-importing from a
+// second source, or a duplicate merge) should win, never a newer one
+// overwriting a genuinely earlier date. Shared here (not in import_backend.js)
+// so hyros_backend.js can use it too without a circular import.
+export function markFirstSeen(contact, candidateISO) {
+  if (!candidateISO) return;
+  if (!contact.firstSeenAt || new Date(candidateISO) < new Date(contact.firstSeenAt)) contact.firstSeenAt = candidateISO;
+}
+
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
 // field: "status" | "tags" | "listIds" | "customFields.<fieldId>"
 // op: "eq" | "neq" | "includes" | "excludes" | "exists"

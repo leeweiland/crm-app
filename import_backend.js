@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch, markFirstSeen } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE } from "./inbox_backend.js";
 import { recheckStopStatus } from "./compliance_backend.js";
@@ -189,16 +189,6 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns) {
   });
   if (added) writeJson(MESSAGE_LOG_FILE, log);
   return added;
-}
-
-// firstSeenAt is "when this person first appeared in ANY connected
-// system" (Close lead created / AC contact created), distinct from our own
-// createdAt (just when WE imported them). Only ever moves earlier -- an
-// older date discovered later (e.g. re-importing from a second source)
-// should win, never a newer one overwriting a genuinely earlier date.
-function markFirstSeen(contact, candidateISO) {
-  if (!candidateISO) return;
-  if (!contact.firstSeenAt || new Date(candidateISO) < new Date(contact.firstSeenAt)) contact.firstSeenAt = candidateISO;
 }
 
 // Matched first by the provider's own id (repeatable imports never

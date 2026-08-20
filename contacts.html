@@ -424,7 +424,7 @@ function sortContacts(contacts) {
   return [...contacts].sort((a, b) => {
     let av, bv;
     if (field === 'name') { av = `${a.first} ${a.last}`.toLowerCase(); bv = `${b.first} ${b.last}`.toLowerCase(); }
-    else if (field === 'createdAt') { av = a.createdAt || ''; bv = b.createdAt || ''; }
+    else if (field === 'createdAt') { av = a.firstSeenAt || a.createdAt || ''; bv = b.firstSeenAt || b.createdAt || ''; }
     else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
     return av < bv ? -dir : av > bv ? dir : 0;
   });
@@ -444,7 +444,7 @@ function renderContactsTable() {
       <td>${escapeHtml(c.phone || '')}</td>
       <td>${c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : ''}</td>
       <td>${(c.tags || []).length ? c.tags.length + ' tag(s)' : ''}</td>
-      <td class="pra-muted">${fmtDate(c.createdAt)}</td>
+      <td class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</td>
     </tr>
   `).join('');
 }
