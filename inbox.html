@@ -191,6 +191,15 @@
   .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); margin: 0 6px 6px 0; }
   .tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
   .ov-sub-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
+  /* Searchable "add a tag/list" dropdown -- same pattern as campaign-builder's
+     recipient pickers, so you search a couple characters instead of scrolling
+     a giant alphabetical <select> of every tag/list in the account. */
+  .search-add { position: relative; margin-top: 8px; }
+  .search-add-dropdown { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 50; max-height: 220px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .search-add-dropdown.open { display: block; }
+  .search-add-option { padding: 8px 12px; font-size: .82rem; cursor: pointer; }
+  .search-add-option:hover { background: rgba(255,255,255,0.06); }
+  .search-add-option-empty { padding: 8px 12px; font-size: .8rem; color: var(--pra-dim); }
 </style>
 </head>
 <body>
@@ -326,10 +335,10 @@
     </div>
     <div class="ov-sub-label">Tags</div>
     <div id="ovTagsWrap"></div>
-    <select class="pra-select" id="ovAddTagSelect" style="margin-top:8px"><option value="">+ Add a tag...</option></select>
+    <div class="search-add" id="ovAddTagBox"></div>
     <div class="ov-sub-label">Lists</div>
     <div id="ovListsWrap"></div>
-    <select class="pra-select" id="ovAddListSelect" style="margin-top:8px"><option value="">+ Add to a list...</option></select>
+    <div class="search-add" id="ovAddListBox"></div>
     <div class="field-row" style="margin:16px 0 0">
       <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ovEmailOptOut"/> Email opt-out</label>
       <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ovSmsOptOut"/> SMS opt-out</label>
@@ -1026,50 +1035,90 @@ async function autoSaveOverlay() {
   await loadRefs();
   await loadConversations(); // re-selects the open conversation if it's still selectedConvo/initialContactId, refreshing the header
 }
+// Selected tags/lists show only the first couple, same collapse pattern as
+// contact-detail.html's Details panel -- a contact with a dozen imported
+// segment tags shouldn't push the whole overlay's form fields off-screen.
+const OV_PILLS_COLLAPSE_LIMIT = 2;
+let ovTagsExpanded = false, ovListsExpanded = false;
+function collapsiblePillsHtml(pills, expanded, toggleId) {
+  const shown = expanded ? pills : pills.slice(0, OV_PILLS_COLLAPSE_LIMIT);
+  const hidden = pills.length - shown.length;
+  return shown.join('') + (hidden > 0
+    ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">+${hidden} more</button>`
+    : (expanded && pills.length > OV_PILLS_COLLAPSE_LIMIT ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">Show less</button>` : ''));
+}
+// Generic search-to-add dropdown -- built once per container (so typing
+// isn't wiped out by the re-renders that follow every add/remove), reused
+// for both Tags and Lists. Same idea as campaign-builder.html's recipient
+// pickers: search a couple characters instead of scrolling one giant
+// alphabetical <select> of every tag/list in the account.
+function renderSearchAddDropdown(containerId, items, selectedIds, onPick) {
+  const el = document.getElementById(containerId);
+  if (!el.dataset.init) {
+    el.innerHTML = `<input class="pra-input search-add-input" type="text" placeholder="Search..."/><div class="search-add-dropdown"></div>`;
+    el.dataset.init = '1';
+  }
+  const searchEl = el.querySelector('.search-add-input');
+  const dropdownEl = el.querySelector('.search-add-dropdown');
+  const showMatches = () => {
+    const q = searchEl.value.trim().toLowerCase();
+    const matches = items.filter(i => !selectedIds.includes(i.id) && i.name.toLowerCase().includes(q)).slice(0, 30);
+    dropdownEl.innerHTML = matches.length ? matches.map(i => `<div class="search-add-option" data-id="${i.id}">${escapeHtml(i.name)}</div>`).join('') : `<div class="search-add-option-empty">${items.length ? 'No matches' : 'None yet'}</div>`;
+    dropdownEl.classList.add('open');
+    dropdownEl.querySelectorAll('.search-add-option').forEach(opt => opt.onclick = () => {
+      searchEl.value = '';
+      dropdownEl.classList.remove('open');
+      onPick(opt.dataset.id);
+    });
+  };
+  searchEl.oninput = showMatches;
+  searchEl.onfocus = showMatches;
+  // Delayed so a click on a .search-add-option (which fires blur first)
+  // still registers before the dropdown disappears out from under it.
+  searchEl.onblur = () => setTimeout(() => dropdownEl.classList.remove('open'), 150);
+}
 function renderOverlayTags() {
   const wrap = document.getElementById('ovTagsWrap');
-  wrap.innerHTML = (overlayContact.tags || []).map(tagId => {
+  const pills = (overlayContact.tags || []).map(tagId => {
     const t = overlayTags.find(x => x.id === tagId);
     if (!t) return '';
     return `<span class="tag-pill">${escapeHtml(t.name)}<button data-tag="${tagId}" class="ovRemoveTag" type="button">&times;</button></span>`;
-  }).join('') || '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
+  }).filter(Boolean);
+  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, ovTagsExpanded, 'ovTagsToggle') : '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
   wrap.querySelectorAll('.ovRemoveTag').forEach(btn => btn.onclick = async () => {
     overlayContact.tags = overlayContact.tags.filter(id => id !== btn.dataset.tag);
     await autoSaveOverlay();
     renderOverlayTags();
   });
-  const sel = document.getElementById('ovAddTagSelect');
-  sel.innerHTML = '<option value="">+ Add a tag...</option>' + overlayTags.filter(t => !overlayContact.tags.includes(t.id)).map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  const toggle = document.getElementById('ovTagsToggle');
+  if (toggle) toggle.onclick = () => { ovTagsExpanded = !ovTagsExpanded; renderOverlayTags(); };
+  renderSearchAddDropdown('ovAddTagBox', overlayTags, overlayContact.tags || [], async (tagId) => {
+    overlayContact.tags.push(tagId);
+    await autoSaveOverlay();
+    renderOverlayTags();
+  });
 }
-document.getElementById('ovAddTagSelect').addEventListener('change', async (e) => {
-  if (!e.target.value) return;
-  overlayContact.tags.push(e.target.value);
-  await autoSaveOverlay();
-  renderOverlayTags();
-  e.target.value = '';
-});
 function renderOverlayLists() {
   const wrap = document.getElementById('ovListsWrap');
-  wrap.innerHTML = (overlayContact.listIds || []).map(listId => {
+  const pills = (overlayContact.listIds || []).map(listId => {
     const l = overlayLists.find(x => x.id === listId);
     if (!l) return '';
     return `<span class="tag-pill">${escapeHtml(l.name)}<button data-list="${listId}" class="ovRemoveList" type="button">&times;</button></span>`;
-  }).join('') || '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
+  }).filter(Boolean);
+  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, ovListsExpanded, 'ovListsToggle') : '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
   wrap.querySelectorAll('.ovRemoveList').forEach(btn => btn.onclick = async () => {
     overlayContact.listIds = overlayContact.listIds.filter(id => id !== btn.dataset.list);
     await autoSaveOverlay();
     renderOverlayLists();
   });
-  const sel = document.getElementById('ovAddListSelect');
-  sel.innerHTML = '<option value="">+ Add to a list...</option>' + overlayLists.filter(l => !overlayContact.listIds.includes(l.id)).map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+  const toggle = document.getElementById('ovListsToggle');
+  if (toggle) toggle.onclick = () => { ovListsExpanded = !ovListsExpanded; renderOverlayLists(); };
+  renderSearchAddDropdown('ovAddListBox', overlayLists, overlayContact.listIds || [], async (listId) => {
+    overlayContact.listIds.push(listId);
+    await autoSaveOverlay();
+    renderOverlayLists();
+  });
 }
-document.getElementById('ovAddListSelect').addEventListener('change', async (e) => {
-  if (!e.target.value) return;
-  overlayContact.listIds.push(e.target.value);
-  await autoSaveOverlay();
-  renderOverlayLists();
-  e.target.value = '';
-});
 function renderOverlayCustomFields() {
   const wrap = document.getElementById('ovCustomFieldsWrap');
   if (!overlayFields.length) { wrap.innerHTML = ''; return; }
