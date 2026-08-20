@@ -103,7 +103,7 @@
      shrinking to its content, which made every outbound bubble render
      flush left like an inbound one despite the correct blue color/class. */
   .bubble-content { max-width: 62%; }
-  .sms-bubble { max-width: 100%; padding: 9px 13px; border-radius: 14px; font-size: .87rem; font-weight: 400; line-height: 1.4; white-space: pre-wrap; }
+  .sms-bubble { max-width: 100%; padding: 9px 13px; border-radius: 14px; font-size: .87rem; font-weight: 400; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
   .bubble-row.outbound .sms-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
   .bubble-row.inbound .sms-bubble { background: var(--pra-panel-2); color: var(--pra-dim); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
   .bubble-time { font-size: .64rem; color: var(--pra-dim); margin-top: 3px; }
@@ -123,7 +123,7 @@
 
   .note-bubble { border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; }
   .note-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); font-weight: 700; font-size: .85rem; }
-  .note-bubble-body { font-size: .8rem; color: var(--pra-dim); padding: 8px 14px; white-space: pre-wrap; border-top: 1px solid var(--pra-border); }
+  .note-bubble-body { font-size: .8rem; color: var(--pra-dim); padding: 8px 14px; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--pra-border); }
   .note-bubble .bubble-time { padding: 0 14px 10px; }
   .track-badge { display: inline-flex; align-items: center; gap: 3px; font-size: .66rem; font-weight: 700; padding: 2px 8px; border-radius: 9px; background: rgba(255,255,255,0.05); color: var(--pra-dim); }
   .track-badge.on { background: rgba(57,255,20,0.16); color: #39ff14; box-shadow: 0 0 6px rgba(57,255,20,0.35); }
