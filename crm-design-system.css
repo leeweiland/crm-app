@@ -170,7 +170,7 @@ body { margin: 0; }
   .app-sidebar-backdrop { display: block; }
   .app-sidebar-logo { display: none; }
   .app-mobile-logo {
-    display: flex; position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+    display: flex; position: fixed; top: 0; left: 0; right: 0; z-index: 295;
     justify-content: center; align-items: center; height: 70px;
     background: var(--pra-black-soft); pointer-events: none;
   }
