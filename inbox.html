@@ -172,7 +172,7 @@
   .task-panel-row input[type="text"]:focus { outline: none; border-bottom: 1px solid var(--pra-blue); }
   .task-panel-row.done input[type="text"] { color: var(--pra-dim); text-decoration: line-through; }
   .task-panel-row .task-panel-due { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
-  .task-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .9rem; padding: 0 2px; flex-shrink: 0; }
+  .task-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
   .task-panel-row button:hover { color: var(--pra-red); }
   .task-panel-add { display: flex; flex-direction: column; gap: 6px; }
   .task-panel-add input { font-size: .82rem; padding: 6px 8px; }
@@ -601,12 +601,20 @@ document.getElementById('confirmDeleteConvoBtn').onclick = async () => {
 // inline edit (click the title) / delete, plus a quick-add form. Reuses
 // threadItems (already loaded by loadThread() for this contact) instead
 // of a separate fetch.
+// Compact date -- fmtDate's toLocaleString() always includes a time, which
+// reads as noise ("12:00:00 AM") for a task/note that was only ever given
+// a date. Only shows a time when one was actually set (non-midnight).
+function fmtDueCompact(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const dateStr = d.toLocaleDateString();
+  return (d.getHours() || d.getMinutes()) ? `${dateStr} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : dateStr;
+}
 function taskPanelRowHtml(t) {
   return `
     <div class="task-panel-row${t.done ? ' done' : ''}" data-task-row="${t.id}">
-      <input type="checkbox" data-task-done="${t.id}" ${t.done ? 'checked' : ''}/>
+      ${t.dueAt ? `<span class="task-panel-due">${fmtDueCompact(t.dueAt)}</span>` : '<span class="task-panel-due">No date</span>'}
       <input type="text" data-task-title="${t.id}" value="${escapeHtml(t.title)}"/>
-      ${t.dueAt ? `<span class="task-panel-due">${fmtDate(t.dueAt)}</span>` : ''}
       <button type="button" data-task-delete="${t.id}" title="Delete">&times;</button>
     </div>
   `;
@@ -615,12 +623,6 @@ function renderTaskPanel() {
   const list = document.getElementById('taskPanelList');
   const tasks = threadItems.filter(i => i.itemType === 'task').sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
   list.innerHTML = tasks.length ? tasks.map(taskPanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No tasks yet.</div>';
-  list.querySelectorAll('[data-task-done]').forEach(cb => cb.onchange = async () => {
-    const id = cb.dataset.taskDone;
-    await fetch('/api/tasks/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: cb.checked }) });
-    const t = threadItems.find(i => i.id === id); if (t) t.done = cb.checked;
-    renderTaskPanel();
-  });
   list.querySelectorAll('[data-task-title]').forEach(inp => {
     const commit = async () => {
       const id = inp.dataset.taskTitle;
@@ -673,7 +675,7 @@ function notePanelRowHtml(n) {
   return `
     <div class="task-panel-row" data-note-row="${n.id}">
       <input type="text" data-note-text="${n.id}" value="${escapeHtml(n.text)}"/>
-      <span class="task-panel-due">${fmtDate(n.at)}</span>
+      <span class="task-panel-due">${fmtDueCompact(n.at)}</span>
       <button type="button" data-note-delete="${n.id}" title="Delete">&times;</button>
     </div>
   `;
