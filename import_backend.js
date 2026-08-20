@@ -5,7 +5,7 @@ import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE } from "./inbox_backend.js";
 import { recheckStopStatus } from "./compliance_backend.js";
 import { getOrCreateTag, getOrCreateList } from "./contacts_backend.js";
-import { hyrosConfigured, fetchHyrosLeadsPage, upsertFromHyros, mergeHyrosActivity } from "./hyros_backend.js";
+import { hyrosConfigured, fetchHyrosLeadsPage, upsertFromHyros, mergeHyrosActivity, searchHyrosLeadByIdentity } from "./hyros_backend.js";
 
 export const IMPORT_JOBS_FILE = "crm_import_jobs.json";
 
@@ -443,6 +443,85 @@ function mergeCloseCalls(contact, activities) {
   if (added) writeJson(CALLS_FILE, calls);
   return added;
 }
+// Targeted single-identity lookup (vs fetchAcBatch's bulk paginated sweep)
+// -- for cross-referencing a contact already found via another source.
+// AC's contact search is email-indexed, not phone, so unlike the Hyros/
+// Close identity lookups this one only ever tries email.
+async function fetchAcContactByEmail(email) {
+  if (!email || !acConfigured()) return null;
+  const r = await fetch(`${AC_BASE}/api/3/contacts?${new URLSearchParams({ email })}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+  if (!r.ok) return null;
+  const data = await r.json();
+  return data.contacts?.[0] || null;
+}
+
+// Close-first segment import: for a filtered slice of Close leads (by
+// Close's own search query -- status, custom fields, etc.), pull full
+// Close history same as the bulk importer, then ALSO cross-reference AC and
+// Hyros by email/phone for each one so a person found this way ends up
+// exactly as fully populated as someone found via the AC or Hyros bulk
+// importers. Reuses every merge/enrich helper the other three import paths
+// already use -- this is just a different way of choosing WHO to import,
+// not a different way of importing them.
+export async function importCloseSegment(query, limit) {
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  const r = await fetch(`${CLOSE_BASE}/lead/?${new URLSearchParams({ query, _limit: String(limit) })}`, { headers: { Authorization: auth } });
+  if (!r.ok) throw new Error(`Close search API error ${r.status}`);
+  const leads = (await r.json()).data || [];
+
+  // Tags/lists are cheap (~1-2 pages each) so fetched up front; the FULL
+  // account-wide campaigns sweep (fetchAcOneToOneCampaigns) is by far the
+  // most expensive call this makes (thousands of campaigns, tens of
+  // sequential pages) -- for a small targeted segment, most contacts may
+  // not even have an AC match at all, so it's fetched lazily on the FIRST
+  // AC match found and cached for the rest of this run, instead of paying
+  // that cost unconditionally even when nobody in the batch needs it.
+  const [tagMap, listMap] = await Promise.all([fetchAcIdNameMap("tags"), fetchAcIdNameMap("lists")]);
+  let oneToOneCampaigns = null;
+
+  const contactIds = [];
+  for (const lead of leads) {
+    const { contacts: touched } = upsertFromCloseLead(lead, null);
+    for (const contact of touched) {
+      await pullCloseHistoryForContact(contact);
+      await mergeCloseSequences(contact);
+
+      const acContact = await fetchAcContactByEmail(contact.email);
+      if (acContact) {
+        if (!oneToOneCampaigns) oneToOneCampaigns = await fetchAcOneToOneCampaigns();
+        const all = readJson(CONTACTS_FILE, []);
+        const stored = all.find(c => c.id === contact.id);
+        if (stored) {
+          stored.externalIds.acContactId = acContact.id;
+          stored.first = stored.first || acContact.firstName || "";
+          stored.last = stored.last || acContact.lastName || "";
+          markFirstSeen(stored, acContact.cdate);
+          await enrichAcContact(stored, acContact.id, tagMap, listMap);
+          writeJson(CONTACTS_FILE, all);
+          mergeAcCampaigns(stored, oneToOneCampaigns);
+        }
+      }
+
+      const hyrosLead = await searchHyrosLeadByIdentity(contact.email, contact.phone);
+      if (hyrosLead) {
+        const all = readJson(CONTACTS_FILE, []);
+        const stored = all.find(c => c.id === contact.id);
+        if (stored) {
+          stored.externalIds.hyrosLeadId = hyrosLead.id;
+          markFirstSeen(stored, hyrosLead.creationDate);
+          (hyrosLead.tags || []).forEach(name => {
+            const tag = getOrCreateTag(name);
+            if (tag && !stored.tags.includes(tag.id)) stored.tags.push(tag.id);
+          });
+          writeJson(CONTACTS_FILE, all);
+          mergeHyrosActivity(stored, hyrosLead);
+        }
+      }
+      contactIds.push(contact.id);
+    }
+  }
+  return { foundInClose: leads.length, imported: contactIds.length, contactIds };
+}
 export async function pullCloseHistoryForContact(contact) {
   const leadId = contact.externalIds?.closeLeadId;
   if (!leadId) return { ok: false, reason: "Contact has no linked Close lead" };
@@ -486,6 +565,21 @@ export async function handleImportRequest(req, res, url) {
       if (`${contact.status}|${contact.first}` !== before) updated++;
     }
     return sendJson(res, 200, { ok: true, checked: targets.length, updated });
+  }
+
+  // Close-first segment import, e.g. { query: 'status:"ENROLLED" custom.TYPE:"ONLINE"', limit: 10 }
+  // -- Close's own search syntax (status/custom fields/etc), cross-referenced
+  // against AC and Hyros for each match. See importCloseSegment's own comment.
+  if (p === "/api/import/close-segment" && req.method === "POST") {
+    if (!closeConfigured()) return sendJson(res, 400, { error: "CLOSE_API_KEY isn't set yet." });
+    const { query, limit } = await readJsonBody(req);
+    if (!query) return sendJson(res, 400, { error: "query is required (Close search syntax)" });
+    try {
+      const result = await importCloseSegment(query, Math.min(limit || 10, 50));
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (e) {
+      return sendJson(res, 502, { error: e.message });
+    }
   }
 
   if (p === "/api/import/jobs" && req.method === "GET") {

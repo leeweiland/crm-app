@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch, markFirstSeen } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch, markFirstSeen, digitsOnly } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { getOrCreateTag } from "./contacts_backend.js";
 
@@ -22,6 +22,24 @@ export async function fetchHyrosLeadsPage(pageId, pageSize) {
   if (!r.ok) return { ok: false, reason: `Hyros API error ${r.status}` };
   const data = await r.json();
   return { ok: true, leads: data.result || [], nextPageId: data.nextPageId || null };
+}
+
+// Targeted single-identity lookup -- unlike fetchHyrosLeadsPage (bulk
+// paginated sweep), this is for cross-referencing a contact ALREADY found
+// via another source (e.g. a Close-first import) to see if Hyros also has
+// them. Tries email first since Hyros's own dedup is email-primary.
+export async function searchHyrosLeadByIdentity(email, phone) {
+  const headers = { "API-Key": process.env.HYROS_API_KEY };
+  if (email) {
+    const r = await fetch(`${HYROS_BASE}/leads?${new URLSearchParams({ emails: email })}`, { headers });
+    if (r.ok) { const d = await r.json(); if (d.result?.length) return d.result[0]; }
+  }
+  const phoneDigits = digitsOnly(phone);
+  if (phoneDigits) {
+    const r = await fetch(`${HYROS_BASE}/leads?${new URLSearchParams({ phones: phoneDigits })}`, { headers });
+    if (r.ok) { const d = await r.json(); if (d.result?.length) return d.result[0]; }
+  }
+  return null;
 }
 
 // Matched first by Hyros's own lead id (repeatable imports never
