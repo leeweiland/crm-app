@@ -158,8 +158,8 @@
 
   /* ── Chat panel header: status + tasks control ── */
   .chat-panel-task-btn { flex-shrink: 0; position: relative; }
-  .chat-panel-actions { display: flex; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
-  .chat-panel-actions #chatStatusSelect { flex: 1; min-width: 0; max-width: none; }
+  .chat-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
+  .chat-panel-actions #chatStatusSelect { flex: 1; min-width: 140px; max-width: none; }
   /* Anchored under the Tasks button, not a full modal -- lists existing
      tasks (edit/delete) plus a quick-add form. Closes on click-out or
      Cancel, never needs its own scroll to be usable on a phone screen. */
@@ -666,20 +666,76 @@ async function submitNewTask() {
   document.getElementById('taskPanelTime').value = '';
   renderTaskPanel();
 }
-// Delegated (not a direct getElementById().onclick) since the panel's DOM
+// ── Chat panel: contact-bound Notes panel ────────────────────────────────
+// Same shape as the Tasks panel above, minus dueAt/done -- a note isn't
+// something you complete, just something you write down and can edit later.
+function notePanelRowHtml(n) {
+  return `
+    <div class="task-panel-row" data-note-row="${n.id}">
+      <input type="text" data-note-text="${n.id}" value="${escapeHtml(n.text)}"/>
+      <span class="task-panel-due">${fmtDate(n.at)}</span>
+      <button type="button" data-note-delete="${n.id}" title="Delete">&times;</button>
+    </div>
+  `;
+}
+function renderNotePanel() {
+  const list = document.getElementById('notePanelList');
+  const notes = threadItems.filter(i => i.itemType === 'note').sort((a, b) => new Date(b.at) - new Date(a.at));
+  list.innerHTML = notes.length ? notes.map(notePanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No notes yet.</div>';
+  list.querySelectorAll('[data-note-text]').forEach(inp => {
+    const commit = async () => {
+      const id = inp.dataset.noteText;
+      const text = inp.value.trim();
+      if (!text) { inp.value = threadItems.find(i => i.id === id)?.text || ''; return; }
+      await fetch('/api/notes/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      const n = threadItems.find(i => i.id === id); if (n) n.text = text;
+    };
+    inp.addEventListener('blur', commit);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+  });
+  list.querySelectorAll('[data-note-delete]').forEach(btn => btn.onclick = async () => {
+    const id = btn.dataset.noteDelete;
+    await fetch('/api/notes/' + id, { method: 'DELETE' });
+    threadItems = threadItems.filter(i => i.id !== id);
+    renderNotePanel();
+  });
+}
+function toggleNotePanel(contactId) {
+  const panel = document.getElementById('notePanel');
+  const opening = !panel.classList.contains('open');
+  panel.classList.toggle('open', opening);
+  panel.dataset.contactId = contactId || '';
+  if (opening) {
+    document.getElementById('notePanelText').value = '';
+    renderNotePanel();
+  }
+}
+async function submitNewNote() {
+  const text = document.getElementById('notePanelText').value.trim();
+  if (!text) { showToast('Note text is required', true); return; }
+  const contactId = document.getElementById('notePanel').dataset.contactId;
+  const r = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId, text }) });
+  const { note } = await r.json();
+  threadItems.push({ ...note, itemType: 'note', at: note.createdAt });
+  document.getElementById('notePanelText').value = '';
+  renderNotePanel();
+}
+// Delegated (not a direct getElementById().onclick) since both panels' DOM
 // is recreated every time renderThread() re-renders the chat panel header
 // -- a direct binding would go stale the moment a new conversation opens.
-// Same listener also handles click-out-to-close: clicks on the panel
-// itself or its trigger button are ignored (the trigger has its own
-// toggle handler, which would otherwise immediately re-close what it just
-// opened).
+// Same listener also handles click-out-to-close for whichever panel is
+// open: clicks on a panel itself or its own trigger button are ignored
+// (the trigger has its own toggle handler, which would otherwise
+// immediately re-close what it just opened).
 document.addEventListener('click', (e) => {
   if (e.target.id === 'taskPanelCancelBtn') { toggleTaskPanel(null); return; }
   if (e.target.id === 'taskPanelAddBtn') { submitNewTask(); return; }
-  const panel = document.getElementById('taskPanel');
-  if (!panel || !panel.classList.contains('open')) return;
-  if (panel.contains(e.target) || e.target.id === 'chatAddTaskBtn') return;
-  toggleTaskPanel(null);
+  if (e.target.id === 'notePanelCancelBtn') { toggleNotePanel(null); return; }
+  if (e.target.id === 'notePanelAddBtn') { submitNewNote(); return; }
+  const taskPanel = document.getElementById('taskPanel');
+  if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') toggleTaskPanel(null);
+  const notePanel = document.getElementById('notePanel');
+  if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') toggleNotePanel(null);
 });
 function openConfirmPotential(c) {
   document.getElementById('confirmPotentialFrom').textContent = `From: ${c.displayName}`;
@@ -800,6 +856,19 @@ function renderThread() {
           </div>
         </div>
       </div>
+      <div class="chat-panel-task-btn">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatAddNoteBtn" type="button">Notes</button>
+        <div class="task-panel" id="notePanel">
+          <div class="task-panel-list" id="notePanelList"></div>
+          <div class="task-panel-add">
+            <input class="pra-input" id="notePanelText" placeholder="New note..."/>
+          </div>
+          <div class="task-panel-footer">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="notePanelCancelBtn" type="button">Cancel</button>
+            <button class="pra-btn pra-btn-sm" id="notePanelAddBtn" type="button" style="margin-left:8px">Add</button>
+          </div>
+        </div>
+      </div>
       <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
     </div>
     ${emailStatsHtml(emailItems)}
@@ -843,6 +912,7 @@ function renderThread() {
   document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;
   document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
+  document.getElementById('chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); toggleNotePanel(c.contactId); };
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
   document.getElementById('chatStatusSelect').addEventListener('change', async (e) => {
     const status = e.target.value;

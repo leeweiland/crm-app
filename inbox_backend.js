@@ -10,6 +10,7 @@ function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
 export const CALLS_FILE = "crm_calls.json";
 export const TASKS_FILE = "crm_tasks.json";
+export const NOTES_FILE = "crm_notes.json";
 export { CONVERSATION_META_FILE };
 
 function withContact(item, contacts) {
@@ -22,7 +23,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -38,7 +39,8 @@ export async function handleInboxRequest(req, res, url) {
     const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
     const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).filter(t => t.contactId === contactId).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
-    const items = [...messages, ...calls, ...tasks].sort((a, b) => new Date(b.at) - new Date(a.at));
+    const notes = readJson(NOTES_FILE, []).filter(n => n.contactId === contactId).map(n => ({ ...n, itemType: "note", at: n.createdAt }));
+    const items = [...messages, ...calls, ...tasks, ...notes].sort((a, b) => new Date(b.at) - new Date(a.at));
     return sendJson(res, 200, { items });
   }
 
@@ -365,6 +367,34 @@ export async function handleInboxRequest(req, res, url) {
     }
     if (req.method === "DELETE") {
       writeJson(TASKS_FILE, tasks.filter(t => t.id !== taskMatch[1]));
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  // Freeform contact notes -- same list/add/edit/delete shape as Tasks,
+  // just no dueAt/done (a note isn't something you complete).
+  if (p === "/api/notes" && req.method === "POST") {
+    const { contactId, text } = await readJsonBody(req);
+    if (!text) return sendJson(res, 400, { error: "text is required" });
+    const notes = readJson(NOTES_FILE, []);
+    const note = { id: randomUUID(), contactId: contactId || null, text, createdAt: new Date().toISOString(), createdBy: me.id };
+    notes.push(note);
+    writeJson(NOTES_FILE, notes);
+    return sendJson(res, 200, { ok: true, note });
+  }
+  const noteMatch = p.match(/^\/api\/notes\/([^/]+)$/);
+  if (noteMatch) {
+    const notes = readJson(NOTES_FILE, []);
+    const note = notes.find(n => n.id === noteMatch[1]);
+    if (req.method === "PATCH") {
+      if (!note) return sendJson(res, 404, { error: "Not found" });
+      const { text } = await readJsonBody(req);
+      if (text) note.text = text;
+      writeJson(NOTES_FILE, notes);
+      return sendJson(res, 200, { ok: true, note });
+    }
+    if (req.method === "DELETE") {
+      writeJson(NOTES_FILE, notes.filter(n => n.id !== noteMatch[1]));
       return sendJson(res, 200, { ok: true });
     }
   }
