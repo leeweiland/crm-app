@@ -67,26 +67,28 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <div class="pra-h1" style="margin-bottom:20px">Reporting</div>
+      <div class="mobile-sticky-header">
+        <div class="pra-h1" style="margin-bottom:20px">Reporting</div>
 
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="overview">Overview</button>
-        <button class="tab-btn" data-tab="email">Email</button>
-        <button class="tab-btn" data-tab="sms">SMS</button>
-        <button class="tab-btn" data-tab="ads">Ads</button>
-        <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
-      </div>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="overview">Overview</button>
+          <button class="tab-btn" data-tab="email">Email</button>
+          <button class="tab-btn" data-tab="sms">SMS</button>
+          <button class="tab-btn" data-tab="ads">Ads</button>
+          <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
+        </div>
 
-      <!-- Shared date-range selector -- same options, same math, used by
-           Overview/Email/SMS/Ads. Customer Journeys doesn't use it (it's a
-           lifetime timeline per contact, not a period rollup). -->
-      <div class="rep-toolbar">
-        <select class="pra-select" id="periodSelect"></select>
-        <input class="pra-input" type="date" id="customStart" style="display:none"/>
-        <input class="pra-input" type="date" id="customEnd" style="display:none"/>
-        <button class="pra-btn pra-btn-sm" id="updateReportBtn">Update</button>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="refreshAdsBtn" title="Ads data comes from a Google Sheet updated separately">Refresh Data</button>
-        <span class="pra-muted" id="periodRangeMsg" style="font-size:.8rem"></span>
+        <!-- Shared date-range selector -- same options, same math, used by
+             Overview/Email/SMS/Ads. Customer Journeys doesn't use it (it's a
+             lifetime timeline per contact, not a period rollup). -->
+        <div class="rep-toolbar">
+          <select class="pra-select" id="periodSelect"></select>
+          <input class="pra-input" type="date" id="customStart" style="display:none"/>
+          <input class="pra-input" type="date" id="customEnd" style="display:none"/>
+          <button class="pra-btn pra-btn-sm" id="updateReportBtn">Update</button>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="refreshAdsBtn" title="Ads data comes from a Google Sheet updated separately">Refresh Data</button>
+          <span class="pra-muted" id="periodRangeMsg" style="font-size:.8rem"></span>
+        </div>
       </div>
 
       <div class="tab-panel active" id="tab-overview">
