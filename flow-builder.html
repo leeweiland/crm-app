@@ -684,7 +684,22 @@ canvasWrap.addEventListener('touchmove', (e) => {
   } else if (e.touches.length === 2 && pinchStartDist) {
     e.preventDefault();
     const dist = touchDist(e.touches[0], e.touches[1]);
-    zoom = Math.min(1.5, Math.max(0.4, +(pinchStartZoom * (dist / pinchStartDist)).toFixed(2)));
+    const newZoom = Math.min(1.5, Math.max(0.4, +(pinchStartZoom * (dist / pinchStartDist)).toFixed(2)));
+    // Zoom around the pinch's midpoint, not the canvas's fixed
+    // transform-origin (0,0) -- without this the content visibly slides
+    // toward the top-left corner on every pinch instead of staying under
+    // your fingers. Standard "zoom toward a point" math: find what content
+    // coordinate is currently under the focal point, then solve for the
+    // pan that keeps that same content coordinate under the focal point
+    // at the new zoom level.
+    const rect = canvasWrap.getBoundingClientRect();
+    const focalX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+    const focalY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+    const contentX = (focalX - panX) / zoom;
+    const contentY = (focalY - panY) / zoom;
+    panX = focalX - contentX * newZoom;
+    panY = focalY - contentY * newZoom;
+    zoom = newZoom;
     applyTransform();
   }
 }, { passive: false });
