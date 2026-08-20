@@ -191,16 +191,14 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <div class="pra-h1" style="margin-bottom:16px">Inbox</div>
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="primary">Inbox</button>
-        <button class="tab-btn" data-tab="tasks">Tasks</button>
-        <button class="tab-btn" data-tab="reminders">Reminders</button>
-      </div>
-
-      <!-- Tasks / Reminders: existing flat list -->
-      <div id="flatListView" style="display:none">
-        <div class="inbox-toolbar">
+      <div class="mobile-sticky-header">
+        <div class="pra-h1" style="margin-bottom:16px">Inbox</div>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="primary">Inbox</button>
+          <button class="tab-btn" data-tab="tasks">Tasks</button>
+          <button class="tab-btn" data-tab="reminders">Reminders</button>
+        </div>
+        <div class="inbox-toolbar" id="inboxToolbar" style="display:none">
           <select class="pra-select" id="viewSelect">
             <option value="new">New</option>
             <option value="past">Past</option>
@@ -217,6 +215,10 @@
             <button class="pra-btn pra-btn-ghost pra-btn-sm" id="bulkDoneBtn">Mark Done</button>
           </div>
         </div>
+      </div>
+
+      <!-- Tasks / Reminders: existing flat list -->
+      <div id="flatListView" style="display:none">
         <div class="pra-panel" id="itemsPanel"></div>
       </div>
 
@@ -413,6 +415,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   const isChat = currentTab in CHAT_TABS;
   document.getElementById('chatView').style.display = isChat ? 'flex' : 'none';
   document.getElementById('flatListView').style.display = isChat ? 'none' : 'block';
+  document.getElementById('inboxToolbar').style.display = isChat ? 'none' : 'flex';
   if (isChat) { document.getElementById('chatView').classList.remove('thread-open'); loadConversations(); }
   else loadItems();
 });

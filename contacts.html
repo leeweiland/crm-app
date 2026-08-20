@@ -9,8 +9,8 @@
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
   .tag-chip { display: inline-block; font-size: .68rem; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 4px; }
-  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .tabs { display: flex; flex-wrap: nowrap; gap: 8px; margin-bottom: 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
@@ -46,25 +46,26 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="contacts">Contacts</button>
-        <button class="tab-btn" data-tab="lists">Email Lists</button>
-        <button class="tab-btn" data-tab="emailsegments">Email Segments</button>
-        <button class="tab-btn" data-tab="smssegments">SMS Segments</button>
-        <button class="tab-btn" data-tab="tags">Tags</button>
-        <button class="tab-btn" data-tab="import">Data Import</button>
-        <button class="tab-btn" data-tab="duplicates">Duplicates</button>
-      </div>
-
-      <div class="tab-panel active" id="tab-contacts">
-        <div class="toolbar">
+      <div class="mobile-sticky-header">
+        <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="contacts">Contacts</button>
+          <button class="tab-btn" data-tab="lists">Email Lists</button>
+          <button class="tab-btn" data-tab="emailsegments">Email Segments</button>
+          <button class="tab-btn" data-tab="smssegments">SMS Segments</button>
+          <button class="tab-btn" data-tab="tags">Tags</button>
+          <button class="tab-btn" data-tab="import">Data Import</button>
+          <button class="tab-btn" data-tab="duplicates">Duplicates</button>
+        </div>
+        <div class="toolbar" id="contactsToolbar">
           <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
           <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
           <a class="pra-link filter-toggle" id="filterToggle">+ Filters</a>
           <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
         </div>
+      </div>
 
+      <div class="tab-panel active" id="tab-contacts">
         <div class="pra-panel filter-panel" id="filterPanel">
           <div class="match-toggle" style="margin-bottom:12px">
             Match
@@ -273,6 +274,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    // The search/status/filter/add-contact toolbar only makes sense on the
+    // Contacts tab itself -- lives in the sticky header (not inside
+    // #tab-contacts) so it can be pinned alongside the title/tabs, which
+    // means its visibility has to be toggled by hand instead of coming
+    // free from the tab-panel's own show/hide.
+    document.getElementById('contactsToolbar').style.display = btn.dataset.tab === 'contacts' ? 'flex' : 'none';
   };
 });
 

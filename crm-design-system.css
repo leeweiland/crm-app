@@ -186,9 +186,23 @@ body { margin: 0; }
   }
   .app-sidebar.open { transform: translateX(0); }
   .app-main { padding: 70px 18px 24px; max-width: 100%; }
+  /* Shared "pin the page chrome, scroll the content" wrapper -- wrap a
+     page's title/tabs/toolbar in this so they stay visible while a long
+     list (contacts, forms, campaigns, whatever) scrolls underneath. Docks
+     right below the fixed hamburger bar (top matches .app-main's own
+     padding-top at each breakpoint, so it never overlaps the hamburger and
+     never leaves a gap above it either). Negative side-margins + matching
+     padding pull it flush to the screen edges regardless of .app-main's
+     own left/right padding. */
+  .mobile-sticky-header {
+    position: sticky; top: 70px; z-index: 90;
+    background: var(--pra-black-soft);
+    margin: 0 -18px 16px; padding: 0 18px 12px;
+  }
 }
 @media (max-width: 600px) {
   .app-main { padding: 64px 12px 20px; }
+  .mobile-sticky-header { top: 64px; margin: 0 -12px 16px; padding: 0 12px 12px; }
 }
 
 /* ── Data table ── */
