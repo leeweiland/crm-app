@@ -35,6 +35,7 @@
   .filter-panel { display: none; margin-bottom: 16px; padding: 16px; }
   .filter-panel.show { display: block; }
   .cond-row { display: grid; grid-template-columns: 1fr 140px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+  @media (max-width: 900px) { .cond-row { grid-template-columns: 1fr; } }
   .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
   .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }

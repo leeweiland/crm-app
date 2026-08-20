@@ -13,8 +13,8 @@
   .tab-panel.active { display: block; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
   .row-item:last-child { border-bottom: none; }
-  .add-row { display: flex; gap: 10px; margin-top: 14px; }
-  .add-row input, .add-row select { flex: 1; }
+  .add-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .add-row input, .add-row select { flex: 1; min-width: 120px; }
   .drag-handle { cursor: grab; color: var(--pra-dim); }
 </style>
 </head>
