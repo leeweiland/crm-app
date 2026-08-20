@@ -100,6 +100,44 @@ async function fetchCloseSequenceSubscriptions(leadId) {
   const data = await r.json();
   return data.data || [];
 }
+// AC and Hyros have no real deal-stage concept of their own -- Close's
+// status_label is the one authoritative pipeline status across all three
+// systems. Rather than defaulting a brand-new AC/Hyros contact to a
+// made-up status, actively search Close (even for someone not imported
+// from Close yet) so a person who already has a real Close status keeps
+// it, instead of showing up blank. Only ever fills in a MISSING status --
+// never overwrites one a human (or the Close importer) already set.
+async function searchCloseLeadByIdentity(email, phone) {
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  for (const [field, value] of [["email", email], ["phone", phone]]) {
+    if (!value) continue;
+    const r = await fetch(`${CLOSE_BASE}/lead/?query=${encodeURIComponent(`${field}:"${value}"`)}`, { headers: { Authorization: auth } });
+    if (!r.ok) continue;
+    const data = await r.json();
+    if (data.data?.length) return data.data[0];
+  }
+  return null;
+}
+// Applied only when Close has no record of this person at all -- persists
+// straight to disk since the in-memory `contact` object may be a stale
+// snapshot from an earlier readJson call by this point in the loop.
+function applyFallbackStatus(contact, status) {
+  contact.status = status;
+  const contacts = readJson(CONTACTS_FILE, []);
+  const stored = contacts.find(c => c.id === contact.id);
+  if (stored) { stored.status = status; writeJson(CONTACTS_FILE, contacts); }
+}
+export async function enrichStatusFromClose(contact) {
+  if (contact.status || !closeConfigured()) return;
+  const lead = await searchCloseLeadByIdentity(contact.email, contact.phone);
+  if (!lead) return;
+  contact.status = lead.status_label || contact.status;
+  if (!contact.externalIds.closeLeadId) contact.externalIds.closeLeadId = lead.id;
+  markFirstSeen(contact, lead.date_created);
+  const contacts = readJson(CONTACTS_FILE, []);
+  const stored = contacts.find(c => c.id === contact.id);
+  if (stored) { Object.assign(stored, contact); writeJson(CONTACTS_FILE, contacts); }
+}
 export async function mergeCloseSequences(contact) {
   const leadId = contact.externalIds?.closeLeadId;
   if (!leadId || !closeConfigured()) return 0;
@@ -475,8 +513,15 @@ export async function handleImportRequest(req, res, url) {
         ]);
         for (const c of result.contacts) {
           try {
-            const contact = await upsertFromAc(c, job.defaultStatus, tagMap, listMap);
+            // Close is the one authoritative source of pipeline status --
+            // AC has no equivalent field, so a brand-new contact is created
+            // with no status, Close gets a chance to fill in the real one,
+            // and job.defaultStatus (if set) only applies as a last resort
+            // when Close doesn't have this person either.
+            const contact = await upsertFromAc(c, null, tagMap, listMap);
             mergeAcCampaigns(contact, oneToOneCampaigns);
+            await enrichStatusFromClose(contact);
+            if (!contact.status && job.defaultStatus) applyFallbackStatus(contact, job.defaultStatus);
             job.totalImported++;
           } catch (e) { job.totalErrors++; job.errors.push({ externalId: c.id, message: e.message }); }
         }
@@ -503,13 +548,15 @@ export async function handleImportRequest(req, res, url) {
         // from the first page.
         const result = await fetchHyrosLeadsPage(job.cursor || null, job.batchSize);
         if (!result.ok) { job.status = "error"; job.errors.push({ externalId: null, message: result.reason }); writeJson(IMPORT_JOBS_FILE, jobs); return sendJson(res, 400, { error: result.reason }); }
-        result.leads.forEach(lead => {
+        for (const lead of result.leads) {
           try {
-            const contact = upsertFromHyros(lead, job.defaultStatus);
+            const contact = upsertFromHyros(lead, null);
             mergeHyrosActivity(contact, lead);
+            await enrichStatusFromClose(contact);
+            if (!contact.status && job.defaultStatus) applyFallbackStatus(contact, job.defaultStatus);
             job.totalImported++;
           } catch (e) { job.totalErrors++; job.errors.push({ externalId: lead.id, message: e.message }); }
-        });
+        }
         job.cursor = result.nextPageId || 0;
         job.status = result.nextPageId ? "idle" : "completed";
       }
