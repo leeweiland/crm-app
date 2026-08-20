@@ -14,13 +14,6 @@
   .ed-hint { font-size: .72rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-preview-outer { border-radius: 14px; padding: 40px 24px; display: flex; justify-content: center; }
   @media (max-width: 900px) {
-    /* The booking widget's calendar grid genuinely can't shrink below a
-       legible size (7 real date columns) -- rather than squeeze it
-       illegible, let it render at full size and scroll horizontally
-       within this one bounded area, same tradeoff the real public booking
-       page has to make. */
-    .ed-preview-outer { justify-content: flex-start; overflow-x: auto; padding: 24px 16px; }
-    .bk-card { flex-shrink: 0; }
     .ed-shell { grid-template-columns: 1fr; }
     .ed-sidebar { position: static; max-height: none; }
   }
@@ -66,6 +59,22 @@
   .time-slot { padding: 10px 14px; border: 1px solid var(--bk-accent); color: var(--bk-accent); border-radius: 8px; font-size: .86rem; cursor: pointer; text-align: center; background: none; font-family: inherit; }
   .time-slot:hover { background: var(--bk-accent); color: #fff; }
   .time-placeholder { color: var(--bk-dim); font-size: .84rem; text-align: center; padding: 40px 8px; }
+
+  /* ── Mobile-only step elements, same pattern as the real book.html --
+       hidden on desktop where info/calendar/times fit side by side. ── */
+  .mobile-back-row, .mobile-tz-row, .mobile-duration-row, .mobile-select-time-label { display: none; }
+  @media (max-width: 640px) {
+    .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; }
+    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); }
+    .bk-grid.with-times .bk-info, .bk-grid.with-times .bk-body { display: none; }
+    .bk-times-col { border-left: none; border-top: none; padding: 24px 20px; }
+    .mobile-back-row { display: block; margin-bottom: 14px; }
+    .mobile-back-btn { background: var(--bk-bg); border: 1px solid var(--bk-border); border-radius: 50%; width: 42px; height: 42px; font-size: 1.2rem; line-height: 1; cursor: pointer; color: var(--bk-accent); font-family: inherit; }
+    .bk-times-col .bk-h2 { text-align: center; }
+    .mobile-tz-row { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: .82rem; color: var(--bk-dim); margin: 6px 0 18px; text-align: center; }
+    .mobile-duration-row { display: block; font-size: .84rem; color: var(--bk-dim); margin-bottom: 4px; text-align: center; }
+    .mobile-select-time-label { display: block; font-family: var(--bk-font-primary); font-weight: 700; font-size: 1rem; margin: 10px 0 14px; text-align: center; }
+  }
 
   /* ── Click-to-edit affordances ── */
   .editable { cursor: text; border-radius: 4px; outline: none; transition: box-shadow .12s; }
@@ -286,7 +295,11 @@ function renderCalendar() {
     </div>
     ${selectedDate ? `
       <div class="bk-times-col">
+        <div class="mobile-back-row"><button class="mobile-back-btn" id="pvMobileBackBtn" aria-label="Back to calendar" type="button">&larr;</button></div>
         <div class="bk-h2">${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+        <div class="mobile-tz-row">🌐 ${previewTz}</div>
+        <div class="mobile-duration-row">Duration: ${draft.durationMinutes} min</div>
+        <div class="mobile-select-time-label">Select a Time</div>
         <div class="time-slots">${times || '<div class="time-placeholder">No times this day</div>'}</div>
       </div>
     ` : ''}
@@ -297,6 +310,8 @@ function renderCalendar() {
   const prevBtn = document.getElementById('pvPrevMonth'), nextBtn = document.getElementById('pvNextMonth');
   if (prevBtn) prevBtn.onclick = () => { calViewMonth = new Date(year, month - 1, 1); renderCalendar(); };
   if (nextBtn) nextBtn.onclick = () => { calViewMonth = new Date(year, month + 1, 1); renderCalendar(); };
+  const mobileBackBtn = document.getElementById('pvMobileBackBtn');
+  if (mobileBackBtn) mobileBackBtn.onclick = () => { selectedDate = null; renderCalendar(); };
 }
 
 // Same curated font list as form-builder.html's FONT_OPTIONS, so the whole
