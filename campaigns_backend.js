@@ -3,8 +3,16 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { matchesSegment, CONTACTS_FILE, SEGMENTS_FILE } from "./contacts_backend.js";
 import { sendEmail } from "./email_backend.js";
 import { getMessagesForSource } from "./message_log.js";
+import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
+export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
+const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients"];
+function campaignSnapshotFields(campaign) {
+  const out = {};
+  for (const k of VERSIONED_FIELDS) out[k] = campaign[k];
+  return out;
+}
 
 function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
   const contacts = readJson(CONTACTS_FILE, []);
@@ -48,7 +56,7 @@ export async function sendCampaignNow(campaignId) {
   const recipients = resolveRecipients(campaign.recipients || {});
   for (const contact of recipients) {
     await sendEmail({
-      to: contact.email, subject: campaign.subject, blocks: campaign.blocks, theme: campaign.theme,
+      to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
       footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
       sourceType: "campaign", sourceId: campaign.id,
     });
@@ -76,7 +84,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaigns = readJson(CAMPAIGNS_FILE, []);
     const campaign = {
       id: randomUUID(), name: name || "Untitled Campaign", status: "draft",
-      subject: "", blocks: [], theme: { background: "#f4f4f4", maxWidth: 650 }, footerTemplateId: null,
+      subject: "", previewText: "", blocks: [], theme: { background: "#f4f4f4", maxWidth: 650 }, footerTemplateId: null,
       recipients: { listIds: [], tagIds: [], segmentId: null, excludeListIds: [] },
       scheduledAt: null, sentAt: null,
       stats: { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 },
@@ -119,7 +127,11 @@ export async function handleCampaignsRequest(req, res, url) {
       if (!campaign) return sendJson(res, 404, { error: "Not found" });
       if (campaign.status === "sent" || campaign.status === "sending") return sendJson(res, 400, { error: "Can't edit a campaign that's already sending or sent" });
       const body = await readJsonBody(req);
-      for (const k of ["name", "subject", "blocks", "theme", "footerTemplateId", "recipients"]) if (k in body) campaign[k] = body[k];
+      // Snapshot the pre-change state before overwriting it -- throttled
+      // (see versions_shared.js) so this doesn't create a new version on
+      // every debounced autosave, just roughly once per editing session.
+      maybeSnapshotVersion(CAMPAIGN_VERSIONS_FILE, "campaignId", campaign.id, campaignSnapshotFields(campaign));
+      for (const k of VERSIONED_FIELDS) if (k in body) campaign[k] = body[k];
       campaign.updatedAt = new Date().toISOString();
       writeJson(CAMPAIGNS_FILE, campaigns);
       return sendJson(res, 200, { ok: true, campaign });
@@ -128,6 +140,27 @@ export async function handleCampaignsRequest(req, res, url) {
       writeJson(CAMPAIGNS_FILE, campaigns.filter(c => c.id !== campaignMatch[1]));
       return sendJson(res, 200, { ok: true });
     }
+  }
+
+  const versionsMatch = p.match(/^\/api\/campaigns\/([^/]+)\/versions$/);
+  if (versionsMatch && req.method === "GET") {
+    return sendJson(res, 200, { versions: listVersions(CAMPAIGN_VERSIONS_FILE, "campaignId", versionsMatch[1]) });
+  }
+  const restoreMatch = p.match(/^\/api\/campaigns\/([^/]+)\/versions\/([^/]+)\/restore$/);
+  if (restoreMatch && req.method === "POST") {
+    const campaigns = readJson(CAMPAIGNS_FILE, []);
+    const campaign = campaigns.find(c => c.id === restoreMatch[1]);
+    if (!campaign) return sendJson(res, 404, { error: "Campaign not found" });
+    const version = getVersion(CAMPAIGN_VERSIONS_FILE, "campaignId", campaign.id, restoreMatch[2]);
+    if (!version) return sendJson(res, 404, { error: "Version not found" });
+    // Snapshot the current (pre-restore) state too, unthrottled -- a
+    // restore is a deliberate action, not a routine autosave, so it always
+    // gets its own undo point even if one was just taken seconds ago.
+    maybeSnapshotVersion(CAMPAIGN_VERSIONS_FILE, "campaignId", campaign.id, campaignSnapshotFields(campaign), { force: true });
+    Object.assign(campaign, version.snapshot);
+    campaign.updatedAt = new Date().toISOString();
+    writeJson(CAMPAIGNS_FILE, campaigns);
+    return sendJson(res, 200, { ok: true, campaign });
   }
 
   const previewMatch = p.match(/^\/api\/campaigns\/([^/]+)\/preview-recipients$/);

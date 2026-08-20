@@ -3,19 +3,22 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { STATUSES_FILE } from "./statuses_backend.js";
+import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
+import { fireFlowTrigger } from "./flows_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const EVENT_TYPES_FILE = "crm_event_types.json";
 export const BOOKINGS_FILE = "crm_bookings.json";
 export const AVAILABILITY_FILE = "crm_availability.json";
+export const TEAM_CALENDARS_FILE = "crm_team_calendars.json";
 
 const DEFAULT_AVAILABILITY = {
   timezone: "America/Anchorage",
@@ -34,6 +37,53 @@ const DEFAULT_AVAILABILITY = {
 };
 const SLOT_GRID_MINUTES = 15;
 const DAYS_AHEAD_DEFAULT = 21;
+
+// Same two embed patterns Calendly offers: an inline widget (auto-scans for
+// `.scheduling-inline-widget[data-url]` on load and injects an iframe) and
+// a popup widget (`SchedulingWidget.initPopupWidget({url})`, called from an
+// onclick). Kept dependency-free and small enough to inline-review at a glance.
+const WIDGET_JS = `(function(){
+  function injectStyles(){
+    if (document.getElementById('scheduling-widget-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'scheduling-widget-styles';
+    s.textContent = '.scheduling-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999999;display:flex;align-items:center;justify-content:center;padding:20px}.scheduling-overlay iframe{width:100%;max-width:900px;height:90vh;border:0;border-radius:12px;background:#fff}.scheduling-overlay .scheduling-close{position:absolute;top:20px;right:24px;color:#fff;font-size:32px;cursor:pointer;background:none;border:none;line-height:1}';
+    document.head.appendChild(s);
+  }
+  function openPopup(opts){
+    injectStyles();
+    var overlay = document.createElement('div');
+    overlay.className = 'scheduling-overlay';
+    var close = document.createElement('button');
+    close.className = 'scheduling-close';
+    close.innerHTML = '\\u00d7';
+    close.onclick = function(){ document.body.removeChild(overlay); };
+    var iframe = document.createElement('iframe');
+    iframe.src = opts.url;
+    overlay.appendChild(iframe);
+    overlay.appendChild(close);
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) document.body.removeChild(overlay); });
+    document.body.appendChild(overlay);
+  }
+  function initInlineWidgets(){
+    var els = document.querySelectorAll('.scheduling-inline-widget[data-url]');
+    for (var i = 0; i < els.length; i++){
+      var el = els[i];
+      if (el.getAttribute('data-scheduling-initialized')) continue;
+      el.setAttribute('data-scheduling-initialized', '1');
+      var iframe = document.createElement('iframe');
+      iframe.src = el.getAttribute('data-url');
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.border = '0';
+      iframe.style.minHeight = el.style.height || '700px';
+      el.appendChild(iframe);
+    }
+  }
+  window.SchedulingWidget = { initPopupWidget: openPopup };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInlineWidgets);
+  else initInlineWidgets();
+})();`;
 
 function getAvailability() { return { ...DEFAULT_AVAILABILITY, ...readJson(AVAILABILITY_FILE, {}) }; }
 
@@ -78,13 +128,18 @@ async function getCalendarAccessToken() {
   if (!d.access_token) throw new Error("Calendar token refresh failed: " + JSON.stringify(d));
   return d.access_token;
 }
-// Busy intervals on the connected calendar for [startISO, endISO) -- merged
-// into slot computation so a real conflict (including events not created by
-// this scheduler, e.g. Lee blocking off vacation directly in Google
+// Busy intervals for [startISO, endISO) on the given calendar -- merged into
+// slot computation so a real conflict (including events not created by this
+// scheduler, e.g. someone blocking off vacation directly in Google
 // Calendar) blocks a slot, not just bookings this app made itself.
-async function fetchFreeBusy(startISO, endISO) {
+// calendarId defaults to the connected account's own calendar, but an event
+// type can target any other Workspace member's calendar instead (see
+// TEAM_CALENDARS_FILE below) -- the single connected OAuth token can read/
+// write any calendar in the same Google Workspace domain without a
+// per-person auth flow, same as chat-app's appointment booking relies on.
+async function fetchFreeBusy(startISO, endISO, calendarId) {
+  calendarId = calendarId || getCalendarId();
   const accessToken = await getCalendarAccessToken();
-  const calendarId = getCalendarId();
   const r = await fetch("https://www.googleapis.com/calendar/v3/freeBusy", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -94,7 +149,8 @@ async function fetchFreeBusy(startISO, endISO) {
   if (!r.ok) throw new Error("freeBusy failed: " + JSON.stringify(d));
   return (d.calendars?.[calendarId]?.busy || []).map(b => ({ start: new Date(b.start).getTime(), end: new Date(b.end).getTime() }));
 }
-async function createCalendarEvent({ summary, description, startISO, durationMinutes, attendees, timezone }) {
+async function createCalendarEvent({ summary, description, startISO, durationMinutes, attendees, timezone, calendarId }) {
+  calendarId = calendarId || getCalendarId();
   const accessToken = await getCalendarAccessToken();
   const start = new Date(startISO);
   const end = new Date(start.getTime() + durationMinutes * 60000);
@@ -105,7 +161,7 @@ async function createCalendarEvent({ summary, description, startISO, durationMin
     attendees: (attendees || []).map(a => ({ email: a.email, displayName: a.name })),
     reminders: { useDefault: true },
   };
-  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(getCalendarId())}/events?sendUpdates=all`, {
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=all`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -114,9 +170,10 @@ async function createCalendarEvent({ summary, description, startISO, durationMin
   if (!r.ok) throw new Error("Calendar event creation failed: " + JSON.stringify(d));
   return { id: d.id, htmlLink: d.htmlLink };
 }
-async function deleteCalendarEvent(eventId) {
+async function deleteCalendarEvent(eventId, calendarId) {
+  calendarId = calendarId || getCalendarId();
   const accessToken = await getCalendarAccessToken();
-  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(getCalendarId())}/events/${eventId}?sendUpdates=all`, {
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}?sendUpdates=all`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -147,20 +204,36 @@ function buildIcs({ summary, description, start, end, uid }) {
 }
 
 // ── Event types ──────────────────────────────────────────────────────────
-const DEFAULT_BRANDING = { brandName: "Pacific Rim Athletics", logoUrl: "", backgroundColor: "#ffffff", textColor: "#0a0a0a", accentColor: "#009bff", redirectUrl: "" };
+// fontPrimary/fontSecondary are keys into book.html/scheduling-editor.html's
+// shared FONT_OPTIONS map (same set form-builder.html uses, for one
+// consistent font list across the whole CRM). pageBackgroundColor is the
+// color around the card; backgroundColor is the card itself.
+const DEFAULT_BRANDING = {
+  brandName: "Pacific Rim Athletics", logoUrl: "",
+  pageBackgroundColor: "#f2f2f5", backgroundColor: "#ffffff", textColor: "#0a0a0a", accentColor: "#009bff",
+  fontPrimary: "default", fontSecondary: "aldrich",
+  redirectUrl: "",
+};
 
-function newEventType({ name, description, durationMinutes, bufferMinutes, location, branding, statusId }) {
+function newEventType({ name, description, durationMinutes, bufferMinutes, location, branding, statusId, calendarEmail }) {
   const slugBase = String(name || "meeting").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting";
   // Defaults to the "BOOKED" status if one exists, same behavior as before
   // this became configurable -- an event type with no explicit statusId
-  // still moves a contact into something sensible on booking.
-  const defaultStatusId = readJson(STATUSES_FILE, []).find(s => s.label === "BOOKED")?.id || "";
+  // still moves a contact into something sensible on booking. Stores the
+  // status LABEL, not its id -- contact.status is a label string everywhere
+  // else in this app (see contact-detail.html's status <select>, whose
+  // option values are s.label; automation/workflow goal-matching compares
+  // straight against that string), so an id here would silently never match.
+  const defaultStatusId = readJson(STATUSES_FILE, []).find(s => s.label === "BOOKED")?.label || "";
   return {
     id: randomUUID(), slug: slugBase, name: name || "Meeting", description: description || "",
     durationMinutes: Number(durationMinutes) || 30, bufferMinutes: Number(bufferMinutes) || 0,
     location: location || { type: "zoom", detail: "" },
     branding: { ...DEFAULT_BRANDING, ...(branding || {}) },
     statusId: statusId !== undefined ? statusId : defaultStatusId,
+    // "" (default) means the connected account's own calendar (getCalendarId());
+    // otherwise a specific Workspace teammate's email from TEAM_CALENDARS_FILE.
+    calendarEmail: calendarEmail || "",
     active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 }
@@ -176,7 +249,11 @@ function uniqueSlug(base, existing, excludeId) {
 // ── Slot computation ─────────────────────────────────────────────────────
 async function computeAvailableSlots(eventType, startDateStr, endDateStr) {
   const availability = getAvailability();
-  const bookings = readJson(BOOKINGS_FILE, []).filter(b => b.status === "confirmed");
+  // Scoped to the calendar THIS event type actually books onto -- a
+  // confirmed booking on a teammate's calendar shouldn't block slots for an
+  // event type that books onto someone else's (or the default) calendar.
+  const calendarId = eventType.calendarEmail || getCalendarId();
+  const bookings = readJson(BOOKINGS_FILE, []).filter(b => b.status === "confirmed" && (b.calendarId || getCalendarId()) === calendarId);
   const now = Date.now();
   const minNoticeMs = (availability.minNoticeMinutes ?? 120) * 60000;
 
@@ -184,7 +261,7 @@ async function computeAvailableSlots(eventType, startDateStr, endDateStr) {
   const rangeEndISO = localTimeToUTC(addDays(endDateStr, 1), "00:00").toISOString();
   let calendarBusy = [];
   if (calendarConfigured()) {
-    try { calendarBusy = await fetchFreeBusy(rangeStartISO, rangeEndISO); }
+    try { calendarBusy = await fetchFreeBusy(rangeStartISO, rangeEndISO, calendarId); }
     catch { /* degrade to internal-bookings-only conflict checking below */ }
   }
   const internalBusy = bookings.map(b => ({
@@ -217,14 +294,11 @@ async function computeAvailableSlots(eventType, startDateStr, endDateStr) {
   return byDate;
 }
 
-// ── Contact upsert, same matched-by-email-then-phone pattern as
-// forms_backend.js's upsertContactFromSubmission ──────────────────────────
 function upsertContactFromBooking({ name, email, phone, statusId }) {
   const contacts = readJson(CONTACTS_FILE, []);
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
-  let contact = (normalizedEmail && contacts.find(c => c.email?.toLowerCase() === normalizedEmail))
-    || (!normalizedEmail && normalizedPhone && contacts.find(c => c.phone === normalizedPhone));
+  let contact = findContactMatch(contacts, normalizedEmail, normalizedPhone);
   const [first, ...rest] = String(name || "").trim().split(/\s+/);
   const last = rest.join(" ");
 
@@ -292,6 +366,17 @@ export async function handleSchedulingRequest(req, res, url) {
     return true;
   }
 
+  // ── Embed widget -- same "one small self-contained script" pattern as
+  // tracking_backend.js's /track.js, but this one's meant to be referenced
+  // by <script src>, not inlined: it needs to run fresh on every page load
+  // (bugfixes land automatically) and its whole job is DOM injection, which
+  // only works loaded live in the embedding page, not copy-pasted as text.
+  if (p === "/widget.js" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(WIDGET_JS);
+    return true;
+  }
+
   // ── Public: event type lookup, availability, booking create/cancel ──────
   const publicEtMatch = p.match(/^\/api\/scheduling\/event-types\/([^/]+)$/);
   if (publicEtMatch && req.method === "GET") {
@@ -337,6 +422,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const start = new Date(startAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
     const availability = getAvailability();
+    const calendarId = et.calendarEmail || getCalendarId();
 
     let calendarEventId = null;
     if (calendarConfigured()) {
@@ -346,6 +432,7 @@ export async function handleSchedulingRequest(req, res, url) {
           description: `${notes || ""}\n\nBooked via CRM scheduling.`.trim(),
           startISO: start.toISOString(), durationMinutes: et.durationMinutes,
           attendees: [{ email, name }], timezone: timezone || availability.timezone,
+          calendarId,
         });
         calendarEventId = created.id;
       } catch { /* degrade -- booking still saved internally below */ }
@@ -356,7 +443,7 @@ export async function handleSchedulingRequest(req, res, url) {
       name, email: String(email).trim().toLowerCase(), phone: phone || "", notes: notes || "",
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || availability.timezone, bufferMinutes: et.bufferMinutes,
-      status: "confirmed", calendarEventId,
+      status: "confirmed", calendarEventId, calendarId,
       cancelToken: randomBytes(24).toString("hex"),
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
     };
@@ -364,8 +451,24 @@ export async function handleSchedulingRequest(req, res, url) {
     bookings.push(booking);
     writeJson(BOOKINGS_FILE, bookings);
 
+    // Log the booking itself as an inbound Inbox activity, same as a form
+    // submission -- "they booked a call" should be visible in the
+    // conversation thread, not just as a row in the Scheduling tab.
+    const when = start.toLocaleString("en-US", { timeZone: booking.timezone, dateStyle: "full", timeStyle: "short" });
+    logMessage({
+      channel: "booking", direction: "inbound", contactId: contact.id,
+      sourceType: "booking", sourceId: booking.id,
+      subject: `Booked: ${et.name}`, body: `${when}${notes ? `\n\n${notes}` : ""}`,
+      bodyPreview: `${when}${notes ? ` — ${notes}` : ""}`.slice(0, 200),
+      status: "received",
+    });
+
     fireTrigger("booking_created", { contactId: contact.id, eventTypeId: et.id });
     fireWorkflowTrigger("booking_created", { contactId: contact.id, eventTypeId: et.id });
+    fireFlowTrigger("booking_created", {
+      contactId: contact.id, eventTypeId: et.id,
+      payload: { "Event Type": et.name, "When": when, "Name": name, "Email": booking.email, "Phone": booking.phone, "Notes": notes || "" },
+    });
     checkConversionGoal("meeting_booked", contact.id);
 
     await sendBookingConfirmation(booking, et, contact);
@@ -414,7 +517,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (booking.status === "confirmed") {
       booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
       writeJson(BOOKINGS_FILE, bookings);
-      if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId).catch(() => {});
+      if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
     }
     return sendJson(res, 200, { ok: true });
   }
@@ -426,6 +529,30 @@ export async function handleSchedulingRequest(req, res, url) {
 
   if (p === "/api/scheduling/admin/status" && req.method === "GET") {
     return sendJson(res, 200, { calendarConnected: calendarConfigured() });
+  }
+
+  // Team calendars -- Workspace teammates' emails an event type can target
+  // instead of the default connected account. Just a name+email list; the
+  // single connected OAuth token can read/write any calendar in the same
+  // Google Workspace domain, so adding one here is enough, no per-person
+  // auth flow needed (same as chat-app's per-coach appointment calendars).
+  if (p === "/api/scheduling/admin/team-calendars" && req.method === "GET") {
+    return sendJson(res, 200, { teamCalendars: readJson(TEAM_CALENDARS_FILE, []) });
+  }
+  if (p === "/api/scheduling/admin/team-calendars" && req.method === "POST") {
+    const { name, email } = await readJsonBody(req);
+    if (!email) return sendJson(res, 400, { error: "email is required" });
+    const teamCalendars = readJson(TEAM_CALENDARS_FILE, []);
+    const entry = { id: randomUUID(), name: name || email, email: String(email).trim().toLowerCase(), createdAt: new Date().toISOString() };
+    teamCalendars.push(entry);
+    writeJson(TEAM_CALENDARS_FILE, teamCalendars);
+    return sendJson(res, 200, { ok: true, teamCalendar: entry });
+  }
+  const teamCalMatch = p.match(/^\/api\/scheduling\/admin\/team-calendars\/([^/]+)$/);
+  if (teamCalMatch && req.method === "DELETE") {
+    const teamCalendars = readJson(TEAM_CALENDARS_FILE, []);
+    writeJson(TEAM_CALENDARS_FILE, teamCalendars.filter(t => t.id !== teamCalMatch[1]));
+    return sendJson(res, 200, { ok: true });
   }
 
   if (p === "/api/scheduling/admin/event-types" && req.method === "GET") {
@@ -447,7 +574,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "bufferMinutes", "location", "active", "statusId"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "bufferMinutes", "location", "active", "statusId", "calendarEmail"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);
@@ -486,7 +613,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (booking.status === "confirmed") {
       booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
       writeJson(BOOKINGS_FILE, bookings);
-      if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId).catch(() => {});
+      if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
     }
     return sendJson(res, 200, { ok: true });
   }

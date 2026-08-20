@@ -180,6 +180,30 @@ let activeTypeFilter = ''; // '' | 'lead' | 'contact' -- quick toggle above the 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : ''; }
 
+// Same map as inbox.html's STATUS_GLOW / contact-detail.html's STATUS_GLOW --
+// kept in sync manually since these are separate static pages with no shared JS.
+const STATUS_COLORS = {
+  'FINISHED': '#9a9aa5',
+  'POTENTIAL': '#ffffff',
+  'FOLLOW UP (They have a Task / Date set)': '#f4ff00',
+  'APPLICATION': '#14892b',
+  'BOOKED': '#1fbf42',
+  'WE CANCELLED': '#7a7a86',
+  "RSVP'ed": '#2eff5a',
+  'ENROLLED': '#39ff14',
+  'STOP': '#4a4a52',
+  'BAD FIT / BLACKLIST': '#4a4a52',
+};
+function hexToRgba(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+function statusBadgeStyle(status) {
+  const color = STATUS_COLORS[status];
+  if (!color) return '';
+  return `background:${hexToRgba(color, 0.15)};color:${color};border-color:${hexToRgba(color, 0.4)}`;
+}
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -418,7 +442,7 @@ function renderContactsTable() {
       <td>${escapeHtml(c.first)} ${escapeHtml(c.last)}</td>
       <td>${escapeHtml(c.email || '')}</td>
       <td>${escapeHtml(c.phone || '')}</td>
-      <td>${c.status ? `<span class="pra-badge">${escapeHtml(c.status)}</span>` : ''}</td>
+      <td>${c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : ''}</td>
       <td>${(c.tags || []).length ? c.tags.length + ' tag(s)' : ''}</td>
       <td class="pra-muted">${fmtDate(c.createdAt)}</td>
     </tr>

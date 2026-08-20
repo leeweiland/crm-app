@@ -3,25 +3,75 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
+import { fireFlowTrigger } from "./flows_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const FORMS_FILE = "crm_forms.json";
 export const RESPONSES_FILE = "crm_form_responses.json";
 
-// "statement" is display-only (no answer), "page_break" is a layout marker
-// (splits the public renderer into steps, Tally's one-question-at-a-time
-// feel) -- neither is validated as required and neither ever has an answer.
+// "statement"/"headline"/"image"/"video" are display-only content blocks (no
+// answer), "page_break" is a layout marker (splits the public renderer into
+// steps, Tally's one-question-at-a-time feel) -- none of these are
+// validated as required and none ever carry an answer.
 export const FIELD_TYPES = [
   "short_text", "long_text", "email", "phone", "first_name", "last_name",
   "number", "dropdown", "multiple_choice", "checkboxes", "date",
-  "statement", "page_break",
+  "statement", "headline", "image", "video", "page_break",
 ];
 const CHOICE_TYPES = ["dropdown", "multiple_choice", "checkboxes"];
-const ANSWERABLE_TYPES = FIELD_TYPES.filter(t => t !== "statement" && t !== "page_break");
+const NON_ANSWERABLE_TYPES = ["statement", "headline", "image", "video", "page_break"];
+const ANSWERABLE_TYPES = FIELD_TYPES.filter(t => !NON_ANSWERABLE_TYPES.includes(t));
+
+// Same two embed patterns scheduling_backend.js's widget.js offers (inline
+// auto-scan + JS-driven popup overlay), scoped to forms so the Embed modal
+// in form-builder.html can offer the same Inline/Popup/Direct Link choices.
+const FORMS_WIDGET_JS = `(function(){
+  function injectStyles(){
+    if (document.getElementById('form-widget-styles')) return;
+    var s = document.createElement('style');
+    s.id = 'form-widget-styles';
+    s.textContent = '.form-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999999;display:flex;align-items:center;justify-content:center;padding:20px}.form-overlay iframe{width:100%;max-width:640px;height:90vh;border:0;border-radius:12px;background:#0a0a0d}.form-overlay .form-widget-close{position:absolute;top:20px;right:24px;color:#fff;font-size:32px;cursor:pointer;background:none;border:none;line-height:1}';
+    document.head.appendChild(s);
+  }
+  function openPopup(opts){
+    injectStyles();
+    var overlay = document.createElement('div');
+    overlay.className = 'form-overlay';
+    var close = document.createElement('button');
+    close.className = 'form-widget-close';
+    close.innerHTML = '\\u00d7';
+    close.onclick = function(){ document.body.removeChild(overlay); };
+    var iframe = document.createElement('iframe');
+    iframe.src = opts.url;
+    overlay.appendChild(iframe);
+    overlay.appendChild(close);
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) document.body.removeChild(overlay); });
+    document.body.appendChild(overlay);
+  }
+  function initInlineWidgets(){
+    var els = document.querySelectorAll('.form-inline-widget[data-url]');
+    for (var i = 0; i < els.length; i++){
+      var el = els[i];
+      if (el.getAttribute('data-form-widget-initialized')) continue;
+      el.setAttribute('data-form-widget-initialized', '1');
+      var iframe = document.createElement('iframe');
+      iframe.src = el.getAttribute('data-url');
+      iframe.style.width = '100%';
+      iframe.style.height = '100%';
+      iframe.style.border = '0';
+      iframe.style.minHeight = el.style.height || '700px';
+      el.appendChild(iframe);
+    }
+  }
+  window.FormWidget = { initPopupWidget: openPopup };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInlineWidgets);
+  else initInlineWidgets();
+})();`;
 
 function slugField(field) {
   const base = String(field.label || field.type || field.id).toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -97,7 +147,7 @@ function upsertContactFromSubmission(form, answers) {
   if (!email && !phone) return null;
 
   const contacts = readJson(CONTACTS_FILE, []);
-  let contact = (email && contacts.find(c => c.email?.toLowerCase() === email)) || (!email && phone && contacts.find(c => c.phone === phone));
+  let contact = findContactMatch(contacts, email, phone);
   const prevTags = contact ? [...contact.tags] : [];
   const prevListIds = contact ? [...contact.listIds] : [];
   const isNew = !contact;
@@ -169,7 +219,33 @@ export async function handleFormsRequest(req, res, url) {
     responses.push(response);
     writeJson(RESPONSES_FILE, responses);
 
-    if (result?.contact.id) { fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id }); fireWorkflowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id }); }
+    if (result?.contact.id) {
+      // Log the submission itself as an inbound Inbox activity -- otherwise
+      // a form fill only shows up as a contact getting created/updated,
+      // with no trace in the conversation thread that they reached out.
+      const answerSummary = form.fields
+        .filter(f => ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "")
+        .map(f => `${f.label || f.type}: ${Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id]}`)
+        .join(" · ");
+      logMessage({
+        channel: "form", direction: "inbound", contactId: result.contact.id,
+        sourceType: "form", sourceId: form.id,
+        subject: `Form: ${form.name}`, body: answerSummary, bodyPreview: answerSummary.slice(0, 200),
+        status: "received",
+      });
+      fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
+      fireWorkflowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
+      // Labeled by field label (not raw field id) so a flow's {{payload.x}}
+      // tokens -- and the "pull sample data" picker -- show real, readable
+      // field names instead of opaque uuids.
+      const labeledAnswers = {};
+      form.fields.forEach(f => {
+        if (ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "") {
+          labeledAnswers[f.label || f.type] = Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id];
+        }
+      });
+      fireFlowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id, payload: labeledAnswers });
+    }
 
     return sendJson(res, 200, { ok: true, confirmationMessage: form.settings.confirmationMessage, redirectUrl: form.settings.redirectUrl || null });
   }
@@ -181,6 +257,11 @@ export async function handleFormsRequest(req, res, url) {
   if (shareMatch && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     res.end(readFileSync(join(__dirname, "public-form.html")));
+    return true;
+  }
+  if (p === "/forms-widget.js" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600" });
+    res.end(FORMS_WIDGET_JS);
     return true;
   }
 

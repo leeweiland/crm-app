@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Design Booking Page — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  /* ── Editor chrome (dark, matches the rest of the CRM) ── */
+  .ed-topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .ed-save-msg { font-size: .78rem; color: var(--pra-dim); }
+  .ed-shell { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
+  .ed-sidebar { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; padding-bottom: 4px; }
+  .ed-hint { font-size: .72rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
+  .ed-preview-outer { border-radius: 14px; padding: 40px 24px; display: flex; justify-content: center; }
+  .tabs .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .tabs .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
+
+  /* ── Sidebar sections -- same fb-side-section pattern form-builder.html
+       uses, for one consistent "Design" panel look across the CRM. ── */
+  .fb-side-section { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .fb-side-title { font-family: var(--font-primary); font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pra-dim); margin-bottom: 12px; }
+  .fb-side-section .field { margin-bottom: 12px; }
+  .fb-side-section .field:last-child { margin-bottom: 0; }
+  .fb-color-field { display: flex; align-items: center; gap: 10px; }
+  .fb-color-field input[type=color] { width: 40px; height: 32px; padding: 2px; border-radius: 6px; border: 1px solid var(--pra-border); background: none; cursor: pointer; flex-shrink: 0; }
+  .fb-color-field span { font-size: .78rem; color: var(--pra-dim); font-family: monospace; }
+
+  /* ── Live preview card — same visual language as the real book.html ── */
+  :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .ed-preview-outer { background: var(--bk-page-bg); }
+  .bk-card { width: 100%; max-width: 780px; background: var(--bk-bg); color: var(--bk-text); border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); overflow: hidden; font-family: var(--bk-font-secondary); }
+  #pvBrand, #pvTitle, .bk-h2, .cal-month-label, .time-slot, .cal-day { font-family: var(--bk-font-primary); }
+  .bk-grid { display: grid; grid-template-columns: 260px 1fr; }
+  .bk-grid.with-times { grid-template-columns: 260px 1fr 220px; }
+  .bk-info { padding: 32px 28px; border-right: 1px solid var(--bk-border); position: relative; }
+  .bk-body { padding: 28px 26px; min-width: 0; }
+  .bk-times-col { padding: 28px 16px 28px 0; border-left: 1px solid var(--bk-border); min-width: 0; }
+  .bk-meta-row { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--bk-dim); margin-bottom: 10px; }
+  .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .cal-month-label { font-weight: 700; font-size: .92rem; }
+  .cal-nav-btn { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: var(--bk-text); padding: 4px 8px; border-radius: 6px; }
+  .cal-nav-btn:hover:not(:disabled) { background: rgba(0,0,0,0.06); }
+  .cal-nav-btn:disabled { opacity: .25; cursor: default; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+  .cal-dow { font-size: .68rem; font-weight: 700; color: var(--bk-dim); padding: 6px 0; text-transform: uppercase; }
+  .cal-day { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: .84rem; color: #c9ccd1; }
+  .cal-day.available { color: var(--bk-accent); cursor: pointer; font-weight: 600; }
+  .cal-day.selected { background: var(--bk-accent); color: #fff; }
+  .tz-row { margin-top: 18px; }
+  .tz-row label { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bk-dim); display: block; margin-bottom: 4px; }
+  .tz-select { width: 100%; padding: 8px 10px; border: 1px solid var(--bk-border); border-radius: 8px; font-size: .84rem; color: var(--bk-dim); background: var(--bk-bg); }
+  .bk-h2 { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
+  .time-slots { display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto; }
+  .time-slot { padding: 10px 14px; border: 1px solid var(--bk-accent); color: var(--bk-accent); border-radius: 8px; font-size: .86rem; cursor: pointer; text-align: center; background: none; font-family: inherit; }
+  .time-slot:hover { background: var(--bk-accent); color: #fff; }
+  .time-placeholder { color: var(--bk-dim); font-size: .84rem; text-align: center; padding: 40px 8px; }
+
+  /* ── Click-to-edit affordances ── */
+  .editable { cursor: text; border-radius: 4px; outline: none; transition: box-shadow .12s; }
+  .editable:hover { box-shadow: 0 0 0 2px rgba(0,155,255,0.35); }
+  .editable:focus { box-shadow: 0 0 0 2px var(--pra-blue); }
+  .editable:empty::before { content: attr(data-placeholder); color: #b8bcc4; }
+
+  .pv-logo-slot { width: 150px; height: 150px; border-radius: 8px; margin-bottom: 14px; display: flex; align-items: center; justify-content: center; cursor: pointer; position: relative; overflow: hidden; border: 1.5px dashed var(--bk-border); }
+  .pv-logo-slot:hover { border-color: var(--bk-accent); }
+  .pv-logo-slot img { width: 100%; height: 100%; object-fit: contain; }
+  .pv-logo-slot .pv-logo-placeholder { font-size: .62rem; color: var(--bk-dim); text-align: center; padding: 4px; }
+  .pv-logo-remove { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: .7rem; display: none; align-items: center; justify-content: center; cursor: pointer; }
+  .pv-logo-slot:hover .pv-logo-remove { display: flex; }
+
+  .loc-editor-wrap { position: relative; }
+  .loc-popover { position: absolute; top: 100%; left: 0; margin-top: 6px; background: var(--bk-bg); border: 1px solid var(--bk-border); border-radius: 8px; padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); z-index: 10; width: 240px; }
+  .loc-popover select, .loc-popover input { width: 100%; padding: 7px 9px; border: 1px solid var(--bk-border); border-radius: 6px; font-size: .82rem; color: var(--bk-text); background: var(--bk-bg); font-family: inherit; margin-bottom: 8px; box-sizing: border-box; }
+  .loc-popover select:last-child, .loc-popover input:last-child, .loc-popover div:last-child input { margin-bottom: 0; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="ed-topbar">
+        <a class="pra-link" href="/scheduling.html">&larr; Back to Scheduling</a>
+        <div class="pra-h1" style="font-size:1.2rem;flex:1" id="edEventName">Loading…</div>
+        <span class="ed-save-msg" id="edSaveMsg"></span>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="edEmbedBtn">Embed</button>
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" id="edViewLive" target="_blank">View Live Page</a>
+      </div>
+
+      <div class="ed-shell">
+        <div class="ed-sidebar">
+          <div class="ed-hint">Click the logo, title, description, or location directly in the preview to edit it. Everything saves automatically.</div>
+
+          <div class="fb-side-section">
+            <div class="fb-side-title">Design</div>
+            <div class="field"><label class="pra-label">Primary font (brand, title, buttons)</label><select class="pra-select" id="fFontPrimary"></select></div>
+            <div class="field"><label class="pra-label">Secondary font (description, times)</label><select class="pra-select" id="fFontSecondary"></select></div>
+            <div class="field"><label class="pra-label">Accent color</label>
+              <div class="fb-color-field"><input type="color" id="fAccentColor"/><span id="fAccentColorHex"></span></div>
+            </div>
+            <div class="field"><label class="pra-label">Page background</label>
+              <div class="fb-color-field"><input type="color" id="fPageBackgroundColor"/><span id="fPageBackgroundColorHex"></span></div>
+            </div>
+            <div class="field"><label class="pra-label">Card background</label>
+              <div class="fb-color-field"><input type="color" id="fCardBackgroundColor"/><span id="fCardBackgroundColorHex"></span></div>
+            </div>
+            <div class="field"><label class="pra-label">Text color</label>
+              <div class="fb-color-field"><input type="color" id="fTextColor"/><span id="fTextColorHex"></span></div>
+            </div>
+          </div>
+
+          <div class="fb-side-section">
+            <div class="fb-side-title">Settings</div>
+            <div class="field"><label class="pra-label">Duration (minutes)</label><input class="pra-input" type="number" id="fDuration" min="5" step="5"/></div>
+            <div class="field"><label class="pra-label">Buffer (minutes)</label><input class="pra-input" type="number" id="fBuffer" min="0" step="5"/></div>
+            <div class="field"><label class="pra-label">On booking, set contact status to</label>
+              <select class="pra-select" id="fStatus"><option value="">Don't change status</option></select>
+            </div>
+            <div class="field"><label class="pra-label">Calendar</label>
+              <input class="pra-input" id="fCalendar" list="fCalendarOptions" placeholder="Leave blank for your own calendar"/>
+              <datalist id="fCalendarOptions"></datalist>
+              <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Type any email on your Google Workspace domain, or pick a suggestion. Save frequent ones in Scheduling &rarr; Calendar.</div>
+            </div>
+            <div class="field"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" id="fRedirectUrl" placeholder="Leave blank for the built-in confirmation"/></div>
+            <div class="field"><label class="pra-label">Booking link</label>
+              <div class="link-row" style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--pra-dim)"><code id="fSlug" style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px"></code></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ed-preview-outer">
+          <div class="bk-card">
+            <div class="bk-grid" id="pvGrid">
+              <div class="bk-info">
+                <div class="pv-logo-slot" id="pvLogoSlot">
+                  <div class="pv-logo-placeholder" id="pvLogoPlaceholder">Click to upload logo</div>
+                  <img id="pvLogoImg" style="display:none"/>
+                  <div class="pv-logo-remove" id="pvLogoRemove" title="Remove logo">&times;</div>
+                </div>
+                <input type="file" accept="image/*" id="pvLogoFileInput" style="display:none"/>
+                <div class="editable" id="pvBrand" contenteditable="true" data-placeholder="Brand name" style="font-size:.8rem;font-weight:600;color:var(--bk-accent);margin-bottom:4px"></div>
+                <div class="editable" id="pvTitle" contenteditable="true" data-placeholder="Event name" style="font-size:1.25rem;font-weight:700;margin-bottom:14px;line-height:1.3"></div>
+                <div class="bk-meta-row" id="pvDuration">⏱ 30 min</div>
+                <div class="loc-editor-wrap">
+                  <div class="bk-meta-row editable" id="pvLocation" style="cursor:pointer">📹 Zoom</div>
+                  <div class="loc-popover" id="locPopover" style="display:none">
+                    <select id="locType">
+                      <option value="zoom">Zoom</option>
+                      <option value="phone">Phone call</option>
+                      <option value="in_person">In person</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                    <div id="locIconField" style="display:none">
+                      <input id="locIcon" placeholder="Icon or emoji (optional)"/>
+                    </div>
+                    <input id="locDetail" placeholder="Zoom link, address, phone number, etc."/>
+                  </div>
+                </div>
+                <div class="editable" id="pvDesc" contenteditable="true" data-placeholder="Description shown to visitors…" style="font-size:.84rem;color:var(--bk-dim);margin-top:14px;line-height:1.5;min-height:1.4em"></div>
+              </div>
+              <!-- .bk-body / .bk-times-col are regenerated by renderCalendar() below --
+                   .bk-info above is never touched by that so contenteditable focus is preserved. -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Embed modal -->
+<div class="modal-backdrop" id="embedModal">
+  <div class="pra-panel modal-box" style="max-width:620px">
+    <div class="pra-h2" style="margin-bottom:16px">Embed This Booking Page</div>
+    <div class="tabs" style="display:flex;gap:6px;margin-bottom:16px">
+      <button class="tab-btn active" data-embed-tab="inline" type="button">Inline Embed</button>
+      <button class="tab-btn" data-embed-tab="popup" type="button">Popup Widget</button>
+      <button class="tab-btn" data-embed-tab="link" type="button">Direct Link</button>
+    </div>
+    <div id="embedTab-inline">
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">Embeds the live booking calendar directly into a page — e.g. Framer's Embed / Custom Code block.</div>
+      <textarea class="pra-input" id="embedInlineCode" readonly rows="4" style="font-family:monospace;font-size:.76rem;white-space:pre;resize:vertical"></textarea>
+    </div>
+    <div id="embedTab-popup" style="display:none">
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">Adds a link that opens the booking page in a popup overlay instead of navigating away — put this anywhere, e.g. wrapped around a button.</div>
+      <textarea class="pra-input" id="embedPopupCode" readonly rows="4" style="font-family:monospace;font-size:.76rem;white-space:pre;resize:vertical"></textarea>
+    </div>
+    <div id="embedTab-link" style="display:none">
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">Just the plain link — paste anywhere (email, SMS, bio link, button href).</div>
+      <input class="pra-input" id="embedDirectLink" readonly/>
+    </div>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" id="copyEmbedBtn" style="margin-top:12px">Copy</button>
+    <div style="text-align:right;margin-top:20px"><button class="pra-btn pra-btn-ghost" onclick="closeModal('embedModal')">Close</button></div>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script>
+const eventTypeId = new URLSearchParams(location.search).get('id');
+let draft = null, saveTimer = null;
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function monthLabel(d) { return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
+
+// ── Real calendar, ported from book.html -- this is the same live
+// availability the public booking page shows, so clicking a date here
+// behaves exactly like it will for a real visitor (minus actually being
+// able to submit a booking -- that's what "View Live Page" is for). ──
+const previewTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+let rawSlotIsos = [], slotsByLocalDate = {}, selectedDate = null, calViewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+async function loadPreviewSlots() {
+  if (!draft?.slug) { rawSlotIsos = []; slotsByLocalDate = {}; return; }
+  const start = new Date().toISOString().slice(0, 10);
+  const end = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+  const r = await fetch(`/api/scheduling/availability?slug=${draft.slug}&start=${start}&end=${end}`);
+  if (!r.ok) { rawSlotIsos = []; slotsByLocalDate = {}; return; }
+  const { slots } = await r.json();
+  rawSlotIsos = Object.values(slots).flat();
+  slotsByLocalDate = {};
+  rawSlotIsos.forEach(iso => {
+    const localDate = new Date(iso).toLocaleDateString('en-CA', { timeZone: previewTz });
+    (slotsByLocalDate[localDate] = slotsByLocalDate[localDate] || []).push(iso);
+  });
+  Object.values(slotsByLocalDate).forEach(arr => arr.sort());
+}
+
+function renderCalendar() {
+  const grid = document.getElementById('pvGrid');
+  grid.querySelectorAll('.bk-body, .bk-times-col').forEach(el => el.remove());
+  grid.classList.toggle('with-times', !!selectedDate);
+
+  const dates = Object.keys(slotsByLocalDate).sort();
+  const minMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const maxMonth = dates.length ? new Date(dates[dates.length - 1] + 'T00:00:00') : minMonth;
+  const year = calViewMonth.getFullYear(), month = calViewMonth.getMonth();
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const availSet = new Set(dates);
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${pad2(month + 1)}-${pad2(d)}`;
+    const available = availSet.has(dateStr);
+    const cls = ['cal-day'];
+    if (available) cls.push('available');
+    if (dateStr === selectedDate) cls.push('selected');
+    cells += `<div class="${cls.join(' ')}" ${available ? `data-date="${dateStr}"` : ''}>${d}</div>`;
+  }
+  const canPrev = new Date(year, month, 1) > minMonth;
+  const canNext = new Date(year, month, 1) < new Date(maxMonth.getFullYear(), maxMonth.getMonth(), 1);
+  const times = (slotsByLocalDate[selectedDate] || []).map(iso => {
+    const label = new Date(iso).toLocaleTimeString('en-US', { timeZone: previewTz, hour: 'numeric', minute: '2-digit' });
+    return `<div class="time-slot">${label}</div>`;
+  }).join('');
+
+  const bodyHtml = `
+    <div class="bk-body">
+      <div class="bk-h2">Select a Date</div>
+      <div class="cal-header">
+        <button class="cal-nav-btn" id="pvPrevMonth" ${canPrev ? '' : 'disabled'}>&larr;</button>
+        <div class="cal-month-label">${monthLabel(calViewMonth)}</div>
+        <button class="cal-nav-btn" id="pvNextMonth" ${canNext ? '' : 'disabled'}>&rarr;</button>
+      </div>
+      <div class="cal-grid">
+        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+        ${cells}
+      </div>
+      ${!dates.length ? '<div class="time-placeholder">No times available in the next 3 months.</div>' : ''}
+      <div class="tz-row">
+        <label>Time zone</label>
+        <select class="tz-select" disabled><option>${previewTz} (auto-detected)</option></select>
+      </div>
+    </div>
+    ${selectedDate ? `
+      <div class="bk-times-col">
+        <div class="bk-h2">${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+        <div class="time-slots">${times || '<div class="time-placeholder">No times this day</div>'}</div>
+      </div>
+    ` : ''}
+  `;
+  grid.insertAdjacentHTML('beforeend', bodyHtml);
+
+  grid.querySelectorAll('[data-date]').forEach(el => el.onclick = () => { selectedDate = el.dataset.date; renderCalendar(); });
+  const prevBtn = document.getElementById('pvPrevMonth'), nextBtn = document.getElementById('pvNextMonth');
+  if (prevBtn) prevBtn.onclick = () => { calViewMonth = new Date(year, month - 1, 1); renderCalendar(); };
+  if (nextBtn) nextBtn.onclick = () => { calViewMonth = new Date(year, month + 1, 1); renderCalendar(); };
+}
+
+// Same curated font list as form-builder.html's FONT_OPTIONS, so the whole
+// CRM (forms + scheduling) offers one consistent set. "default" and
+// "aldrich" need no network request (already loaded by
+// crm-design-system.css's @import); the rest are pulled from Google Fonts
+// on demand when selected.
+const FONT_OPTIONS = {
+  default: { label: 'PRA Default (Century Gothic)', stack: "'Century Gothic','Poppins','Trebuchet MS',sans-serif", googleFont: null },
+  aldrich: { label: 'Aldrich', stack: "'Aldrich',sans-serif", googleFont: null },
+  poppins: { label: 'Poppins', stack: "'Poppins',sans-serif", googleFont: null },
+  inter: { label: 'Inter', stack: "'Inter',sans-serif", googleFont: 'Inter:wght@400;600;700' },
+  roboto: { label: 'Roboto', stack: "'Roboto',sans-serif", googleFont: 'Roboto:wght@400;500;700' },
+  montserrat: { label: 'Montserrat', stack: "'Montserrat',sans-serif", googleFont: 'Montserrat:wght@400;600;700' },
+  playfair: { label: 'Playfair Display', stack: "'Playfair Display',serif", googleFont: 'Playfair+Display:wght@400;600;700' },
+  lora: { label: 'Lora', stack: "'Lora',serif", googleFont: 'Lora:wght@400;600;700' },
+  georgia: { label: 'Georgia (system serif)', stack: "Georgia,'Times New Roman',serif", googleFont: null },
+  arial: { label: 'Arial (system sans)', stack: "Arial,Helvetica,sans-serif", googleFont: null },
+};
+function loadGoogleFont(spec, slot) {
+  const linkId = 'edGoogleFont-' + slot;
+  let link = document.getElementById(linkId);
+  if (!spec) { if (link) link.remove(); return; }
+  const href = `https://fonts.googleapis.com/css2?family=${spec}&display=swap`;
+  if (link) { if (link.href !== href) link.href = href; return; }
+  link = document.createElement('link'); link.id = linkId; link.rel = 'stylesheet'; link.href = href;
+  document.head.appendChild(link);
+}
+
+function applyBrandingToPreview() {
+  const b = draft.branding;
+  document.documentElement.style.setProperty('--bk-bg', b.backgroundColor);
+  document.documentElement.style.setProperty('--bk-page-bg', b.pageBackgroundColor);
+  document.documentElement.style.setProperty('--bk-text', b.textColor);
+  document.documentElement.style.setProperty('--bk-accent', b.accentColor);
+  const primary = FONT_OPTIONS[b.fontPrimary] || FONT_OPTIONS.default;
+  document.documentElement.style.setProperty('--bk-font-primary', primary.stack);
+  loadGoogleFont(primary.googleFont, 'primary');
+  const secondary = FONT_OPTIONS[b.fontSecondary] || FONT_OPTIONS.aldrich;
+  document.documentElement.style.setProperty('--bk-font-secondary', secondary.stack);
+  loadGoogleFont(secondary.googleFont, 'secondary');
+}
+
+// Setting .textContent on a contenteditable element always collapses the
+// cursor to the start, even when the new value is identical to what's
+// already there. renderPreview() gets called after every debounced save
+// (including ones triggered BY typing in one of these fields), so without
+// this guard the cursor kept jumping to the front mid-sentence. Only skip
+// the currently-focused field -- everything else still needs to re-render
+// normally (e.g. typing in the sidebar's Duration field while pvTitle is
+// untouched should still update pvTitle if it changed some other way).
+function setTextUnlessFocused(el, value) {
+  if (document.activeElement !== el) el.textContent = value;
+}
+
+// Same logic as book.html's locationLabel() -- "custom" gets a
+// user-chosen icon/emoji instead of a fixed one, since it has no natural
+// default (unlike zoom/phone/in_person).
+function locationLabel(loc) {
+  if (!loc) return '';
+  if (loc.type === 'zoom') return '📹 ' + (loc.detail || 'Zoom (link sent by email)');
+  if (loc.type === 'phone') return '📞 ' + (loc.detail || 'Phone call');
+  if (loc.type === 'in_person') return '📍 ' + (loc.detail || 'In person');
+  return `${loc.icon || ''} ${loc.detail || 'Custom'}`.trim();
+}
+
+function renderPreview() {
+  setTextUnlessFocused(document.getElementById('pvBrand'), draft.branding.brandName || '');
+  setTextUnlessFocused(document.getElementById('pvTitle'), draft.name || '');
+  setTextUnlessFocused(document.getElementById('pvDesc'), draft.description || '');
+  document.getElementById('pvDuration').textContent = `⏱ ${draft.durationMinutes} min`;
+  document.getElementById('pvLocation').textContent = locationLabel(draft.location);
+
+  const logoImg = document.getElementById('pvLogoImg'), placeholder = document.getElementById('pvLogoPlaceholder');
+  if (draft.branding.logoUrl) { logoImg.src = draft.branding.logoUrl; logoImg.style.display = 'block'; placeholder.style.display = 'none'; }
+  else { logoImg.style.display = 'none'; placeholder.style.display = 'block'; }
+
+  applyBrandingToPreview();
+  document.getElementById('edEventName').textContent = draft.name || 'Untitled Event Type';
+  document.getElementById('edViewLive').href = `/book/${draft.slug}`;
+  document.getElementById('fSlug').textContent = `/book/${draft.slug}`;
+}
+
+function renderSidebar() {
+  document.getElementById('fDuration').value = draft.durationMinutes;
+  document.getElementById('fBuffer').value = draft.bufferMinutes;
+  document.getElementById('fStatus').value = draft.statusId || '';
+  document.getElementById('fCalendar').value = draft.calendarEmail || '';
+  document.getElementById('fRedirectUrl').value = draft.branding.redirectUrl || '';
+
+  const b = draft.branding;
+  const fontPrimarySel = document.getElementById('fFontPrimary');
+  fontPrimarySel.innerHTML = Object.entries(FONT_OPTIONS).map(([k, f]) => `<option value="${k}" ${b.fontPrimary === k ? 'selected' : ''}>${f.label}</option>`).join('');
+  const fontSecondarySel = document.getElementById('fFontSecondary');
+  fontSecondarySel.innerHTML = Object.entries(FONT_OPTIONS).map(([k, f]) => `<option value="${k}" ${b.fontSecondary === k ? 'selected' : ''}>${f.label}</option>`).join('');
+  setColorField('fAccentColor', 'fAccentColorHex', b.accentColor);
+  setColorField('fPageBackgroundColor', 'fPageBackgroundColorHex', b.pageBackgroundColor);
+  setColorField('fCardBackgroundColor', 'fCardBackgroundColorHex', b.backgroundColor);
+  setColorField('fTextColor', 'fTextColorHex', b.textColor);
+}
+function setColorField(colorId, hexId, value) {
+  document.getElementById(colorId).value = value;
+  document.getElementById(hexId).textContent = value;
+}
+
+function saveDebounced() {
+  document.getElementById('edSaveMsg').textContent = 'Saving…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 500);
+}
+async function saveNow() {
+  const r = await fetch('/api/scheduling/admin/event-types/' + draft.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
+      bufferMinutes: draft.bufferMinutes, location: draft.location, statusId: draft.statusId,
+      calendarEmail: draft.calendarEmail, branding: draft.branding,
+    }),
+  });
+  document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
+  if (r.ok) {
+    const d = await r.json();
+    draft.slug = d.eventType.slug;
+    renderPreview();
+    // Duration/buffer/availability could all have just changed -- refresh
+    // the real slots so the calendar preview stays accurate.
+    await loadPreviewSlots();
+    renderCalendar();
+  }
+}
+
+async function loadStatuses() {
+  const r = await fetch('/api/statuses');
+  if (!r.ok) return;
+  const { statuses } = await r.json();
+  // value is the LABEL, not s.id -- contact.status is a label string
+  // everywhere else in this app (contact-detail.html's status <select>
+  // uses s.label as its option values, and automation/workflow goal
+  // matching compares straight against that string), so an id here would
+  // silently never match a goal or a status-based automation trigger.
+  document.getElementById('fStatus').innerHTML = '<option value="">Don\'t change status</option>' + statuses.map(s => `<option value="${s.label}">${s.label}</option>`).join('');
+  document.getElementById('fStatus').value = draft.statusId || '';
+}
+// A free-text input with a <datalist> -- unlike a closed <select>, this
+// still lets you type ANY email on the Workspace domain directly, not just
+// ones already saved as a team calendar. Suggestions are just a convenience.
+async function loadTeamCalendars() {
+  const r = await fetch('/api/scheduling/admin/team-calendars');
+  const teamCalendars = r.ok ? (await r.json()).teamCalendars : [];
+  const suggestions = [{ name: 'Lee (your connected account)', email: 'lee@pacificrimathletics.com' }, ...teamCalendars];
+  document.getElementById('fCalendarOptions').innerHTML =
+    suggestions.map(t => `<option value="${t.email}" label="${t.name}"></option>`).join('');
+  document.getElementById('fCalendar').value = draft.calendarEmail || '';
+}
+
+async function init() {
+  const r = await fetch('/api/scheduling/admin/event-types');
+  const { eventTypes } = await r.json();
+  draft = eventTypes.find(e => e.id === eventTypeId);
+  if (!draft) { document.getElementById('edEventName').textContent = 'Event type not found'; return; }
+  draft.branding = {
+    brandName: 'Pacific Rim Athletics', logoUrl: '',
+    pageBackgroundColor: '#f2f2f5', backgroundColor: '#ffffff', textColor: '#0a0a0a', accentColor: '#009bff',
+    fontPrimary: 'default', fontSecondary: 'aldrich', redirectUrl: '',
+    ...(draft.branding || {}),
+  };
+  renderPreview();
+  renderSidebar();
+  await loadPreviewSlots();
+  renderCalendar();
+  await loadStatuses();
+  await loadTeamCalendars();
+  if (new URLSearchParams(location.search).get('embed') === '1') openEmbedModal();
+}
+
+// ── Sidebar field wiring ────────────────────────────────────────────────
+['fDuration','fBuffer','fRedirectUrl'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    draft.durationMinutes = Number(document.getElementById('fDuration').value) || 30;
+    draft.bufferMinutes = Number(document.getElementById('fBuffer').value) || 0;
+    draft.branding.redirectUrl = document.getElementById('fRedirectUrl').value.trim();
+    renderPreview();
+    saveDebounced();
+  });
+});
+document.getElementById('fStatus').addEventListener('change', () => {
+  draft.statusId = document.getElementById('fStatus').value;
+  saveDebounced();
+});
+document.getElementById('fCalendar').addEventListener('change', () => {
+  draft.calendarEmail = document.getElementById('fCalendar').value;
+  // saveNow() (fired by saveDebounced below) already refreshes the slots
+  // preview on success, which is exactly what's needed here too since
+  // which calendar's freeBusy gets checked just changed.
+  saveDebounced();
+});
+
+// ── Click-to-edit text ──────────────────────────────────────────────────
+document.getElementById('pvBrand').addEventListener('input', (e) => { draft.branding.brandName = e.target.textContent; saveDebounced(); });
+document.getElementById('pvTitle').addEventListener('input', (e) => { draft.name = e.target.textContent; document.getElementById('edEventName').textContent = draft.name; saveDebounced(); });
+document.getElementById('pvDesc').addEventListener('input', (e) => { draft.description = e.target.textContent; saveDebounced(); });
+
+// ── Click-to-edit location (type + detail + optional custom icon) ───────
+document.getElementById('pvLocation').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('locType').value = draft.location.type;
+  document.getElementById('locDetail').value = draft.location.detail || '';
+  document.getElementById('locIcon').value = draft.location.icon || '';
+  document.getElementById('locIconField').style.display = draft.location.type === 'custom' ? 'block' : 'none';
+  document.getElementById('locPopover').style.display = 'block';
+});
+document.getElementById('locType').addEventListener('change', () => {
+  draft.location.type = document.getElementById('locType').value;
+  document.getElementById('locIconField').style.display = draft.location.type === 'custom' ? 'block' : 'none';
+  renderPreview(); saveDebounced();
+});
+document.getElementById('locDetail').addEventListener('input', () => {
+  draft.location.detail = document.getElementById('locDetail').value;
+  renderPreview(); saveDebounced();
+});
+document.getElementById('locIcon').addEventListener('input', () => {
+  draft.location.icon = document.getElementById('locIcon').value;
+  renderPreview(); saveDebounced();
+});
+document.addEventListener('mousedown', (e) => {
+  const wrap = document.querySelector('.loc-editor-wrap');
+  const popover = document.getElementById('locPopover');
+  if (wrap && popover.style.display !== 'none' && !wrap.contains(e.target)) popover.style.display = 'none';
+});
+
+// ── Click-to-edit logo (upload, not a URL field) ─────────────────────────
+document.getElementById('pvLogoSlot').addEventListener('click', (e) => {
+  if (e.target.id === 'pvLogoRemove') return;
+  document.getElementById('pvLogoFileInput').click();
+});
+document.getElementById('pvLogoFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById('edSaveMsg').textContent = 'Uploading logo…';
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  const r = await fetch('/api/uploads/image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) });
+  const d = await r.json();
+  if (!r.ok) { document.getElementById('edSaveMsg').textContent = d.error || 'Upload failed'; return; }
+  draft.branding.logoUrl = d.url;
+  renderPreview();
+  saveNow();
+  e.target.value = '';
+});
+document.getElementById('pvLogoRemove').addEventListener('click', (e) => {
+  e.stopPropagation();
+  draft.branding.logoUrl = '';
+  renderPreview();
+  saveNow();
+});
+
+// ── Click-to-edit colors ──────────────────────────────────────────────────
+function wireColorField(colorId, hexId, key) {
+  document.getElementById(colorId).addEventListener('input', (e) => {
+    draft.branding[key] = e.target.value;
+    document.getElementById(hexId).textContent = e.target.value;
+    applyBrandingToPreview();
+    saveDebounced();
+  });
+}
+wireColorField('fAccentColor', 'fAccentColorHex', 'accentColor');
+wireColorField('fPageBackgroundColor', 'fPageBackgroundColorHex', 'pageBackgroundColor');
+wireColorField('fCardBackgroundColor', 'fCardBackgroundColorHex', 'backgroundColor');
+wireColorField('fTextColor', 'fTextColorHex', 'textColor');
+document.getElementById('fFontPrimary').addEventListener('change', (e) => {
+  draft.branding.fontPrimary = e.target.value;
+  applyBrandingToPreview();
+  saveDebounced();
+});
+document.getElementById('fFontSecondary').addEventListener('change', (e) => {
+  draft.branding.fontSecondary = e.target.value;
+  applyBrandingToPreview();
+  saveDebounced();
+});
+
+// ── Embed modal ───────────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+document.querySelectorAll('[data-embed-tab]').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('[data-embed-tab]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  ['inline', 'popup', 'link'].forEach(t => document.getElementById('embedTab-' + t).style.display = t === btn.dataset.embedTab ? 'block' : 'none');
+});
+
+async function openEmbedModal() {
+  const siteRes = await fetch('/api/integrations/site');
+  const base = (siteRes.ok ? (await siteRes.json()).publicBaseUrl : '') || location.origin;
+  const bookUrl = `${base}/book/${draft.slug}`;
+  document.getElementById('embedInlineCode').value =
+    `<div class="scheduling-inline-widget" data-url="${bookUrl}" style="min-width:320px;height:700px;"></div>\n` +
+    `<script src="${base}/widget.js" async><\/script>`;
+  document.getElementById('embedPopupCode').value =
+    `<script src="${base}/widget.js" async><\/script>\n` +
+    `<a href="${bookUrl}" onclick="SchedulingWidget.initPopupWidget({url:'${bookUrl}'});return false;">Schedule time with me</a>`;
+  document.getElementById('embedDirectLink').value = bookUrl;
+  openModal('embedModal');
+}
+document.getElementById('edEmbedBtn').onclick = openEmbedModal;
+document.getElementById('copyEmbedBtn').onclick = () => {
+  const activeTab = document.querySelector('[data-embed-tab].active').dataset.embedTab;
+  const el = document.getElementById(activeTab === 'inline' ? 'embedInlineCode' : activeTab === 'popup' ? 'embedPopupCode' : 'embedDirectLink');
+  el.select();
+  document.execCommand('copy');
+  showToast('Copied');
+};
+
+init();
+</script>
+</body>
+</html>

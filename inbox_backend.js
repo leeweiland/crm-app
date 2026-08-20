@@ -1,12 +1,16 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
+import { sendEmail } from "./email_backend.js";
+import { sendSms } from "./sms_backend.js";
+import { CONVERSATION_META_FILE, getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
 export const CALLS_FILE = "crm_calls.json";
 export const TASKS_FILE = "crm_tasks.json";
+export { CONVERSATION_META_FILE };
 
 function withContact(item, contacts) {
   return { ...item, contact: item.contactId ? contacts.find(c => c.id === item.contactId) || null : null };
@@ -18,7 +22,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -31,11 +35,170 @@ export async function handleInboxRequest(req, res, url) {
   const contactActivityMatch = p.match(/^\/api\/inbox\/contact\/([^/]+)$/);
   if (contactActivityMatch && req.method === "GET") {
     const contactId = contactActivityMatch[1];
-    const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt }));
-    const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt }));
+    const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
+    const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).filter(t => t.contactId === contactId).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
     const items = [...messages, ...calls, ...tasks].sort((a, b) => new Date(b.at) - new Date(a.at));
     return sendJson(res, 200, { items });
+  }
+
+  // ── Chat-style conversation list -- one row per contact (or per raw
+  // from/to for a not-yet-confirmed Potential Contact) with any email/sms
+  // activity, most-recently-active first. Powers the Inbox's left sidebar.
+  if (p === "/api/inbox/conversations" && req.method === "GET") {
+    const channel = url.searchParams.get("channel"); // 'email' | 'sms' | null (both, plus form/booking activity)
+    const contacts = readJson(CONTACTS_FILE, []);
+    const messages = readJson(MESSAGE_LOG_FILE, [])
+      .filter(m => ["email", "sms", "form", "booking"].includes(m.channel))
+      .filter(m => !channel || m.channel === channel);
+
+    const groups = new Map(); // key -> { contactId, key, contact, messages: [] }
+    for (const m of messages) {
+      const key = m.contactId || `unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`;
+      if (!groups.has(key)) groups.set(key, { key, contactId: m.contactId || null, messages: [] });
+      groups.get(key).messages.push(m);
+    }
+
+    const conversations = [...groups.values()].map(g => {
+      const sorted = g.messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const last = sorted[0];
+      const contact = g.contactId ? contacts.find(c => c.id === g.contactId) || null : null;
+      const unreadCount = g.messages.filter(m => m.direction === "inbound" && !m.inboxDone).length;
+      const meta = g.contactId ? getConvoMeta(g.contactId) : null;
+      // Read-receipt-style status for the last MINE message in this thread
+      // (independent of `last`, which could be their most recent inbound
+      // reply) -- single check (sent/queued), double grey (delivered), or
+      // double blue once we know it was opened (email) -- SMS has no
+      // carrier-level "read" signal, so it never goes past delivered.
+      const lastMine = sorted.find(m => m.direction === "outbound") || null;
+      const lastOpened = !!lastMine?.statusHistory?.some(h => h.status === "opened");
+      // A contact stuck on an automated drip sequence keeps getting fresh
+      // OUTBOUND timestamps forever even if they never reply -- sorting by
+      // raw last-activity buries a genuine reply from yesterday under five
+      // leads who last engaged a year ago but are still mid-sequence.
+      // lastInboundAt is what "Newest first" actually sorts by; lastAt
+      // stays the true last-touch for the preview text/ticks.
+      const lastInbound = sorted.find(m => m.direction === "inbound") || null;
+      return {
+        key: g.key, contactId: g.contactId, contact,
+        displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
+        lastChannel: last.channel, lastDirection: last.direction,
+        lastPreview: last.subject || last.bodyPreview || "",
+        lastAt: last.createdAt, lastInboundAt: lastInbound?.createdAt || null, lastMessageId: last.id, unreadCount,
+        pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived,
+        // "Done" only counts once you've actually seen everything -- new
+        // inbound activity after being marked done drops unreadCount back
+        // above 0, which is enough on its own to fall out of the DONE
+        // filter (unresponded && done are mutually exclusive by construction).
+        done: !!meta?.done && unreadCount === 0,
+        lastStatus: lastMine?.status || null, lastOpened,
+      };
+    }).sort((a, b) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      // Never-replied threads (lastInboundAt: null) sort after every thread
+      // that has a real reply, oldest of the never-replied group last.
+      if (!a.lastInboundAt || !b.lastInboundAt) {
+        if (!a.lastInboundAt && !b.lastInboundAt) return new Date(b.lastAt) - new Date(a.lastAt);
+        return a.lastInboundAt ? -1 : 1;
+      }
+      return new Date(b.lastInboundAt) - new Date(a.lastInboundAt);
+    });
+
+    return sendJson(res, 200, { conversations });
+  }
+
+  // Pin/star a conversation -- purely presentational state, kept
+  // independent of the contact record itself.
+  const pinMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/pin$/);
+  if (pinMatch && req.method === "POST") {
+    const { pinned } = await readJsonBody(req);
+    return sendJson(res, 200, { ok: true, meta: setConvoMeta(pinMatch[1], { pinned: !!pinned }) });
+  }
+  const starMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/star$/);
+  if (starMatch && req.method === "POST") {
+    const { starred } = await readJsonBody(req);
+    return sendJson(res, 200, { ok: true, meta: setConvoMeta(starMatch[1], { starred: !!starred }) });
+  }
+  // Archive -- manual toggle from the context menu, and also set
+  // automatically (see conversation_meta.js's setConvoMeta callers in
+  // compliance_backend.js/email_backend.js/contacts_backend.js) whenever a
+  // contact opts out or gets blacklisted, since a suppressed contact has
+  // nothing left to action in the Inbox.
+  const archiveMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/archive$/);
+  if (archiveMatch && req.method === "POST") {
+    const { archived } = await readJsonBody(req);
+    return sendJson(res, 200, { ok: true, meta: setConvoMeta(archiveMatch[1], { archived: !!archived }) });
+  }
+  // Mark an entire thread done -- clears every unread inbound message for
+  // this contact (same effect as the old per-message mark-done, just
+  // scoped by contactId instead of an explicit id list) and remembers the
+  // "done" state itself so the DONE filter has something to match even
+  // once unreadCount naturally hits 0 some other way.
+  const doneMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/done$/);
+  if (doneMatch && req.method === "POST") {
+    const contactId = doneMatch[1];
+    const { done } = await readJsonBody(req);
+    const value = done !== false;
+    if (value) {
+      const log = readJson(MESSAGE_LOG_FILE, []);
+      let changed = false;
+      log.forEach(m => { if (m.contactId === contactId && m.direction === "inbound" && !m.inboxDone) { m.inboxDone = true; changed = true; } });
+      if (changed) writeJson(MESSAGE_LOG_FILE, log);
+    }
+    return sendJson(res, 200, { ok: true, meta: setConvoMeta(contactId, { done: value }) });
+  }
+
+  // Permanently delete an entire conversation -- every message to/from this
+  // contact (or, for a not-yet-confirmed Potential Contact, every message
+  // matching that raw address), plus its pin/star/done state. Irreversible,
+  // so the frontend gates this behind its own explicit confirm dialog.
+  const deleteConvoMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)$/);
+  if (deleteConvoMatch && req.method === "DELETE") {
+    const key = decodeURIComponent(deleteConvoMatch[1]);
+    const log = readJson(MESSAGE_LOG_FILE, []);
+    let remaining;
+    const unmatched = key.match(/^unmatched:(email|sms):(.*)$/);
+    if (unmatched) {
+      const [, channel, address] = unmatched;
+      remaining = log.filter(m => !(!m.contactId && m.channel === channel && (m.direction === "inbound" ? m.from : m.to) === address));
+    } else {
+      remaining = log.filter(m => m.contactId !== key);
+      const meta = readJson(CONVERSATION_META_FILE, []).filter(m => m.contactId !== key);
+      writeJson(CONVERSATION_META_FILE, meta);
+    }
+    if (remaining.length !== log.length) writeJson(MESSAGE_LOG_FILE, remaining);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // Ad-hoc 1:1 send from the Inbox chat panel -- unlike campaigns/
+  // automations/booking confirmations, this always goes out as the
+  // logged-in staff member's own address (see email_backend.js's `from`
+  // override), not the single shared campaign sender.
+  if (p === "/api/inbox/send" && req.method === "POST") {
+    const { contactId, channel, subject, body } = await readJsonBody(req);
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find(c => c.id === contactId);
+    if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
+    if (!body || !body.trim()) return sendJson(res, 400, { error: "Message is required" });
+
+    if (channel === "email") {
+      if (!contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
+      const result = await sendEmail({
+        to: contact.email, subject: subject || "(no subject)",
+        blocks: [{ id: "b1", type: "text", html: body.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: null,
+        contactId, sourceType: "inbox", sourceId: me.id,
+        from: `${me.first} ${me.last} <${me.email}>`,
+      });
+      if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
+      return sendJson(res, 200, { ok: true });
+    }
+    if (channel === "sms") {
+      if (!contact.phone) return sendJson(res, 400, { error: "This contact has no phone number" });
+      const result = await sendSms({ to: contact.phone, body, contactId, sourceType: "inbox", sourceId: me.id });
+      if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
+      return sendJson(res, 200, { ok: true });
+    }
+    return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
   }
 
   if (p === "/api/inbox" && req.method === "GET") {
@@ -95,36 +258,62 @@ export async function handleInboxRequest(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
-  // Turns a Potential Contact (an unmatched inbound message) into a real
-  // contact, then backfills every prior inbound message from that same
-  // phone number so they immediately disappear from Potential Contacts
-  // and show up correctly in the rest of the Inbox.
+  // Turns a Potential Contact (an unmatched message -- inbound OR outbound,
+  // e.g. a self-test send with no contact behind it yet) into a real
+  // contact, then backfills every prior unmatched message to/from that
+  // same address so they immediately disappear from Potential Contacts and
+  // show up correctly in the rest of the Inbox.
   if (p === "/api/inbox/confirm-potential" && req.method === "POST") {
     const { messageId, first, last } = await readJsonBody(req);
     if (!first) return sendJson(res, 400, { error: "first name is required" });
     const log = readJson(MESSAGE_LOG_FILE, []);
     const row = log.find(m => m.id === messageId);
     if (!row) return sendJson(res, 404, { error: "Message not found" });
-    const phone = row.channel === "sms" ? row.from : null;
-    const email = row.channel === "email" ? row.from : null;
+    // Which field is actually THEIR address depends on the row's own
+    // direction -- from=them on an inbound message, but to=them on an
+    // outbound one (the bug this replaced always read `.from`, which is
+    // US on anything outbound, silently creating a contact with the wrong
+    // address and -- since it never matched anything below -- leaving the
+    // row "unmatched" forever, so confirming again looked like it "did
+    // nothing" and just kept creating duplicate contacts).
+    const theirAddress = row.direction === "inbound" ? row.from : row.to;
+    const phone = row.channel === "sms" ? theirAddress : null;
+    const email = row.channel === "email" ? theirAddress : null;
 
     const contacts = readJson(CONTACTS_FILE, []);
-    const contact = {
-      id: randomUUID(), type: "lead", accountName: "",
-      first, last: last || "", email: email || "", phone: phone || "",
-      status: "", tags: [], listIds: [], customFields: {},
-      source: "inbound_confirmed", ownerId: null, emailOptOut: false, smsOptOut: false,
-      externalIds: { acContactId: null, closeLeadId: null },
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    };
-    contacts.push(contact);
+    // Same person can show up as TWO separate Potential Contacts rows (one
+    // per channel -- an unmatched SMS row and an unmatched email row),
+    // confirmed minutes apart. Without this check each confirm created its
+    // own new contact instead of recognizing the other channel's contact
+    // already exists, silently producing duplicates every time.
+    let contact = findContactMatch(contacts, email, phone);
+    if (contact) {
+      if (!contact.email && email) contact.email = email.toLowerCase();
+      if (!contact.phone && phone) contact.phone = phone;
+      contact.updatedAt = new Date().toISOString();
+    } else {
+      contact = {
+        id: randomUUID(), type: "lead", accountName: "",
+        first, last: last || "", email: (email || "").toLowerCase(), phone: phone || "",
+        status: "", tags: [], listIds: [], customFields: {},
+        source: "inbound_confirmed", ownerId: null, emailOptOut: false, smsOptOut: false,
+        externalIds: { acContactId: null, closeLeadId: null },
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      contacts.push(contact);
+    }
     writeJson(CONTACTS_FILE, contacts);
 
+    let logChanged = false;
     if (phone) {
       const digits = digitsOnly(phone);
-      log.forEach(m => { if (!m.contactId && digitsOnly(m.from) === digits) m.contactId = contact.id; });
-      writeJson(MESSAGE_LOG_FILE, log);
+      log.forEach(m => { if (!m.contactId && digitsOnly(m.direction === "inbound" ? m.from : m.to) === digits) { m.contactId = contact.id; logChanged = true; } });
     }
+    if (email) {
+      const lower = email.toLowerCase();
+      log.forEach(m => { if (!m.contactId && (m.direction === "inbound" ? m.from : m.to)?.toLowerCase() === lower) { m.contactId = contact.id; logChanged = true; } });
+    }
+    if (logChanged) writeJson(MESSAGE_LOG_FILE, log);
     return sendJson(res, 200, { ok: true, contact });
   }
 

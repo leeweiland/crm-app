@@ -10,6 +10,8 @@
   .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; border-bottom: 1px solid transparent; }
   .ab-name-input:focus { border-bottom-color: var(--pra-blue); }
   .ab-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 18px; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .row-item:last-child { border-bottom: none; }
   .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
   .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
   .active-toggle.on { background: var(--pra-green); }
@@ -50,7 +52,7 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <a class="pra-link" href="/automations.html">&larr; Back to Email Automations</a>
+      <a class="pra-link" href="/automations.html" id="backLink">&larr; Back to Email Automations</a>
       <div class="ab-header" style="margin-top:14px">
         <input class="ab-name-input" id="autoName"/>
         <button class="active-toggle" id="activeToggle"></button>
@@ -167,16 +169,31 @@
           <label class="pra-label">Subject line</label>
           <input class="pra-input" id="emailStepSubject" placeholder="Your session with Coach Lee..."/>
         </div>
+        <div class="field" style="margin-bottom:16px">
+          <label class="pra-label">Preview text</label>
+          <input class="pra-input" id="emailStepPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
+        </div>
         <div id="emailStepEditorRoot"></div>
       </div>
       <div class="cb-sidebar">
         <div class="pra-panel">
           <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
           <select class="pra-select" id="emailStepFooter"><option value="">Default</option></select>
+          <div id="emailStepFooterDirtyBar" style="display:none;margin-top:12px">
+            <div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">Footer content changed here -- these edits aren't saved yet.</div>
+            <button class="pra-btn pra-btn-sm" id="emailStepFooterUpdateBtn" type="button" style="width:100%;margin-bottom:6px">Update this footer everywhere</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="emailStepFooterSaveAsNewBtn" type="button" style="width:100%">Save as new footer</button>
+          </div>
         </div>
         <div class="pra-panel">
           <button class="pra-btn" id="saveEmailStepBtn" style="width:100%;margin-bottom:8px">Save</button>
-          <button class="pra-btn pra-btn-ghost" style="width:100%" onclick="closeModal('emailStepModal')">Cancel</button>
+          <button class="pra-btn pra-btn-ghost" style="width:100%" id="closeEmailStepBtn">Close</button>
+        </div>
+        <div class="pra-panel">
+          <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Test Send</div>
+          <input class="pra-input" id="emailStepTestEmailInput" placeholder="you@email.com" style="margin-bottom:8px"/>
+          <button class="pra-btn pra-btn-ghost" id="emailStepTestSendBtn" style="width:100%">Send Test</button>
+          <div class="pra-muted" id="emailStepTestSendMsg" style="font-size:.78rem;margin-top:8px;min-height:1em"></div>
         </div>
       </div>
     </div>
@@ -329,13 +346,28 @@ function saveDebounced() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveAutomation, 400);
 }
-async function saveAutomation() {
+async function saveAutomation(opts) {
   const r = await fetch('/api/automations/' + automation.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: automation.name, trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal }),
+    ...(opts?.keepalive ? { keepalive: true } : {}),
   });
-  if (r.ok) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+  if (r.ok && !opts?.keepalive) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
 }
+async function flushSave() {
+  clearTimeout(saveTimer);
+  if (automation?.id) await saveAutomation();
+}
+document.getElementById('backLink').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await flushSave();
+  location.href = '/automations.html';
+});
+window.addEventListener('beforeunload', () => {
+  if (!automation?.id) return;
+  clearTimeout(saveTimer);
+  saveAutomation({ keepalive: true });
+});
 
 document.getElementById('autoName').addEventListener('input', (e) => { automation.name = e.target.value; saveDebounced(); });
 document.getElementById('activeToggle').onclick = async () => {
@@ -435,7 +467,7 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
   };
 });
 function defaultConfig(type) {
-  if (type === 'send_email') return { subject: '', blocks: [], theme: { background: '#f4f4f4', maxWidth: 650 }, footerTemplateId: null };
+  if (type === 'send_email') return { subject: '', previewText: '', blocks: [], theme: { background: '#f4f4f4', maxWidth: 650 }, footerTemplateId: null };
   if (type === 'wait') return { amount: 1, unit: 'hours' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };
@@ -526,20 +558,95 @@ function openStepConfigModal(step, isNew) {
 function openEmailStepEditor(step, isNew) {
   editingStepId = step.id;
   document.getElementById('emailStepSubject').value = step.config.subject || '';
+  document.getElementById('emailStepPreviewText').value = step.config.previewText || '';
   const footerSel = document.getElementById('emailStepFooter');
   footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${step.config.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   const root = document.getElementById('emailStepEditorRoot');
   root.innerHTML = '';
-  emailStepEditor = BlockEditor.init(root, { blocks: step.config.blocks || [], theme: step.config.theme }, () => {});
-  document.getElementById('saveEmailStepBtn').onclick = () => {
+  emailStepEditor = BlockEditor.init(root, { blocks: step.config.blocks || [], theme: step.config.theme }, () => {},
+    () => { document.getElementById('emailStepFooterDirtyBar').style.display = 'block'; });
+  function currentFooter() {
+    return allFooters.find(f => f.id === footerSel.value) || allFooters.find(f => f.isDefault) || null;
+  }
+  function updateEditorFooter() {
+    emailStepEditor.setFooter(currentFooter());
+    document.getElementById('emailStepFooterDirtyBar').style.display = 'none';
+  }
+  updateEditorFooter();
+  footerSel.onchange = updateEditorFooter;
+  document.getElementById('emailStepFooterUpdateBtn').onclick = async () => {
+    const footer = currentFooter();
+    if (!footer) return;
+    const { blocks } = emailStepEditor.getFooterState();
+    const r = await fetch('/api/footer-templates/' + footer.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks }),
+    });
+    if (!r.ok) { showToast('Failed to update footer', true); return; }
+    const { template } = await r.json();
+    allFooters = allFooters.map(f => f.id === template.id ? template : f);
+    emailStepEditor.setFooter(template);
+    document.getElementById('emailStepFooterDirtyBar').style.display = 'none';
+    showToast('Footer updated everywhere it\'s used');
+  };
+  document.getElementById('emailStepFooterSaveAsNewBtn').onclick = async () => {
+    const footer = currentFooter();
+    const name = prompt('Name for the new footer:', footer ? `Copy of ${footer.name}` : 'New Footer');
+    if (!name) return;
+    const { blocks } = emailStepEditor.getFooterState();
+    const r = await fetch('/api/footer-templates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, blocks, theme: footer?.theme || {},
+        physicalAddress: footer?.physicalAddress || '', socialLinks: footer?.socialLinks || [],
+        unsubscribeLinkText: footer?.unsubscribeLinkText || 'Unsubscribe',
+      }),
+    });
+    if (!r.ok) { showToast('Failed to save new footer', true); return; }
+    const { template } = await r.json();
+    allFooters.push(template);
+    footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${template.id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+    emailStepEditor.setFooter(template);
+    document.getElementById('emailStepFooterDirtyBar').style.display = 'none';
+    showToast('Saved as a new footer');
+  };
+  // Both Save and Close commit the step and flush an immediate save (not
+  // the usual debounce) -- clicking away from this modal used to be able to
+  // lose whatever you'd just typed if it hadn't been 400ms since your last
+  // keystroke yet, and Cancel discarded the whole step's edits outright.
+  // Everything here autosaves now, same as the rest of the builder, so
+  // there's nothing left to "cancel" -- the button is Close, not Cancel.
+  async function commitAndClose() {
     step.config.subject = document.getElementById('emailStepSubject').value;
+    step.config.previewText = document.getElementById('emailStepPreviewText').value;
     step.config.footerTemplateId = footerSel.value || null;
     const state = emailStepEditor.getState();
     step.config.blocks = state.blocks;
     step.config.theme = state.theme;
     if (isNew) attachNewStep(step);
     closeModal('emailStepModal');
-    render(); saveDebounced();
+    render();
+    clearTimeout(saveTimer);
+    await saveAutomation();
+  }
+  document.getElementById('saveEmailStepBtn').onclick = commitAndClose;
+  document.getElementById('closeEmailStepBtn').onclick = commitAndClose;
+  document.getElementById('emailStepTestSendBtn').onclick = async () => {
+    const to = document.getElementById('emailStepTestEmailInput').value.trim();
+    const msg = document.getElementById('emailStepTestSendMsg');
+    if (!to) return;
+    msg.textContent = 'Sending...';
+    const state = emailStepEditor.getState();
+    const r = await fetch('/api/email/test-send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to, subject: '[TEST] ' + document.getElementById('emailStepSubject').value,
+        previewText: document.getElementById('emailStepPreviewText').value,
+        blocks: state.blocks, theme: state.theme, footerTemplateId: footerSel.value || null,
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { msg.textContent = d.error || 'Test send failed'; return; }
+    msg.textContent = 'Test sent.';
   };
   openModal('emailStepModal');
 }
@@ -582,22 +689,28 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', () => { panning = false; canvasWrap.classList.remove('panning'); });
 
-document.getElementById('historyBtn').onclick = () => {
-  const versions = (automation.versions || []).slice().reverse();
+// Server-authoritative (GET .../versions + POST .../restore, see
+// versions_shared.js) rather than reading the automation's own in-memory
+// state -- versions are throttled/pruned server-side, and restoring needs
+// to snapshot the pre-restore state too, which only the server can do
+// atomically.
+document.getElementById('historyBtn').onclick = async () => {
+  const r = await fetch(`/api/automations/${automation.id}/versions`);
+  const { versions } = await r.json();
   document.getElementById('historyBody').innerHTML = versions.length ? versions.map(v => `
     <div class="row-item">
-      <span style="flex:1">${new Date(v.savedAt).toLocaleString()}</span>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-restore="${v.versionId}">Restore</button>
+      <span style="flex:1">${new Date(v.savedAt).toLocaleString()} <span class="pra-muted" style="font-size:.78rem">${escapeHtml(v.snapshot.name || '')}</span></span>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-restore="${v.id}">Restore</button>
     </div>
-  `).join('') : '<div class="pra-muted">No saved versions yet.</div>';
-  document.querySelectorAll('[data-restore]').forEach(btn => btn.onclick = () => {
-    const version = versions.find(v => v.versionId === btn.dataset.restore);
-    if (!version || !confirm('Restore this version? Current unsaved changes will be replaced.')) return;
-    automation.trigger = version.snapshot.trigger;
-    automation.steps = version.snapshot.steps;
-    automation.startStepId = version.snapshot.startStepId;
-    closeModal('historyModal');
-    render(); saveDebounced();
+  `).join('') : '<div class="pra-muted">No earlier versions yet — history builds up as you make changes over time.</div>';
+  document.querySelectorAll('[data-restore]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Restore this version? Your current changes are saved as a version first, so you can always come back.')) return;
+    const restoreRes = await fetch(`/api/automations/${automation.id}/versions/${btn.dataset.restore}/restore`, { method: 'POST' });
+    if (!restoreRes.ok) { showToast('Restore failed', true); return; }
+    // Simplest correct way to pick up the restored trigger/steps/goal --
+    // init() already does the full load (automation + step stats), no
+    // separate reload path to keep in sync with it.
+    location.reload();
   });
   openModal('historyModal');
 };

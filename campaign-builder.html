@@ -16,6 +16,8 @@
   .chip-option.on { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-blue); }
   .time-picker-row { display: flex; gap: 6px; margin-top: 6px; }
   .time-picker-row select { flex: 1; min-width: 0; }
+  .history-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .history-row:last-child { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -23,13 +25,14 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <a class="pra-link" href="/campaigns.html">&larr; Back to Email Campaigns</a>
+      <a class="pra-link" href="/campaigns.html" id="backLink">&larr; Back to Email Campaigns</a>
       <div id="sesBanner" class="not-configured-banner" style="display:none;margin-top:12px">
         Amazon SES isn't configured yet — you can build and save campaigns, but sending is disabled until AWS credentials are added.
       </div>
       <div class="cb-header" style="margin-top:14px">
         <input class="cb-name-input" id="campaignName"/>
         <span class="cb-status-pill" id="statusPill">draft</span>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="historyBtn" type="button">History</button>
       </div>
 
       <div class="cb-layout">
@@ -37,6 +40,10 @@
           <div class="field" style="margin-bottom:16px">
             <label class="pra-label">Subject line</label>
             <input class="pra-input" id="subjectInput" placeholder="Your session with Coach Lee..."/>
+          </div>
+          <div class="field" style="margin-bottom:16px">
+            <label class="pra-label">Preview text</label>
+            <input class="pra-input" id="previewTextInput" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
           </div>
           <div id="blockEditorRoot"></div>
         </div>
@@ -58,6 +65,11 @@
           <div class="pra-panel">
             <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
             <select class="pra-select" id="footerSelect"><option value="">Default</option></select>
+            <div id="footerDirtyBar" style="display:none;margin-top:12px">
+              <div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">Footer content changed here -- these edits aren't saved yet.</div>
+              <button class="pra-btn pra-btn-sm" id="footerUpdateBtn" style="width:100%;margin-bottom:6px">Update this footer everywhere</button>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="footerSaveAsNewBtn" style="width:100%">Save as new footer</button>
+            </div>
           </div>
 
           <div class="pra-panel">
@@ -92,12 +104,55 @@
     </div>
   </div>
 </div>
+
+<!-- Version history -->
+<div class="modal-backdrop" id="historyModal">
+  <div class="pra-panel modal-box" style="max-width:540px">
+    <div class="pra-h2" style="margin-bottom:6px">Version History</div>
+    <div class="pra-muted" style="font-size:.8rem;margin-bottom:16px">Snapshots roughly once per editing session. Restoring saves your current state as a version first, so nothing is ever really lost.</div>
+    <div id="historyList" style="max-height:420px;overflow-y:auto"></div>
+    <div style="text-align:right;margin-top:16px"><button class="pra-btn pra-btn-ghost" onclick="closeModal('historyModal')">Close</button></div>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script src="/block-editor-client.js"></script>
 <script>
 const campaignId = new URLSearchParams(location.search).get('id');
 let campaign = null, editor = null, allLists = [], allTags = [], allSegments = [], allFooters = [];
 let debounceTimer;
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+// ── Version history ──────────────────────────────────────────────────────
+async function openHistoryModal() {
+  const r = await fetch(`/api/campaigns/${campaign.id}/versions`);
+  const { versions } = await r.json();
+  const list = document.getElementById('historyList');
+  list.innerHTML = versions.length
+    ? versions.map(v => `
+        <div class="history-row">
+          <div style="flex:1">
+            <div>${new Date(v.savedAt).toLocaleString()}</div>
+            <div class="pra-muted" style="font-size:.78rem">${escapeHtml(v.snapshot.subject || '(no subject)')}</div>
+          </div>
+          <button class="pra-btn pra-btn-sm" data-restore="${v.id}">Restore</button>
+        </div>
+      `).join('')
+    : '<div class="pra-muted" style="font-size:.85rem">No earlier versions yet — history builds up as you make changes over time.</div>';
+  list.querySelectorAll('[data-restore]').forEach(btn => btn.onclick = () => restoreVersion(btn.dataset.restore));
+  openModal('historyModal');
+}
+async function restoreVersion(versionId) {
+  if (!confirm('Restore this version? Your current changes are saved as a version first, so you can always come back.')) return;
+  const r = await fetch(`/api/campaigns/${campaign.id}/versions/${versionId}/restore`, { method: 'POST' });
+  if (!r.ok) { showToast('Restore failed', true); return; }
+  closeModal('historyModal');
+  await loadCampaign();
+  showToast('Restored');
+}
+document.getElementById('historyBtn').onclick = openHistoryModal;
 
 async function loadRefs() {
   const [listsRes, tagsRes, segmentsRes, footersRes, sesRes] = await Promise.all([
@@ -142,18 +197,83 @@ function saveDebounced() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(saveCampaign, 500);
 }
-async function saveCampaign() {
+async function saveCampaign(opts) {
   const r = await fetch('/api/campaigns/' + campaign.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, blocks: campaign.blocks, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients }),
+    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients }),
+    ...(opts?.keepalive ? { keepalive: true } : {}),
   });
-  if (r.ok) updateRecipientCount();
+  if (r.ok && !opts?.keepalive) updateRecipientCount();
 }
+// Flushes any pending debounced save immediately, for moments a 500ms wait
+// isn't safe to assume: navigating away via the Back link, or the tab/
+// window closing (via `keepalive`, which lets the fetch survive the page
+// unloading -- a plain fetch gets aborted mid-flight otherwise).
+async function flushSave() {
+  clearTimeout(debounceTimer);
+  if (campaign?.id) await saveCampaign();
+}
+document.getElementById('backLink').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await flushSave();
+  location.href = '/campaigns.html';
+});
+window.addEventListener('beforeunload', () => {
+  if (!campaign?.id) return;
+  clearTimeout(debounceTimer);
+  saveCampaign({ keepalive: true });
+});
 
 document.getElementById('campaignName').addEventListener('input', (e) => { campaign.name = e.target.value; saveDebounced(); });
 document.getElementById('subjectInput').addEventListener('input', (e) => { campaign.subject = e.target.value; saveDebounced(); });
+document.getElementById('previewTextInput').addEventListener('input', (e) => { campaign.previewText = e.target.value; saveDebounced(); });
 document.getElementById('segmentSelect').addEventListener('change', (e) => { campaign.recipients.segmentId = e.target.value || null; saveDebounced(); updateRecipientCount(); });
-document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); });
+document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); updateEditorFooter(); });
+function currentFooter() {
+  return allFooters.find(f => f.id === campaign.footerTemplateId) || allFooters.find(f => f.isDefault) || null;
+}
+function updateEditorFooter() {
+  if (!editor) return;
+  editor.setFooter(currentFooter());
+  document.getElementById('footerDirtyBar').style.display = 'none';
+}
+document.getElementById('footerUpdateBtn').onclick = async () => {
+  const footer = currentFooter();
+  if (!footer) return;
+  const { blocks } = editor.getFooterState();
+  const r = await fetch('/api/footer-templates/' + footer.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks }),
+  });
+  if (!r.ok) { showToast('Failed to update footer', true); return; }
+  const { template } = await r.json();
+  allFooters = allFooters.map(f => f.id === template.id ? template : f);
+  editor.setFooter(template);
+  document.getElementById('footerDirtyBar').style.display = 'none';
+  showToast('Footer updated everywhere it\'s used');
+};
+document.getElementById('footerSaveAsNewBtn').onclick = async () => {
+  const footer = currentFooter();
+  const name = prompt('Name for the new footer:', footer ? `Copy of ${footer.name}` : 'New Footer');
+  if (!name) return;
+  const { blocks } = editor.getFooterState();
+  const r = await fetch('/api/footer-templates', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name, blocks, theme: footer?.theme || {},
+      physicalAddress: footer?.physicalAddress || '', socialLinks: footer?.socialLinks || [],
+      unsubscribeLinkText: footer?.unsubscribeLinkText || 'Unsubscribe',
+    }),
+  });
+  if (!r.ok) { showToast('Failed to save new footer', true); return; }
+  const { template } = await r.json();
+  allFooters.push(template);
+  campaign.footerTemplateId = template.id;
+  renderAll();
+  editor.setFooter(template);
+  document.getElementById('footerDirtyBar').style.display = 'none';
+  saveDebounced();
+  showToast('Saved as a new footer');
+};
 
 document.getElementById('saveDraftBtn').onclick = async () => { await saveCampaign(); showToast('Draft saved'); };
 
@@ -200,7 +320,7 @@ document.getElementById('scheduleBtn').onclick = async () => {
 document.getElementById('testSendBtn').onclick = async () => {
   const to = document.getElementById('testEmailInput').value.trim();
   if (!to) return;
-  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId }) });
+  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { showToast(d.error || 'Test send failed', true); return; }
   showToast('Test sent');
@@ -212,12 +332,21 @@ async function loadCampaign() {
   campaign = (await r.json()).campaign;
   document.getElementById('campaignName').value = campaign.name;
   document.getElementById('subjectInput').value = campaign.subject || '';
+  document.getElementById('previewTextInput').value = campaign.previewText || '';
   document.getElementById('statusPill').textContent = campaign.status;
   const editable = !['sending', 'sent'].includes(campaign.status);
   document.querySelectorAll('.cb-layout input, .cb-layout select, .cb-layout button').forEach(el => { if (el.id !== 'testEmailInput' && el.id !== 'testSendBtn') el.disabled = !editable; });
-  if (!editor) editor = BlockEditor.init(document.getElementById('blockEditorRoot'), { blocks: campaign.blocks, theme: campaign.theme }, (state) => { campaign.blocks = state.blocks; campaign.theme = state.theme; saveDebounced(); });
-  else editor.setState({ blocks: campaign.blocks, theme: campaign.theme });
+  if (!editor) {
+    editor = BlockEditor.init(
+      document.getElementById('blockEditorRoot'), { blocks: campaign.blocks, theme: campaign.theme },
+      (state) => { campaign.blocks = state.blocks; campaign.theme = state.theme; saveDebounced(); },
+      () => { document.getElementById('footerDirtyBar').style.display = 'block'; },
+    );
+  } else {
+    editor.setState({ blocks: campaign.blocks, theme: campaign.theme });
+  }
   renderAll();
+  updateEditorFooter();
   if (campaign.status === 'sent') {
     document.getElementById('statsPanel').style.display = 'block';
     const statsRes = await fetch(`/api/reporting/campaigns/${campaign.id}`);

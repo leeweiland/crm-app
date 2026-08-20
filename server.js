@@ -13,7 +13,6 @@ import { handleSmsRequest } from "./sms_backend.js";
 import { handleWorkflowsRequest } from "./workflows_backend.js";
 import { handleInboxRequest } from "./inbox_backend.js";
 import { handleReportingRequest } from "./reporting_backend.js";
-import { handleWebhooksRequest } from "./webhooks_backend.js";
 import { handleImportRequest } from "./import_backend.js";
 import { handleFacebookRequest } from "./facebook_backend.js";
 import { handleTrackingRequest } from "./tracking_backend.js";
@@ -22,6 +21,8 @@ import { handleSchedulingRequest } from "./scheduling_backend.js";
 import { handleIntegrationsRequest } from "./integrations_backend.js";
 import { handleUploadsRequest } from "./uploads_backend.js";
 import { handleAdsRequest } from "./ads_backend.js";
+import { handleFlowsRequest } from "./flows_backend.js";
+import { handleDuplicatesRequest } from "./duplicates_backend.js";
 import { startScheduler } from "./scheduler.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -70,7 +71,6 @@ createServer(async (req, res) => {
   if (await handleWorkflowsRequest(req, res, url)) return;
   if (await handleInboxRequest(req, res, url)) return;
   if (await handleReportingRequest(req, res, url)) return;
-  if (await handleWebhooksRequest(req, res, url)) return;
   if (await handleImportRequest(req, res, url)) return;
   if (await handleFacebookRequest(req, res, url)) return;
   if (await handleTrackingRequest(req, res, url)) return;
@@ -79,6 +79,8 @@ createServer(async (req, res) => {
   if (await handleIntegrationsRequest(req, res, url)) return;
   if (await handleUploadsRequest(req, res, url)) return;
   if (await handleAdsRequest(req, res, url)) return;
+  if (await handleFlowsRequest(req, res, url)) return;
+  if (await handleDuplicatesRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike
   // chat-app, which shares a domain/nav with sibling apps), so there's no

@@ -1,11 +1,13 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { renderBlocksToHtml, applyMergeTags, rewriteLinksForTracking } from "./block_editor_shared.js";
+import { renderBlocksToHtml, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
+import { resolveSendSourceSlug } from "./source_names.js";
+import { setConvoMeta } from "./conversation_meta.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -95,7 +97,27 @@ function resolveFooterHtml(footerTemplateId, contactId) {
 // campaigns_backend.js now and automations_backend.js in Phase 3, matching
 // chat-app's convention of small reusable async helpers rather than a
 // service-to-service HTTP layer.
-export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, contactId, sourceType, sourceId }) {
+// The inbox-list snippet next to the subject line -- without this, most
+// clients fall back to showing the first visible text in the body (often
+// "%FIRSTNAME%" or a stray leading space). Hidden in the rendered email
+// itself; padded with invisible filler characters so real body text can't
+// leak into the reserved preview space once the actual preview text ends.
+function buildPreheaderHtml(previewText) {
+  if (!previewText) return "";
+  const padding = "&#8199;&zwnj;".repeat(120);
+  return `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#fff;opacity:0">${escapeHtml(previewText)}${padding}</div>`;
+}
+function escapeHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// `from` optionally overrides ses.fromAddress -- used by the Inbox so a
+// reply goes out as the logged-in staff member's own address instead of the
+// single shared sender every campaign/automation/booking email uses.
+// Requires the sending domain (not just one address) to be SES-verified;
+// SES rejects an unverified individual address the same way it already
+// degrades when nothing is configured at all -- see the catch below.
+export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from }) {
   const client = await getSesClient();
   const ses = getSesSettings();
   const contact = contactId ? getContact(contactId) : null;
@@ -104,15 +126,22 @@ export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, 
     return { ok: false, reason: "opted_out" };
   }
 
-  let html = renderBlocksToHtml(blocks, theme) + resolveFooterHtml(footerTemplateId, contactId);
+  let html = buildPreheaderHtml(previewText) + renderBlocksToHtml(blocks, theme) + resolveFooterHtml(footerTemplateId, contactId);
   if (contact) html = applyMergeTags(html, contact);
+  // Tagged before logging, so the stored body matches exactly what the
+  // recipient received (same convention sms_backend.js's sendSms() uses).
+  // "el=email-<slug>" resolved from THIS send's own sourceType/sourceId
+  // (source_names.js), matching the el= convention already used on ads,
+  // social, and YouTube links -- links stay real, direct, recognizable
+  // URLs, not routed through a redirect on this CRM's own domain.
+  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(sourceType, sourceId)}`);
   const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
+  const fromAddress = from || ses.fromAddress;
 
   const logRow = logMessage({
     channel: "email", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: ses.fromAddress || null, subject: renderedSubject,
-    body: html, // full rendered HTML, captured before link-rewriting so it shows real destinations
-    bodyPreview: (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "",
+    to, from: fromAddress || null, subject: renderedSubject,
+    body: html, bodyPreview: (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "",
     status: client ? "queued" : "failed",
   });
 
@@ -120,11 +149,9 @@ export async function sendEmail({ to, subject, blocks, theme, footerTemplateId, 
     return { ok: false, reason: "ses_not_configured" };
   }
 
-  html = rewriteLinksForTracking(html, { messageLogId: logRow.id, baseUrl: getPublicBaseUrl() });
-
   try {
     const cmd = new SendEmailCommand({
-      FromEmailAddress: ses.fromAddress,
+      FromEmailAddress: fromAddress,
       Destination: { ToAddresses: [to] },
       Content: { Simple: { Subject: { Data: renderedSubject }, Body: { Html: { Data: html } } } },
       ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
@@ -173,9 +200,10 @@ export async function handleEmailRequest(req, res, url) {
   if (p === "/api/email/click" && req.method === "GET") {
     const messageLogId = url.searchParams.get("m");
     const dest = url.searchParams.get("u");
+    let row = null;
     if (messageLogId) {
       const log = readJson(MESSAGE_LOG_FILE, []);
-      const row = log.find(m => m.id === messageLogId);
+      row = log.find(m => m.id === messageLogId);
       if (row) {
         row.status = "clicked"; row.statusHistory.push({ status: "clicked", at: new Date().toISOString() });
         writeJson(MESSAGE_LOG_FILE, log);
@@ -189,7 +217,13 @@ export async function handleEmailRequest(req, res, url) {
         res.setHeader("Set-Cookie", `crm_cid=${encodeURIComponent(row.contactId)}; Max-Age=2592000; Path=/; SameSite=Lax`);
       }
     }
-    res.writeHead(302, { Location: dest || "/" });
+    // Tagged with "el=email-<slug>" resolved from THIS message's own
+    // sourceType/sourceId (see source_names.js) rather than a static
+    // setting, so the value always names whichever campaign/automation
+    // actually sent it.
+    const elValue = row ? `email-${resolveSendSourceSlug(row.sourceType, row.sourceId)}` : null;
+    const taggedDest = dest ? appendSourceTag(dest, elValue) : dest;
+    res.writeHead(302, { Location: taggedDest || "/" });
     res.end();
     return true;
   }
@@ -198,7 +232,11 @@ export async function handleEmailRequest(req, res, url) {
     const contactId = url.searchParams.get("c");
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find(c => c.id === contactId);
-    if (contact) { contact.emailOptOut = true; contact.updatedAt = new Date().toISOString(); writeJson(CONTACTS_FILE, contacts); }
+    if (contact) {
+      contact.emailOptOut = true; contact.status = "STOP"; contact.updatedAt = new Date().toISOString();
+      writeJson(CONTACTS_FILE, contacts);
+      setConvoMeta(contact.id, { archived: true });
+    }
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px 20px">
       <h2>You've been unsubscribed.</h2><p>You won't receive any more marketing emails from us.</p>
@@ -217,9 +255,9 @@ export async function handleEmailRequest(req, res, url) {
   }
 
   if (p === "/api/email/test-send" && req.method === "POST") {
-    const { to, subject, blocks, theme, footerTemplateId } = await readJsonBody(req);
+    const { to, subject, previewText, blocks, theme, footerTemplateId } = await readJsonBody(req);
     if (!to || !subject) return sendJson(res, 400, { error: "to and subject are required" });
-    const result = await sendEmail({ to, subject, blocks: blocks || [], theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
+    const result = await sendEmail({ to, subject, previewText, blocks: blocks || [], theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
     if (!result.ok) return sendJson(res, 400, { error: result.reason === "ses_not_configured" ? "Amazon SES isn't configured yet -- add AWS credentials to .env first." : result.reason });
     return sendJson(res, 200, { ok: true });
   }

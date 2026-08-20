@@ -5,3 +5,11 @@ node_modules/
 # Railway Volume by migrateDataFile), never committed. Mirrors chat-app's
 # discipline of git-adding specific code files only, never these.
 crm_*.json
+
+# User-uploaded media (logos, attachments) -- same discipline as the data
+# files above: real runtime content, not app code, belongs on a Railway
+# Volume, not in git.
+uploads/
+
+# This tool's own local session config, not app code.
+.claude/

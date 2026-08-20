@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Connections & Flows — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
+  .active-toggle { width: 38px; height: 20px; border-radius: 12px; background: var(--pra-border); position: relative; cursor: pointer; display: inline-block; border: none; }
+  .active-toggle.on { background: var(--pra-blue); }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .active-toggle.on::after { transform: translateX(18px); }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="toolbar">
+        <div class="pra-h1" style="flex:1">Connections & Flows</div>
+        <button class="pra-btn" id="newFlowBtn">+ New Flow</button>
+      </div>
+      <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Your Zapier alternative — trigger a flow from a webhook (Framer, or anything else), a form submission, or a booking, then filter, delay, branch, write to Google Sheets, enroll in an Email Automation or SMS Sequence, or change a contact's status.</div>
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Trigger</th><th>Active</th><th>Runs</th><th>Last Edited</th><th></th>
+          </tr></thead>
+          <tbody id="flowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', booking_created: 'Booking created' };
+
+async function loadFlows() {
+  const r = await fetch('/api/flows');
+  const body = document.getElementById('flowsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load flows.</td></tr>'; return; }
+  const { flows } = await r.json();
+  if (!flows.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>'; return; }
+  const sorted = [...flows].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  body.innerHTML = sorted.map(f => `
+    <tr>
+      <td class="clickable" onclick="location.href='/flow-builder.html?id=${f.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(f.name)}</td>
+      <td class="pra-muted">${TRIGGER_LABELS[f.trigger?.type] || ''}</td>
+      <td><button class="active-toggle${f.active ? ' on' : ''}" data-id="${f.id}" data-active="${f.active}"></button></td>
+      <td>${f.totalRuns}${f.activeRuns ? ` <span class="pra-muted">(${f.activeRuns} active)</span>` : ''}</td>
+      <td class="pra-muted">${fmtDate(f.updatedAt)}</td>
+      <td style="white-space:nowrap">
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${f.id}">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+  document.querySelectorAll('.active-toggle').forEach(btn => btn.onclick = async () => {
+    const next = btn.dataset.active !== 'true';
+    await fetch(`/api/flows/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });
+    loadFlows();
+  });
+  document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Delete this flow? Its run history is deleted too.')) return;
+    await fetch('/api/flows/' + btn.dataset.del, { method: 'DELETE' });
+    loadFlows();
+  });
+}
+
+document.getElementById('newFlowBtn').onclick = async () => {
+  const r = await fetch('/api/flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Flow' }) });
+  const d = await r.json();
+  if (r.ok) location.href = '/flow-builder.html?id=' + d.flow.id;
+};
+
+loadFlows();
+</script>
+</body>
+</html>

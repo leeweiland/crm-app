@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
+import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
+import { applyStatusOptOut } from "./compliance_backend.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -73,9 +74,24 @@ export async function handleContactsRequest(req, res, url) {
     const body = await readJsonBody(req);
     if (!body.first || !body.last) return sendJson(res, 400, { error: "first and last are required" });
     const contacts = readJson(CONTACTS_FILE, []);
-    const record = newContactRecord(body);
-    contacts.push(record);
-    writeJson(CONTACTS_FILE, contacts);
+    // Same "email or phone already means the same person" rule every other
+    // creation path in this app follows (forms, bookings, imports) --
+    // manual "+ Add Contact" was the one place that didn't, so typing in an
+    // email/phone that already belonged to someone silently created a
+    // second record instead of updating the one that already exists.
+    let record = findContactMatch(contacts, body.email, body.phone);
+    if (record) {
+      for (const k of ["first", "last", "accountName", "status"]) if (body[k]) record[k] = body[k];
+      if (body.email) record.email = String(body.email).toLowerCase();
+      if (body.phone) record.phone = body.phone;
+      record.customFields = { ...record.customFields, ...(body.customFields || {}) };
+      record.updatedAt = new Date().toISOString();
+      writeJson(CONTACTS_FILE, contacts);
+    } else {
+      record = newContactRecord(body);
+      contacts.push(record);
+      writeJson(CONTACTS_FILE, contacts);
+    }
     record.listIds.forEach(listId => { fireTrigger("list_subscribe", { contactId: record.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: record.id, listId }); });
     record.tags.forEach(tagId => { fireTrigger("tag_added", { contactId: record.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: record.id, tagId }); });
     return sendJson(res, 200, { ok: true, contact: record });
@@ -94,6 +110,7 @@ export async function handleContactsRequest(req, res, url) {
       const prevListIds = [...contact.listIds], prevTags = [...contact.tags], prevStatus = contact.status;
       const allowed = ["type", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
       for (const k of allowed) if (k in body) contact[k] = body[k];
+      if (contact.status !== prevStatus) applyStatusOptOut(contact);
       contact.updatedAt = new Date().toISOString();
       writeJson(CONTACTS_FILE, contacts);
       // Only fire for genuinely NEW list/tag membership, not every patch --

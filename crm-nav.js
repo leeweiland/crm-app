@@ -6,6 +6,7 @@
     { href: "/contacts.html", label: "Contacts" },
     { href: "/forms.html", label: "Forms" },
     { href: "/scheduling.html", label: "Scheduling" },
+    { href: "/flows.html", label: "Connections & Flows" },
     { href: "/campaigns.html", label: "Email Campaigns" },
     { href: "/automations.html", label: "Email Automations" },
     { href: "/workflows.html", label: "SMS Sequences" },
@@ -46,6 +47,36 @@
     await fetch("/api/auth/logout", { method: "POST" });
     location.href = "/login.html";
   };
+
+  // Off-canvas sidebar toggle (tablet/mobile only, see crm-design-system.css)
+  // -- injected once here rather than per-page, so every page gets it for
+  // free just by including this script and the empty #appSidebar div.
+  if (!document.getElementById("appSidebarToggleBtn")) {
+    const toggleBtn = document.createElement("button");
+    toggleBtn.id = "appSidebarToggleBtn";
+    toggleBtn.className = "app-sidebar-toggle-btn";
+    toggleBtn.setAttribute("aria-label", "Open menu");
+    toggleBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+    const backdrop = document.createElement("div");
+    backdrop.id = "appSidebarBackdrop";
+    backdrop.className = "app-sidebar-backdrop";
+    // Persistent top-center logo (tablet/mobile only) -- the in-sidebar
+    // logo above is hidden at that breakpoint (crm-design-system.css) since
+    // it's only ever visible while the off-canvas menu is slid open; this
+    // stays visible whether the menu is open or closed.
+    const mobileLogo = document.createElement("div");
+    mobileLogo.id = "appMobileLogo";
+    mobileLogo.className = "app-mobile-logo";
+    mobileLogo.innerHTML = logoUrl
+      ? `<img class="app-mobile-logo-img" src="${logoUrl}" alt="Pacific Rim Athletics"/>`
+      : `<span style="font-family:var(--font-secondary);font-size:.85rem;color:var(--pra-white)">Pacific Rim Athletics</span>`;
+    document.body.append(toggleBtn, backdrop, mobileLogo);
+
+    const closeSidebar = () => { sidebar.classList.remove("open"); backdrop.classList.remove("show"); };
+    toggleBtn.onclick = () => { sidebar.classList.toggle("open"); backdrop.classList.toggle("show"); };
+    backdrop.onclick = closeSidebar;
+    sidebar.querySelectorAll(".app-nav-link").forEach(link => link.addEventListener("click", closeSidebar));
+  }
 
   window.crmMe = me;
 })();

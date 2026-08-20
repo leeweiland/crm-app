@@ -43,6 +43,37 @@ export function getTwilioSettings() {
   };
 }
 
+// SMS "STOP" is a carrier-compliance keyword (SMS opt-out only, never
+// email); email opt-out only ever happens via an explicit unsubscribe-link
+// click. BAD FIT / BLACKLIST is a staff judgment call, not a legal
+// requirement, so it's the one status that suppresses both channels.
+const DEFAULT_STOP_KEYWORDS = ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"];
+// Reference values for attributing traffic back to a specific ad/link.
+// metaUrlParams/googleTrackingTemplate are paste-into-the-ad-platform's-own-
+// UI values (this CRM doesn't call Meta/Google's APIs with them). There's
+// no separate "source tag" setting anymore -- every link this CRM sends in
+// email/SMS gets an "el=<channel>-<slug>" tag applied automatically
+// (source_names.js's resolveSendSourceSlug), matching the el= convention
+// already used everywhere else (ads, social, YouTube), with the slug
+// derived from whichever campaign/automation/workflow is actually sending
+// it. Nothing to configure here for that part.
+export function getTrackingSettings() {
+  const t = readSettings().tracking || {};
+  return {
+    metaUrlParams: t.metaUrlParams || "",
+    googleTrackingTemplate: t.googleTrackingTemplate || "",
+  };
+}
+
+export function getComplianceSettings() {
+  const c = readSettings().compliance || {};
+  return {
+    stopKeywordsEnabled: c.stopKeywordsEnabled !== false,
+    stopKeywords: Array.isArray(c.stopKeywords) && c.stopKeywords.length ? c.stopKeywords : DEFAULT_STOP_KEYWORDS,
+    blacklistAutoOptOut: c.blacklistAutoOptOut !== false,
+  };
+}
+
 function mask(value) {
   if (!value) return "";
   if (value.length <= 4) return "****";
@@ -107,12 +138,40 @@ export async function handleIntegrationsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
+  if (p === "/api/integrations/compliance" && req.method === "GET") {
+    return sendJson(res, 200, getComplianceSettings());
+  }
+  if (p === "/api/integrations/compliance" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const all = readSettings();
+    all.compliance = all.compliance || {};
+    if ("stopKeywordsEnabled" in body) all.compliance.stopKeywordsEnabled = !!body.stopKeywordsEnabled;
+    if ("blacklistAutoOptOut" in body) all.compliance.blacklistAutoOptOut = !!body.blacklistAutoOptOut;
+    if (Array.isArray(body.stopKeywords)) all.compliance.stopKeywords = body.stopKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true });
+  }
+
   if (p === "/api/integrations/site" && req.method === "POST") {
     const body = await readJsonBody(req);
     const all = readSettings();
     all.site = all.site || {};
     for (const k of ["publicBaseUrl", "websiteUrl"]) if (k in body) all.site[k] = String(body[k]).trim().replace(/\/+$/, "");
     if ("logoUrl" in body) all.site.logoUrl = String(body.logoUrl).trim();
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === "/api/integrations/tracking" && req.method === "GET") {
+    return sendJson(res, 200, getTrackingSettings());
+  }
+  if (p === "/api/integrations/tracking" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const all = readSettings();
+    all.tracking = all.tracking || {};
+    for (const k of ["metaUrlParams", "googleTrackingTemplate"]) {
+      if (k in body) all.tracking[k] = String(body[k]).trim();
+    }
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
   }

@@ -29,21 +29,40 @@
       <div class="pra-h1" style="margin-bottom:20px">Settings</div>
       <div class="settings-shell">
       <div class="settings-nav">
-        <button class="tab-btn active" data-tab="statuses">Statuses</button>
+        <button class="tab-btn active" data-tab="general">General</button>
+        <button class="tab-btn" data-tab="statuses">Statuses</button>
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
         <button class="tab-btn" data-tab="footers">Email Footers</button>
-        <button class="tab-btn" data-tab="webhooks">Webhook Forms</button>
         <button class="tab-btn" data-tab="ses">SMTP / SES</button>
         <button class="tab-btn" data-tab="twilio">Twilio</button>
-        <button class="tab-btn" data-tab="website">Website</button>
+        <button class="tab-btn" data-tab="emailsettings">Email Settings</button>
+        <button class="tab-btn" data-tab="tracking">Tracking</button>
         <button class="tab-btn" data-tab="ads">Ads</button>
         <button class="tab-btn" data-tab="import">Data Import</button>
+        <button class="tab-btn" data-tab="duplicates">Duplicates</button>
         <button class="tab-btn" data-tab="users">Users</button>
         <button class="tab-btn" data-tab="account">My Account</button>
       </div>
       <div class="settings-content">
 
-      <div class="tab-panel active pra-panel" id="tab-statuses" style="padding:22px">
+      <div class="tab-panel active pra-panel" id="tab-general" style="padding:22px;max-width:600px">
+        <div class="pra-h2" style="margin-bottom:6px">CRM Logo</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shown top-left of the sidebar on every page. Uploading a logo replaces the "Pacific Rim Athletics" text wordmark.</div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <div id="logoPreviewWrap" style="width:64px;height:64px;border:1px solid var(--pra-border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--pra-panel-2);flex-shrink:0;overflow:hidden">
+            <img id="logoPreview" style="max-width:100%;max-height:100%;object-fit:contain;display:none"/>
+            <span id="logoPreviewEmpty" class="pra-muted" style="font-size:.7rem">None</span>
+          </div>
+          <div>
+            <input type="file" accept="image/*" id="logoFileInput" style="display:none"/>
+            <button class="pra-btn pra-btn-sm" id="uploadLogoBtn">Upload Logo</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="removeLogoBtn">Remove</button>
+            <div class="pra-muted" id="logoMsg" style="font-size:.76rem;margin-top:6px;min-height:1em"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-statuses" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:6px">Lead Statuses</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Drag to reorder. Represents a contact's current relationship to your company.</div>
         <div id="statusesList"></div>
@@ -76,35 +95,6 @@
         </div>
       </div>
 
-      <div class="tab-panel" id="tab-webhooks">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div class="pra-panel" style="padding:22px">
-            <div class="pra-h2" style="margin-bottom:6px">Webhook Forms</div>
-            <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Point a Framer form's "Send to a URL" action directly at the URL shown here -- no Zapier needed. Each form gets its own URL and field mapping.</div>
-            <div id="webhookConfigsList"></div>
-            <button class="pra-btn" id="newWebhookBtn" style="margin-top:14px">+ New Form</button>
-          </div>
-          <div class="pra-panel" id="webhookEditorPanel" style="padding:22px;display:none">
-            <div class="pra-h2" style="margin-bottom:14px">Edit Form</div>
-            <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="webhookName"/></div>
-            <div class="field"><label class="pra-label">Webhook URL</label>
-              <div style="display:flex;gap:8px">
-                <input class="pra-input" id="webhookUrl" readonly/>
-                <button class="pra-btn pra-btn-ghost pra-btn-sm" id="copyWebhookUrlBtn">Copy</button>
-              </div>
-            </div>
-            <div class="pra-label" style="margin:14px 0 8px">Field Mapping</div>
-            <div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">Left = the exact field name/label Framer sends. Right = where it goes on the contact.</div>
-            <div id="fieldMapRows"></div>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addFieldMapRowBtn" style="margin-top:8px">+ Add Field Mapping</button>
-            <div class="pra-label" style="margin:14px 0 8px">Defaults for New Contacts</div>
-            <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="webhookDefaultStatus"><option value="">None</option></select></div>
-            <div class="field"><label class="pra-label">Tags</label><div class="chip-multiselect" id="webhookDefaultTags"></div></div>
-            <div class="field"><label class="pra-label">Lists</label><div class="chip-multiselect" id="webhookDefaultLists"></div></div>
-            <button class="pra-btn" id="saveWebhookBtn" style="width:100%;margin-top:14px">Save</button>
-          </div>
-        </div>
-      </div>
 
       <div class="tab-panel pra-panel" id="tab-ses" style="padding:22px;max-width:520px">
         <div class="pra-h2" style="margin-bottom:6px">Amazon SES (Bulk Email)</div>
@@ -128,22 +118,22 @@
         <div class="pra-muted" id="twilioSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
-      <div class="tab-panel pra-panel" id="tab-website" style="padding:22px;max-width:600px">
-        <div class="pra-h2" style="margin-bottom:6px">CRM Logo</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shown top-left of the sidebar on every page. Uploading a logo replaces the "Pacific Rim Athletics" text wordmark.</div>
-        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
-          <div id="logoPreviewWrap" style="width:64px;height:64px;border:1px solid var(--pra-border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--pra-panel-2);flex-shrink:0;overflow:hidden">
-            <img id="logoPreview" style="max-width:100%;max-height:100%;object-fit:contain;display:none"/>
-            <span id="logoPreviewEmpty" class="pra-muted" style="font-size:.7rem">None</span>
-          </div>
-          <div>
-            <input type="file" accept="image/*" id="logoFileInput" style="display:none"/>
-            <button class="pra-btn pra-btn-sm" id="uploadLogoBtn">Upload Logo</button>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="removeLogoBtn">Remove</button>
-            <div class="pra-muted" id="logoMsg" style="font-size:.76rem;margin-top:6px;min-height:1em"></div>
-          </div>
-        </div>
-        <hr style="border-color:var(--pra-border);margin:18px 0"/>
+      <div class="tab-panel pra-panel" id="tab-emailsettings" style="padding:22px;max-width:560px">
+        <div class="pra-h2" style="margin-bottom:6px">Compliance &amp; Opt-Out</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Automatic opt-out rules, so no one keeps getting texted or emailed after they've asked to stop.</div>
+
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="stopKeywordsEnabled"/> Auto-detect SMS stop keywords</label>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words (not just mentioned in a sentence), the contact's status is set to <b>STOP</b> and SMS is opted out. This never affects email — email opt-out only happens via an explicit unsubscribe link click.</div>
+        <div class="field"><label class="pra-label">Keywords (comma-separated)</label><input class="pra-input" id="stopKeywordsList" placeholder="stop, stopall, unsubscribe, cancel, end, quit"/></div>
+
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out on suppression status</label>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Bad Fit / Blacklist</b>, both SMS and email are opted out. Applies no matter how the status was changed (manually, or automatically above).</div>
+
+        <button class="pra-btn" id="saveComplianceBtn">Save</button>
+        <div class="pra-muted" id="complianceSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-tracking" style="padding:22px;max-width:600px">
         <div class="pra-h2" style="margin-bottom:6px">Website &amp; Page-Visit Tracking</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Lets automations and SMS workflows trigger off a contact visiting a page on your site (Framer), after they've clicked a tracked email link.</div>
         <div class="field"><label class="pra-label">Website URL</label><input class="pra-input" id="siteWebsiteUrl" placeholder="https://pacificrimathletics.com"/></div>
@@ -154,6 +144,26 @@
         <div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">Paste this into a custom code / embed block on every page (e.g. Framer's Site Settings → Custom Code → End of &lt;body&gt; tag) you want page-visit triggers to work on. The full script is inlined here (not just a &lt;script src&gt; reference) so it works even where an external script tag wouldn't load reliably.</div>
         <textarea class="pra-input" id="trackSnippetCode" readonly rows="9" style="font-family:monospace;font-size:.76rem;white-space:pre;resize:vertical"></textarea>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="copyTrackSnippetBtn" style="margin-top:8px">Copy</button>
+
+        <hr style="border-color:var(--pra-border);margin:24px 0 18px"/>
+        <div class="pra-h2" style="margin-bottom:6px">Ad Platform Link Tracking</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Reference values for attributing traffic back to a specific ad. Meta and Google append these to your landing page URL when someone clicks an ad.</div>
+        <div class="field">
+          <label class="pra-label">Meta (Facebook/Instagram) URL Parameters</label>
+          <input class="pra-input" id="trackMetaParams" placeholder="fbc_id={{adset.id}}&h_ad_id={{ad.id}}"/>
+          <div class="pra-muted" style="font-size:.76rem;margin-top:4px">Paste into Meta Ads Manager → Ad Set → Tracking → URL Parameters.</div>
+        </div>
+        <div class="field">
+          <label class="pra-label">Google Ads Tracking Template</label>
+          <input class="pra-input" id="trackGoogleTemplate" placeholder="{lpurl}?gc_id={campaignid}&h_ad_id={creative}"/>
+          <div class="pra-muted" style="font-size:.76rem;margin-top:4px">Paste into Google Ads → Settings → Account-level (or Campaign-level) Tracking Template.</div>
+        </div>
+        <button class="pra-btn" id="saveTrackingBtn">Save</button>
+        <div class="pra-muted" id="trackingSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+
+        <hr style="border-color:var(--pra-border);margin:24px 0 18px"/>
+        <div class="pra-h2" style="margin-bottom:6px">CRM Email/SMS Link Tagging</div>
+        <div class="pra-muted" style="font-size:.82rem">Nothing to configure here -- every link this CRM sends in email or SMS is automatically tagged <code>?el=email-&lt;campaign-or-automation-name&gt;</code> or <code>?el=sms-&lt;workflow-name&gt;</code>, matching the <code>el=</code> convention already used on your ads, social posts, and YouTube links.</div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-ads" style="padding:22px;max-width:520px">
@@ -215,6 +225,14 @@
             <div class="pra-muted" id="manualImportResultMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
           </div>
         </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-duplicates" style="padding:22px">
+        <div class="pra-h2" style="margin-bottom:6px">Possible Duplicate Contacts</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Flags two separate contact records that share an exact email or phone, or that share a name plus a tracked website visit's IP address or rough location. Never merges automatically -- even an exact match could be two different people (e.g. a shared office phone line), so every merge is a deliberate choice below.</div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanDuplicatesBtn">Scan for Duplicates</button>
+        <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
+        <div id="duplicatesList" style="margin-top:18px"></div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-users" style="padding:22px">
@@ -447,6 +465,25 @@ document.getElementById('saveTwilioBtn').onclick = async () => {
   if (r.ok) loadTwilioSettings();
 };
 
+async function loadComplianceSettings() {
+  const r = await fetch('/api/integrations/compliance');
+  if (!r.ok) return;
+  const c = await r.json();
+  document.getElementById('stopKeywordsEnabled').checked = !!c.stopKeywordsEnabled;
+  document.getElementById('stopKeywordsList').value = (c.stopKeywords || []).join(', ');
+  document.getElementById('blacklistAutoOptOut').checked = !!c.blacklistAutoOptOut;
+}
+document.getElementById('saveComplianceBtn').onclick = async () => {
+  const body = {
+    stopKeywordsEnabled: document.getElementById('stopKeywordsEnabled').checked,
+    stopKeywords: document.getElementById('stopKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
+    blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked,
+  };
+  const r = await fetch('/api/integrations/compliance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('complianceSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadComplianceSettings();
+};
+
 // ── Website / tracking ───────────────────────────────────────────────────
 let siteSettingsCache = {};
 async function loadSiteSettings() {
@@ -505,6 +542,66 @@ document.getElementById('copyTrackSnippetBtn').onclick = () => {
   document.getElementById('trackSnippetCode').select();
   document.execCommand('copy');
   showToast('Copied');
+};
+
+// ── Ad platform link tracking ────────────────────────────────────────────
+async function loadTrackingSettings() {
+  const r = await fetch('/api/integrations/tracking');
+  if (!r.ok) return;
+  const t = await r.json();
+  document.getElementById('trackMetaParams').value = t.metaUrlParams || '';
+  document.getElementById('trackGoogleTemplate').value = t.googleTrackingTemplate || '';
+}
+document.getElementById('saveTrackingBtn').onclick = async () => {
+  const body = {
+    metaUrlParams: document.getElementById('trackMetaParams').value.trim(),
+    googleTrackingTemplate: document.getElementById('trackGoogleTemplate').value.trim(),
+  };
+  const r = await fetch('/api/integrations/tracking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('trackingSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadTrackingSettings();
+};
+
+// ── Possible duplicate contacts ──────────────────────────────────────────
+async function loadDuplicates() {
+  const r = await fetch('/api/duplicates');
+  if (!r.ok) return;
+  const { pairs } = await r.json();
+  const wrap = document.getElementById('duplicatesList');
+  if (!pairs.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">No possible duplicates flagged. Click "Scan for Duplicates" to check.</div>'; return; }
+  wrap.innerHTML = pairs.map(d => `
+    <div class="pra-card" style="padding:16px;margin-bottom:12px">
+      <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${d.reason === 'email' ? 'same email address' : d.reason === 'phone' ? 'same phone number' : d.reason === 'ip' ? 'same name + shared IP address' : 'same name + shared rough location'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        ${[d.contactA, d.contactB].map(c => `
+          <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px">
+            <div style="font-weight:700">${escapeHtml(c.first)} ${escapeHtml(c.last)}</div>
+            <div class="pra-muted" style="font-size:.8rem">${escapeHtml(c.email || '')}${c.email && c.phone ? ' · ' : ''}${escapeHtml(c.phone || '')}</div>
+            <div class="pra-muted" style="font-size:.78rem;margin-top:4px">${escapeHtml(c.status || '(no status)')}</div>
+            <button class="pra-btn pra-btn-sm" style="margin-top:10px;width:100%" data-keep="${c.id}" data-dupid="${d.id}">Keep This One</button>
+          </div>
+        `).join('')}
+      </div>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" style="margin-top:10px" data-dismiss="${d.id}">Not a Duplicate</button>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('[data-keep]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Merge these two contacts? Every message, call, and task moves onto the kept contact, and the other contact record is deleted. This cannot be undone.')) return;
+    const r = await fetch(`/api/duplicates/${btn.dataset.dupid}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepId: btn.dataset.keep }) });
+    if (r.ok) { showToast('Merged'); loadDuplicates(); } else showToast('Could not merge', true);
+  });
+  wrap.querySelectorAll('[data-dismiss]').forEach(btn => btn.onclick = async () => {
+    const r = await fetch(`/api/duplicates/${btn.dataset.dismiss}/dismiss`, { method: 'POST' });
+    if (r.ok) { showToast('Dismissed'); loadDuplicates(); } else showToast('Could not dismiss', true);
+  });
+}
+document.getElementById('scanDuplicatesBtn').onclick = async () => {
+  const msg = document.getElementById('duplicatesScanMsg');
+  msg.textContent = 'Scanning…';
+  const r = await fetch('/api/duplicates/scan', { method: 'POST' });
+  const d = await r.json();
+  msg.textContent = r.ok ? `Found ${d.added} new possible duplicate${d.added === 1 ? '' : 's'}.` : 'Scan failed.';
+  if (r.ok) loadDuplicates();
 };
 
 // ── Ads dashboard settings ───────────────────────────────────────────────
@@ -590,104 +687,6 @@ document.getElementById('setDefaultFooterBtn').onclick = async () => {
   loadFooters();
 };
 
-// ── Webhook Forms (Framer, no Zapier) ───────────────────────────────────
-let allWebhooks = [], editingWebhookId = null, webhookRefTags = [], webhookRefLists = [], webhookRefStatuses = [], webhookRefFields = [];
-async function loadWebhookRefs() {
-  const [tagsRes, listsRes, statusesRes, fieldsRes] = await Promise.all([
-    fetch('/api/tags'), fetch('/api/lists'), fetch('/api/statuses'), fetch('/api/custom-fields?entityType=contact')
-  ]);
-  webhookRefTags = (await tagsRes.json()).tags;
-  webhookRefLists = (await listsRes.json()).lists;
-  webhookRefStatuses = (await statusesRes.json()).statuses;
-  webhookRefFields = (await fieldsRes.json()).fields;
-}
-async function loadWebhooks() {
-  const r = await fetch('/api/webhook-configs');
-  allWebhooks = (await r.json()).configs;
-  document.getElementById('webhookConfigsList').innerHTML = allWebhooks.map(w => `
-    <div class="row-item" style="cursor:pointer" data-open-webhook="${w.id}">
-      <span style="flex:1">${escapeHtml(w.name)}</span>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-webhook="${w.id}">Delete</button>
-    </div>
-  `).join('') || '<div class="pra-muted">No forms yet.</div>';
-  document.querySelectorAll('[data-open-webhook]').forEach(el => el.addEventListener('click', (e) => {
-    if (e.target.closest('[data-del-webhook]')) return;
-    openWebhookEditor(el.dataset.openWebhook);
-  }));
-  document.querySelectorAll('[data-del-webhook]').forEach(btn => btn.onclick = async (e) => {
-    e.stopPropagation();
-    await fetch('/api/webhook-configs/' + btn.dataset.delWebhook, { method: 'DELETE' });
-    loadWebhooks();
-  });
-}
-function fieldMapRowHtml(label, target) {
-  return `
-    <div class="field-row" style="margin-bottom:8px" data-fieldmap-row>
-      <input class="pra-input" placeholder="Framer field label" value="${escapeHtml(label || '')}" data-fm-label/>
-      <select class="pra-select" data-fm-target>
-        <option value="first" ${target === 'first' ? 'selected' : ''}>First name</option>
-        <option value="last" ${target === 'last' ? 'selected' : ''}>Last name</option>
-        <option value="email" ${target === 'email' ? 'selected' : ''}>Email</option>
-        <option value="phone" ${target === 'phone' ? 'selected' : ''}>Phone</option>
-        ${webhookRefFields.map(f => `<option value="customField:${f.id}" ${target === 'customField:' + f.id ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
-      </select>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-remove-fieldmap-row type="button">&times;</button>
-    </div>
-  `;
-}
-function wireFieldMapRow(el) {
-  el.querySelector('[data-remove-fieldmap-row]').onclick = () => el.remove();
-}
-document.getElementById('addFieldMapRowBtn').onclick = () => {
-  const wrap = document.getElementById('fieldMapRows');
-  wrap.insertAdjacentHTML('beforeend', fieldMapRowHtml('', 'first'));
-  wireFieldMapRow(wrap.lastElementChild);
-};
-function openWebhookEditor(id) {
-  const w = allWebhooks.find(x => x.id === id);
-  if (!w) return;
-  editingWebhookId = id;
-  document.getElementById('webhookEditorPanel').style.display = 'block';
-  document.getElementById('webhookName').value = w.name;
-  document.getElementById('webhookUrl').value = (siteSettingsCache.publicBaseUrl || location.origin) + '/api/webhooks/framer/' + w.webhookToken;
-  const rowsWrap = document.getElementById('fieldMapRows');
-  rowsWrap.innerHTML = '';
-  Object.entries(w.fieldMap || {}).forEach(([label, target]) => {
-    rowsWrap.insertAdjacentHTML('beforeend', fieldMapRowHtml(label, target));
-    wireFieldMapRow(rowsWrap.lastElementChild);
-  });
-  document.getElementById('webhookDefaultStatus').innerHTML = '<option value="">None</option>' + webhookRefStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${w.defaultStatusId === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
-  document.getElementById('webhookDefaultTags').innerHTML = webhookRefTags.map(t => `<span class="chip-option${(w.defaultTagIds || []).includes(t.id) ? ' on' : ''}" data-id="${t.id}">${escapeHtml(t.name)}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
-  document.getElementById('webhookDefaultLists').innerHTML = webhookRefLists.map(l => `<span class="chip-option${(w.defaultListIds || []).includes(l.id) ? ' on' : ''}" data-id="${l.id}">${escapeHtml(l.name)}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
-  document.querySelectorAll('#webhookDefaultTags .chip-option, #webhookDefaultLists .chip-option').forEach(chip => chip.onclick = () => chip.classList.toggle('on'));
-}
-document.getElementById('newWebhookBtn').onclick = async () => {
-  const r = await fetch('/api/webhook-configs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Form' }) });
-  const d = await r.json();
-  await loadWebhooks();
-  if (r.ok) openWebhookEditor(d.config.id);
-};
-document.getElementById('copyWebhookUrlBtn').onclick = () => {
-  document.getElementById('webhookUrl').select();
-  document.execCommand('copy');
-  showToast('Copied');
-};
-document.getElementById('saveWebhookBtn').onclick = async () => {
-  if (!editingWebhookId) return;
-  const fieldMap = {};
-  document.querySelectorAll('[data-fieldmap-row]').forEach(row => {
-    const label = row.querySelector('[data-fm-label]').value.trim();
-    const target = row.querySelector('[data-fm-target]').value;
-    if (label) fieldMap[label] = target;
-  });
-  const defaultTagIds = [...document.querySelectorAll('#webhookDefaultTags .chip-option.on')].map(el => el.dataset.id);
-  const defaultListIds = [...document.querySelectorAll('#webhookDefaultLists .chip-option.on')].map(el => el.dataset.id);
-  const body = { name: document.getElementById('webhookName').value.trim(), fieldMap, defaultTagIds, defaultListIds, defaultStatusId: document.getElementById('webhookDefaultStatus').value || null };
-  const r = await fetch('/api/webhook-configs/' + editingWebhookId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) { showToast('Could not save', true); return; }
-  showToast('Saved');
-  loadWebhooks();
-};
 
 // ── Data Import ──────────────────────────────────────────────────────────
 async function loadImportStatus() {
@@ -825,11 +824,13 @@ loadStatuses();
 loadFields();
 loadUsers();
 loadFooters();
-loadWebhookRefs().then(loadWebhooks);
 loadImportStatus();
 loadSesSettings();
 loadTwilioSettings();
+loadComplianceSettings();
 loadSiteSettings();
+loadTrackingSettings();
+loadDuplicates();
 loadAdsSettings();
 </script>
 </body>

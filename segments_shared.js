@@ -8,6 +8,24 @@
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
 
+export function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
+
+// A person is the same contact if EITHER their email OR their phone
+// matches -- not "phone only when there's no email" like several importers
+// used to do. Someone re-entering through a different channel (e.g. a
+// Close lead with only a phone on file, later filling out a web form with
+// their email) must land on the existing record, not a duplicate. Phone
+// compares on the last 10 digits so formatting/country-code differences
+// ("+18085551234" vs "808-555-1234") don't cause a false miss.
+export function findContactMatch(contacts, email, phone) {
+  const normEmail = String(email || "").trim().toLowerCase();
+  const normPhone = digitsOnly(phone).slice(-10);
+  return contacts.find(c =>
+    (normEmail && c.email?.toLowerCase() === normEmail) ||
+    (normPhone && digitsOnly(c.phone).slice(-10) === normPhone)
+  ) || null;
+}
+
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
 // field: "status" | "tags" | "listIds" | "customFields.<fieldId>"
 // op: "eq" | "neq" | "includes" | "excludes" | "exists"

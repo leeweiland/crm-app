@@ -146,6 +146,51 @@ body { margin: 0; }
 .app-main { flex: 1; min-width: 0; padding: 28px 32px; max-width: 1400px; }
 .app-sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--pra-border); font-size: .78rem; color: var(--pra-dim); }
 
+/* ── Responsive: sidebar becomes an off-canvas slide-in/out panel at
+   tablet/mobile widths, toggled by a hamburger button crm-nav.js injects
+   into every page (so this applies app-wide with one shared script, not a
+   per-page change). Hidden/no-ops entirely above 900px. ── */
+.app-sidebar-toggle-btn {
+  display: none; position: fixed; top: 14px; left: 14px; z-index: 300;
+  width: 40px; height: 40px; border-radius: 8px; align-items: center; justify-content: center;
+  background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-white); cursor: pointer;
+}
+.app-sidebar-toggle-btn svg { width: 20px; height: 20px; }
+.app-sidebar-backdrop {
+  display: none; position: fixed; inset: 0; z-index: 240; background: rgba(0,0,0,0.55);
+  opacity: 0; pointer-events: none; transition: opacity .2s ease;
+}
+.app-sidebar-backdrop.show { opacity: 1; pointer-events: auto; }
+/* Logo moves out of the off-canvas menu and sits fixed top-center instead,
+   so it's visible whether the menu is open or closed -- inside the menu it
+   was only ever visible while the panel was slid open. */
+.app-mobile-logo { display: none; }
+@media (max-width: 900px) {
+  .app-sidebar-toggle-btn { display: flex; }
+  .app-sidebar-backdrop { display: block; }
+  .app-sidebar-logo { display: none; }
+  .app-mobile-logo {
+    display: flex; position: fixed; top: 14px; left: 0; right: 0; z-index: 300;
+    justify-content: center; align-items: center; height: 40px; pointer-events: none;
+  }
+  .app-mobile-logo-img { display: block; max-height: 32px; max-width: 160px; object-fit: contain; }
+  .app-sidebar {
+    position: fixed; top: 0; left: 0; z-index: 250; width: 260px;
+    transform: translateX(-100%); transition: transform .2s ease;
+    box-shadow: 4px 0 28px rgba(0,0,0,0.45);
+    /* The logo used to fill this space in normal document flow; with it
+       hidden here (moved to .app-mobile-logo instead), the first nav link
+       would otherwise start right under/behind the fixed hamburger button
+       (top:14px, 40px tall) once the panel slides open. */
+    padding-top: 64px;
+  }
+  .app-sidebar.open { transform: translateX(0); }
+  .app-main { padding: 70px 18px 24px; max-width: 100%; }
+}
+@media (max-width: 600px) {
+  .app-main { padding: 64px 12px 20px; }
+}
+
 /* ── Data table ── */
 .data-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
 .data-table th {
@@ -210,20 +255,38 @@ body { margin: 0; }
    dark Email Settings background never makes block text invisible in the
    editor (there's always a white card under it, same as the real email). */
 .be-canvas { background: #f4f4f4; border: 1px solid var(--pra-border); border-radius: 0 0 8px 8px; overflow: hidden; transition: background .15s; padding: 24px 16px; }
-.be-canvas-inner { margin: 0 auto; background: #ffffff; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden; }
+/* Matches block_editor_shared.js's actual send-time wrapper
+   (font-family:Arial,Helvetica,sans-serif) and resets the font-weight:700
+   .pra-root sets globally for the CRM's own UI chrome -- without this,
+   every block of text rendered bold regardless of whether Bold was
+   actually applied, since normal weight was never asserted anywhere
+   inside the canvas. */
+.be-canvas-inner { margin: 0 auto; background: #ffffff; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden; font-family: Arial, Helvetica, sans-serif; font-weight: 400; }
 .be-shell:has(.be-toolbar[style*="flex"]) .be-canvas { border-radius: 0 0 8px 8px; }
 .be-block { position: relative; border: 2px dashed transparent; cursor: pointer; }
 .be-block:hover { border-color: rgba(0,155,255,0.3); }
 .be-block.selected { border-color: var(--pra-blue); }
 .be-block.drag-over { border-color: var(--pra-green); border-style: solid; }
-.be-block-actions { display: none; position: absolute; top: -1px; right: 0; background: var(--pra-blue); border-radius: 0 0 0 6px; z-index: 2; padding: 2px 6px; align-items: center; gap: 4px; }
+.be-block-actions { display: none; position: absolute; top: -1px; right: 0; max-width: 100%; background: var(--pra-blue); border-radius: 0 0 0 6px; z-index: 2; padding: 4px 6px; align-items: center; gap: 6px; box-sizing: border-box; }
 .be-block:hover .be-block-actions, .be-block.selected .be-block-actions { display: flex; }
-.be-block-actions button { background: none; border: none; color: #fff; cursor: pointer; font-size: .82rem; padding: 2px 4px; }
-.be-block-actions span { color: #fff; }
-.be-drag-handle { cursor: grab; color: #fff; font-size: .85rem; padding: 0 2px; }
+.be-block-actions button { background: none; border: none; color: #fff; cursor: pointer; padding: 2px; display: inline-flex; align-items: center; justify-content: center; line-height: 1; flex-shrink: 0; }
+.be-block-actions button:disabled { opacity: .4; cursor: default; }
+.be-block-actions button:hover:not(:disabled) { opacity: .75; }
+.be-drag-handle { cursor: grab; color: #fff; padding: 0 2px; display: inline-flex; align-items: center; flex-shrink: 0; }
 .be-drag-handle:active { cursor: grabbing; }
 .be-block-body { color: #111; }
 .be-block-body img { max-width: 100%; }
+.be-image-upload-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 36px 16px; margin: 10px; border: 2px dashed #cfcfcf; border-radius: 6px; color: #888; cursor: pointer; }
+.be-image-upload-placeholder:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
+.be-image-upload-placeholder span { font-size: .82rem; }
+.be-image-replace-wrap { cursor: pointer; position: relative; }
+.be-image-replace-wrap:hover::after { content: 'Click to replace'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); color: #fff; font-size: .8rem; font-family: Arial, Helvetica, sans-serif; }
+.be-footer-section { border-top: 1px dashed #ddd; }
+.be-footer-preview-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #b0b0b0; text-align: center; padding: 6px 0; background: #fafafa; }
+.be-footer-empty { padding: 20px; text-align: center; color: #999; font-size: .82rem; }
+.be-footer-add-row { display: flex; gap: 8px; justify-content: center; padding: 12px; background: #fafafa; }
+.be-footer-add-btn { display: inline-flex; align-items: center; gap: 5px; background: #fff; border: 1px solid #ddd; color: #555; border-radius: 6px; padding: 5px 10px; font-size: .78rem; cursor: pointer; font-family: Arial, Helvetica, sans-serif; }
+.be-footer-add-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
 .be-add-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
 /* Fixed height always -- never changes on hover/drag-over, so hovering
    never reflows sibling blocks and shoves the target out from under the
@@ -240,7 +303,7 @@ body { margin: 0; }
 .be-dropzone-add { display: flex; gap: 4px; justify-content: center; align-items: center; opacity: 0; transition: opacity .12s; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); white-space: nowrap; }
 .be-dropzone:hover:not(.drag-over) .be-dropzone-add { opacity: 1; }
 .be-canvas.dragging .be-dropzone-add { display: none; }
-.be-dropzone-add button { width: 20px; height: 20px; border-radius: 50%; background: var(--pra-blue); color: #fff; border: 2px solid var(--pra-panel-bg, #fff); font-size: .62rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+.be-dropzone-add button { width: 24px; height: 24px; border-radius: 50%; background: var(--pra-blue); color: #fff; border: 2px solid var(--pra-panel-bg, #fff); line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
 .be-dropzone-add button:hover { background: #0086e0; }
 .be-palette-item { cursor: grab; }
 .be-palette-item:active { cursor: grabbing; }

@@ -3,9 +3,17 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE, matchesSegment } from "./segments_shared.js";
 import { sendEmail } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
+import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 
 export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
+export const AUTOMATION_VERSIONS_FILE = "crm_automation_versions.json";
+const VERSIONED_FIELDS = ["name", "trigger", "steps", "startStepId", "goal"];
+function automationSnapshotFields(automation) {
+  const out = {};
+  for (const k of VERSIONED_FIELDS) out[k] = automation[k];
+  return out;
+}
 
 // "page_visit" fires from tracking_backend.js's /api/track/pageview (the
 // crm_cid cookie set on a tracked email-link click identifies the browser).
@@ -76,7 +84,7 @@ export function fireTrigger(type, { contactId, listId, tagId, path, formId, even
   }
 }
 
-function enrollContact(automation, contactId) {
+export function enrollContact(automation, contactId) {
   const enrollments = readJson(ENROLLMENTS_FILE, []);
   if (enrollments.some(e => e.automationId === automation.id && e.contactId === contactId && e.status === "active")) return;
   const enrollment = {
@@ -117,7 +125,7 @@ async function advanceEnrollment(enrollment, automation) {
       const contact = getContact(enrollment.contactId);
       if (contact) {
         await sendEmail({
-          to: contact.email, subject: step.config.subject || "", blocks: step.config.blocks || [], theme: step.config.theme,
+          to: contact.email, subject: step.config.subject || "", previewText: step.config.previewText, blocks: step.config.blocks || [], theme: step.config.theme,
           footerTemplateId: step.config.footerTemplateId, contactId: contact.id,
           sourceType: "automation_step", sourceId: `${automation.id}:${step.id}`,
         });
@@ -243,12 +251,14 @@ export async function handleAutomationsRequest(req, res, url) {
     if (req.method === "PATCH") {
       if (!automation) return sendJson(res, 404, { error: "Not found" });
       const body = await readJsonBody(req);
-      // Autosave version snapshot -- capped at the last 20, matching Close's
-      // "Last change was saved" pattern rather than a manual "save version" step.
-      automation.versions = automation.versions || [];
-      automation.versions.push({ versionId: randomUUID(), savedAt: new Date().toISOString(), savedBy: me.id, snapshot: { trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId } });
-      if (automation.versions.length > 20) automation.versions = automation.versions.slice(-20);
-      for (const k of ["name", "trigger", "steps", "startStepId", "goal"]) if (k in body) automation[k] = body[k];
+      // Snapshot the pre-change state before overwriting it -- throttled
+      // (see versions_shared.js) so this doesn't create a new version on
+      // every debounced autosave, just roughly once per editing session.
+      // Shared with campaigns_backend.js's identical versioning, in its own
+      // file (crm_automation_versions.json) rather than growing unboundedly
+      // inline on the automation record itself.
+      maybeSnapshotVersion(AUTOMATION_VERSIONS_FILE, "automationId", automation.id, automationSnapshotFields(automation));
+      for (const k of VERSIONED_FIELDS) if (k in body) automation[k] = body[k];
       automation.updatedAt = new Date().toISOString();
       writeJson(AUTOMATIONS_FILE, automations);
       return sendJson(res, 200, { ok: true, automation });
@@ -257,6 +267,24 @@ export async function handleAutomationsRequest(req, res, url) {
       writeJson(AUTOMATIONS_FILE, automations.filter(a => a.id !== automationMatch[1]));
       return sendJson(res, 200, { ok: true });
     }
+  }
+
+  const versionsMatch = p.match(/^\/api\/automations\/([^/]+)\/versions$/);
+  if (versionsMatch && req.method === "GET") {
+    return sendJson(res, 200, { versions: listVersions(AUTOMATION_VERSIONS_FILE, "automationId", versionsMatch[1]) });
+  }
+  const restoreMatch = p.match(/^\/api\/automations\/([^/]+)\/versions\/([^/]+)\/restore$/);
+  if (restoreMatch && req.method === "POST") {
+    const automations = readJson(AUTOMATIONS_FILE, []);
+    const automation = automations.find(a => a.id === restoreMatch[1]);
+    if (!automation) return sendJson(res, 404, { error: "Automation not found" });
+    const version = getVersion(AUTOMATION_VERSIONS_FILE, "automationId", automation.id, restoreMatch[2]);
+    if (!version) return sendJson(res, 404, { error: "Version not found" });
+    maybeSnapshotVersion(AUTOMATION_VERSIONS_FILE, "automationId", automation.id, automationSnapshotFields(automation), { force: true });
+    Object.assign(automation, version.snapshot);
+    automation.updatedAt = new Date().toISOString();
+    writeJson(AUTOMATIONS_FILE, automations);
+    return sendJson(res, 200, { ok: true, automation });
   }
 
   const activateMatch = p.match(/^\/api\/automations\/([^/]+)\/active$/);

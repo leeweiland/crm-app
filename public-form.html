@@ -8,15 +8,20 @@
 <style>
   body { background: var(--pra-black-soft); }
   .pf-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-  .pf-card { width: 100%; max-width: 560px; padding: 36px 32px; }
+  .pf-card { width: 100%; max-width: 560px; padding: 36px 32px; border-radius: var(--pf-radius, 12px); }
+  .pf-card .pra-input, .pf-card .pra-select, .pf-card .pra-textarea, .pf-card .pra-btn, .pf-choice-row { border-radius: calc(var(--pf-radius, 12px) * .65); }
   .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }
   .pf-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--pra-border); }
   .pf-progress span.done { background: var(--pra-blue); }
   .pf-field { margin-bottom: 20px; }
   .pf-label { font-family: var(--font-primary); font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; }
   .pf-required { color: var(--pra-blue); margin-left: 3px; }
-  .pf-help { color: var(--pra-dim); font-size: .8rem; margin-bottom: 10px; }
-  .pf-statement { font-size: .95rem; line-height: 1.5; color: var(--pra-white); }
+  .pf-help { font-family: var(--font-secondary); color: var(--pra-dim); font-size: .8rem; margin-bottom: 10px; }
+  .pf-statement { font-family: var(--font-secondary); font-size: .95rem; line-height: 1.5; color: var(--pra-white); }
+  .pf-headline { font-family: var(--font-primary); font-weight: 800; font-size: 1.6rem; line-height: 1.25; color: var(--pra-white); }
+  .pf-image img { max-width: 100%; border-radius: calc(var(--pf-radius, 12px) * .5); display: block; }
+  .pf-video-embed { position: relative; width: 100%; padding-top: 56.25%; border-radius: calc(var(--pf-radius, 12px) * .5); overflow: hidden; background: #000; }
+  .pf-video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   .pf-choice-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--pra-border); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
   .pf-choice-row:hover { border-color: var(--pra-blue); }
   .pf-choice-row input { accent-color: var(--pra-blue); }
@@ -40,6 +45,70 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 // Same two-tone (white linework + #009bff accent) icon convention as
 // chat-app/chat.html and form-builder.html.
 const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.6"/><path d="M7.5 12.5l3 3 6-6.5" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+// ── Theme — same font/color/radius system as form-builder.html's Design
+// panel. Overrides the CSS custom properties crm-design-system.css already
+// defines and uses everywhere, scoped to the whole page since this page IS
+// the form (no surrounding CRM chrome to protect from re-theming).
+const FONT_OPTIONS = {
+  default: { stack: "'Century Gothic','Poppins','Trebuchet MS',sans-serif", googleFont: null },
+  aldrich: { stack: "'Aldrich',sans-serif", googleFont: null },
+  poppins: { stack: "'Poppins',sans-serif", googleFont: null },
+  inter: { stack: "'Inter',sans-serif", googleFont: 'Inter:wght@400;600;700' },
+  roboto: { stack: "'Roboto',sans-serif", googleFont: 'Roboto:wght@400;500;700' },
+  montserrat: { stack: "'Montserrat',sans-serif", googleFont: 'Montserrat:wght@400;600;700' },
+  playfair: { stack: "'Playfair Display',serif", googleFont: 'Playfair+Display:wght@400;600;700' },
+  lora: { stack: "'Lora',serif", googleFont: 'Lora:wght@400;600;700' },
+  georgia: { stack: "Georgia,'Times New Roman',serif", googleFont: null },
+  arial: { stack: "Arial,Helvetica,sans-serif", googleFont: null },
+};
+const RADIUS_OPTIONS = { sharp: '3px', rounded: '14px', pill: '32px' };
+const THEME_DEFAULTS = { accentColor: '#009bff', backgroundColor: '#0a0a0d', cardBackground: '#101014', textColor: '#ffffff', fontFamily: 'default', secondaryFontFamily: 'aldrich', borderRadius: 'rounded' };
+function hexToRgba(hex, alpha) {
+  const h = (hex || '#009bff').replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16) || 0, g = parseInt(h.slice(2, 4), 16) || 0, b = parseInt(h.slice(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+// slot distinguishes the primary vs secondary font's <link>, since both can
+// independently point at a different Google Font at the same time.
+function loadGoogleFont(spec, slot) {
+  if (!spec) return;
+  const link = document.createElement('link');
+  link.id = 'themeGoogleFont-' + slot;
+  link.rel = 'stylesheet';
+  link.href = `https://fonts.googleapis.com/css2?family=${spec}&display=swap`;
+  document.head.appendChild(link);
+}
+// Accepts a full Wistia URL or a bare media ID — same helper as
+// form-builder.html's Design canvas, duplicated since this is a fully
+// independent static page.
+function wistiaIdFromInput(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  const urlMatch = s.match(/wistia\.(?:com|net)\/(?:medias|embed\/iframe)\/([a-z0-9]+)/i);
+  if (urlMatch) return urlMatch[1];
+  if (/^[a-z0-9]{6,15}$/i.test(s)) return s;
+  return null;
+}
+
+function applyTheme(theme) {
+  const t = { ...THEME_DEFAULTS, ...(theme || {}) };
+  const root = document.documentElement.style;
+  root.setProperty('--pra-blue', t.accentColor);
+  root.setProperty('--pra-blue-dim', hexToRgba(t.accentColor, 0.12));
+  root.setProperty('--pra-blue-glow', hexToRgba(t.accentColor, 0.55));
+  root.setProperty('--pra-panel', t.cardBackground);
+  root.setProperty('--pra-black-soft', t.backgroundColor);
+  root.setProperty('--pra-white', t.textColor);
+  const font = FONT_OPTIONS[t.fontFamily] || FONT_OPTIONS.default;
+  root.setProperty('--font-primary', font.stack);
+  loadGoogleFont(font.googleFont, 'primary');
+  const secondaryFont = FONT_OPTIONS[t.secondaryFontFamily] || FONT_OPTIONS.aldrich;
+  root.setProperty('--font-secondary', secondaryFont.stack);
+  loadGoogleFont(secondaryFont.googleFont, 'secondary');
+  root.setProperty('--pf-radius', RADIUS_OPTIONS[t.borderRadius] || RADIUS_OPTIONS.rounded);
+}
+
 const formId = location.pathname.split('/').filter(Boolean).pop();
 let form = null, steps = [], stepIndex = 0, answers = {};
 
@@ -61,6 +130,19 @@ function renderField(f) {
   const req = f.required ? '<span class="pf-required">*</span>' : '';
   if (f.type === 'statement') {
     return `<div class="pf-field"><div class="pf-statement">${escapeHtml(f.label)}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}</div>`;
+  }
+  if (f.type === 'headline') {
+    return `<div class="pf-field"><div class="pf-headline">${escapeHtml(f.label)}</div></div>`;
+  }
+  if (f.type === 'image') {
+    if (!f.src) return '';
+    const img = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt || '')}"/>`;
+    return `<div class="pf-field pf-image">${f.link ? `<a href="${escapeHtml(f.link)}" target="_blank" rel="noopener">${img}</a>` : img}</div>`;
+  }
+  if (f.type === 'video') {
+    const wistiaId = wistiaIdFromInput(f.videoUrl);
+    if (!wistiaId) return '';
+    return `<div class="pf-field"><div class="pf-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div>`;
   }
   const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
   const val = answers[f.id];
@@ -197,6 +279,7 @@ async function submit() {
   if (!r.ok) { document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form isn\'t available.</div>'; return; }
   form = (await r.json()).form;
   document.title = form.name;
+  applyTheme(form.theme);
   steps = buildSteps(form.fields);
   if (!steps.length) { document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form has no fields yet.</div>'; return; }
   renderStep();

@@ -57,15 +57,48 @@ export function applyMergeTags(html, contact) {
     .replace(/%PHONE%/gi, contact?.phone || "");
 }
 
-// Rewrites every <a href="..."> to a click-tracking redirect through
-// /api/email/click, so open/click reporting (#8 in the plan) can attribute
-// a click back to this specific send. The original destination is
-// preserved as a query param and the redirect handler 302s to it after
-// logging the click.
-export function rewriteLinksForTracking(html, { messageLogId, baseUrl }) {
+// Adds an "el=<value>" link-attribution tag directly onto a URL -- "el"
+// (not configurable) to match the convention already used everywhere else
+// this business tags links by hand (ads, social, YouTube), so CRM-sent
+// links read exactly the same way and stay recognizable/short instead of
+// pointing through a redirect on this CRM's own domain. The tradeoff,
+// explicit and intentional: there's no way to know FOR CERTAIN a specific
+// recipient clicked (that would need a redirect, which was tried and
+// rejected -- see git history), only that a page visit later showed up
+// carrying that campaign's el= value. Uses the URL API instead of string
+// concatenation so it correctly handles a link that already has its own
+// query string or fragment; a malformed URL is left untouched rather than
+// risked being corrupted.
+export function appendSourceTag(rawUrl, value) {
+  if (!value) return rawUrl;
+  if (/^https?:\/\//i.test(rawUrl)) {
+    try {
+      const u = new URL(rawUrl);
+      u.searchParams.set("el", value);
+      return u.toString();
+    } catch {
+      return rawUrl;
+    }
+  }
+  // Protocol-less mention (this app's own SMS templates routinely write
+  // "PacificRimAthletics.com/videos/x" with no "https://") -- appended via
+  // plain string logic instead of round-tripping through the URL API,
+  // which would lowercase the hostname and change how the link reads.
+  return `${rawUrl}${rawUrl.includes("?") ? "&" : "?"}el=${encodeURIComponent(value)}`;
+}
+// Applies appendSourceTag to every <a href="..."> in a rendered email.
+export function tagHtmlLinksWithSource(html, value) {
+  if (!value) return html;
   return String(html || "").replace(/href="([^"]+)"/g, (match, url) => {
     if (url.startsWith("mailto:") || url.startsWith("#")) return match;
-    const tracked = `${baseUrl}/api/email/click?m=${encodeURIComponent(messageLogId)}&u=${encodeURIComponent(url)}`;
-    return `href="${tracked}"`;
+    return `href="${appendSourceTag(url, value)}"`;
   });
+}
+// Same idea, but for a plain-text SMS body -- finds every URL, WITH or
+// WITHOUT a leading http(s)://, and appends the tag to each. Requires a
+// trailing "/path" so a bare "info@pacificrimathletics.com" email mention
+// (no path after the domain) is never mistaken for a link.
+export function appendSourceTagToSmsBody(body, value) {
+  if (!value) return body;
+  return String(body || "").replace(/(?<!@)(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}\/[^\s]*/g, (url) => appendSourceTag(url, value));
 }

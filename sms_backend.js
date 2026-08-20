@@ -5,6 +5,9 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, updateMessageById, updateMessageStatusByProviderId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings } from "./integrations_backend.js";
+import { recheckStopStatus } from "./compliance_backend.js";
+import { appendSourceTagToSmsBody } from "./block_editor_shared.js";
+import { resolveSendSourceSlug } from "./source_names.js";
 
 export const SMS_TEMPLATES_FILE = "crm_sms_templates.json";
 
@@ -24,8 +27,6 @@ function findContactByPhone(phone) {
   return readJson(CONTACTS_FILE, []).find(c => String(c.phone || "").replace(/\D/g, "").slice(-10) === digits.slice(-10)) || null;
 }
 
-const STOP_KEYWORDS = ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"];
-
 // Shared send primitive, same shape/convention as email_backend.js's
 // sendEmail() -- imported directly by workflows_backend.js and (later)
 // automations_backend.js's future SMS step, not called over HTTP.
@@ -35,16 +36,22 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
 
   const client = getTwilioClient();
   const twilioSettings = getTwilioSettings();
+  // Tagged before both logging and sending, so the stored body matches
+  // exactly what the recipient received (same convention email_backend.js
+  // uses). "el=sms-<slug>" resolved from THIS send's own sourceType/sourceId
+  // (source_names.js), matching the el= convention already used everywhere
+  // else -- links stay real, direct, recognizable URLs.
+  const taggedBody = appendSourceTagToSmsBody(body, `sms-${resolveSendSourceSlug(sourceType, sourceId)}`);
   const logRow = logMessage({
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: twilioSettings.fromNumber || null, body: body || "", bodyPreview: (body || "").slice(0, 140),
+    to, from: twilioSettings.fromNumber || null, body: taggedBody || "", bodyPreview: (taggedBody || "").slice(0, 140),
     status: client ? "queued" : "failed",
   });
 
   if (!client) return { ok: false, reason: "twilio_not_configured" };
 
   try {
-    const msg = await client.messages.create({ to, from: twilioSettings.fromNumber, body });
+    const msg = await client.messages.create({ to, from: twilioSettings.fromNumber, body: taggedBody });
     updateMessageById(logRow.id, { providerMessageId: msg.sid, status: msg.status || "sent", sentAt: new Date().toISOString() });
     return { ok: true, sid: msg.sid };
   } catch (e) {
@@ -83,11 +90,7 @@ export async function handleSmsRequest(req, res, url) {
     if (contact) {
       logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
       checkConversionGoal("incoming_sms", contact.id);
-      if (STOP_KEYWORDS.includes(body.trim().toLowerCase())) {
-        const contacts = readJson(CONTACTS_FILE, []);
-        const target = contacts.find(c => c.id === contact.id);
-        if (target) { target.smsOptOut = true; target.updatedAt = new Date().toISOString(); writeJson(CONTACTS_FILE, contacts); }
-      }
+      recheckStopStatus(contact.id);
     } else {
       // Message from a number with no matching contact -- still logged
       // (contactId: null) so it's visible in the Inbox, just unattributed.

@@ -46,9 +46,18 @@
   .ads-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
   .ads-segment-card { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
   .ads-segment-card .seg-title { font-family: var(--font-secondary); font-size: .8rem; letter-spacing: .06em; margin-bottom: 12px; color: var(--pra-blue); }
-  .ads-stat-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--pra-border); font-size: .84rem; }
+  .ads-stat-row { display: flex; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--pra-border); font-size: .84rem; border-radius: 4px; }
   .ads-stat-row:last-child { border-bottom: none; }
   .ads-stat-row .lbl { color: var(--pra-dim); }
+  .ads-stat-row.roas-row { background: rgba(57,255,20,.12); box-shadow: inset 0 0 0 1px rgba(57,255,20,.35); margin-top: 6px; }
+  .ads-stat-row.roas-row .lbl, .ads-stat-row.roas-row span:last-child { color: #39ff14; text-shadow: 0 0 6px rgba(57,255,20,.5); }
+  .ads-stat-row.mar-row { background: rgba(4,217,255,.12); box-shadow: inset 0 0 0 1px rgba(4,217,255,.35); }
+  .ads-stat-row.mar-row .lbl, .ads-stat-row.mar-row span:last-child { color: #04d9ff; text-shadow: 0 0 6px rgba(4,217,255,.5); }
+  .stat-card-ads { background: rgba(57,255,20,0.1); border: 1px solid rgba(57,255,20,0.35); }
+  .stat-card-email { background: rgba(0,155,255,0.1); border: 1px solid rgba(0,155,255,0.35); }
+  .stat-card-sms { background: rgba(255,79,163,0.1); border: 1px solid rgba(255,79,163,0.35); }
+  .stat-card-automations { background: rgba(0,60,110,0.5); border: 1px solid rgba(0,155,255,0.2); }
+  .stat-card-workflows { background: rgba(110,15,65,0.5); border: 1px solid rgba(255,79,163,0.2); }
 </style>
 </head>
 <body>
@@ -88,12 +97,12 @@
           <div class="rep-grid" id="emailGrid"></div>
         </div>
         <div class="rep-section">
-          <div class="rep-section-title">SMS</div>
-          <div class="rep-grid" id="smsGrid"></div>
-        </div>
-        <div class="rep-section">
           <div class="rep-section-title">Email Automations</div>
           <div class="rep-grid" id="automationsGrid"></div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">SMS</div>
+          <div class="rep-grid" id="smsGrid"></div>
         </div>
         <div class="rep-section">
           <div class="rep-section-title">SMS Sequences</div>
@@ -215,25 +224,27 @@ document.getElementById('periodSelect').addEventListener('change', applyPeriod);
 document.getElementById('updateReportBtn').onclick = applyPeriod;
 
 const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
+const EMAIL_OVERVIEW_LABELS = { sent: 'Sent', opened: 'Opened', clicked: 'Clicked' };
 const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed' };
-function grid(el, labels, data) {
+function grid(el, labels, data, cardCls) {
   document.getElementById(el).innerHTML = Object.entries(labels).map(([key, label]) => `
-    <div class="pra-card" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
+    <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
   `).join('');
 }
 async function loadOverview() {
-  const r = await fetch('/api/reporting/overview');
+  const r = await fetch(`/api/reporting/overview?start=${currentStart}&end=${currentEnd}`);
   if (!r.ok) return;
   const { email, sms, automations, workflows } = await r.json();
-  grid('emailGrid', EMAIL_LABELS, email);
-  grid('smsGrid', SMS_LABELS, sms);
-  grid('automationsGrid', { total: 'Total', active: 'Active', currentlyEnrolled: 'Currently Enrolled' }, automations);
-  grid('workflowsGrid', { total: 'Total', active: 'Active', currentlyEnrolled: 'Currently Enrolled' }, workflows);
+  grid('emailGrid', EMAIL_OVERVIEW_LABELS, email, 'stat-card-email');
+  grid('smsGrid', SMS_LABELS, sms, 'stat-card-sms');
+  grid('automationsGrid', EMAIL_OVERVIEW_LABELS, automations, 'stat-card-automations');
+  grid('workflowsGrid', SMS_LABELS, workflows, 'stat-card-workflows');
   const adsR = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);
   const ads = adsR.ok ? await adsR.json() : { ok: false };
   grid('overviewAdsGrid',
     { spend: 'Spend', emails: 'Leads', closes: 'Closes', coll: 'Collected' },
-    ads.ok ? { spend: fmtMoney(ads.combined.spend), emails: ads.combined.emails, closes: ads.combined.closes, coll: fmtMoney(ads.combined.coll) } : { spend: '—', emails: '—', closes: '—', coll: '—' }
+    ads.ok ? { spend: fmtMoney(ads.combined.spend), emails: ads.combined.emails, closes: ads.combined.closes, coll: fmtMoney(ads.combined.coll) } : { spend: '—', emails: '—', closes: '—', coll: '—' },
+    'stat-card-ads'
   );
 }
 
@@ -265,16 +276,21 @@ async function loadSmsReport() {
 }
 
 // ── Ads ──────────────────────────────────────────────────────────────────
+function fmtRatio(n) { return (n || 0).toFixed(2) + 'x'; }
 function adsSegmentCardHtml(title, data) {
   if (!data) return `<div class="ads-segment-card"><div class="seg-title">${title}</div><div class="pra-muted" style="font-size:.8rem">No data.</div></div>`;
+  const roas = data.spend ? data.coll / data.spend : 0;
+  const mar = data.spend ? data.all / data.spend : 0;
   const rows = [
-    ['Spend', fmtMoney(data.spend)], ['Meta', fmtMoney(data.metaSpend)], ['Google', fmtMoney(data.googleSpend)],
-    ['Leads', data.emails], ['Bookings/Apps', data.bookM], ['Closes', data.closes], ['Sales (incl. renewals)', data.sales], ['Collected', fmtMoney(data.coll)],
+    ['Spend', fmtMoney(data.spend), ''], ['Meta', fmtMoney(data.metaSpend), ''], ['Google', fmtMoney(data.googleSpend), ''],
+    ['Leads', data.emails, ''], ['Bookings/Apps', data.bookM, ''], ['Closes', data.closes, ''], ['Sales (incl. renewals)', data.sales, ''],
+    ['$ New Enrollments', fmtMoney(data.coll), ''], ['$ Payoffs, Renewals, Travel', fmtMoney(data.all), ''],
+    ['ROAS', fmtRatio(roas), 'roas-row'], ['MAR (Total ROAS)', fmtRatio(mar), 'mar-row'],
   ];
   return `
     <div class="ads-segment-card">
       <div class="seg-title">${title}</div>
-      ${rows.map(([lbl, val]) => `<div class="ads-stat-row"><span class="lbl">${lbl}</span><span>${val}</span></div>`).join('')}
+      ${rows.map(([lbl, val, cls]) => `<div class="ads-stat-row ${cls}"><span class="lbl">${lbl}</span><span>${val}</span></div>`).join('')}
     </div>
   `;
 }

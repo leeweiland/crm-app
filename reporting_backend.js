@@ -1,8 +1,6 @@
 import { readJson, sendJson, getSessionUser } from "./auth_backend.js";
 import { getMessagesForSource, MESSAGE_LOG_FILE } from "./message_log.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
-import { AUTOMATIONS_FILE, ENROLLMENTS_FILE } from "./automations_backend.js";
-import { WORKFLOWS_FILE, WF_ENROLLMENTS_FILE } from "./workflows_backend.js";
 
 // Cross-channel dashboards -- everything here reads crm_message_log.json,
 // the one file every channel (email now, SMS since Phase 4) and every
@@ -84,19 +82,19 @@ export async function handleReportingRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
   if (p === "/api/reporting/overview" && req.method === "GET") {
-    const messages = readJson(MESSAGE_LOG_FILE, []);
+    const { startMs, endMs } = parseRangeParams(url);
+    const inRange = (m) => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; };
+    const messages = readJson(MESSAGE_LOG_FILE, []).filter(inRange);
     const email = messages.filter(m => m.channel === "email" && m.direction === "outbound");
     const sms = messages.filter(m => m.channel === "sms");
-    const automations = readJson(AUTOMATIONS_FILE, []);
-    const automationEnrollments = readJson(ENROLLMENTS_FILE, []);
-    const workflows = readJson(WORKFLOWS_FILE, []);
-    const workflowEnrollments = readJson(WF_ENROLLMENTS_FILE, []);
+    const automationEmail = email.filter(m => m.sourceType === "automation_step");
+    const workflowSms = sms.filter(m => m.sourceType === "workflow_step");
     return sendJson(res, 200, {
       email: statsFromMessages(email),
       sms: smsStatsFromMessages(sms),
       campaigns: { total: readJson(CAMPAIGNS_FILE, []).length },
-      automations: { total: automations.length, active: automations.filter(a => a.active).length, currentlyEnrolled: automationEnrollments.filter(e => e.status === "active").length },
-      workflows: { total: workflows.length, active: workflows.filter(w => w.active).length, currentlyEnrolled: workflowEnrollments.filter(e => e.status === "active").length },
+      automations: statsFromMessages(automationEmail),
+      workflows: smsStatsFromMessages(workflowSms),
     });
   }
 

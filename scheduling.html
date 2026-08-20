@@ -8,6 +8,10 @@
 <style>
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
   .tabs { display: flex; gap: 6px; margin-bottom: 18px; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .row-item:last-child { border-bottom: none; }
+  .add-row { display: flex; gap: 10px; margin-top: 14px; }
+  .add-row input { flex: 1; }
   .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
@@ -39,23 +43,14 @@
         <span class="conn-pill" id="calConnPill">Checking calendar…</span>
       </div>
       <div class="tabs">
-        <button class="tab-btn active" data-tab="bookings">Bookings</button>
-        <button class="tab-btn" data-tab="eventTypes">Event Types</button>
+        <button class="tab-btn active" data-tab="eventTypes">Event Types</button>
+        <button class="tab-btn" data-tab="bookings">Bookings</button>
         <button class="tab-btn" data-tab="availability">Availability</button>
-      </div>
-
-      <!-- ── Bookings ── -->
-      <div class="tab-panel active" id="tab-bookings">
-        <div class="pra-panel" style="overflow-x:auto">
-          <table class="data-table">
-            <thead><tr><th>When</th><th>Contact</th><th>Event Type</th><th>Status</th><th></th></tr></thead>
-            <tbody id="bookingsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
-          </table>
-        </div>
+        <button class="tab-btn" data-tab="calendar">Calendar</button>
       </div>
 
       <!-- ── Event Types ── -->
-      <div class="tab-panel" id="tab-eventTypes">
+      <div class="tab-panel active" id="tab-eventTypes">
         <div class="toolbar" style="margin-bottom:14px">
           <div class="pra-muted" style="font-size:.82rem;flex:1">Each event type gets its own public booking page at <code>/book/&lt;slug&gt;</code>.</div>
           <button class="pra-btn" id="newEventTypeBtn">+ New Event Type</button>
@@ -64,6 +59,16 @@
           <table class="data-table">
             <thead><tr><th>Name</th><th>Duration</th><th>Buffer</th><th>Location</th><th>Active</th><th>Booking Link</th><th></th></tr></thead>
             <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Bookings ── -->
+      <div class="tab-panel" id="tab-bookings">
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr><th>When</th><th>Contact</th><th>Event Type</th><th>Status</th><th></th></tr></thead>
+            <tbody id="bookingsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -80,56 +85,37 @@
           <button class="pra-btn" id="saveAvailabilityBtn" style="margin-top:16px">Save Availability</button>
         </div>
       </div>
+
+      <!-- ── Calendar ── -->
+      <div class="tab-panel" id="tab-calendar">
+        <div class="pra-panel" style="padding:20px;max-width:560px">
+          <div class="pra-h2" style="margin-bottom:6px">Google Calendar</div>
+          <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px" id="calStatusText">Checking connection…</div>
+
+          <div class="pra-h2" style="margin-bottom:6px;font-size:.95rem">Team Calendars</div>
+          <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px">Add teammates on the same Google Workspace domain here, then pick which one an event type books onto (from that event type's Design page). The connected account can read/write any of these calendars without a separate login for each person.</div>
+          <div id="teamCalendarsList"></div>
+          <div class="add-row" style="margin-top:14px">
+            <input class="pra-input" id="newTeamCalName" placeholder="Name (e.g. Megan)"/>
+            <input class="pra-input" id="newTeamCalEmail" placeholder="Email on the Workspace domain"/>
+            <button class="pra-btn" id="addTeamCalBtn">Add</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
-<!-- Event type modal -->
+<!-- New event type modal -- just enough to create one; everything else
+     (branding, description, duration, location, status, redirect) is set
+     afterward in the visual Design editor. -->
 <div class="modal-backdrop" id="etModal">
-  <div class="pra-panel modal-box" style="max-width:600px;max-height:88vh;overflow-y:auto">
-    <div class="pra-h2" style="margin-bottom:16px" id="etModalTitle">New Event Type</div>
-    <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="etName"/></div>
-    <div class="field"><label class="pra-label">Description</label><textarea class="pra-textarea" id="etDescription" rows="2"></textarea></div>
-    <div class="field-row">
-      <div class="field"><label class="pra-label">Duration (minutes)</label><input class="pra-input" type="number" id="etDuration" min="5" step="5" value="30"/></div>
-      <div class="field"><label class="pra-label">Buffer (minutes)</label><input class="pra-input" type="number" id="etBuffer" min="0" step="5" value="0"/></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label class="pra-label">Location</label>
-        <select class="pra-select" id="etLocationType">
-          <option value="zoom">Zoom</option>
-          <option value="phone">Phone call</option>
-          <option value="in_person">In person</option>
-          <option value="custom">Custom</option>
-        </select>
-      </div>
-      <div class="field"><label class="pra-label">Location detail</label><input class="pra-input" id="etLocationDetail" placeholder="Zoom link, address, etc."/></div>
-    </div>
-    <div class="field"><label class="pra-label">On booking, set contact status to</label>
-      <select class="pra-select" id="etStatus"><option value="">Don't change status</option></select>
-    </div>
-
-    <hr style="border-color:var(--pra-border);margin:20px 0"/>
-    <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Booking Page Branding</div>
-    <div class="field-row">
-      <div class="field"><label class="pra-label">Brand name</label><input class="pra-input" id="etBrandName" placeholder="Pacific Rim Athletics"/></div>
-      <div class="field"><label class="pra-label">Logo URL</label><input class="pra-input" id="etLogoUrl" placeholder="https://…"/></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label class="pra-label">Background color</label>
-        <div style="display:flex;gap:8px;align-items:center"><input type="color" id="etBackgroundColor" value="#ffffff"/><input class="pra-input" id="etBackgroundColorHex" value="#ffffff"/></div>
-      </div>
-      <div class="field"><label class="pra-label">Text color</label>
-        <div style="display:flex;gap:8px;align-items:center"><input type="color" id="etTextColor" value="#0a0a0a"/><input class="pra-input" id="etTextColorHex" value="#0a0a0a"/></div>
-      </div>
-      <div class="field"><label class="pra-label">Accent color</label>
-        <div style="display:flex;gap:8px;align-items:center"><input type="color" id="etAccentColor" value="#009bff"/><input class="pra-input" id="etAccentColorHex" value="#009bff"/></div>
-      </div>
-    </div>
-    <div class="field"><label class="pra-label">Redirect URL after booking (leave blank to show the built-in confirmation screen)</label><input class="pra-input" id="etRedirectUrl" placeholder="https://pacificrimathletics.com/thank-you"/></div>
-
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">New Event Type</div>
+    <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="etName" placeholder="Application Call"/></div>
+    <div class="pra-muted" style="font-size:.78rem;margin-bottom:6px">You'll design the booking page (colors, logo, description, and everything else) right after creating it.</div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
-      <button class="pra-btn" id="saveEtBtn" style="flex:1">Save</button>
+      <button class="pra-btn" id="saveEtBtn" style="flex:1">Create &amp; Design</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('etModal')">Cancel</button>
     </div>
   </div>
@@ -155,7 +141,39 @@ async function loadStatus() {
   const pill = document.getElementById('calConnPill');
   pill.textContent = d.calendarConnected ? 'Google Calendar connected' : 'Google Calendar not connected (internal-only conflict checking)';
   pill.className = 'conn-pill ' + (d.calendarConnected ? 'on' : 'off');
+  document.getElementById('calStatusText').textContent = d.calendarConnected
+    ? 'Connected. New bookings create real events (and check real conflicts) on Google Calendar.'
+    : 'Not connected — set GOOGLE_REFRESH_TOKEN_PRA_CALENDAR in .env. Until then, availability only checks bookings made through this scheduler.';
 }
+
+// ── Team calendars ────────────────────────────────────────────────────────
+async function loadTeamCalendars() {
+  const r = await fetch('/api/scheduling/admin/team-calendars');
+  const { teamCalendars } = await r.json();
+  const list = document.getElementById('teamCalendarsList');
+  if (!teamCalendars.length) { list.innerHTML = '<div class="pra-muted" style="font-size:.82rem">No team calendars added yet — the default is your own connected calendar.</div>'; return; }
+  list.innerHTML = teamCalendars.map(t => `
+    <div class="row-item">
+      <div style="flex:1"><b>${escapeHtml(t.name)}</b> <span class="pra-muted">${escapeHtml(t.email)}</span></div>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-cal="${t.id}">Remove</button>
+    </div>
+  `).join('');
+  document.querySelectorAll('[data-del-cal]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Remove this team calendar? Event types using it will fall back to your default calendar.')) return;
+    await fetch('/api/scheduling/admin/team-calendars/' + btn.dataset.delCal, { method: 'DELETE' });
+    loadTeamCalendars();
+  });
+}
+document.getElementById('addTeamCalBtn').onclick = async () => {
+  const name = document.getElementById('newTeamCalName').value.trim();
+  const email = document.getElementById('newTeamCalEmail').value.trim();
+  if (!email) { showToast('Email is required', true); return; }
+  const r = await fetch('/api/scheduling/admin/team-calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email }) });
+  if (!r.ok) { showToast('Failed to add', true); return; }
+  document.getElementById('newTeamCalName').value = '';
+  document.getElementById('newTeamCalEmail').value = '';
+  loadTeamCalendars();
+};
 
 // ── Bookings ──────────────────────────────────────────────────────────────
 async function loadBookings() {
@@ -182,7 +200,6 @@ async function loadBookings() {
 }
 
 // ── Event types ───────────────────────────────────────────────────────────
-let editingEtId = null;
 async function loadEventTypes() {
   const body = document.getElementById('eventTypesBody');
   const r = await fetch('/api/scheduling/admin/event-types');
@@ -197,85 +214,26 @@ async function loadEventTypes() {
       <td>${et.active ? 'Yes' : 'No'}</td>
       <td><div class="link-row"><code>/book/${escapeHtml(et.slug)}</code><a class="pra-link" href="/book/${escapeHtml(et.slug)}" target="_blank">Open</a></div></td>
       <td style="white-space:nowrap">
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${et.id}">Edit</button>
+        <a class="pra-btn pra-btn-outline pra-btn-sm" href="/scheduling-editor.html?id=${et.id}">Design</a>
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/scheduling-editor.html?id=${et.id}&embed=1">Embed</a>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${et.id}">Delete</button>
       </td>
     </tr>
   `).join('');
-  document.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => openEtModal(eventTypes.find(e => e.id === btn.dataset.edit)));
   document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => {
     if (!confirm('Delete this event type? Existing bookings are kept.')) return;
     await fetch('/api/scheduling/admin/event-types/' + btn.dataset.del, { method: 'DELETE' });
     loadEventTypes();
   });
 }
-let allStatuses = [];
-async function loadStatuses() {
-  const r = await fetch('/api/statuses');
-  if (!r.ok) return;
-  allStatuses = (await r.json()).statuses;
-  const select = document.getElementById('etStatus');
-  select.innerHTML = '<option value="">Don\'t change status</option>' + allStatuses.map(s => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
-}
-
-// Keeps each <input type=color> in sync with its adjacent hex text field --
-// either one can be edited and the other follows.
-function linkColorInputs(colorId, hexId) {
-  const colorEl = document.getElementById(colorId), hexEl = document.getElementById(hexId);
-  colorEl.oninput = () => { hexEl.value = colorEl.value; };
-  hexEl.oninput = () => { if (/^#[0-9a-fA-F]{6}$/.test(hexEl.value)) colorEl.value = hexEl.value; };
-}
-linkColorInputs('etBackgroundColor', 'etBackgroundColorHex');
-linkColorInputs('etTextColor', 'etTextColorHex');
-linkColorInputs('etAccentColor', 'etAccentColorHex');
-
-function openEtModal(et) {
-  editingEtId = et ? et.id : null;
-  document.getElementById('etModalTitle').textContent = et ? 'Edit Event Type' : 'New Event Type';
-  document.getElementById('etName').value = et?.name || '';
-  document.getElementById('etDescription').value = et?.description || '';
-  document.getElementById('etDuration').value = et?.durationMinutes ?? 30;
-  document.getElementById('etBuffer').value = et?.bufferMinutes ?? 0;
-  document.getElementById('etLocationType').value = et?.location?.type || 'zoom';
-  document.getElementById('etLocationDetail').value = et?.location?.detail || '';
-  document.getElementById('etStatus').value = et?.statusId || '';
-  const b = et?.branding || {};
-  document.getElementById('etBrandName').value = b.brandName ?? 'Pacific Rim Athletics';
-  document.getElementById('etLogoUrl').value = b.logoUrl || '';
-  document.getElementById('etBackgroundColor').value = b.backgroundColor || '#ffffff';
-  document.getElementById('etBackgroundColorHex').value = b.backgroundColor || '#ffffff';
-  document.getElementById('etTextColor').value = b.textColor || '#0a0a0a';
-  document.getElementById('etTextColorHex').value = b.textColor || '#0a0a0a';
-  document.getElementById('etAccentColor').value = b.accentColor || '#009bff';
-  document.getElementById('etAccentColorHex').value = b.accentColor || '#009bff';
-  document.getElementById('etRedirectUrl').value = b.redirectUrl || '';
-  openModal('etModal');
-}
-document.getElementById('newEventTypeBtn').onclick = () => openEtModal(null);
+document.getElementById('newEventTypeBtn').onclick = () => openModal('etModal');
 document.getElementById('saveEtBtn').onclick = async () => {
-  const payload = {
-    name: document.getElementById('etName').value.trim(),
-    description: document.getElementById('etDescription').value.trim(),
-    durationMinutes: Number(document.getElementById('etDuration').value) || 30,
-    bufferMinutes: Number(document.getElementById('etBuffer').value) || 0,
-    location: { type: document.getElementById('etLocationType').value, detail: document.getElementById('etLocationDetail').value.trim() },
-    statusId: document.getElementById('etStatus').value,
-    branding: {
-      brandName: document.getElementById('etBrandName').value.trim(),
-      logoUrl: document.getElementById('etLogoUrl').value.trim(),
-      backgroundColor: document.getElementById('etBackgroundColorHex').value.trim() || '#ffffff',
-      textColor: document.getElementById('etTextColorHex').value.trim() || '#0a0a0a',
-      accentColor: document.getElementById('etAccentColorHex').value.trim() || '#009bff',
-      redirectUrl: document.getElementById('etRedirectUrl').value.trim(),
-    },
-  };
-  if (!payload.name) { showToast('Name is required', true); return; }
-  const url = editingEtId ? '/api/scheduling/admin/event-types/' + editingEtId : '/api/scheduling/admin/event-types';
-  const r = await fetch(url, { method: editingEtId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (!r.ok) { showToast('Failed to save', true); return; }
-  closeModal('etModal');
-  showToast('Saved');
-  loadEventTypes();
+  const name = document.getElementById('etName').value.trim();
+  if (!name) { showToast('Name is required', true); return; }
+  const r = await fetch('/api/scheduling/admin/event-types', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  const d = await r.json();
+  if (!r.ok) { showToast('Failed to create', true); return; }
+  location.href = '/scheduling-editor.html?id=' + d.eventType.id;
 };
 
 // ── Availability ──────────────────────────────────────────────────────────
@@ -323,10 +281,10 @@ document.getElementById('saveAvailabilityBtn').onclick = async () => {
 };
 
 loadStatus();
-loadStatuses();
 loadBookings();
 loadEventTypes();
 loadAvailability();
+loadTeamCalendars();
 </script>
 </body>
 </html>
