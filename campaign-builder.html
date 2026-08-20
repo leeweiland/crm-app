@@ -11,9 +11,19 @@
   .cb-name-input:focus { border-bottom-color: var(--pra-blue); }
   .cb-status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); }
   .not-configured-banner { background: rgba(255,193,7,0.12); border: 1px solid #ffc107; color: #ffc107; border-radius: 8px; padding: 10px 14px; font-size: .8rem; margin-bottom: 16px; }
-  .chip-multiselect { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .chip-option { font-size: .74rem; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--pra-border); color: var(--pra-dim); cursor: pointer; }
-  .chip-option.on { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-blue); }
+  /* Searchable multi-select -- replaces dumping every list/tag as a flat
+     wall of pill buttons (unusable once an account has 50+ tags). Selected
+     items show as removable chips; typing filters a dropdown of the rest. */
+  .search-multiselect { position: relative; margin-top: 6px; }
+  .ms-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .ms-chips:empty { margin-bottom: 0; }
+  .ms-dropdown { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 50; max-height: 220px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .ms-dropdown.open { display: block; }
+  .ms-option { padding: 8px 12px; font-size: .82rem; cursor: pointer; }
+  .ms-option:hover { background: rgba(255,255,255,0.06); }
+  .ms-option-empty { padding: 8px 12px; font-size: .8rem; color: var(--pra-dim); }
+  .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); }
+  .tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
   .time-picker-row { display: flex; gap: 6px; margin-top: 6px; }
   .time-picker-row select { flex: 1; min-width: 0; }
   .history-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -52,13 +62,13 @@
           <div class="pra-panel">
             <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Recipients</div>
             <div class="pra-label">Lists</div>
-            <div class="chip-multiselect" id="listChips"></div>
+            <div class="search-multiselect" id="listChips"></div>
             <div class="pra-label" style="margin-top:12px">Tags</div>
-            <div class="chip-multiselect" id="tagChips"></div>
+            <div class="search-multiselect" id="tagChips"></div>
             <div class="pra-label" style="margin-top:12px">Segment</div>
             <select class="pra-select" id="segmentSelect"><option value="">None</option></select>
             <div class="pra-label" style="margin-top:12px">Exclude lists</div>
-            <div class="chip-multiselect" id="excludeChips"></div>
+            <div class="search-multiselect" id="excludeChips"></div>
             <div class="pra-muted" style="font-size:.8rem;margin-top:12px" id="recipientCount">— recipients</div>
           </div>
 
@@ -166,16 +176,46 @@ async function loadRefs() {
   document.getElementById('sesBanner').style.display = configured ? 'none' : 'block';
 }
 
-function renderChips(containerId, items, selectedIds, onToggle) {
+// Searchable multi-select -- the skeleton (search input + dropdown) is
+// built ONCE per container and left alone on later calls, since renderAll()
+// runs after every single toggle/edit and rebuilding the <input> each time
+// would drop whatever the user was mid-typing. Only the selected-chips row
+// and the dropdown's match list get refreshed.
+function renderSearchableMultiSelect(containerId, items, selectedIds, onToggle) {
   const el = document.getElementById(containerId);
-  el.innerHTML = items.map(item => `<span class="chip-option${selectedIds.includes(item.id) ? ' on' : ''}" data-id="${item.id}">${item.name}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
-  el.querySelectorAll('.chip-option').forEach(chip => chip.onclick = () => { onToggle(chip.dataset.id); renderAll(); saveDebounced(); });
+  if (!el.dataset.msInit) {
+    el.innerHTML = `<div class="ms-chips"></div><input class="pra-input ms-search" type="text" placeholder="Search..."/><div class="ms-dropdown"></div>`;
+    el.dataset.msInit = '1';
+    const searchEl = el.querySelector('.ms-search');
+    const dropdownEl = el.querySelector('.ms-dropdown');
+    const showMatches = () => {
+      const q = searchEl.value.trim().toLowerCase();
+      const matches = items.filter(i => !selectedIds.includes(i.id) && i.name.toLowerCase().includes(q)).slice(0, 30);
+      dropdownEl.innerHTML = matches.length ? matches.map(i => `<div class="ms-option" data-id="${i.id}">${escapeHtml(i.name)}</div>`).join('') : `<div class="ms-option-empty">${items.length ? 'No matches' : 'None yet'}</div>`;
+      dropdownEl.classList.add('open');
+      dropdownEl.querySelectorAll('.ms-option').forEach(opt => opt.onclick = () => {
+        onToggle(opt.dataset.id);
+        searchEl.value = '';
+        dropdownEl.classList.remove('open');
+        renderAll(); saveDebounced();
+      });
+    };
+    searchEl.addEventListener('input', showMatches);
+    searchEl.addEventListener('focus', showMatches);
+    // Delayed so a click on a .ms-option (which fires blur first) still
+    // registers before the dropdown disappears out from under it.
+    searchEl.addEventListener('blur', () => setTimeout(() => dropdownEl.classList.remove('open'), 150));
+  }
+  const chipsEl = el.querySelector('.ms-chips');
+  const selected = items.filter(i => selectedIds.includes(i.id));
+  chipsEl.innerHTML = selected.map(i => `<span class="tag-pill">${escapeHtml(i.name)}<button type="button" data-remove="${i.id}">&times;</button></span>`).join('');
+  chipsEl.querySelectorAll('[data-remove]').forEach(btn => btn.onclick = () => { onToggle(btn.dataset.remove); renderAll(); saveDebounced(); });
 }
 
 function renderAll() {
-  renderChips('listChips', allLists, campaign.recipients.listIds, (id) => toggleId(campaign.recipients.listIds, id));
-  renderChips('tagChips', allTags, campaign.recipients.tagIds, (id) => toggleId(campaign.recipients.tagIds, id));
-  renderChips('excludeChips', allLists, campaign.recipients.excludeListIds, (id) => toggleId(campaign.recipients.excludeListIds, id));
+  renderSearchableMultiSelect('listChips', allLists, campaign.recipients.listIds, (id) => toggleId(campaign.recipients.listIds, id));
+  renderSearchableMultiSelect('tagChips', allTags, campaign.recipients.tagIds, (id) => toggleId(campaign.recipients.tagIds, id));
+  renderSearchableMultiSelect('excludeChips', allLists, campaign.recipients.excludeListIds, (id) => toggleId(campaign.recipients.excludeListIds, id));
   const segSel = document.getElementById('segmentSelect');
   segSel.innerHTML = '<option value="">None</option>' + allSegments.map(s => `<option value="${s.id}" ${campaign.recipients.segmentId === s.id ? 'selected' : ''}>${s.name}</option>`).join('');
   const footerSel = document.getElementById('footerSelect');
