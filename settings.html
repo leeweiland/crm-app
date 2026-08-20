@@ -6,12 +6,9 @@
 <title>Settings — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
-  .settings-shell { display: flex; align-items: flex-start; gap: 24px; }
-  .settings-nav { display: flex; flex-direction: column; gap: 2px; width: 190px; flex-shrink: 0; border-right: 1px solid var(--pra-border); padding-right: 10px; }
-  .tab-btn { background: none; border: none; border-left: 2px solid transparent; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 14px; cursor: pointer; text-align: left; border-radius: 4px; }
-  .tab-btn:hover { background: rgba(255,255,255,0.04); }
-  .tab-btn.active { color: var(--pra-white); background: rgba(0,155,255,0.1); border-left-color: var(--pra-blue); }
-  .settings-content { flex: 1; min-width: 0; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -27,8 +24,7 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Settings</div>
-      <div class="settings-shell">
-      <div class="settings-nav">
+      <div class="tabs">
         <button class="tab-btn active" data-tab="general">General</button>
         <button class="tab-btn" data-tab="statuses">Statuses</button>
         <button class="tab-btn" data-tab="customfields">Custom Fields</button>
@@ -41,7 +37,6 @@
         <button class="tab-btn" data-tab="users">Users</button>
         <button class="tab-btn" data-tab="account">My Account</button>
       </div>
-      <div class="settings-content">
 
       <div class="tab-panel active pra-panel" id="tab-general" style="padding:22px;max-width:600px">
         <div class="pra-h2" style="margin-bottom:6px">CRM Logo</div>
@@ -226,8 +221,6 @@
         <div class="field"><label class="pra-label">Confirm new password</label><input class="pra-input" type="password" id="confirmPassword"/></div>
         <button class="pra-btn" id="changePasswordBtn">Update Password</button>
         <div class="pra-muted" id="passwordMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
-      </div>
-      </div>
       </div>
     </div>
   </div>

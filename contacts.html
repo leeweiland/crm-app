@@ -6,15 +6,12 @@
 <title>Contacts — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
-  .toolbar { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
   .tag-chip { display: inline-block; font-size: .68rem; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 4px; }
-  .contacts-shell { display: flex; align-items: flex-start; gap: 24px; }
-  .contacts-nav { display: flex; flex-direction: column; gap: 2px; width: 190px; flex-shrink: 0; border-right: 1px solid var(--pra-border); padding-right: 10px; }
-  .contacts-content { flex: 1; min-width: 0; }
-  .tab-btn { background: none; border: none; border-left: 2px solid transparent; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .86rem; padding: 10px 14px; cursor: pointer; text-align: left; border-radius: 4px; }
-  .tab-btn:hover { background: rgba(255,255,255,0.04); }
-  .tab-btn.active { color: var(--pra-white); background: rgba(0,155,255,0.1); border-left-color: var(--pra-blue); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -27,7 +24,6 @@
   .cond-row { display: grid; grid-template-columns: 1fr 140px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
   .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
   .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
-  #typeToggle .pra-btn-ghost.active { color: var(--pra-white); background: var(--pra-blue-dim); border-color: rgba(0,155,255,0.3); }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
@@ -40,10 +36,8 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
-      <div class="contacts-shell">
-      <div class="contacts-nav">
+      <div class="tabs">
         <button class="tab-btn active" data-tab="contacts">Contacts</button>
-        <button class="tab-btn" data-tab="accounts">Accounts</button>
         <button class="tab-btn" data-tab="lists">Email Lists</button>
         <button class="tab-btn" data-tab="emailsegments">Email Segments</button>
         <button class="tab-btn" data-tab="smssegments">SMS Segments</button>
@@ -51,16 +45,9 @@
         <button class="tab-btn" data-tab="import">Data Import</button>
         <button class="tab-btn" data-tab="duplicates">Duplicates</button>
       </div>
-      <div class="contacts-content">
 
       <div class="tab-panel active" id="tab-contacts">
         <div class="toolbar">
-          <div class="type-toggle" id="typeToggle" style="display:flex;gap:4px">
-            <button class="pra-btn pra-btn-ghost pra-btn-sm active" data-type-filter="">All</button>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-type-filter="lead">Leads</button>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-type-filter="contact">Contacts</button>
-          </div>
-          <div style="flex:1"></div>
           <input class="pra-input" id="searchInput" placeholder="Search name, email, account..."/>
           <select class="pra-select" id="statusFilter" style="max-width:200px"><option value="">All statuses</option></select>
           <a class="pra-link filter-toggle" id="filterToggle">+ Filters</a>
@@ -94,15 +81,6 @@
               <th class="sortable" data-sort="createdAt">Created</th>
             </tr></thead>
             <tbody id="contactsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="tab-panel" id="tab-accounts">
-        <div class="pra-panel" style="overflow-x:auto">
-          <table class="data-table">
-            <thead><tr><th>Account</th><th>Contacts</th></tr></thead>
-            <tbody id="accountsBody"><tr><td colspan="2" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -206,8 +184,6 @@
         <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
         <div id="duplicatesList" style="margin-top:18px"></div>
       </div>
-
-      </div>
     </div>
   </div>
 </div>
@@ -251,7 +227,6 @@
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
 let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
-let activeTypeFilter = ''; // '' | 'lead' | 'contact' -- quick toggle above the Contacts table
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleDateString() : ''; }
@@ -286,31 +261,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'accounts') loadAccounts();
   };
 });
-
-document.querySelectorAll('#typeToggle [data-type-filter]').forEach(btn => {
-  btn.onclick = () => {
-    document.querySelectorAll('#typeToggle [data-type-filter]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    activeTypeFilter = btn.dataset.typeFilter;
-    loadContacts();
-  };
-});
-
-async function loadAccounts() {
-  const r = await fetch('/api/contacts');
-  const body = document.getElementById('accountsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="2" class="pra-muted">Could not load.</td></tr>'; return; }
-  const { contacts } = await r.json();
-  const byAccount = {};
-  contacts.forEach(c => { if (c.accountName) (byAccount[c.accountName] = byAccount[c.accountName] || []).push(c); });
-  const accounts = Object.entries(byAccount).sort((a, b) => a[0].localeCompare(b[0]));
-  body.innerHTML = accounts.length ? accounts.map(([name, members]) => `
-    <tr><td>${escapeHtml(name)}</td><td>${members.length}</td></tr>
-  `).join('') : '<tr><td colspan="2" class="pra-muted">No accounts yet — set an account name on a contact to see it here.</td></tr>';
-}
 
 // ── Reference data ──────────────────────────────────────────────────────
 async function loadStatuses() {
@@ -535,7 +487,6 @@ async function loadContacts() {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (status) params.set('status', status);
-  if (activeTypeFilter) params.set('type', activeTypeFilter);
   if (activeFilter) params.set('filter', JSON.stringify(activeFilter));
   const r = await fetch('/api/contacts?' + params.toString());
   const body = document.getElementById('contactsBody');
