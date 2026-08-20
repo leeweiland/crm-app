@@ -170,8 +170,9 @@ body { margin: 0; }
   .app-sidebar-backdrop { display: block; }
   .app-sidebar-logo { display: none; }
   .app-mobile-logo {
-    display: flex; position: fixed; top: 14px; left: 0; right: 0; z-index: 300;
-    justify-content: center; align-items: center; height: 40px; pointer-events: none;
+    display: flex; position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+    justify-content: center; align-items: center; height: 70px;
+    background: var(--pra-black-soft); pointer-events: none;
   }
   .app-mobile-logo-img { display: block; max-height: 32px; max-width: 160px; object-fit: contain; }
   .app-sidebar {
@@ -202,6 +203,7 @@ body { margin: 0; }
 }
 @media (max-width: 600px) {
   .app-main { padding: 64px 12px 20px; }
+  .app-mobile-logo { height: 64px; }
   .mobile-sticky-header { top: 64px; margin: 0 -12px 16px; padding: 0 12px 12px; }
 }
 
