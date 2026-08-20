@@ -33,6 +33,7 @@
   .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .legend-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
   .journey-layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .journey-layout { grid-template-columns: 1fr; } }
   .journey-contact-row { padding: 10px 12px; border-bottom: 1px solid var(--pra-border); cursor: pointer; font-size: .86rem; }
   .journey-contact-row:hover { background: rgba(255,255,255,0.03); }
   .journey-contact-row.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
@@ -44,6 +45,7 @@
   .journey-icon.call { background: rgba(255,59,59,0.15); color: var(--pra-red); }
   .journey-icon.task, .journey-icon.reminder { background: rgba(255,193,7,0.15); color: #ffc107; }
   .ads-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 900px) { .ads-cards { grid-template-columns: 1fr; } }
   .ads-segment-card { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
   .ads-segment-card .seg-title { font-family: var(--font-secondary); font-size: .8rem; letter-spacing: .06em; margin-bottom: 12px; color: var(--pra-blue); }
   .ads-stat-row { display: flex; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--pra-border); font-size: .84rem; border-radius: 4px; }

@@ -13,6 +13,10 @@
   .ed-sidebar { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; padding-bottom: 4px; }
   .ed-hint { font-size: .72rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-preview-outer { border-radius: 14px; padding: 40px 24px; display: flex; justify-content: center; }
+  @media (max-width: 900px) {
+    .ed-shell { grid-template-columns: 1fr; }
+    .ed-sidebar { position: static; max-height: none; }
+  }
   .tabs .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
   .tabs .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
 

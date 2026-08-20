@@ -42,6 +42,10 @@
   /* ── Visual canvas — mirrors public-form.html's pf-* rendering exactly,
      so the editor IS a live preview of the published form, Tally-style. ── */
   .fb-canvas-shell { flex: 1; min-width: 0; max-width: 620px; }
+  @media (max-width: 900px) {
+    .fb-layout { flex-direction: column; }
+    .fb-sidebar { width: 100%; position: static; max-height: none; }
+  }
   .fb-canvas { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: var(--pf-radius, 14px); padding: 36px 0 24px; }
   .fb-canvas .pra-input, .fb-canvas .pra-select, .fb-canvas .pra-textarea { border-radius: calc(var(--pf-radius, 10px) * .6); }
   .fb-progress { display: flex; gap: 6px; padding: 0 44px; margin-bottom: 24px; }
