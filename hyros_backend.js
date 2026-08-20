@@ -69,10 +69,13 @@ export function upsertFromHyros(hyrosLead, defaultStatus) {
     };
     contacts.push(contact);
   }
-  // Hyros's own tags (e.g. "!clicked", "@some-source-link") -- get-or-create
-  // by name so re-imports never duplicate, same rule as every other tag
-  // source in this app.
-  (hyrosLead.tags || []).forEach(name => {
+  // Hyros's own tags -- get-or-create by name so re-imports never duplicate,
+  // same rule as every other tag source in this app. Skips "!"-prefixed
+  // tags (!hyros, !clicked, !stripe-stripe, !optin, ...) -- those are
+  // Hyros's own internal bookkeeping, not something a coach ever needs to
+  // see in the CRM. "$"-prefixed (real sales/products) and "@"-prefixed
+  // (per-send attribution) tags are kept -- both are real marketing data.
+  (hyrosLead.tags || []).filter(name => !name.startsWith("!")).forEach(name => {
     const tag = getOrCreateTag(name);
     if (tag && !contact.tags.includes(tag.id)) contact.tags.push(tag.id);
   });
