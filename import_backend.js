@@ -128,10 +128,17 @@ function applyFallbackStatus(contact, status) {
   if (stored) { stored.status = status; writeJson(CONTACTS_FILE, contacts); }
 }
 export async function enrichStatusFromClose(contact) {
-  if (contact.status || !closeConfigured()) return;
+  if ((contact.status && contact.first) || !closeConfigured()) return;
   const lead = await searchCloseLeadByIdentity(contact.email, contact.phone);
   if (!lead) return;
-  contact.status = lead.status_label || contact.status;
+  if (!contact.status) contact.status = lead.status_label || contact.status;
+  // AC/Hyros sometimes carry no name at all for a given record -- Close's
+  // nested contact usually does, so it's worth falling back to rather than
+  // leaving the contact permanently nameless in the CRM.
+  if (!contact.first && !contact.last) {
+    const name = (lead.contacts?.[0]?.name || lead.display_name || "").trim();
+    if (name) { const parts = name.split(/\s+/); contact.first = parts[0] || ""; contact.last = parts.slice(1).join(" "); }
+  }
   if (!contact.externalIds.closeLeadId) contact.externalIds.closeLeadId = lead.id;
   markFirstSeen(contact, lead.date_created);
   const contacts = readJson(CONTACTS_FILE, []);
@@ -471,11 +478,12 @@ export async function handleImportRequest(req, res, url) {
   // BEFORE that cross-reference existed, or before their matching Close
   // lead existed yet.
   if (p === "/api/import/backfill-status" && req.method === "POST") {
-    const targets = readJson(CONTACTS_FILE, []).filter(c => ["ac_import", "hyros_import"].includes(c.source) && !c.status);
+    const targets = readJson(CONTACTS_FILE, []).filter(c => ["ac_import", "hyros_import"].includes(c.source) && (!c.status || (!c.first && !c.last)));
     let updated = 0;
     for (const contact of targets) {
+      const before = `${contact.status}|${contact.first}`;
       await enrichStatusFromClose(contact);
-      if (contact.status) updated++;
+      if (`${contact.status}|${contact.first}` !== before) updated++;
     }
     return sendJson(res, 200, { ok: true, checked: targets.length, updated });
   }
