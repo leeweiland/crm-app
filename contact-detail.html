@@ -175,7 +175,18 @@ async function loadRefs() {
   allFields = (await fieldsRes.json()).fields;
 }
 
-const TAGS_COLLAPSE_LIMIT = 8;
+// Shared accordion for both Tags and Lists -- a contact pulled in from
+// Hyros/AC can carry 50+ tags (or be on dozens of lists), and dumping them
+// all flat makes the whole page unreadable, especially on mobile. Shows
+// the first 2, with a "+N more" toggle for the rest.
+const PILLS_COLLAPSE_LIMIT = 2;
+function collapsiblePillsHtml(pills, expanded, toggleId) {
+  const shown = expanded ? pills : pills.slice(0, PILLS_COLLAPSE_LIMIT);
+  const hidden = pills.length - shown.length;
+  return shown.join('') + (hidden > 0
+    ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">+${hidden} more</button>`
+    : (expanded && pills.length > PILLS_COLLAPSE_LIMIT ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">Show less</button>` : ''));
+}
 let tagsExpanded = false;
 function renderTags() {
   const wrap = document.getElementById('tagsWrap');
@@ -184,17 +195,7 @@ function renderTags() {
     if (!t) return '';
     return `<span class="tag-pill">${escapeHtml(t.name)}<button data-tag="${tagId}" class="removeTag">&times;</button></span>`;
   }).filter(Boolean);
-  if (!pills.length) {
-    wrap.innerHTML = '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
-  } else {
-    // A contact pulled in from Hyros/AC can carry 50+ tags -- dumping them
-    // all flat makes the whole page unreadable, especially on mobile.
-    const shown = tagsExpanded ? pills : pills.slice(0, TAGS_COLLAPSE_LIMIT);
-    const hidden = pills.length - shown.length;
-    wrap.innerHTML = shown.join('') + (hidden > 0
-      ? `<button type="button" class="pra-link" id="tagsToggle" style="font-size:.8rem;margin-left:4px">+${hidden} more</button>`
-      : (tagsExpanded && pills.length > TAGS_COLLAPSE_LIMIT ? `<button type="button" class="pra-link" id="tagsToggle" style="font-size:.8rem;margin-left:4px">Show less</button>` : ''));
-  }
+  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, tagsExpanded, 'tagsToggle') : '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
   wrap.querySelectorAll('.removeTag').forEach(btn => btn.onclick = async () => {
     contact.tags = contact.tags.filter(id => id !== btn.dataset.tag);
     await saveContact();
@@ -213,18 +214,22 @@ document.getElementById('addTagSelect').onchange = async (e) => {
   e.target.value = '';
 };
 
+let listsExpanded = false;
 function renderLists() {
   const wrap = document.getElementById('listsWrap');
-  wrap.innerHTML = (contact.listIds || []).map(listId => {
+  const pills = (contact.listIds || []).map(listId => {
     const l = allLists.find(x => x.id === listId);
     if (!l) return '';
     return `<span class="tag-pill">${escapeHtml(l.name)}<button data-list="${listId}" class="removeList">&times;</button></span>`;
-  }).join('') || '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
+  }).filter(Boolean);
+  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, listsExpanded, 'listsToggle') : '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
   wrap.querySelectorAll('.removeList').forEach(btn => btn.onclick = async () => {
     contact.listIds = contact.listIds.filter(id => id !== btn.dataset.list);
     await saveContact();
     renderLists();
   });
+  const toggle = document.getElementById('listsToggle');
+  if (toggle) toggle.onclick = () => { listsExpanded = !listsExpanded; renderLists(); };
   const sel = document.getElementById('addListSelect');
   sel.innerHTML = '<option value="">+ Add to a list...</option>' + allLists.filter(l => !contact.listIds.includes(l.id)).map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
 }
