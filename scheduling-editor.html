@@ -14,6 +14,13 @@
   .ed-hint { font-size: .72rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-preview-outer { border-radius: 14px; padding: 40px 24px; display: flex; justify-content: center; }
   @media (max-width: 900px) {
+    /* The booking widget's calendar grid genuinely can't shrink below a
+       legible size (7 real date columns) -- rather than squeeze it
+       illegible, let it render at full size and scroll horizontally
+       within this one bounded area, same tradeoff the real public booking
+       page has to make. */
+    .ed-preview-outer { justify-content: flex-start; overflow-x: auto; padding: 24px 16px; }
+    .bk-card { flex-shrink: 0; }
     .ed-shell { grid-template-columns: 1fr; }
     .ed-sidebar { position: static; max-height: none; }
   }
