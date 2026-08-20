@@ -15,6 +15,15 @@
   .active-toggle.on::after { left: 20px; }
   .wf-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 16px; }
   .wf-stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 900px) {
+    /* Six stat cards can't usefully wrap to 2-per-row on a phone -- shrink
+       them and let the row scroll horizontally instead, same tradeoff as
+       the booking calendar. */
+    .wf-stats { display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 8px; }
+    .wf-stats .pra-card { flex-shrink: 0; width: 104px; padding: 10px 12px !important; }
+    .wf-stats .pra-label { font-size: .6rem; }
+    .wf-stats .pra-h1 { font-size: 1.25rem; }
+  }
   .wf-submenu { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); flex-wrap: wrap; }
   .wf-submenu button { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .84rem; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
   .wf-submenu button:hover { color: var(--pra-white); }
