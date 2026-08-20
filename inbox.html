@@ -143,7 +143,7 @@
   /* Native date/time pickers render a black-on-black calendar icon on a
      dark background otherwise -- color-scheme flips both to the light
      variant so the icon and popover are visible (same fix as chat-app). */
-  #chatTaskDate, #chatTaskTime { color-scheme: dark; color: #fff; }
+  #taskPanelDate, #taskPanelTime { color-scheme: dark; color: #fff; }
 
   /* ── Chat sidebar: filter/sort row ── */
   .chat-sidebar-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; flex-shrink: 0; }
@@ -156,8 +156,29 @@
   .context-menu button:hover { background: rgba(255,255,255,0.06); }
   .context-menu button.danger { color: var(--pra-red); }
 
-  /* ── Chat panel header: + Task control ── */
-  .chat-panel-task-btn { flex-shrink: 0; }
+  /* ── Chat panel header: status + tasks control ── */
+  .chat-panel-task-btn { flex-shrink: 0; position: relative; }
+  .chat-panel-actions { display: flex; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
+  .chat-panel-actions #chatStatusSelect { flex: 1; min-width: 0; max-width: none; }
+  /* Anchored under the Tasks button, not a full modal -- lists existing
+     tasks (edit/delete) plus a quick-add form. Closes on click-out or
+     Cancel, never needs its own scroll to be usable on a phone screen. */
+  .task-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 400; width: 280px; max-width: 88vw; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 12px; }
+  .task-panel.open { display: block; }
+  .task-panel-list { max-height: 220px; overflow-y: auto; margin-bottom: 10px; }
+  .task-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); }
+  .task-panel-row:last-child { border-bottom: none; }
+  .task-panel-row input[type="text"] { flex: 1; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .82rem; padding: 2px 0; }
+  .task-panel-row input[type="text"]:focus { outline: none; border-bottom: 1px solid var(--pra-blue); }
+  .task-panel-row.done input[type="text"] { color: var(--pra-dim); text-decoration: line-through; }
+  .task-panel-row .task-panel-due { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
+  .task-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .9rem; padding: 0 2px; flex-shrink: 0; }
+  .task-panel-row button:hover { color: var(--pra-red); }
+  .task-panel-add { display: flex; flex-direction: column; gap: 6px; }
+  .task-panel-add input { font-size: .82rem; padding: 6px 8px; }
+  .task-panel-add-row { display: flex; gap: 6px; }
+  .task-panel-add-row input[type="date"], .task-panel-add-row input[type="time"] { flex: 1; min-width: 0; }
+  .task-panel-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
 
   /* ── Contact details overlay (opened from the chat panel's name link) ── */
   .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); margin: 0 6px 6px 0; }
@@ -270,23 +291,6 @@
     <div class="btn-row" style="display:flex;gap:10px">
       <button class="pra-btn" style="flex:1;background:var(--pra-red);border-color:var(--pra-red)" id="confirmDeleteConvoBtn">Yes, delete it</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('deleteConvoModal')">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal-backdrop" id="chatTaskModal">
-  <div class="pra-panel modal-box">
-    <div class="pra-h2" style="margin-bottom:16px">New Task</div>
-    <div class="pra-muted" id="chatTaskFor" style="font-size:.82rem;margin-bottom:14px"></div>
-    <div class="field"><label class="pra-label">Type</label><select class="pra-select" id="chatTaskType"><option value="task">Task</option><option value="reminder">Reminder</option></select></div>
-    <div class="field"><label class="pra-label">Title</label><input class="pra-input" id="chatTaskTitle"/></div>
-    <div class="field-row">
-      <div class="field"><label class="pra-label">Date</label><input class="pra-input" type="date" id="chatTaskDate"/></div>
-      <div class="field"><label class="pra-label">Time</label><input class="pra-input" type="time" id="chatTaskTime"/></div>
-    </div>
-    <div class="btn-row" style="display:flex;gap:10px;margin-top:14px">
-      <button class="pra-btn" id="saveChatTaskBtn" style="flex:1">Save</button>
-      <button class="pra-btn pra-btn-ghost" onclick="closeModal('chatTaskModal')">Cancel</button>
     </div>
   </div>
 </div>
@@ -591,28 +595,92 @@ document.getElementById('confirmDeleteConvoBtn').onclick = async () => {
   loadConversations();
 };
 
-// ── Chat panel: contact-bound "+ Task" ───────────────────────────────────
-function openChatTaskModal(c) {
-  document.getElementById('chatTaskModal').dataset.contactId = c.contactId;
-  document.getElementById('chatTaskFor').textContent = `For: ${c.displayName}`;
-  document.getElementById('chatTaskType').value = 'task';
-  document.getElementById('chatTaskTitle').value = '';
-  document.getElementById('chatTaskDate').value = '';
-  document.getElementById('chatTaskTime').value = '';
-  openModal('chatTaskModal');
+// ── Chat panel: contact-bound Tasks panel ────────────────────────────────
+// Anchored dropdown (not a modal) so it never needs its own scroll to
+// reach the "Add" button on a phone screen -- lists existing tasks with
+// inline edit (click the title) / delete, plus a quick-add form. Reuses
+// threadItems (already loaded by loadThread() for this contact) instead
+// of a separate fetch.
+function taskPanelRowHtml(t) {
+  return `
+    <div class="task-panel-row${t.done ? ' done' : ''}" data-task-row="${t.id}">
+      <input type="checkbox" data-task-done="${t.id}" ${t.done ? 'checked' : ''}/>
+      <input type="text" data-task-title="${t.id}" value="${escapeHtml(t.title)}"/>
+      ${t.dueAt ? `<span class="task-panel-due">${fmtDate(t.dueAt)}</span>` : ''}
+      <button type="button" data-task-delete="${t.id}" title="Delete">&times;</button>
+    </div>
+  `;
 }
-document.getElementById('saveChatTaskBtn').onclick = async () => {
-  const title = document.getElementById('chatTaskTitle').value.trim();
+function renderTaskPanel() {
+  const list = document.getElementById('taskPanelList');
+  const tasks = threadItems.filter(i => i.itemType === 'task').sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
+  list.innerHTML = tasks.length ? tasks.map(taskPanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No tasks yet.</div>';
+  list.querySelectorAll('[data-task-done]').forEach(cb => cb.onchange = async () => {
+    const id = cb.dataset.taskDone;
+    await fetch('/api/tasks/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: cb.checked }) });
+    const t = threadItems.find(i => i.id === id); if (t) t.done = cb.checked;
+    renderTaskPanel();
+  });
+  list.querySelectorAll('[data-task-title]').forEach(inp => {
+    const commit = async () => {
+      const id = inp.dataset.taskTitle;
+      const title = inp.value.trim();
+      if (!title) { inp.value = threadItems.find(i => i.id === id)?.title || ''; return; }
+      await fetch('/api/tasks/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
+      const t = threadItems.find(i => i.id === id); if (t) t.title = title;
+    };
+    inp.addEventListener('blur', commit);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+  });
+  list.querySelectorAll('[data-task-delete]').forEach(btn => btn.onclick = async () => {
+    const id = btn.dataset.taskDelete;
+    await fetch('/api/tasks/' + id, { method: 'DELETE' });
+    threadItems = threadItems.filter(i => i.id !== id);
+    renderTaskPanel();
+  });
+}
+function toggleTaskPanel(contactId) {
+  const panel = document.getElementById('taskPanel');
+  const opening = !panel.classList.contains('open');
+  panel.classList.toggle('open', opening);
+  panel.dataset.contactId = contactId || '';
+  if (opening) {
+    document.getElementById('taskPanelTitle').value = '';
+    document.getElementById('taskPanelDate').value = '';
+    document.getElementById('taskPanelTime').value = '';
+    renderTaskPanel();
+  }
+}
+async function submitNewTask() {
+  const title = document.getElementById('taskPanelTitle').value.trim();
   if (!title) { showToast('Title is required', true); return; }
-  const contactId = document.getElementById('chatTaskModal').dataset.contactId;
-  const dateVal = document.getElementById('chatTaskDate').value;
-  const timeVal = document.getElementById('chatTaskTime').value;
+  const contactId = document.getElementById('taskPanel').dataset.contactId;
+  const dateVal = document.getElementById('taskPanelDate').value;
+  const timeVal = document.getElementById('taskPanelTime').value;
   const dueAt = dateVal ? new Date(`${dateVal}T${timeVal || '00:00'}`).toISOString() : null;
-  const body = { type: document.getElementById('chatTaskType').value, contactId, title, dueAt };
-  await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  closeModal('chatTaskModal');
-  showToast('Task created');
-};
+  const r = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'task', contactId, title, dueAt }) });
+  const { task } = await r.json();
+  threadItems.push({ ...task, itemType: 'task', at: task.dueAt || task.createdAt });
+  document.getElementById('taskPanelTitle').value = '';
+  document.getElementById('taskPanelDate').value = '';
+  document.getElementById('taskPanelTime').value = '';
+  renderTaskPanel();
+}
+// Delegated (not a direct getElementById().onclick) since the panel's DOM
+// is recreated every time renderThread() re-renders the chat panel header
+// -- a direct binding would go stale the moment a new conversation opens.
+// Same listener also handles click-out-to-close: clicks on the panel
+// itself or its trigger button are ignored (the trigger has its own
+// toggle handler, which would otherwise immediately re-close what it just
+// opened).
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'taskPanelCancelBtn') { toggleTaskPanel(null); return; }
+  if (e.target.id === 'taskPanelAddBtn') { submitNewTask(); return; }
+  const panel = document.getElementById('taskPanel');
+  if (!panel || !panel.classList.contains('open')) return;
+  if (panel.contains(e.target) || e.target.id === 'chatAddTaskBtn') return;
+  toggleTaskPanel(null);
+});
 function openConfirmPotential(c) {
   document.getElementById('confirmPotentialFrom').textContent = `From: ${c.displayName}`;
   document.getElementById('confirmFirst').value = '';
@@ -713,9 +781,26 @@ function renderThread() {
         </span>
         <div class="chat-panel-sub">${escapeHtml(c.contact?.email || '')}${c.contact?.email && c.contact?.phone ? ' · ' : ''}${escapeHtml(c.contact?.phone || '')}</div>
       </div>
-      <div style="flex:1"></div>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm chat-panel-task-btn" id="chatAddTaskBtn" type="button">+ Task</button>
-      <select class="pra-select" id="chatStatusSelect" style="max-width:200px;${avatarStyle(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
+    </div>
+    <div class="chat-panel-actions">
+      <div class="chat-panel-task-btn">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatAddTaskBtn" type="button">Tasks</button>
+        <div class="task-panel" id="taskPanel">
+          <div class="task-panel-list" id="taskPanelList"></div>
+          <div class="task-panel-add">
+            <input class="pra-input" id="taskPanelTitle" placeholder="New task..."/>
+            <div class="task-panel-add-row">
+              <input class="pra-input" type="date" id="taskPanelDate"/>
+              <input class="pra-input" type="time" id="taskPanelTime"/>
+            </div>
+          </div>
+          <div class="task-panel-footer">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="taskPanelCancelBtn" type="button">Cancel</button>
+            <button class="pra-btn pra-btn-sm" id="taskPanelAddBtn" type="button" style="margin-left:8px">Add</button>
+          </div>
+        </div>
+      </div>
+      <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
     </div>
     ${emailStatsHtml(emailItems)}
     <div class="chat-thread" id="chatThread"></div>
@@ -757,14 +842,14 @@ function renderThread() {
   }
   document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;
-  document.getElementById('chatAddTaskBtn').onclick = () => openChatTaskModal(c);
+  document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
   document.getElementById('chatStatusSelect').addEventListener('change', async (e) => {
     const status = e.target.value;
     if (!status || !c.contactId) return;
     await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
     showToast('Status updated');
-    e.target.setAttribute('style', `max-width:200px;${avatarStyle(status)}`);
+    e.target.setAttribute('style', avatarStyle(status));
     await loadRefs();
     // A status change can auto-archive the conversation (STOP / Bad Fit &
     // Blacklist) -- loadRefs() only refreshes contacts/statuses/users, not
