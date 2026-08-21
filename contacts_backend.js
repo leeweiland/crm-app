@@ -154,7 +154,7 @@ export async function handleContactsRequest(req, res, url) {
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       const body = await readJsonBody(req);
       const prevListIds = [...contact.listIds], prevTags = [...contact.tags], prevStatus = contact.status;
-      const allowed = ["type", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
+      const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
       for (const k of allowed) if (k in body) contact[k] = body[k];
       if (contact.status !== prevStatus) applyStatusOptOut(contact);
       contact.updatedAt = new Date().toISOString();

@@ -64,6 +64,7 @@
   .convo-preview { font-size: .78rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; display: flex; align-items: center; gap: 4px; }
   .convo-preview .bubble-ticks { display: inline-flex; flex-shrink: 0; }
   .convo-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  .convo-time-row { display: flex; align-items: center; gap: 5px; }
   .convo-time { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
   .convo-time.has-unread { color: #39ff14; font-weight: 700; }
   .convo-actions-row { display: flex; align-items: center; gap: 1px; }
@@ -166,7 +167,10 @@
   /* ── Chat panel header: status + tasks control ── */
   .chat-panel-task-btn { flex-shrink: 0; position: relative; }
   .chat-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
-  .chat-panel-actions #chatStatusSelect { flex: 1; min-width: 140px; max-width: none; }
+  /* Deliberately NOT flex:1/min-width -- that stretched this to fill the
+     whole row width regardless of the status text length. Auto-width lets
+     it shrink-wrap like every other pill/badge in this app. */
+  .chat-panel-actions #chatStatusSelect { flex: 0 0 auto; width: auto; }
   /* Anchored under the Tasks button, not a full modal -- lists existing
      tasks (edit/delete) plus a quick-add form. Closes on click-out or
      Cancel, never needs its own scroll to be usable on a phone screen. */
@@ -388,6 +392,11 @@ const STATUS_GLOW = {
 // A thread with one of the CRM's own staff/admin users (e.g. testing by
 // messaging lee@ or alexis@) glows blue regardless of lead status -- "this
 // is one of us", not a lead-stage signal.
+// Same fix as contact-detail.html's applyStatusGlow -- a native <select>
+// sizes to its widest OPTION ("FOLLOW UP (They have a Task / Date set)"),
+// not the selected one, so CSS width:auto alone still renders it as a wide
+// bar regardless of which status is actually showing.
+function statusSelectWidthRule(status) { return `width:${(status || 'Change status...').length + 4}ch`; }
 function avatarStyle(status, email) {
   const isStaff = email && allUsers.some(u => u.email?.toLowerCase() === email.toLowerCase());
   const glow = isStaff ? '#009bff' : STATUS_GLOW[status];
@@ -499,7 +508,10 @@ function renderSidebar() {
         ${!c.contactId ? '<button class="pra-btn pra-btn-ghost pra-btn-sm convo-add-btn" data-add-contact type="button">+ Add Contact</button>' : ''}
       </div>
       <div class="convo-side">
-        <div class="convo-time${hasUnread ? ' has-unread' : ''}">${fmtShort(c.lastAt)}</div>
+        <div class="convo-time-row">
+          ${c.contact?.programType ? `<span class="pra-badge pra-badge-${c.contact.programType}" style="font-size:.56rem;padding:2px 7px">${escapeHtml(c.contact.programType)}</span>` : ''}
+          <div class="convo-time${hasUnread ? ' has-unread' : ''}">${fmtShort(c.lastAt)}</div>
+        </div>
         <div class="convo-actions-row">
           ${c.contactId ? `<button class="convo-icon-btn pin-btn${c.pinned ? ' on' : ''}" data-pin="${c.contactId}" data-pin-on="${c.pinned ? '0' : '1'}" title="${c.pinned ? 'Unpin' : 'Pin to top'}">${PIN_ICON}</button>` : ''}
           ${c.contactId ? `<button class="convo-icon-btn star-btn${c.starred ? ' on' : ''}" data-star="${c.contactId}" data-star-on="${c.starred ? '0' : '1'}" title="${c.starred ? 'Unstar' : 'Star'}">${STAR_ICON}</button>` : ''}
@@ -853,10 +865,10 @@ function renderThread() {
       <button class="chat-back-btn" id="chatBackBtn" title="Back to chats">&larr;</button>
       <div>
         <span class="chat-panel-name-row">
+          ${c.contact?.programType ? `<span class="pra-badge pra-badge-${c.contact.programType}">${escapeHtml(c.contact.programType)}</span>` : ''}
           <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(c.displayName)}</a>
-          ${c.contact?.firstSeenAt ? `<span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : ''}
         </span>
-        <div class="chat-panel-sub">${escapeHtml(c.contact?.email || '')}${c.contact?.email && c.contact?.phone ? ' · ' : ''}${escapeHtml(c.contact?.phone || '')}</div>
+        <div class="chat-panel-sub">${escapeHtml(c.contact?.email || '')}${c.contact?.email && c.contact?.phone ? ' · ' : ''}${c.contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(c.contact.phone)}</a>` : ''}${c.contact?.firstSeenAt ? ` · <span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : ''}</div>
       </div>
     </div>
     <div class="chat-panel-actions">
@@ -890,7 +902,7 @@ function renderThread() {
           </div>
         </div>
       </div>
-      <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
+      <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)};${statusSelectWidthRule(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
     </div>
     ${emailStatsHtml(emailItems)}
     <div class="chat-thread" id="chatThread"></div>
@@ -940,7 +952,7 @@ function renderThread() {
     if (!status || !c.contactId) return;
     await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
     showToast('Status updated');
-    e.target.setAttribute('style', avatarStyle(status));
+    e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
     await loadRefs();
     // A status change can auto-archive the conversation (STOP / Bad Fit &
     // Blacklist) -- loadRefs() only refreshes contacts/statuses/users, not

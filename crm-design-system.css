@@ -146,6 +146,11 @@ body { margin: 0; }
 .pra-badge-admin { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
 .pra-badge-superuser { background: rgba(255,59,59,0.15); color: var(--pra-red); }
 .pra-badge-user { background: rgba(255,255,255,0.12); color: #fff; }
+.pra-badge-online { background: rgba(57,255,20,0.15); color: #39ff14; border-color: rgba(57,255,20,0.35); }
+.pra-badge-gym { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+
+.pra-tel-link { color: var(--pra-blue); text-decoration: none; }
+.pra-tel-link:hover { text-decoration: underline; }
 
 .pra-avatar {
   width: 38px; height: 38px; border-radius: 50%;

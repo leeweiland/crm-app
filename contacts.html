@@ -53,6 +53,10 @@
   .contacts-table .frozen-col-1 { left: 0; }
   .contacts-table .frozen-col-2 { left: 110px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
   .contacts-table tr.clickable:hover .frozen-col-1, .contacts-table tr.clickable:hover .frozen-col-2 { background: var(--pra-panel-2); }
+  .columns-panel { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 400; width: 240px; max-height: 340px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 10px; }
+  .columns-panel.show { display: block; }
+  .columns-panel label { display: flex; align-items: center; gap: 8px; font-size: .82rem; padding: 5px 4px; cursor: pointer; }
+  .columns-panel label:hover { background: rgba(255,255,255,0.05); border-radius: 6px; }
 </style>
 </head>
 <body>
@@ -76,6 +80,10 @@
           <div class="toolbar-row2">
             <select class="pra-select" id="statusFilter"><option value="">All statuses</option></select>
             <a class="pra-link filter-toggle" id="filterToggle">+ Filters</a>
+            <div style="position:relative">
+              <a class="pra-link filter-toggle" id="columnsToggle">Columns</a>
+              <div class="columns-panel" id="columnsPanel"></div>
+            </div>
             <button class="pra-btn" id="addContactBtn">+ Add Contact</button>
           </div>
         </div>
@@ -100,16 +108,8 @@
 
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table contacts-table">
-            <thead><tr>
-              <th class="sortable frozen-col-1" data-sort="first">First</th>
-              <th class="sortable frozen-col-2" data-sort="last">Last</th>
-              <th class="sortable" data-sort="email">Email</th>
-              <th class="sortable" data-sort="phone">Phone</th>
-              <th class="sortable" data-sort="status">Status</th>
-              <th>Tags</th>
-              <th class="sortable" data-sort="createdAt">Created</th>
-            </tr></thead>
-            <tbody id="contactsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+            <thead><tr id="contactsHeadRow"></tr></thead>
+            <tbody id="contactsBody"><tr><td class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -482,6 +482,49 @@ document.getElementById('confirmSaveSegmentBtn').onclick = async () => {
 // ── Contacts list ────────────────────────────────────────────────────────
 let currentContacts = [];
 let contactSort = { field: 'name', dir: 1 };
+
+// First/Last are always shown (they're the frozen/sticky columns, and the
+// primary way to identify a row) -- everything else, including every
+// custom field, is toggleable via the Columns panel below.
+const BASE_COLUMNS = [
+  { key: 'first', label: 'First', sortable: true, frozen: 1, always: true, render: c => escapeHtml(c.first) },
+  { key: 'last', label: 'Last', sortable: true, frozen: 2, always: true, render: c => escapeHtml(c.last) },
+  { key: 'email', label: 'Email', sortable: true, render: c => escapeHtml(c.email || '') },
+  { key: 'phone', label: 'Phone', sortable: true, render: c => c.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.phone.replace(/[^\d+]/g, ''))}" onclick="event.stopPropagation()">${escapeHtml(c.phone)}</a>` : '' },
+  { key: 'status', label: 'Status', sortable: true, render: c => c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : '' },
+  { key: 'programType', label: 'Type', sortable: true, render: c => c.programType ? `<span class="pra-badge pra-badge-${c.programType}">${escapeHtml(c.programType)}</span>` : '' },
+  { key: 'tags', label: 'Tags', sortable: false, render: c => (c.tags || []).length ? c.tags.length + ' tag(s)' : '' },
+  { key: 'createdAt', label: 'Created', sortable: true, render: c => `<span class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</span>` },
+];
+function customFieldColumns() {
+  return allCustomFields.map(f => ({ key: 'customFields.' + f.id, label: f.label, sortable: false, render: c => escapeHtml(c.customFields?.[f.id] || '') }));
+}
+function allColumnDefs() { return [...BASE_COLUMNS, ...customFieldColumns()]; }
+function activeColumns() { return allColumnDefs().filter(c => c.always || visibleColumns.includes(c.key)); }
+
+const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'programType', 'tags', 'createdAt'];
+function loadVisibleColumns() {
+  try { return JSON.parse(localStorage.getItem('contactsVisibleColumns')) || DEFAULT_VISIBLE_COLUMNS; }
+  catch { return DEFAULT_VISIBLE_COLUMNS; }
+}
+let visibleColumns = loadVisibleColumns();
+function renderColumnsPanel() {
+  document.getElementById('columnsPanel').innerHTML = allColumnDefs().map(col => `
+    <label><input type="checkbox" data-col-toggle="${col.key}" ${col.always || visibleColumns.includes(col.key) ? 'checked' : ''} ${col.always ? 'disabled' : ''}/> ${escapeHtml(col.label)}</label>
+  `).join('');
+  document.querySelectorAll('[data-col-toggle]').forEach(cb => cb.onchange = () => {
+    const key = cb.dataset.colToggle;
+    if (cb.checked) { if (!visibleColumns.includes(key)) visibleColumns.push(key); }
+    else visibleColumns = visibleColumns.filter(k => k !== key);
+    localStorage.setItem('contactsVisibleColumns', JSON.stringify(visibleColumns));
+    renderContactsTable();
+  });
+}
+document.getElementById('columnsToggle').onclick = (e) => { e.stopPropagation(); document.getElementById('columnsPanel').classList.toggle('show'); };
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#columnsPanel') && !e.target.closest('#columnsToggle')) document.getElementById('columnsPanel').classList.remove('show');
+});
+
 function sortContacts(contacts) {
   const { field, dir } = contactSort;
   return [...contacts].sort((a, b) => {
@@ -492,30 +535,28 @@ function sortContacts(contacts) {
   });
 }
 function renderContactsTable() {
-  document.querySelectorAll('th.sortable').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.sort === contactSort.field);
-    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
-    if (th.dataset.sort === contactSort.field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${contactSort.dir === 1 ? '▲' : '▼'}</span>`);
+  const cols = activeColumns();
+  const headRow = document.getElementById('contactsHeadRow');
+  headRow.innerHTML = cols.map(col => {
+    const frozenClass = col.frozen === 1 ? ' frozen-col-1' : col.frozen === 2 ? ' frozen-col-2' : '';
+    const sortedClass = col.sortable && contactSort.field === col.key ? ' sorted' : '';
+    const arrow = col.sortable && contactSort.field === col.key ? `<span class="sort-arrow">${contactSort.dir === 1 ? '▲' : '▼'}</span>` : '';
+    return `<th class="${col.sortable ? 'sortable' : ''}${sortedClass}${frozenClass}"${col.sortable ? ` data-sort="${col.key}"` : ''}>${escapeHtml(col.label)}${arrow}</th>`;
+  }).join('');
+  headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+    if (contactSort.field === th.dataset.sort) contactSort.dir *= -1;
+    else contactSort = { field: th.dataset.sort, dir: 1 };
+    renderContactsTable();
   });
+
   const body = document.getElementById('contactsBody');
-  if (!currentContacts.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No contacts match.</td></tr>'; return; }
+  if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; return; }
   body.innerHTML = sortContacts(currentContacts).map(c => `
     <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
-      <td class="frozen-col-1">${escapeHtml(c.first)}</td>
-      <td class="frozen-col-2">${escapeHtml(c.last)}</td>
-      <td>${escapeHtml(c.email || '')}</td>
-      <td>${escapeHtml(c.phone || '')}</td>
-      <td>${c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : ''}</td>
-      <td>${(c.tags || []).length ? c.tags.length + ' tag(s)' : ''}</td>
-      <td class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</td>
+      ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}">${col.render(c)}</td>`).join('')}
     </tr>
   `).join('');
 }
-document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
-  if (contactSort.field === th.dataset.sort) contactSort.dir *= -1;
-  else contactSort = { field: th.dataset.sort, dir: 1 };
-  renderContactsTable();
-}));
 async function loadContacts() {
   const q = document.getElementById('searchInput').value.trim();
   const status = document.getElementById('statusFilter').value;
@@ -525,7 +566,7 @@ async function loadContacts() {
   if (activeFilter) params.set('filter', JSON.stringify(activeFilter));
   const r = await fetch('/api/contacts?' + params.toString());
   const body = document.getElementById('contactsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load contacts.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td class="pra-muted">Could not load contacts.</td></tr>'; return; }
   currentContacts = (await r.json()).contacts;
   renderContactsTable();
 }
@@ -717,6 +758,7 @@ document.getElementById('scanDuplicatesBtn').onclick = async () => {
 (async function init() {
   await loadStatuses();
   await loadCustomFields();
+  renderColumnsPanel();
   await Promise.all([loadTags(), loadLists()]);
   await loadSegments();
   await loadContacts();

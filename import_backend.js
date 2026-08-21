@@ -149,6 +149,15 @@ function mergeCloseCustomFields(contact, closeCustom) {
     const field = getOrCreateCustomField(contact.type === "contact" ? "contact" : "lead", label);
     if (!field) return;
     contact.customFields[field.id] = Array.isArray(value) ? value.join(", ") : String(value);
+    // Close's "TYPE" custom field (ONLINE/GYM) is the only real membership-
+    // program signal this app has -- promoted to its own first-class
+    // contact.programType (lowercased) so every UI spot that shows it reads
+    // one consistent field instead of two different customField ids split
+    // by entityType.
+    if (label === "TYPE") {
+      const v = (Array.isArray(value) ? value[0] : value || "").toString().trim().toLowerCase();
+      if (v === "online" || v === "gym") contact.programType = v;
+    }
   });
 }
 export async function enrichStatusFromClose(contact) {

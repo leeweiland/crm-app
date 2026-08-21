@@ -78,6 +78,17 @@
      black-on-white here regardless of the pill's per-status color. */
   .status-pill-select option { background: #fff; color: #000; }
   .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
+  /* Native <details>/<summary> -- no accordion pattern existed anywhere in
+     this app yet, kept deliberately plain/native rather than inventing a
+     new JS-driven widget for six read-only sections. */
+  .data-accordion { border: 1px solid var(--pra-border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .data-accordion summary { padding: 9px 12px; cursor: pointer; font-size: .82rem; font-weight: 700; list-style: none; display: flex; align-items: center; justify-content: space-between; }
+  .data-accordion summary::-webkit-details-marker { display: none; }
+  .data-accordion summary::after { content: '+'; color: var(--pra-dim); font-weight: 400; }
+  .data-accordion[open] summary::after { content: '\2212'; }
+  .data-accordion summary:hover { background: var(--pra-panel-2); }
+  .data-accordion-body { padding: 4px 12px 12px; font-size: .8rem; }
+  .data-accordion-body a { color: var(--pra-blue); word-break: break-all; }
 </style>
 </head>
 <body>
@@ -89,15 +100,20 @@
         <a class="pra-link" href="/contacts.html">&larr; Back to Contacts</a>
         <a class="pra-link" id="backToChatLink" style="margin-left:16px">&larr; Back to Chat</a>
         <div class="contact-header">
-          <div class="pra-h1" id="contactName">Loading…</div>
-          <select class="status-pill-select" id="fStatus"></select>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span id="contactTypeBadge"></span>
+              <div class="pra-h1" id="contactName">Loading…</div>
+            </div>
+            <select class="status-pill-select" id="fStatus" style="margin-top:8px"></select>
+          </div>
         </div>
       </div>
 
       <div class="detail-grid" id="detailGrid">
         <div class="detail-col-left" id="detailColLeft">
           <div class="pra-panel" style="padding:22px;margin-bottom:16px">
-            <div class="pra-h2" style="margin-bottom:14px">Details</div>
+            <div class="pra-h2" style="margin-bottom:14px;display:flex;align-items:center;gap:8px">Details <span id="detailsTypeBadge"></span></div>
             <div class="field-row">
               <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="fFirst"/></div>
               <div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="fLast"/></div>
@@ -105,7 +121,12 @@
             <div class="field"><label class="pra-label">Account / Company</label><input class="pra-input" id="fAccount"/></div>
             <div class="field-row">
               <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="fEmail"/></div>
-              <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="fPhone"/></div>
+              <div class="field"><label class="pra-label">Phone</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input class="pra-input" id="fPhone"/>
+                  <a class="pra-tel-link" id="fPhoneDial" title="Call" style="display:none;flex-shrink:0;font-size:1.1rem">&#128222;</a>
+                </div>
+              </div>
             </div>
 
             <div class="sub-section-label">Tags</div>
@@ -115,6 +136,14 @@
             <div class="sub-section-label">Lists</div>
             <div id="listsWrap"></div>
             <select class="pra-select" id="addListSelect" style="margin-top:8px"><option value="">+ Add to a list...</option></select>
+
+            <div class="sub-section-label">Data Sources</div>
+            <details class="data-accordion"><summary>Hyros Tags</summary><div class="data-accordion-body" id="accHyrosTags"></div></details>
+            <details class="data-accordion"><summary>Hyros Tracked URL &amp; Previous URL</summary><div class="data-accordion-body" id="accHyrosUrls"></div></details>
+            <details class="data-accordion"><summary>Hyros First Click</summary><div class="data-accordion-body" id="accHyrosFirstClick"></div></details>
+            <details class="data-accordion"><summary>Hyros Last Click</summary><div class="data-accordion-body" id="accHyrosLastClick"></div></details>
+            <details class="data-accordion"><summary>AC Tags</summary><div class="data-accordion-body" id="accAcTags"></div></details>
+            <details class="data-accordion"><summary>AC Lists</summary><div class="data-accordion-body" id="accAcLists"></div></details>
 
             <div class="field-row" style="margin:16px 0 0">
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
@@ -163,10 +192,20 @@ function hexToRgba(hex, alpha) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
+// A native <select>'s intrinsic width sizes to its WIDEST <option> (e.g.
+// "FOLLOW UP (They have a Task / Date set)"), not the one actually
+// selected -- setting width:auto in CSS doesn't fix that, it just inherits
+// this same behavior. Sized explicitly here instead, in `ch` units against
+// the currently selected option's own text length, so a short status like
+// "ENROLLED" renders as a small pill instead of stretching to fit the
+// longest status in the whole list.
+function statusSelectWidthCh(status) { return (status || '').length + 4 + 'ch'; }
 function applyStatusGlow(status) {
+  const sel = document.getElementById('fStatus');
   const glow = STATUS_GLOW[status];
-  if (!glow) { document.getElementById('fStatus').removeAttribute('style'); return; }
-  document.getElementById('fStatus').setAttribute('style', `--status-glow:${glow};--status-glow-soft:${glow}88;background:${hexToRgba(glow, 0.15)};color:${glow}`);
+  const widthRule = `width:${statusSelectWidthCh(status)};`;
+  if (!glow) { sel.setAttribute('style', widthRule); return; }
+  sel.setAttribute('style', `${widthRule}--status-glow:${glow};--status-glow-soft:${glow}88;background:${hexToRgba(glow, 0.15)};color:${glow}`);
 }
 
 async function loadRefs() {
@@ -209,6 +248,7 @@ function renderTags() {
   if (toggle) toggle.onclick = () => { tagsExpanded = !tagsExpanded; renderTags(); };
   const sel = document.getElementById('addTagSelect');
   sel.innerHTML = '<option value="">+ Add a tag...</option>' + allTags.filter(t => !contact.tags.includes(t.id)).map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+  renderDataSourceAccordions();
 }
 document.getElementById('addTagSelect').onchange = async (e) => {
   if (!e.target.value) return;
@@ -236,6 +276,7 @@ function renderLists() {
   if (toggle) toggle.onclick = () => { listsExpanded = !listsExpanded; renderLists(); };
   const sel = document.getElementById('addListSelect');
   sel.innerHTML = '<option value="">+ Add to a list...</option>' + allLists.filter(l => !contact.listIds.includes(l.id)).map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+  renderDataSourceAccordions();
 }
 document.getElementById('addListSelect').onchange = async (e) => {
   if (!e.target.value) return;
@@ -245,6 +286,52 @@ document.getElementById('addListSelect').onchange = async (e) => {
   e.target.value = '';
 };
 
+function renderTypeBadge() {
+  const pt = contact.programType;
+  const html = pt ? `<span class="pra-badge pra-badge-${pt}">${escapeHtml(pt)}</span>` : '';
+  document.getElementById('contactTypeBadge').innerHTML = html;
+  document.getElementById('detailsTypeBadge').innerHTML = html;
+}
+function renderPhoneDialLink() {
+  const link = document.getElementById('fPhoneDial');
+  const digits = (contact.phone || '').replace(/[^\d+]/g, '');
+  if (digits) { link.href = 'tel:' + digits; link.style.display = ''; }
+  else { link.removeAttribute('href'); link.style.display = 'none'; }
+}
+// Hyros tag names all follow one of "@" (ad/email/keyword touch), "$"
+// (purchase), or "!" (Hyros's own internal bookkeeping) -- everything else
+// on a contact's flat tags array came from AC (or was added manually in
+// this CRM). There's no per-tag source field in the data model to split on
+// directly (see getOrCreateTag -- matches by name only, source-agnostic),
+// so this is a naming-convention split, not a stored fact.
+function isHyrosTagName(name) { return /^[@$!]/.test(name); }
+function pillHtml(name) { return `<span class="tag-pill" style="cursor:default">${escapeHtml(name)}</span>`; }
+function renderDataSourceAccordions() {
+  const tagNames = (contact.tags || []).map(id => allTags.find(t => t.id === id)?.name).filter(Boolean);
+  const hyrosTags = tagNames.filter(isHyrosTagName);
+  const acTags = tagNames.filter(n => !isHyrosTagName(n));
+  document.getElementById('accHyrosTags').innerHTML = hyrosTags.length ? hyrosTags.map(pillHtml).join('') : '<span class="pra-muted">None.</span>';
+  document.getElementById('accAcTags').innerHTML = acTags.length ? acTags.map(pillHtml).join('') : '<span class="pra-muted">None.</span>';
+
+  const listNames = (contact.listIds || []).map(id => allLists.find(l => l.id === id)?.name).filter(Boolean);
+  document.getElementById('accAcLists').innerHTML = listNames.length ? listNames.map(pillHtml).join('') : '<span class="pra-muted">Not on any lists.</span>';
+
+  const urlRow = (label, url) => url ? `<div style="margin-bottom:8px"><b>${label}:</b><br/><a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a></div>` : '';
+  const urlsHtml = urlRow('Tracked URL', contact.hyrosTrackedUrl) + urlRow('Previous URL', contact.hyrosPreviousUrl);
+  document.getElementById('accHyrosUrls').innerHTML = urlsHtml || '<span class="pra-muted">Not captured for this contact (only available from a CSV export, Hyros’s API doesn’t expose it).</span>';
+
+  // "First ad click"/"Last ad click" activity entries are logged by
+  // hyros_backend.js's mergeHyrosActivity() at import time -- same
+  // thread items already loaded for the Conversation panel, just filtered
+  // to the "activity" channel here instead of re-fetched.
+  const firstClick = threadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('First ad click'));
+  const lastClick = threadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('Last ad click'));
+  const clickHtml = (item) => item
+    ? `<div><b>${escapeHtml(item.subject || '')}</b></div><div class="pra-muted" style="margin-top:2px">${escapeHtml(item.body || '')}</div><div class="pra-muted" style="margin-top:4px;font-size:.74rem">${fmtDate(item.at)}</div>`
+    : '<span class="pra-muted">Not captured for this contact.</span>';
+  document.getElementById('accHyrosFirstClick').innerHTML = clickHtml(firstClick);
+  document.getElementById('accHyrosLastClick').innerHTML = clickHtml(lastClick);
+}
 function renderCustomFields() {
   const wrap = document.getElementById('customFieldsWrap');
   if (!allFields.length) { wrap.innerHTML = ''; return; }
@@ -278,6 +365,7 @@ async function autoSaveDetails() {
   document.querySelectorAll('.custom-field-input').forEach(inp => { contact.customFields[inp.dataset.field] = inp.value; });
   await saveContact();
   document.getElementById('contactName').textContent = contact.first + ' ' + contact.last;
+  renderPhoneDialLink();
   renderConvoPanel();
   showToast('Saved');
 }
@@ -310,6 +398,8 @@ document.getElementById('deleteBtn').onclick = async () => {
   statusSel.addEventListener('change', () => { applyStatusGlow(statusSel.value); autoSaveDetails(); });
   document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
   document.getElementById('fSmsOptOut').checked = !!contact.smsOptOut;
+  renderTypeBadge();
+  renderPhoneDialLink();
   renderCustomFields();
   renderTags();
   renderLists();
@@ -421,6 +511,7 @@ async function loadThread() {
   const r = await fetch('/api/inbox/contact/' + contactId);
   threadItems = r.ok ? (await r.json()).items : [];
   renderConvoPanel();
+  renderDataSourceAccordions();
 }
 // ── Details column: drag-to-resize, width remembered across visits ──────
 (function initDetailResize() {
