@@ -47,8 +47,24 @@ export async function handleInboxRequest(req, res, url) {
   // ── Chat-style conversation list -- one row per contact (or per raw
   // from/to for a not-yet-confirmed Potential Contact) with any email/sms
   // activity, most-recently-active first. Powers the Inbox's left sidebar.
+  //
+  // Filtering/sorting/search all happen HERE, before pagination, rather
+  // than being applied client-side to whatever page happens to be loaded
+  // -- with a large conversation list, a client-side filter over just the
+  // first page would silently miss matches further down, and "search"
+  // needs to cover the whole list regardless of scroll position. Only the
+  // final page slice is ever serialized/sent, which is what actually
+  // fixes the "too slow to load" problem: the JSON payload and the DOM
+  // render are both bounded by `limit`, not by total conversation count.
   if (p === "/api/inbox/conversations" && req.method === "GET") {
     const channel = url.searchParams.get("channel"); // 'email' | 'sms' | null (both, plus form/booking activity)
+    const statusFilter = url.searchParams.get("status") || "";
+    const typeFilter = url.searchParams.get("type") || "";
+    const bucket = url.searchParams.get("filter") || "all"; // all|done|unresponded|archived|favorites
+    const sortDir = url.searchParams.get("sort") === "oldest" ? "oldest" : "newest";
+    const search = (url.searchParams.get("search") || "").trim().toLowerCase();
+    const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("limit"), 10) || 40));
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
     const contacts = readJson(CONTACTS_FILE, []);
     const messages = readJson(MESSAGE_LOG_FILE, [])
       .filter(m => ["email", "sms", "form", "booking", "activity"].includes(m.channel))
@@ -95,18 +111,36 @@ export async function handleInboxRequest(req, res, url) {
         done: !!meta?.done && unreadCount === 0,
         lastStatus: lastMine?.status || null, lastOpened,
       };
-    }).sort((a, b) => {
+    });
+
+    let rows = conversations;
+    if (search) rows = rows.filter(c => c.displayName.toLowerCase().includes(search));
+    // Archived conversations (opted-out / blacklisted contacts, or manually
+    // archived) stay out of every other view -- there's nothing left to
+    // action on them -- and only show up when Archived is explicitly selected.
+    if (bucket === "archived") rows = rows.filter(c => c.archived);
+    else {
+      rows = rows.filter(c => !c.archived);
+      if (bucket === "done") rows = rows.filter(c => c.done);
+      else if (bucket === "unresponded") rows = rows.filter(c => c.unreadCount > 0);
+      else if (bucket === "favorites") rows = rows.filter(c => c.starred);
+    }
+    if (statusFilter) rows = rows.filter(c => c.contact?.status === statusFilter);
+    if (typeFilter) rows = rows.filter(c => c.contact?.programType === typeFilter);
+
+    rows.sort((a, b) => {
       if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
       // Never-replied threads (lastInboundAt: null) sort after every thread
       // that has a real reply, oldest of the never-replied group last.
       if (!a.lastInboundAt || !b.lastInboundAt) {
-        if (!a.lastInboundAt && !b.lastInboundAt) return new Date(b.lastAt) - new Date(a.lastAt);
-        return a.lastInboundAt ? -1 : 1;
+        if (!a.lastInboundAt && !b.lastInboundAt) return sortDir === "oldest" ? new Date(a.lastAt) - new Date(b.lastAt) : new Date(b.lastAt) - new Date(a.lastAt);
+        return (a.lastInboundAt ? -1 : 1) * (sortDir === "oldest" ? -1 : 1);
       }
-      return new Date(b.lastInboundAt) - new Date(a.lastInboundAt);
+      return sortDir === "oldest" ? new Date(a.lastInboundAt) - new Date(b.lastInboundAt) : new Date(b.lastInboundAt) - new Date(a.lastInboundAt);
     });
 
-    return sendJson(res, 200, { conversations });
+    const page = rows.slice(offset, offset + limit);
+    return sendJson(res, 200, { conversations: page, total: rows.length, hasMore: offset + limit < rows.length });
   }
 
   // Pin/star a conversation -- purely presentational state, kept

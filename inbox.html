@@ -396,6 +396,12 @@ let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allContacts = [], allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
 let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', ctxMenuConvo = null, longPressTimer = null;
+// Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
+// rows at a time (filtered/sorted server-side first, see inbox_backend.js)
+// instead of loading the entire conversation list up front; scrolling near
+// the bottom fetches the next page and appends it.
+const CONVO_PAGE_SIZE = 40;
+let convoOffset = 0, convoHasMore = true, convoLoadingMore = false, convoSearchDebounce = null;
 const STOP_STATUSES = ['stop', 'bad fit / blacklist', 'bad fit', 'blacklist'];
 const initialContactId = new URLSearchParams(location.search).get('contact');
 
@@ -470,12 +476,31 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
 });
 
 // ── Chat: conversation sidebar ───────────────────────────────────────────
+function convoQueryParams(offset) {
+  const params = new URLSearchParams();
+  if (convoChannel) params.set('channel', convoChannel);
+  if (convoFilter && convoFilter !== 'all') params.set('filter', convoFilter);
+  if (convoStatus) params.set('status', convoStatus);
+  if (convoType) params.set('type', convoType);
+  if (convoSort && convoSort !== 'newest') params.set('sort', convoSort);
+  if (convoSearchQuery.trim()) params.set('search', convoSearchQuery.trim());
+  params.set('limit', CONVO_PAGE_SIZE);
+  params.set('offset', offset);
+  return params.toString();
+}
+// Full reset -- called on initial tab load and whenever any filter/sort/
+// search/channel control changes. Replaces `conversations` outright rather
+// than appending (see loadMoreConversations for that).
 async function loadConversations() {
   const list = document.getElementById('chatSidebarList');
   list.innerHTML = '<div class="pra-muted" style="padding:16px;font-size:.82rem">Loading…</div>';
-  const r = await fetch('/api/inbox/conversations' + (convoChannel ? '?channel=' + convoChannel : ''));
+  convoOffset = 0; convoHasMore = true;
+  const r = await fetch('/api/inbox/conversations?' + convoQueryParams(0));
   if (!r.ok) { list.innerHTML = '<div class="pra-muted" style="padding:16px;font-size:.82rem">Could not load.</div>'; return; }
-  conversations = (await r.json()).conversations;
+  const data = await r.json();
+  conversations = data.conversations;
+  convoOffset = conversations.length;
+  convoHasMore = !!data.hasMore;
   renderSidebar();
   if (initialContactId) {
     const match = conversations.find(c => c.contactId === initialContactId);
@@ -487,41 +512,34 @@ async function loadConversations() {
     if (stillThere) selectConversation(stillThere, true);
   }
 }
-function renderSidebar() {
-  const list = document.getElementById('chatSidebarList');
-  const q = convoSearchQuery.trim().toLowerCase();
-  let rows = q ? conversations.filter(c => c.displayName.toLowerCase().includes(q)) : conversations;
-  // Archived conversations (opted-out / blacklisted contacts, or manually
-  // archived) stay out of every other view -- there's nothing left to
-  // action on them -- and only show up when Archived is explicitly selected.
-  if (convoFilter === 'archived') rows = rows.filter(c => c.archived);
-  else {
-    rows = rows.filter(c => !c.archived);
-    if (convoFilter === 'done') rows = rows.filter(c => c.done);
-    else if (convoFilter === 'unresponded') rows = rows.filter(c => c.unreadCount > 0);
-    else if (convoFilter === 'favorites') rows = rows.filter(c => c.starred);
+// Scroll-triggered -- fetches the next page under the SAME filter/sort/
+// search and appends it, rather than re-rendering everything (which would
+// also reset scroll position right as the user is scrolling).
+async function loadMoreConversations() {
+  if (!convoHasMore || convoLoadingMore) return;
+  convoLoadingMore = true;
+  try {
+    const r = await fetch('/api/inbox/conversations?' + convoQueryParams(convoOffset));
+    if (!r.ok) return;
+    const data = await r.json();
+    conversations = conversations.concat(data.conversations);
+    convoOffset = conversations.length;
+    convoHasMore = !!data.hasMore;
+    appendConvoRows(data.conversations);
+  } finally {
+    convoLoadingMore = false;
   }
-  if (convoStatus) rows = rows.filter(c => c.contact?.status === convoStatus);
-  if (convoType) rows = rows.filter(c => c.contact?.programType === convoType);
-  // Sorts by last REPLY (lastInboundAt), not last activity of any kind --
-  // an automated drip send shouldn't be able to bump a cold lead above
-  // someone who actually just texted back. Threads with no reply yet sort
-  // to the bottom of "Newest first" / top of "Oldest first".
-  rows = [...rows].sort((a, b) => {
-    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
-    if (!a.lastInboundAt || !b.lastInboundAt) {
-      if (!a.lastInboundAt && !b.lastInboundAt) return convoSort === 'oldest' ? new Date(a.lastAt) - new Date(b.lastAt) : new Date(b.lastAt) - new Date(a.lastAt);
-      return (a.lastInboundAt ? -1 : 1) * (convoSort === 'oldest' ? -1 : 1);
-    }
-    return convoSort === 'oldest' ? new Date(a.lastInboundAt) - new Date(b.lastInboundAt) : new Date(b.lastInboundAt) - new Date(a.lastInboundAt);
-  });
-  if (!rows.length) { list.innerHTML = `<div class="pra-muted" style="padding:16px;font-size:.82rem">${q ? 'No matches.' : 'No conversations yet.'}</div>`; return; }
-  list.innerHTML = rows.map(c => {
-    const hasUnread = c.unreadCount > 0;
-    const showTicks = !hasUnread && c.lastDirection === 'outbound' && c.lastStatus;
-    const previewTicks = showTicks ? readReceiptTicksHtml(c.lastStatus, c.lastOpened) : '';
-    const previewText = escapeHtml((c.lastPreview || '').replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
-    return `
+}
+// Filter/sort/search already happened server-side (see inbox_backend.js) --
+// `conversations` is always exactly the rows that belong on screen, in
+// order. This just turns that array into HTML; it never re-filters or
+// re-sorts it client-side.
+function convoRowHtml(c) {
+  const hasUnread = c.unreadCount > 0;
+  const showTicks = !hasUnread && c.lastDirection === 'outbound' && c.lastStatus;
+  const previewTicks = showTicks ? readReceiptTicksHtml(c.lastStatus, c.lastOpened) : '';
+  const previewText = escapeHtml((c.lastPreview || '').replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
+  return `
     <div class="convo-row${selectedConvo?.key === c.key ? ' selected' : ''}${c.pinned ? ' pinned' : ''}" data-convo="${c.key}">
       <div class="pra-avatar convo-avatar${hasUnread ? ' has-unread' : ''}" style="${avatarStyle(c.contact?.status, c.contact?.email)}">${initials(c.displayName)}</div>
       <div class="convo-meta">
@@ -544,53 +562,76 @@ function renderSidebar() {
         </div>
       </div>
     </div>
-  `; }).join('');
-  list.querySelectorAll('[data-convo]').forEach(row => row.onclick = (e) => {
+  `;
+}
+function wireConvoRow(row) {
+  row.onclick = (e) => {
     if (row.dataset.longPress) { delete row.dataset.longPress; return; }
     if (e.target.closest('[data-add-contact], [data-pin], [data-star]')) return;
     const c = conversations.find(x => x.key === row.dataset.convo);
     if (c.contactId) selectConversation(c);
-  });
-  list.querySelectorAll('[data-convo]').forEach(row => {
-    const c = () => conversations.find(x => x.key === row.dataset.convo);
-    row.addEventListener('contextmenu', (e) => { e.preventDefault(); openContextMenu(c(), e.clientX, e.clientY); });
-    row.addEventListener('touchstart', (e) => {
-      const touch = e.touches[0];
-      longPressTimer = setTimeout(() => { row.dataset.longPress = '1'; openContextMenu(c(), touch.clientX, touch.clientY); }, 500);
-    }, { passive: true });
-    row.addEventListener('touchend', () => clearTimeout(longPressTimer));
-    row.addEventListener('touchmove', () => clearTimeout(longPressTimer));
-  });
-  list.querySelectorAll('[data-add-contact]').forEach(btn => btn.onclick = (e) => {
+  };
+  const c = () => conversations.find(x => x.key === row.dataset.convo);
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); openContextMenu(c(), e.clientX, e.clientY); });
+  row.addEventListener('touchstart', (e) => {
+    const touch = e.touches[0];
+    longPressTimer = setTimeout(() => { row.dataset.longPress = '1'; openContextMenu(c(), touch.clientX, touch.clientY); }, 500);
+  }, { passive: true });
+  row.addEventListener('touchend', () => clearTimeout(longPressTimer));
+  row.addEventListener('touchmove', () => clearTimeout(longPressTimer));
+  row.querySelector('[data-add-contact]')?.addEventListener('click', (e) => { e.stopPropagation(); openConfirmPotential(c()); });
+  row.querySelector('[data-pin]')?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const row = e.target.closest('[data-convo]');
-    const c = conversations.find(x => x.key === row.dataset.convo);
-    openConfirmPotential(c);
-  });
-  list.querySelectorAll('[data-pin]').forEach(btn => btn.onclick = async (e) => {
-    e.stopPropagation();
+    const btn = e.currentTarget;
     const pinned = btn.dataset.pinOn === '1';
     await fetch(`/api/inbox/conversations/${btn.dataset.pin}/pin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned }) });
-    const c = conversations.find(x => x.contactId === btn.dataset.pin);
-    if (c) c.pinned = pinned;
-    conversations.sort((a, b) => (!!a.pinned !== !!b.pinned) ? (a.pinned ? -1 : 1) : new Date(b.lastAt) - new Date(a.lastAt));
-    renderSidebar();
+    loadConversations();
   });
-  list.querySelectorAll('[data-star]').forEach(btn => btn.onclick = async (e) => {
+  row.querySelector('[data-star]')?.addEventListener('click', async (e) => {
     e.stopPropagation();
+    const btn = e.currentTarget;
     const starred = btn.dataset.starOn === '1';
     await fetch(`/api/inbox/conversations/${btn.dataset.star}/star`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred }) });
-    const c = conversations.find(x => x.contactId === btn.dataset.star);
-    if (c) c.starred = starred;
-    renderSidebar();
+    const found = conversations.find(x => x.contactId === btn.dataset.star);
+    if (found) found.starred = starred;
+    btn.classList.toggle('on', starred);
+    btn.title = starred ? 'Unstar' : 'Star';
+    btn.dataset.starOn = starred ? '0' : '1';
   });
 }
-document.getElementById('convoSearchInput').addEventListener('input', (e) => { convoSearchQuery = e.target.value; renderSidebar(); });
-document.getElementById('convoFilterSelect').addEventListener('change', (e) => { convoFilter = e.target.value; renderSidebar(); });
-document.getElementById('convoSortSelect').addEventListener('change', (e) => { convoSort = e.target.value; renderSidebar(); });
+function renderSidebar() {
+  const list = document.getElementById('chatSidebarList');
+  if (!conversations.length) { list.innerHTML = `<div class="pra-muted" style="padding:16px;font-size:.82rem">${convoSearchQuery.trim() ? 'No matches.' : 'No conversations yet.'}</div>`; return; }
+  list.innerHTML = conversations.map(convoRowHtml).join('');
+  list.querySelectorAll('[data-convo]').forEach(wireConvoRow);
+}
+// Appends just the newly-loaded page (scroll-triggered) instead of
+// re-rendering the whole list -- keeps existing rows' DOM nodes (and the
+// user's scroll position) untouched.
+function appendConvoRows(newRows) {
+  if (!newRows.length) return;
+  const list = document.getElementById('chatSidebarList');
+  const frag = document.createElement('div');
+  frag.innerHTML = newRows.map(convoRowHtml).join('');
+  [...frag.children].forEach(row => { wireConvoRow(row); list.appendChild(row); });
+}
+// Infinite scroll -- bound once to the stable list container (its
+// innerHTML changes on every render, but the container element itself
+// never gets replaced, so the listener survives).
+document.getElementById('chatSidebarList').addEventListener('scroll', (e) => {
+  const el = e.target;
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 150) loadMoreConversations();
+});
+document.getElementById('convoSearchInput').addEventListener('input', (e) => {
+  convoSearchQuery = e.target.value;
+  clearTimeout(convoSearchDebounce);
+  convoSearchDebounce = setTimeout(loadConversations, 250);
+});
+document.getElementById('convoFilterSelect').addEventListener('change', (e) => { convoFilter = e.target.value; loadConversations(); });
+document.getElementById('convoSortSelect').addEventListener('change', (e) => { convoSort = e.target.value; loadConversations(); });
 document.getElementById('convoChannelSelect').addEventListener('change', (e) => { convoChannel = e.target.value; loadConversations(); });
-document.getElementById('convoStatusSelect').addEventListener('change', (e) => { convoStatus = e.target.value; renderSidebar(); });
-document.getElementById('convoTypeSelect').addEventListener('change', (e) => { convoType = e.target.value; renderSidebar(); });
+document.getElementById('convoStatusSelect').addEventListener('change', (e) => { convoStatus = e.target.value; loadConversations(); });
+document.getElementById('convoTypeSelect').addEventListener('change', (e) => { convoType = e.target.value; loadConversations(); });
 
 // ── Chat: right-click (desktop) / long-press (mobile) row menu ──────────
 function openContextMenu(c, x, y) {
