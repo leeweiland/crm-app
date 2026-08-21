@@ -65,7 +65,7 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="mobile-sticky-header">
-        <div class="pra-h1" style="margin-bottom:20px">Contacts</div>
+        <div class="pra-h1" style="margin-bottom:20px">Contacts<span id="contactsCount" class="pra-muted" style="font-size:.6em;font-weight:600;margin-left:10px"></span></div>
         <div class="tabs">
           <button class="tab-btn active" data-tab="contacts">Contacts</button>
           <button class="tab-btn" data-tab="lists">Email Lists</button>
@@ -536,6 +536,8 @@ function sortContacts(contacts) {
   });
 }
 function renderContactsTable() {
+  const countEl = document.getElementById('contactsCount');
+  if (countEl) countEl.textContent = currentContacts.length ? `(${currentContacts.length.toLocaleString()})` : '';
   const cols = activeColumns();
   const headRow = document.getElementById('contactsHeadRow');
   headRow.innerHTML = cols.map(col => {
