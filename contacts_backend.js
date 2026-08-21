@@ -114,7 +114,29 @@ export async function handleContactsRequest(req, res, url) {
       try { const filter = JSON.parse(filterParam); filtered = filtered.filter(c => matchesSegment(c, filter)); }
       catch { return sendJson(res, 400, { error: "filter must be valid JSON" }); }
     }
-    return sendJson(res, 200, { contacts: filtered.map(publicContact), total: filtered.length });
+    const total = filtered.length;
+    // Sort/paginate are both opt-in via query params -- other callers
+    // (inbox.html, workflow-detail.html, reporting.html) fetch this same
+    // endpoint with no params at all and expect the full unsorted list back,
+    // so omitting either param must behave exactly as before.
+    const sortField = url.searchParams.get("sort");
+    if (sortField) {
+      const sortDir = url.searchParams.get("dir") === "desc" ? -1 : 1;
+      filtered = [...filtered].sort((a, b) => {
+        let av, bv;
+        if (sortField === "createdAt") { av = a.firstSeenAt || a.createdAt || ""; bv = b.firstSeenAt || b.createdAt || ""; }
+        else { av = (a[sortField] || "").toString().toLowerCase(); bv = (b[sortField] || "").toString().toLowerCase(); }
+        return av < bv ? -sortDir : av > bv ? sortDir : 0;
+      });
+    }
+    const limitParam = url.searchParams.get("limit");
+    let page = filtered;
+    if (limitParam) {
+      const limit = Math.max(1, parseInt(limitParam, 10) || 50);
+      const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
+      page = filtered.slice(offset, offset + limit);
+    }
+    return sendJson(res, 200, { contacts: page.map(publicContact), total });
   }
   if (p === "/api/contacts" && req.method === "POST") {
     const body = await readJsonBody(req);

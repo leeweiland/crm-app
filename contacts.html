@@ -112,6 +112,21 @@
             <tbody id="contactsBody"><tr><td class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
+        <div class="pagination-bar" id="paginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem">
+          <span class="pra-muted" id="paginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">
+            Per page
+            <select class="pra-select" id="pageSizeSelect" style="width:auto">
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="prevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="pageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="nextPageBtn" type="button">Next ›</button>
+        </div>
       </div>
 
       <div class="tab-panel" id="tab-lists">
@@ -456,10 +471,11 @@ function buildFilterFromRows() {
   const mode = document.getElementById('matchMode').value;
   return mode === 'any' ? { any: conds } : { all: conds };
 }
-document.getElementById('applyFilterBtn').onclick = () => { activeFilter = buildFilterFromRows(); loadContacts(); };
+document.getElementById('applyFilterBtn').onclick = () => { activeFilter = buildFilterFromRows(); contactsPage = 1; loadContacts(); };
 document.getElementById('clearFilterBtn').onclick = () => {
   document.getElementById('condRows').innerHTML = '';
   activeFilter = null;
+  contactsPage = 1;
   loadContacts();
 };
 document.getElementById('saveSegmentBtn').onclick = () => {
@@ -481,7 +497,10 @@ document.getElementById('confirmSaveSegmentBtn').onclick = async () => {
 };
 
 // ── Contacts list ────────────────────────────────────────────────────────
-let currentContacts = [];
+let currentContacts = []; // holds just the CURRENT PAGE -- sorting/paging both happen server-side now
+let contactsTotal = 0;
+let contactsPage = 1;
+let contactsPageSize = parseInt(localStorage.getItem('contactsPageSize'), 10) || 50;
 let contactSort = { field: 'name', dir: 1 };
 
 // First/Last are always shown (they're the frozen/sticky columns, and the
@@ -526,18 +545,9 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#columnsPanel') && !e.target.closest('#columnsToggle')) document.getElementById('columnsPanel').classList.remove('show');
 });
 
-function sortContacts(contacts) {
-  const { field, dir } = contactSort;
-  return [...contacts].sort((a, b) => {
-    let av, bv;
-    if (field === 'createdAt') { av = a.firstSeenAt || a.createdAt || ''; bv = b.firstSeenAt || b.createdAt || ''; }
-    else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
-    return av < bv ? -dir : av > bv ? dir : 0;
-  });
-}
 function renderContactsTable() {
   const countEl = document.getElementById('contactsCount');
-  if (countEl) countEl.textContent = currentContacts.length ? `(${currentContacts.length.toLocaleString()})` : '';
+  if (countEl) countEl.textContent = contactsTotal ? `(${contactsTotal.toLocaleString()})` : '';
   const cols = activeColumns();
   const headRow = document.getElementById('contactsHeadRow');
   headRow.innerHTML = cols.map(col => {
@@ -549,16 +559,25 @@ function renderContactsTable() {
   headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
     if (contactSort.field === th.dataset.sort) contactSort.dir *= -1;
     else contactSort = { field: th.dataset.sort, dir: 1 };
-    renderContactsTable();
+    contactsPage = 1;
+    loadContacts();
   });
 
   const body = document.getElementById('contactsBody');
-  if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; return; }
-  body.innerHTML = sortContacts(currentContacts).map(c => `
+  if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; }
+  else body.innerHTML = currentContacts.map(c => `
     <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
       ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}">${col.render(c)}</td>`).join('')}
     </tr>
   `).join('');
+
+  const pageCount = Math.max(1, Math.ceil(contactsTotal / contactsPageSize));
+  const start = contactsTotal ? (contactsPage - 1) * contactsPageSize + 1 : 0;
+  const end = Math.min(contactsPage * contactsPageSize, contactsTotal);
+  document.getElementById('paginationSummary').textContent = contactsTotal ? `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${contactsTotal.toLocaleString()}` : 'No contacts';
+  document.getElementById('pageIndicator').textContent = `Page ${contactsPage} of ${pageCount}`;
+  document.getElementById('prevPageBtn').disabled = contactsPage <= 1;
+  document.getElementById('nextPageBtn').disabled = contactsPage >= pageCount;
 }
 async function loadContacts() {
   const q = document.getElementById('searchInput').value.trim();
@@ -567,15 +586,32 @@ async function loadContacts() {
   if (q) params.set('q', q);
   if (status) params.set('status', status);
   if (activeFilter) params.set('filter', JSON.stringify(activeFilter));
+  // contactSort.field defaults to 'name' (not a real column) meaning
+  // "no explicit sort" -- matches the natural/unsorted order this page
+  // always showed before pagination existed.
+  if (contactSort.field !== 'name') { params.set('sort', contactSort.field); params.set('dir', contactSort.dir === -1 ? 'desc' : 'asc'); }
+  params.set('limit', contactsPageSize);
+  params.set('offset', (contactsPage - 1) * contactsPageSize);
   const r = await fetch('/api/contacts?' + params.toString());
   const body = document.getElementById('contactsBody');
   if (!r.ok) { body.innerHTML = '<tr><td class="pra-muted">Could not load contacts.</td></tr>'; return; }
-  currentContacts = (await r.json()).contacts;
+  const data = await r.json();
+  currentContacts = data.contacts;
+  contactsTotal = data.total;
   renderContactsTable();
 }
 
-document.getElementById('searchInput').addEventListener('input', () => { clearTimeout(window._st); window._st = setTimeout(loadContacts, 250); });
-document.getElementById('statusFilter').addEventListener('change', loadContacts);
+document.getElementById('searchInput').addEventListener('input', () => { clearTimeout(window._st); window._st = setTimeout(() => { contactsPage = 1; loadContacts(); }, 250); });
+document.getElementById('statusFilter').addEventListener('change', () => { contactsPage = 1; loadContacts(); });
+document.getElementById('pageSizeSelect').value = contactsPageSize;
+document.getElementById('pageSizeSelect').addEventListener('change', (e) => {
+  contactsPageSize = parseInt(e.target.value, 10) || 50;
+  localStorage.setItem('contactsPageSize', contactsPageSize);
+  contactsPage = 1;
+  loadContacts();
+});
+document.getElementById('prevPageBtn').onclick = () => { if (contactsPage > 1) { contactsPage--; loadContacts(); } };
+document.getElementById('nextPageBtn').onclick = () => { contactsPage++; loadContacts(); };
 
 document.getElementById('addContactBtn').onclick = () => document.getElementById('addModal').classList.add('show');
 document.getElementById('cancelContactBtn').onclick = () => document.getElementById('addModal').classList.remove('show');
