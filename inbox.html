@@ -157,10 +157,13 @@
   .chat-sidebar-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; flex-shrink: 0; }
   .chat-sidebar-filters select { flex: 1; min-width: 84px; font-size: .76rem; padding: 6px 8px; }
   @media (max-width: 900px) {
-    /* All 4 filters fit on one row on a phone instead of the 4th
-       (Sort) wrapping to its own line and stretching full-width. */
-    .chat-sidebar-filters { gap: 4px; flex-wrap: nowrap; }
-    .chat-sidebar-filters select { min-width: 0; font-size: .68rem; padding: 6px 4px; }
+    /* Full label text, no truncation or 2-line wrapping -- each box sizes
+       to its own content and the row scrolls horizontally if that's wider
+       than the screen, instead of shrinking/cutting off any one box. */
+    .chat-sidebar-filters { gap: 4px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .chat-sidebar-filters select { flex: 0 0 auto; min-width: 0; width: auto; font-size: .68rem; padding: 6px 4px; }
+    .chat-sidebar-filters .mobile-select-anchor { width: auto; } /* .pra-select's width:100% would otherwise become the flex-basis and force each box to fill the row */
+    .chat-sidebar-filters .mobile-select-trigger-label { overflow: visible; text-overflow: clip; white-space: nowrap; }
   }
 
   /* ── Right-click / long-press context menu on chat rows ── */
@@ -267,6 +270,11 @@
             </select>
             <select class="pra-select" id="convoStatusSelect">
               <option value="">All statuses</option>
+            </select>
+            <select class="pra-select" id="convoTypeSelect">
+              <option value="">All types</option>
+              <option value="online">Online</option>
+              <option value="gym">Gym</option>
             </select>
             <select class="pra-select" id="convoSortSelect">
               <option value="newest">Newest first</option>
@@ -377,7 +385,7 @@ function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([],
 let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allContacts = [], allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
-let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', ctxMenuConvo = null, longPressTimer = null;
+let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', ctxMenuConvo = null, longPressTimer = null;
 const STOP_STATUSES = ['stop', 'bad fit / blacklist', 'bad fit', 'blacklist'];
 const initialContactId = new URLSearchParams(location.search).get('contact');
 
@@ -484,6 +492,7 @@ function renderSidebar() {
     else if (convoFilter === 'favorites') rows = rows.filter(c => c.starred);
   }
   if (convoStatus) rows = rows.filter(c => c.contact?.status === convoStatus);
+  if (convoType) rows = rows.filter(c => c.contact?.programType === convoType);
   // Sorts by last REPLY (lastInboundAt), not last activity of any kind --
   // an automated drip send shouldn't be able to bump a cold lead above
   // someone who actually just texted back. Threads with no reply yet sort
@@ -571,6 +580,7 @@ document.getElementById('convoFilterSelect').addEventListener('change', (e) => {
 document.getElementById('convoSortSelect').addEventListener('change', (e) => { convoSort = e.target.value; renderSidebar(); });
 document.getElementById('convoChannelSelect').addEventListener('change', (e) => { convoChannel = e.target.value; loadConversations(); });
 document.getElementById('convoStatusSelect').addEventListener('change', (e) => { convoStatus = e.target.value; renderSidebar(); });
+document.getElementById('convoTypeSelect').addEventListener('change', (e) => { convoType = e.target.value; renderSidebar(); });
 
 // ── Chat: right-click (desktop) / long-press (mobile) row menu ──────────
 function openContextMenu(c, x, y) {
