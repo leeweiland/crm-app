@@ -118,7 +118,7 @@ body { margin: 0; }
   font-family: var(--font-primary); font-size: .88rem; color: var(--pra-white);
 }
 .mobile-select-trigger:disabled { opacity: .45; cursor: not-allowed; }
-.mobile-select-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-select-trigger-label { overflow-wrap: break-word; white-space: normal; }
 .mobile-select-trigger-caret { flex-shrink: 0; font-size: .7em; opacity: .6; }
 .mobile-select-menu {
   display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px;
@@ -130,13 +130,12 @@ body { margin: 0; }
 .mobile-select-menu.open { display: block; }
 .mobile-select-option { padding: 10px 12px; font-size: .86rem; color: var(--pra-white); cursor: pointer; }
 .mobile-select-option:hover, .mobile-select-option.selected { background: rgba(255,255,255,0.06); }
-/* Colored dot for options carrying a data-color attribute (status
-   dropdowns) -- "status at a glance", same idea as the colored avatar
-   rings used elsewhere in the app. */
-.mobile-select-trigger.has-color-dot::before,
-.mobile-select-option.has-color-dot::before {
-  content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--opt-color); margin-right: 7px; vertical-align: middle; flex-shrink: 0;
+/* Options carrying a data-color attribute (status dropdowns) glow the
+   closed trigger box itself in that color once selected -- "status at a
+   glance", same idea as the colored avatar rings elsewhere in the app. */
+.mobile-select-anchor.has-color-glow {
+  border-color: var(--opt-color);
+  box-shadow: 0 0 9px 0 var(--opt-color);
 }
 
 .pra-badge {

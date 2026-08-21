@@ -157,20 +157,20 @@ function enhanceSelectForMobile(sel) {
   anchor.appendChild(menu);
 
   // Options may carry a data-color attribute (e.g. status dropdowns, set
-  // by the page populating them) -- shown as a colored dot in both the
-  // trigger and the menu, same "status at a glance" idea as the colored
-  // avatar rings elsewhere in the app.
+  // by the page populating them) -- the closed trigger box itself glows
+  // that color when selected, same "status at a glance" idea as the
+  // colored avatar rings elsewhere in the app (no per-option dots).
   function renderTrigger() {
     const opt = sel.options[sel.selectedIndex];
     label.textContent = opt ? opt.textContent : "";
     trigger.disabled = sel.disabled;
     const color = opt && opt.dataset.color;
-    trigger.classList.toggle("has-color-dot", !!color);
-    if (color) trigger.style.setProperty("--opt-color", color);
+    anchor.classList.toggle("has-color-glow", !!color);
+    if (color) anchor.style.setProperty("--opt-color", color);
   }
   function renderMenu() {
     menu.innerHTML = Array.from(sel.options).map((opt, i) => `
-      <div class="mobile-select-option${i === sel.selectedIndex ? " selected" : ""}${opt.dataset.color ? " has-color-dot" : ""}" data-i="${i}"${opt.dataset.color ? ` style="--opt-color:${opt.dataset.color}"` : ""}>${escapeHtmlForMobileSelect(opt.textContent)}</div>
+      <div class="mobile-select-option${i === sel.selectedIndex ? " selected" : ""}" data-i="${i}">${escapeHtmlForMobileSelect(opt.textContent)}</div>
     `).join("");
     menu.querySelectorAll(".mobile-select-option").forEach(item => item.onclick = (e) => {
       e.stopPropagation();
