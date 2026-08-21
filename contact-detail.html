@@ -315,17 +315,24 @@ function renderHyrosTags() {
 // DIFFERENT email/phone than the contact's own -- exactly the
 // split-identity case this section exists to surface.
 let hyrosUrlsExpanded = false;
+// Small blue pill, same size/theme as a tag -- the detail (date, source,
+// full URL) lives in the title tooltip rather than a second line of large
+// text, matching how Hyros Tags/Tags render right above it.
+function hyrosUrlPill(label, detail, href) {
+  const inner = href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${escapeHtml(label)}</a>` : escapeHtml(label);
+  return `<span class="tag-pill" style="cursor:default" title="${escapeHtml(detail || '')}">${inner}</span>`;
+}
 function renderHyrosUrls() {
   const rows = [];
-  if (contact.hyrosTrackedUrl) rows.push(`<div><b>Tracked URL</b><br/><a href="${escapeHtml(contact.hyrosTrackedUrl)}" target="_blank" rel="noopener">${escapeHtml(contact.hyrosTrackedUrl)}</a></div>`);
-  if (contact.hyrosPreviousUrl) rows.push(`<div><b>Previous URL</b><br/><a href="${escapeHtml(contact.hyrosPreviousUrl)}" target="_blank" rel="noopener">${escapeHtml(contact.hyrosPreviousUrl)}</a></div>`);
+  if (contact.hyrosTrackedUrl) rows.push(hyrosUrlPill('Tracked URL', contact.hyrosTrackedUrl, contact.hyrosTrackedUrl));
+  if (contact.hyrosPreviousUrl) rows.push(hyrosUrlPill('Previous URL', contact.hyrosPreviousUrl, contact.hyrosPreviousUrl));
   const firstClick = threadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('First ad click'));
   const lastClick = threadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('Last ad click'));
-  if (firstClick) rows.push(`<div><b>${escapeHtml(firstClick.subject || '')}</b><br/><span class="pra-muted">${escapeHtml(firstClick.body || '')} · ${fmtDate(firstClick.at)}</span></div>`);
-  if (lastClick) rows.push(`<div><b>${escapeHtml(lastClick.subject || '')}</b><br/><span class="pra-muted">${escapeHtml(lastClick.body || '')} · ${fmtDate(lastClick.at)}</span></div>`);
+  if (firstClick) rows.push(hyrosUrlPill(firstClick.subject, `${firstClick.body || ''} · ${fmtDate(firstClick.at)}`));
+  if (lastClick) rows.push(hyrosUrlPill(lastClick.subject, `${lastClick.body || ''} · ${fmtDate(lastClick.at)}`));
   if (contact.hyrosOriginLead) {
     const o = contact.hyrosOriginLead;
-    rows.push(`<div><b>Origin Identity</b><br/><span class="pra-muted">${escapeHtml([o.firstName, o.lastName].filter(Boolean).join(' '))} ${escapeHtml(o.email || '')} ${(o.phoneNumbers || []).join(', ')}</span></div>`);
+    rows.push(hyrosUrlPill('Origin Identity', `${[o.firstName, o.lastName].filter(Boolean).join(' ')} ${o.email || ''} ${(o.phoneNumbers || []).join(', ')}`));
   }
   document.getElementById('hyrosUrlsWrap').innerHTML = pillsBodyHtml(rows, hyrosUrlsExpanded, 'Not captured for this contact.');
   document.getElementById('hyrosUrlsToggleSlot').innerHTML = toggleSlotHtml(rows.length, hyrosUrlsExpanded, 'hyrosUrlsToggle');

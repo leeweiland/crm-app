@@ -338,7 +338,13 @@
 <div class="modal-backdrop" id="contactOverlayModal">
   <div class="pra-panel modal-box" style="max-width:520px;max-height:88vh;max-height:88dvh;overflow-y:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:10px">
-      <div class="pra-h2" id="contactOverlayName" style="flex:1;min-width:0">Contact</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="ovTypeBadge"></span>
+          <div class="pra-h2" id="contactOverlayName" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Contact</div>
+        </div>
+        <select class="status-pill-select" id="ovStatus" style="margin-top:6px"></select>
+      </div>
       <a class="pra-btn pra-btn-ghost pra-btn-sm" id="ovFullPageLink" href="#">Open Full Page</a>
       <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" onclick="closeModal('contactOverlayModal')">Close</button>
     </div>
@@ -351,10 +357,14 @@
       <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="ovEmail"/></div>
       <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="ovPhone"/></div>
     </div>
-    <div class="ov-sub-label">Tags</div>
+    <div class="ov-sub-label" style="display:flex;align-items:center;gap:8px">Tags <span id="ovTagsToggleSlot"></span></div>
     <div id="ovTagsWrap"></div>
     <div class="search-add" id="ovAddTagBox"></div>
-    <div class="ov-sub-label">Lists</div>
+    <div class="ov-sub-label" style="display:flex;align-items:center;gap:8px">Hyros Tags <span id="ovHyrosTagsToggleSlot"></span></div>
+    <div id="ovHyrosTagsWrap"></div>
+    <div class="ov-sub-label" style="display:flex;align-items:center;gap:8px">Hyros URLs <span id="ovHyrosUrlsToggleSlot"></span></div>
+    <div id="ovHyrosUrlsWrap"></div>
+    <div class="ov-sub-label" style="display:flex;align-items:center;gap:8px">Lists <span id="ovListsToggleSlot"></span></div>
     <div id="ovListsWrap"></div>
     <div class="search-add" id="ovAddListBox"></div>
     <div class="field-row" style="margin:16px 0 0">
@@ -1030,16 +1040,27 @@ async function sendComposeMessage() {
 // purpose: a quick popup shouldn't carry a destructive action -- "Open Full
 // Page" is there for that.
 let overlayContact = null, overlayTags = [], overlayLists = [], overlayFields = [];
+let overlayThreadItems = [];
 async function openContactOverlay(contactId) {
-  const [tagsRes, listsRes, fieldsRes, contactRes] = await Promise.all([
-    fetch('/api/tags'), fetch('/api/lists'), fetch('/api/custom-fields?entityType=contact'), fetch('/api/contacts/' + contactId)
+  const [tagsRes, listsRes, fieldsRes, contactRes, threadRes] = await Promise.all([
+    fetch('/api/tags'), fetch('/api/lists'), fetch('/api/custom-fields?entityType=contact'), fetch('/api/contacts/' + contactId), fetch('/api/inbox/contact/' + contactId)
   ]);
   overlayTags = tagsRes.ok ? (await tagsRes.json()).tags : [];
   overlayLists = listsRes.ok ? (await listsRes.json()).lists : [];
   overlayFields = fieldsRes.ok ? (await fieldsRes.json()).fields : [];
+  overlayThreadItems = threadRes.ok ? (await threadRes.json()).items : [];
   if (!contactRes.ok) { showToast('Could not load contact', true); return; }
   overlayContact = (await contactRes.json()).contact;
   document.getElementById('contactOverlayName').textContent = `${overlayContact.first} ${overlayContact.last}`.trim() || 'Contact';
+  document.getElementById('ovTypeBadge').innerHTML = overlayContact.programType ? `<span class="pra-badge pra-badge-${overlayContact.programType}">${escapeHtml(overlayContact.programType)}</span>` : '';
+  const statusSel = document.getElementById('ovStatus');
+  statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${overlayContact.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
+  statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(overlayContact.status)};${statusSelectWidthRule(overlayContact.status)}`);
+  statusSel.onchange = async () => {
+    overlayContact.status = statusSel.value;
+    statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(statusSel.value)};${statusSelectWidthRule(statusSel.value)}`);
+    await autoSaveOverlay();
+  };
   document.getElementById('ovFirst').value = overlayContact.first || '';
   document.getElementById('ovLast').value = overlayContact.last || '';
   document.getElementById('ovAccount').value = overlayContact.accountName || '';
@@ -1050,6 +1071,7 @@ async function openContactOverlay(contactId) {
   document.getElementById('ovFullPageLink').href = '/contact-detail.html?id=' + contactId;
   renderOverlayTags();
   renderOverlayLists();
+  renderOverlayHyrosUrls();
   renderOverlayCustomFields();
   openModal('contactOverlayModal');
 }
@@ -1066,14 +1088,49 @@ async function autoSaveOverlay() {
 // Selected tags/lists show only the first couple, same collapse pattern as
 // contact-detail.html's Details panel -- a contact with a dozen imported
 // segment tags shouldn't push the whole overlay's form fields off-screen.
+// The "+N more" toggle renders separately from the pills so it can sit
+// next to the section LABEL instead of trailing after the pills.
 const OV_PILLS_COLLAPSE_LIMIT = 2;
-let ovTagsExpanded = false, ovListsExpanded = false;
-function collapsiblePillsHtml(pills, expanded, toggleId) {
-  const shown = expanded ? pills : pills.slice(0, OV_PILLS_COLLAPSE_LIMIT);
-  const hidden = pills.length - shown.length;
-  return shown.join('') + (hidden > 0
-    ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">+${hidden} more</button>`
-    : (expanded && pills.length > OV_PILLS_COLLAPSE_LIMIT ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">Show less</button>` : ''));
+let ovTagsExpanded = false, ovListsExpanded = false, ovHyrosTagsExpanded = false, ovHyrosUrlsExpanded = false;
+function ovPillsBodyHtml(pills, expanded, emptyText) {
+  if (!pills.length) return `<span class="pra-muted" style="font-size:.82rem">${emptyText}</span>`;
+  return (expanded ? pills : pills.slice(0, OV_PILLS_COLLAPSE_LIMIT)).join('');
+}
+function ovToggleSlotHtml(count, expanded, toggleId) {
+  if (count <= OV_PILLS_COLLAPSE_LIMIT) return '';
+  return `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.78rem">${expanded ? 'Show less' : `+${count - OV_PILLS_COLLAPSE_LIMIT} more`}</button>`;
+}
+// Hyros tag names all follow "@"/"$"/"!" -- everything else came from AC
+// (or was added manually). Same naming-convention split as contact-detail.html.
+function isHyrosTagName(name) { return /^[@$!]/.test(name); }
+function hyrosUrlPill(label, detail, href) {
+  const inner = href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${escapeHtml(label)}</a>` : escapeHtml(label);
+  return `<span class="tag-pill" style="cursor:default" title="${escapeHtml(detail || '')}">${inner}</span>`;
+}
+function renderOverlayHyrosTags() {
+  const tagNames = (overlayContact.tags || []).map(id => overlayTags.find(t => t.id === id)?.name).filter(Boolean);
+  const pills = tagNames.filter(isHyrosTagName).map(name => `<span class="tag-pill" style="cursor:default">${escapeHtml(name)}</span>`);
+  document.getElementById('ovHyrosTagsWrap').innerHTML = ovPillsBodyHtml(pills, ovHyrosTagsExpanded, 'None.');
+  document.getElementById('ovHyrosTagsToggleSlot').innerHTML = ovToggleSlotHtml(pills.length, ovHyrosTagsExpanded, 'ovHyrosTagsToggle');
+  const toggle = document.getElementById('ovHyrosTagsToggle');
+  if (toggle) toggle.onclick = () => { ovHyrosTagsExpanded = !ovHyrosTagsExpanded; renderOverlayHyrosTags(); };
+}
+function renderOverlayHyrosUrls() {
+  const rows = [];
+  if (overlayContact.hyrosTrackedUrl) rows.push(hyrosUrlPill('Tracked URL', overlayContact.hyrosTrackedUrl, overlayContact.hyrosTrackedUrl));
+  if (overlayContact.hyrosPreviousUrl) rows.push(hyrosUrlPill('Previous URL', overlayContact.hyrosPreviousUrl, overlayContact.hyrosPreviousUrl));
+  const firstClick = overlayThreadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('First ad click'));
+  const lastClick = overlayThreadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('Last ad click'));
+  if (firstClick) rows.push(hyrosUrlPill(firstClick.subject, `${firstClick.body || ''} · ${fmtDate(firstClick.at)}`));
+  if (lastClick) rows.push(hyrosUrlPill(lastClick.subject, `${lastClick.body || ''} · ${fmtDate(lastClick.at)}`));
+  if (overlayContact.hyrosOriginLead) {
+    const o = overlayContact.hyrosOriginLead;
+    rows.push(hyrosUrlPill('Origin Identity', `${[o.firstName, o.lastName].filter(Boolean).join(' ')} ${o.email || ''} ${(o.phoneNumbers || []).join(', ')}`));
+  }
+  document.getElementById('ovHyrosUrlsWrap').innerHTML = ovPillsBodyHtml(rows, ovHyrosUrlsExpanded, 'Not captured for this contact.');
+  document.getElementById('ovHyrosUrlsToggleSlot').innerHTML = ovToggleSlotHtml(rows.length, ovHyrosUrlsExpanded, 'ovHyrosUrlsToggle');
+  const toggle = document.getElementById('ovHyrosUrlsToggle');
+  if (toggle) toggle.onclick = () => { ovHyrosUrlsExpanded = !ovHyrosUrlsExpanded; renderOverlayHyrosUrls(); };
 }
 // Generic search-to-add dropdown -- built once per container (so typing
 // isn't wiped out by the re-renders that follow every add/remove), reused
@@ -1112,7 +1169,8 @@ function renderOverlayTags() {
     if (!t) return '';
     return `<span class="tag-pill">${escapeHtml(t.name)}<button data-tag="${tagId}" class="ovRemoveTag" type="button">&times;</button></span>`;
   }).filter(Boolean);
-  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, ovTagsExpanded, 'ovTagsToggle') : '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
+  wrap.innerHTML = ovPillsBodyHtml(pills, ovTagsExpanded, 'No tags yet.');
+  document.getElementById('ovTagsToggleSlot').innerHTML = ovToggleSlotHtml(pills.length, ovTagsExpanded, 'ovTagsToggle');
   wrap.querySelectorAll('.ovRemoveTag').forEach(btn => btn.onclick = async () => {
     overlayContact.tags = overlayContact.tags.filter(id => id !== btn.dataset.tag);
     await autoSaveOverlay();
@@ -1125,6 +1183,7 @@ function renderOverlayTags() {
     await autoSaveOverlay();
     renderOverlayTags();
   });
+  renderOverlayHyrosTags();
 }
 function renderOverlayLists() {
   const wrap = document.getElementById('ovListsWrap');
@@ -1133,7 +1192,8 @@ function renderOverlayLists() {
     if (!l) return '';
     return `<span class="tag-pill">${escapeHtml(l.name)}<button data-list="${listId}" class="ovRemoveList" type="button">&times;</button></span>`;
   }).filter(Boolean);
-  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, ovListsExpanded, 'ovListsToggle') : '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
+  wrap.innerHTML = ovPillsBodyHtml(pills, ovListsExpanded, 'Not on any lists.');
+  document.getElementById('ovListsToggleSlot').innerHTML = ovToggleSlotHtml(pills.length, ovListsExpanded, 'ovListsToggle');
   wrap.querySelectorAll('.ovRemoveList').forEach(btn => btn.onclick = async () => {
     overlayContact.listIds = overlayContact.listIds.filter(id => id !== btn.dataset.list);
     await autoSaveOverlay();
