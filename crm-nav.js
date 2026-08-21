@@ -152,9 +152,14 @@ function enhanceSelectForMobile(sel) {
   anchor.appendChild(trigger);
   const label = trigger.querySelector(".mobile-select-trigger-label");
 
+  // Appended to <body> (not the anchor) and positioned with `fixed`
+  // coordinates computed at open time -- some anchors sit inside a
+  // scrollable/clipping ancestor (e.g. a horizontally-scrolling filter
+  // row), and an absolutely-positioned child would get clipped to that
+  // ancestor's bounds instead of floating freely over the page below it.
   const menu = document.createElement("div");
   menu.className = "mobile-select-menu";
-  anchor.appendChild(menu);
+  document.body.appendChild(menu);
 
   // Options may carry a data-color attribute (e.g. status dropdowns, set
   // by the page populating them) -- the closed trigger box itself glows
@@ -182,6 +187,10 @@ function enhanceSelectForMobile(sel) {
   function openMenu() {
     if (sel.disabled) return;
     renderMenu();
+    const rect = anchor.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 4) + "px";
+    menu.style.left = rect.left + "px";
+    menu.style.width = rect.width + "px";
     menu.classList.add("open");
     document.addEventListener("mousedown", onOutsideClick, true);
   }
@@ -189,7 +198,7 @@ function enhanceSelectForMobile(sel) {
     menu.classList.remove("open");
     document.removeEventListener("mousedown", onOutsideClick, true);
   }
-  function onOutsideClick(e) { if (!anchor.contains(e.target)) closeMenu(); }
+  function onOutsideClick(e) { if (!anchor.contains(e.target) && !menu.contains(e.target)) closeMenu(); }
   trigger.onclick = (e) => {
     e.stopPropagation();
     menu.classList.contains("open") ? closeMenu() : openMenu();

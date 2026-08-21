@@ -121,7 +121,11 @@ body { margin: 0; }
 .mobile-select-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mobile-select-trigger-caret { flex-shrink: 0; font-size: .7em; opacity: .6; }
 .mobile-select-menu {
-  display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px;
+  /* top/left/width are set inline at open time (crm-nav.js), from the
+     anchor's own bounding rect -- fixed positioning + a <body> portal
+     means this floats over the page instead of being clipped by any
+     scrollable/overflow ancestor the anchor happens to sit inside. */
+  display: none; position: fixed;
   max-height: 260px; overflow-y: auto;
   background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
