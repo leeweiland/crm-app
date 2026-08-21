@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -33,17 +33,37 @@ const _batchIo = !!process.env.IMPORT_BATCH_IO;
 const _jsonCache = new Map();
 const _dirtyFiles = new Set();
 
+// Always-on read cache keyed by mtime, separate from the batch-io path above.
+// The live server re-reads+re-parses these files on every single request
+// (every inbox/contacts fetch), which dominates response time once a data
+// file grows past a few hundred KB. statSync is a metadata-only syscall --
+// orders of magnitude cheaper than readFileSync+JSON.parse -- so checking it
+// first and only reparsing when mtime actually changed is a safe win for a
+// single-process server where every write goes through writeJson below.
+const _mtimeCache = new Map(); // file -> { mtimeMs, data }
+
 export function readJson(file, fallback) {
   const p = join(DATA_DIR, file);
   if (_batchIo && _jsonCache.has(file)) return _jsonCache.get(file);
   let data;
-  try { data = existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : fallback; } catch { data = fallback; }
+  try {
+    const stat = statSync(p);
+    const cached = _mtimeCache.get(file);
+    if (cached && cached.mtimeMs === stat.mtimeMs) {
+      data = cached.data;
+    } else {
+      data = JSON.parse(readFileSync(p, "utf8"));
+      _mtimeCache.set(file, { mtimeMs: stat.mtimeMs, data });
+    }
+  } catch { data = fallback; }
   if (_batchIo) _jsonCache.set(file, data);
   return data;
 }
 export function writeJson(file, data) {
   if (_batchIo) { _jsonCache.set(file, data); _dirtyFiles.add(file); return; }
-  writeFileSync(join(DATA_DIR, file), JSON.stringify(data, null, 2), "utf8");
+  const p = join(DATA_DIR, file);
+  writeFileSync(p, JSON.stringify(data, null, 2), "utf8");
+  try { _mtimeCache.set(file, { mtimeMs: statSync(p).mtimeMs, data }); } catch { _mtimeCache.delete(file); }
 }
 export function flushJsonCache() {
   for (const file of _dirtyFiles) {

@@ -13,6 +13,15 @@ export const CONVERSATION_META_FILE = "crm_conversation_meta.json";
 export function getConvoMeta(contactId) {
   return readJson(CONVERSATION_META_FILE, []).find(m => m.contactId === contactId) || null;
 }
+// Same lookup as getConvoMeta, but for callers (the conversation-list
+// endpoint) that need it once per contact in a loop -- reads the file a
+// single time and hands back a Map instead of paying a fresh readJson +
+// linear .find() per contact.
+export function getConvoMetaMap() {
+  const map = new Map();
+  for (const m of readJson(CONVERSATION_META_FILE, [])) map.set(m.contactId, m);
+  return map;
+}
 export function setConvoMeta(contactId, patch) {
   const all = readJson(CONVERSATION_META_FILE, []);
   let row = all.find(m => m.contactId === contactId);

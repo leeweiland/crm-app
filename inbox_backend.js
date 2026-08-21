@@ -4,7 +4,7 @@ import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
-import { CONVERSATION_META_FILE, getConvoMeta, setConvoMeta } from "./conversation_meta.js";
+import { CONVERSATION_META_FILE, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -77,12 +77,14 @@ export async function handleInboxRequest(req, res, url) {
       groups.get(key).messages.push(m);
     }
 
+    const contactById = new Map(contacts.map(c => [c.id, c]));
+    const metaByContactId = getConvoMetaMap();
     const conversations = [...groups.values()].map(g => {
       const sorted = g.messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       const last = sorted[0];
-      const contact = g.contactId ? contacts.find(c => c.id === g.contactId) || null : null;
+      const contact = g.contactId ? contactById.get(g.contactId) || null : null;
       const unreadCount = g.messages.filter(m => m.direction === "inbound" && !m.inboxDone).length;
-      const meta = g.contactId ? getConvoMeta(g.contactId) : null;
+      const meta = g.contactId ? metaByContactId.get(g.contactId) || null : null;
       // Read-receipt-style status for the last MINE message in this thread
       // (independent of `last`, which could be their most recent inbound
       // reply) -- single check (sent/queued), double grey (delivered), or
