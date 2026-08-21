@@ -118,7 +118,7 @@ body { margin: 0; }
   font-family: var(--font-primary); font-size: .88rem; color: var(--pra-white);
 }
 .mobile-select-trigger:disabled { opacity: .45; cursor: not-allowed; }
-.mobile-select-trigger-label { overflow-wrap: break-word; white-space: normal; }
+.mobile-select-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mobile-select-trigger-caret { flex-shrink: 0; font-size: .7em; opacity: .6; }
 .mobile-select-menu {
   display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px;
