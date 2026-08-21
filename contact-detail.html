@@ -78,17 +78,6 @@
      black-on-white here regardless of the pill's per-status color. */
   .status-pill-select option { background: #fff; color: #000; }
   .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
-  /* Native <details>/<summary> -- no accordion pattern existed anywhere in
-     this app yet, kept deliberately plain/native rather than inventing a
-     new JS-driven widget for six read-only sections. */
-  .data-accordion { border: 1px solid var(--pra-border); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
-  .data-accordion summary { padding: 9px 12px; cursor: pointer; font-size: .82rem; font-weight: 700; list-style: none; display: flex; align-items: center; justify-content: space-between; }
-  .data-accordion summary::-webkit-details-marker { display: none; }
-  .data-accordion summary::after { content: '+'; color: var(--pra-dim); font-weight: 400; }
-  .data-accordion[open] summary::after { content: '\2212'; }
-  .data-accordion summary:hover { background: var(--pra-panel-2); }
-  .data-accordion-body { padding: 4px 12px 12px; font-size: .8rem; }
-  .data-accordion-body a { color: var(--pra-blue); word-break: break-all; }
 </style>
 </head>
 <body>
@@ -129,21 +118,19 @@
               </div>
             </div>
 
-            <div class="sub-section-label">Tags</div>
+            <div class="sub-section-label" style="display:flex;align-items:center;gap:8px">Tags <span id="tagsToggleSlot"></span></div>
             <div id="tagsWrap"></div>
             <select class="pra-select" id="addTagSelect" style="margin-top:8px"><option value="">+ Add a tag...</option></select>
 
-            <div class="sub-section-label">Lists</div>
+            <div class="sub-section-label" style="display:flex;align-items:center;gap:8px">Hyros Tags <span id="hyrosTagsToggleSlot"></span></div>
+            <div id="hyrosTagsWrap"></div>
+
+            <div class="sub-section-label" style="display:flex;align-items:center;gap:8px">Hyros URLs <span id="hyrosUrlsToggleSlot"></span></div>
+            <div id="hyrosUrlsWrap"></div>
+
+            <div class="sub-section-label" style="display:flex;align-items:center;gap:8px">Lists <span id="listsToggleSlot"></span></div>
             <div id="listsWrap"></div>
             <select class="pra-select" id="addListSelect" style="margin-top:8px"><option value="">+ Add to a list...</option></select>
-
-            <div class="sub-section-label">Data Sources</div>
-            <details class="data-accordion"><summary>Hyros Tags</summary><div class="data-accordion-body" id="accHyrosTags"></div></details>
-            <details class="data-accordion"><summary>Hyros Tracked URL &amp; Previous URL</summary><div class="data-accordion-body" id="accHyrosUrls"></div></details>
-            <details class="data-accordion"><summary>Hyros First Click</summary><div class="data-accordion-body" id="accHyrosFirstClick"></div></details>
-            <details class="data-accordion"><summary>Hyros Last Click</summary><div class="data-accordion-body" id="accHyrosLastClick"></div></details>
-            <details class="data-accordion"><summary>AC Tags</summary><div class="data-accordion-body" id="accAcTags"></div></details>
-            <details class="data-accordion"><summary>AC Lists</summary><div class="data-accordion-body" id="accAcLists"></div></details>
 
             <div class="field-row" style="margin:16px 0 0">
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
@@ -218,28 +205,31 @@ async function loadRefs() {
   allFields = (await fieldsRes.json()).fields;
 }
 
-// Shared accordion for both Tags and Lists -- a contact pulled in from
-// Hyros/AC can carry 50+ tags (or be on dozens of lists), and dumping them
-// all flat makes the whole page unreadable, especially on mobile. Shows
-// the first 2, with a "+N more" toggle for the rest.
+// Shared collapse pattern for every pill list on this page (Tags, Hyros
+// Tags, Hyros URLs, Lists) -- a contact pulled from Hyros/AC can carry 50+
+// tags, and dumping them all flat makes the panel unreadable. The "+N
+// more" toggle renders separately from the pills themselves so it can sit
+// next to the section LABEL instead of trailing after the pills.
 const PILLS_COLLAPSE_LIMIT = 2;
-function collapsiblePillsHtml(pills, expanded, toggleId) {
-  const shown = expanded ? pills : pills.slice(0, PILLS_COLLAPSE_LIMIT);
-  const hidden = pills.length - shown.length;
-  return shown.join('') + (hidden > 0
-    ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">+${hidden} more</button>`
-    : (expanded && pills.length > PILLS_COLLAPSE_LIMIT ? `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.8rem;margin-left:4px">Show less</button>` : ''));
+function pillsBodyHtml(pills, expanded, emptyText) {
+  if (!pills.length) return `<span class="pra-muted" style="font-size:.82rem">${emptyText}</span>`;
+  return (expanded ? pills : pills.slice(0, PILLS_COLLAPSE_LIMIT)).join('');
 }
+function toggleSlotHtml(count, expanded, toggleId) {
+  if (count <= PILLS_COLLAPSE_LIMIT) return '';
+  return `<button type="button" class="pra-link" id="${toggleId}" style="font-size:.78rem">${expanded ? 'Show less' : `+${count - PILLS_COLLAPSE_LIMIT} more`}</button>`;
+}
+
 let tagsExpanded = false;
 function renderTags() {
-  const wrap = document.getElementById('tagsWrap');
   const pills = (contact.tags || []).map(tagId => {
     const t = allTags.find(x => x.id === tagId);
     if (!t) return '';
     return `<span class="tag-pill">${escapeHtml(t.name)}<button data-tag="${tagId}" class="removeTag">&times;</button></span>`;
   }).filter(Boolean);
-  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, tagsExpanded, 'tagsToggle') : '<span class="pra-muted" style="font-size:.82rem">No tags yet.</span>';
-  wrap.querySelectorAll('.removeTag').forEach(btn => btn.onclick = async () => {
+  document.getElementById('tagsWrap').innerHTML = pillsBodyHtml(pills, tagsExpanded, 'No tags yet.');
+  document.getElementById('tagsToggleSlot').innerHTML = toggleSlotHtml(pills.length, tagsExpanded, 'tagsToggle');
+  document.querySelectorAll('#tagsWrap .removeTag').forEach(btn => btn.onclick = async () => {
     contact.tags = contact.tags.filter(id => id !== btn.dataset.tag);
     await saveContact();
     renderTags();
@@ -248,7 +238,7 @@ function renderTags() {
   if (toggle) toggle.onclick = () => { tagsExpanded = !tagsExpanded; renderTags(); };
   const sel = document.getElementById('addTagSelect');
   sel.innerHTML = '<option value="">+ Add a tag...</option>' + allTags.filter(t => !contact.tags.includes(t.id)).map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
-  renderDataSourceAccordions();
+  renderHyrosTags();
 }
 document.getElementById('addTagSelect').onchange = async (e) => {
   if (!e.target.value) return;
@@ -260,14 +250,14 @@ document.getElementById('addTagSelect').onchange = async (e) => {
 
 let listsExpanded = false;
 function renderLists() {
-  const wrap = document.getElementById('listsWrap');
   const pills = (contact.listIds || []).map(listId => {
     const l = allLists.find(x => x.id === listId);
     if (!l) return '';
     return `<span class="tag-pill">${escapeHtml(l.name)}<button data-list="${listId}" class="removeList">&times;</button></span>`;
   }).filter(Boolean);
-  wrap.innerHTML = pills.length ? collapsiblePillsHtml(pills, listsExpanded, 'listsToggle') : '<span class="pra-muted" style="font-size:.82rem">Not on any lists.</span>';
-  wrap.querySelectorAll('.removeList').forEach(btn => btn.onclick = async () => {
+  document.getElementById('listsWrap').innerHTML = pillsBodyHtml(pills, listsExpanded, 'Not on any lists.');
+  document.getElementById('listsToggleSlot').innerHTML = toggleSlotHtml(pills.length, listsExpanded, 'listsToggle');
+  document.querySelectorAll('#listsWrap .removeList').forEach(btn => btn.onclick = async () => {
     contact.listIds = contact.listIds.filter(id => id !== btn.dataset.list);
     await saveContact();
     renderLists();
@@ -276,7 +266,6 @@ function renderLists() {
   if (toggle) toggle.onclick = () => { listsExpanded = !listsExpanded; renderLists(); };
   const sel = document.getElementById('addListSelect');
   sel.innerHTML = '<option value="">+ Add to a list...</option>' + allLists.filter(l => !contact.listIds.includes(l.id)).map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
-  renderDataSourceAccordions();
 }
 document.getElementById('addListSelect').onchange = async (e) => {
   if (!e.target.value) return;
@@ -305,32 +294,43 @@ function renderPhoneDialLink() {
 // directly (see getOrCreateTag -- matches by name only, source-agnostic),
 // so this is a naming-convention split, not a stored fact.
 function isHyrosTagName(name) { return /^[@$!]/.test(name); }
-function pillHtml(name) { return `<span class="tag-pill" style="cursor:default">${escapeHtml(name)}</span>`; }
-function renderDataSourceAccordions() {
+
+let hyrosTagsExpanded = false;
+function renderHyrosTags() {
   const tagNames = (contact.tags || []).map(id => allTags.find(t => t.id === id)?.name).filter(Boolean);
-  const hyrosTags = tagNames.filter(isHyrosTagName);
-  const acTags = tagNames.filter(n => !isHyrosTagName(n));
-  document.getElementById('accHyrosTags').innerHTML = hyrosTags.length ? hyrosTags.map(pillHtml).join('') : '<span class="pra-muted">None.</span>';
-  document.getElementById('accAcTags').innerHTML = acTags.length ? acTags.map(pillHtml).join('') : '<span class="pra-muted">None.</span>';
+  const pills = tagNames.filter(isHyrosTagName).map(name => `<span class="tag-pill" style="cursor:default">${escapeHtml(name)}</span>`);
+  document.getElementById('hyrosTagsWrap').innerHTML = pillsBodyHtml(pills, hyrosTagsExpanded, 'None.');
+  document.getElementById('hyrosTagsToggleSlot').innerHTML = toggleSlotHtml(pills.length, hyrosTagsExpanded, 'hyrosTagsToggle');
+  const toggle = document.getElementById('hyrosTagsToggle');
+  if (toggle) toggle.onclick = () => { hyrosTagsExpanded = !hyrosTagsExpanded; renderHyrosTags(); };
+}
 
-  const listNames = (contact.listIds || []).map(id => allLists.find(l => l.id === id)?.name).filter(Boolean);
-  document.getElementById('accAcLists').innerHTML = listNames.length ? listNames.map(pillHtml).join('') : '<span class="pra-muted">Not on any lists.</span>';
-
-  const urlRow = (label, url) => url ? `<div style="margin-bottom:8px"><b>${label}:</b><br/><a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a></div>` : '';
-  const urlsHtml = urlRow('Tracked URL', contact.hyrosTrackedUrl) + urlRow('Previous URL', contact.hyrosPreviousUrl);
-  document.getElementById('accHyrosUrls').innerHTML = urlsHtml || '<span class="pra-muted">Not captured for this contact (only available from a CSV export, Hyros’s API doesn’t expose it).</span>';
-
-  // "First ad click"/"Last ad click" activity entries are logged by
-  // hyros_backend.js's mergeHyrosActivity() at import time -- same
-  // thread items already loaded for the Conversation panel, just filtered
-  // to the "activity" channel here instead of re-fetched.
+// "First ad click"/"Last ad click" come from hyros_backend.js's
+// mergeHyrosActivity() -- same thread items already loaded for the
+// Conversation panel, filtered to the "activity" channel here rather than
+// re-fetched. Tracked/Previous URL are CSV-only (Hyros's API doesn't
+// expose them) so they're rendered when present but not expected on every
+// contact. Origin Identity is Hyros's own pre-conversion-to-lead identity
+// link (hyrosOriginLead), shown as its own row since it can carry a
+// DIFFERENT email/phone than the contact's own -- exactly the
+// split-identity case this section exists to surface.
+let hyrosUrlsExpanded = false;
+function renderHyrosUrls() {
+  const rows = [];
+  if (contact.hyrosTrackedUrl) rows.push(`<div><b>Tracked URL</b><br/><a href="${escapeHtml(contact.hyrosTrackedUrl)}" target="_blank" rel="noopener">${escapeHtml(contact.hyrosTrackedUrl)}</a></div>`);
+  if (contact.hyrosPreviousUrl) rows.push(`<div><b>Previous URL</b><br/><a href="${escapeHtml(contact.hyrosPreviousUrl)}" target="_blank" rel="noopener">${escapeHtml(contact.hyrosPreviousUrl)}</a></div>`);
   const firstClick = threadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('First ad click'));
   const lastClick = threadItems.find(i => i.itemType === 'activity' && (i.subject || '').startsWith('Last ad click'));
-  const clickHtml = (item) => item
-    ? `<div><b>${escapeHtml(item.subject || '')}</b></div><div class="pra-muted" style="margin-top:2px">${escapeHtml(item.body || '')}</div><div class="pra-muted" style="margin-top:4px;font-size:.74rem">${fmtDate(item.at)}</div>`
-    : '<span class="pra-muted">Not captured for this contact.</span>';
-  document.getElementById('accHyrosFirstClick').innerHTML = clickHtml(firstClick);
-  document.getElementById('accHyrosLastClick').innerHTML = clickHtml(lastClick);
+  if (firstClick) rows.push(`<div><b>${escapeHtml(firstClick.subject || '')}</b><br/><span class="pra-muted">${escapeHtml(firstClick.body || '')} · ${fmtDate(firstClick.at)}</span></div>`);
+  if (lastClick) rows.push(`<div><b>${escapeHtml(lastClick.subject || '')}</b><br/><span class="pra-muted">${escapeHtml(lastClick.body || '')} · ${fmtDate(lastClick.at)}</span></div>`);
+  if (contact.hyrosOriginLead) {
+    const o = contact.hyrosOriginLead;
+    rows.push(`<div><b>Origin Identity</b><br/><span class="pra-muted">${escapeHtml([o.firstName, o.lastName].filter(Boolean).join(' '))} ${escapeHtml(o.email || '')} ${(o.phoneNumbers || []).join(', ')}</span></div>`);
+  }
+  document.getElementById('hyrosUrlsWrap').innerHTML = pillsBodyHtml(rows, hyrosUrlsExpanded, 'Not captured for this contact.');
+  document.getElementById('hyrosUrlsToggleSlot').innerHTML = toggleSlotHtml(rows.length, hyrosUrlsExpanded, 'hyrosUrlsToggle');
+  const toggle = document.getElementById('hyrosUrlsToggle');
+  if (toggle) toggle.onclick = () => { hyrosUrlsExpanded = !hyrosUrlsExpanded; renderHyrosUrls(); };
 }
 function renderCustomFields() {
   const wrap = document.getElementById('customFieldsWrap');
@@ -511,7 +511,7 @@ async function loadThread() {
   const r = await fetch('/api/inbox/contact/' + contactId);
   threadItems = r.ok ? (await r.json()).items : [];
   renderConvoPanel();
-  renderDataSourceAccordions();
+  renderHyrosUrls();
 }
 // ── Details column: drag-to-resize, width remembered across visits ──────
 (function initDetailResize() {
