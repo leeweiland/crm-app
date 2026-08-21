@@ -124,6 +124,15 @@ function enhanceSelectForMobile(sel) {
   if (sel.dataset.mobileEnhanced || sel.multiple) return;
   sel.dataset.mobileEnhanced = "1";
 
+  // Snapshot layout-relevant computed values before any DOM changes --
+  // needed because plenty of pages size selects via descendant/type
+  // selectors (e.g. ".chat-sidebar-filters select { flex:1 }") that only
+  // ever match the real <select> tag, not the <span> anchor replacing it
+  // visually. Copying className/id (below) covers class/id-based rules;
+  // this covers type/descendant-selector rules the same way.
+  const computed = getComputedStyle(sel);
+  const layoutStyle = `flex:${computed.flex};min-width:${computed.minWidth};max-width:${computed.maxWidth};margin:${computed.margin};`;
+
   const wrap = document.createElement("span");
   wrap.className = "mobile-select-wrap";
   sel.parentNode.insertBefore(wrap, sel);
@@ -133,7 +142,7 @@ function enhanceSelectForMobile(sel) {
   const anchor = document.createElement("span");
   anchor.className = (sel.className || "").replace("mobile-select-native", "").trim() + " mobile-select-anchor";
   if (sel.id) anchor.id = sel.id; // deliberately duplicate -- see below
-  if (sel.getAttribute("style")) anchor.setAttribute("style", sel.getAttribute("style"));
+  anchor.setAttribute("style", layoutStyle + (sel.getAttribute("style") || ""));
   wrap.appendChild(anchor);
 
   const trigger = document.createElement("button");
@@ -147,14 +156,21 @@ function enhanceSelectForMobile(sel) {
   menu.className = "mobile-select-menu";
   anchor.appendChild(menu);
 
+  // Options may carry a data-color attribute (e.g. status dropdowns, set
+  // by the page populating them) -- shown as a colored dot in both the
+  // trigger and the menu, same "status at a glance" idea as the colored
+  // avatar rings elsewhere in the app.
   function renderTrigger() {
     const opt = sel.options[sel.selectedIndex];
     label.textContent = opt ? opt.textContent : "";
     trigger.disabled = sel.disabled;
+    const color = opt && opt.dataset.color;
+    trigger.classList.toggle("has-color-dot", !!color);
+    if (color) trigger.style.setProperty("--opt-color", color);
   }
   function renderMenu() {
     menu.innerHTML = Array.from(sel.options).map((opt, i) => `
-      <div class="mobile-select-option${i === sel.selectedIndex ? " selected" : ""}" data-i="${i}">${escapeHtmlForMobileSelect(opt.textContent)}</div>
+      <div class="mobile-select-option${i === sel.selectedIndex ? " selected" : ""}${opt.dataset.color ? " has-color-dot" : ""}" data-i="${i}"${opt.dataset.color ? ` style="--opt-color:${opt.dataset.color}"` : ""}>${escapeHtmlForMobileSelect(opt.textContent)}</div>
     `).join("");
     menu.querySelectorAll(".mobile-select-option").forEach(item => item.onclick = (e) => {
       e.stopPropagation();

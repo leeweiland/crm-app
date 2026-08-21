@@ -306,7 +306,8 @@ async function loadStatuses() {
   const filterSel = document.getElementById('statusFilter');
   const newSel = document.getElementById('newStatus');
   allStatuses.forEach(s => {
-    filterSel.innerHTML += `<option value="${s.label}">${escapeHtml(s.label)}</option>`;
+    const color = STATUS_COLORS[s.label];
+    filterSel.innerHTML += `<option value="${s.label}"${color ? ` data-color="${color}"` : ''}>${escapeHtml(s.label)}</option>`;
     newSel.innerHTML += `<option value="${s.label}">${escapeHtml(s.label)}</option>`;
   });
 }

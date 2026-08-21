@@ -130,6 +130,14 @@ body { margin: 0; }
 .mobile-select-menu.open { display: block; }
 .mobile-select-option { padding: 10px 12px; font-size: .86rem; color: var(--pra-white); cursor: pointer; }
 .mobile-select-option:hover, .mobile-select-option.selected { background: rgba(255,255,255,0.06); }
+/* Colored dot for options carrying a data-color attribute (status
+   dropdowns) -- "status at a glance", same idea as the colored avatar
+   rings used elsewhere in the app. */
+.mobile-select-trigger.has-color-dot::before,
+.mobile-select-option.has-color-dot::before {
+  content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--opt-color); margin-right: 7px; vertical-align: middle; flex-shrink: 0;
+}
 
 .pra-badge {
   display: inline-block;
