@@ -21,12 +21,35 @@ export const USERS_FILE = "crm_users.json";
 export const SESSIONS_FILE = "crm_sessions.json";
 [USERS_FILE, SESSIONS_FILE].forEach(migrateDataFile);
 
+// Opt-in write-behind cache for bulk import scripts, which call readJson/
+// writeJson once per record -- fine at small scale, but each call reparses/
+// restringifies the WHOLE file, so cost grows with file size and a
+// tens-of-thousands-of-records import ends up dominated by repeated I/O on
+// the same file. Off by default (live server never sets this env var, so
+// its behavior is unchanged); an import script sets IMPORT_BATCH_IO=1 and
+// calls flushJsonCache() periodically (e.g. once per page) instead of
+// relying on every writeJson to hit disk immediately.
+const _batchIo = !!process.env.IMPORT_BATCH_IO;
+const _jsonCache = new Map();
+const _dirtyFiles = new Set();
+
 export function readJson(file, fallback) {
   const p = join(DATA_DIR, file);
-  try { return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : fallback; } catch { return fallback; }
+  if (_batchIo && _jsonCache.has(file)) return _jsonCache.get(file);
+  let data;
+  try { data = existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : fallback; } catch { data = fallback; }
+  if (_batchIo) _jsonCache.set(file, data);
+  return data;
 }
 export function writeJson(file, data) {
+  if (_batchIo) { _jsonCache.set(file, data); _dirtyFiles.add(file); return; }
   writeFileSync(join(DATA_DIR, file), JSON.stringify(data, null, 2), "utf8");
+}
+export function flushJsonCache() {
+  for (const file of _dirtyFiles) {
+    writeFileSync(join(DATA_DIR, file), JSON.stringify(_jsonCache.get(file), null, 2), "utf8");
+  }
+  _dirtyFiles.clear();
 }
 
 export function readJsonBody(req) {
