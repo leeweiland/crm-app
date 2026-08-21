@@ -165,6 +165,20 @@ body { margin: 0; }
 
 .pra-tel-link { color: var(--pra-blue); text-decoration: none; }
 .pra-tel-link:hover { text-decoration: underline; }
+.pra-tel-link svg { width: 16px; height: 16px; vertical-align: middle; }
+
+/* A per-contact status <select> styled as a colored pill (glow color set
+   inline per-status via --status-glow/--status-glow-soft custom
+   properties) -- shared by contact-detail.html's header, the inbox's chat
+   panel, and the inbox's contact-overlay modal, so it needs to live here
+   rather than duplicated per page. */
+.status-pill-select { font-family: var(--font-primary); font-weight: 700; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-blue); background: var(--pra-blue-dim); border: none; border-radius: 12px; padding: 5px 12px; cursor: pointer; box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s, color .15s; }
+/* The dropdown POPUP list is a separate rendering surface from the closed
+   pill -- Chromium fills it in using the <select>'s own color/background
+   unless every <option> overrides them, which made the list unreadable
+   (blue text on light-blue rows). Force plain black-on-white here
+   regardless of the pill's per-status color. */
+.status-pill-select option { background: #fff; color: #000; }
 
 .pra-avatar {
   width: 38px; height: 38px; border-radius: 50%;

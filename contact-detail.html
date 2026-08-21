@@ -70,13 +70,6 @@
   .compose-row textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; }
   .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
   .contact-header { display: flex; align-items: center; gap: 12px; margin: 10px 0 20px; }
-  .status-pill-select { font-family: var(--font-primary); font-weight: 700; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-blue); background: var(--pra-blue-dim); border: none; border-radius: 12px; padding: 5px 12px; cursor: pointer; box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s, color .15s; }
-  /* The dropdown POPUP list is a separate rendering surface from the
-     closed pill -- Chromium fills it in using the <select>'s own
-     color/background unless every <option> overrides them, which made the
-     list unreadable (blue text on light-blue rows). Force plain
-     black-on-white here regardless of the pill's per-status color. */
-  .status-pill-select option { background: #fff; color: #000; }
   .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
 </style>
 </head>
@@ -113,7 +106,7 @@
               <div class="field"><label class="pra-label">Phone</label>
                 <div style="display:flex;gap:6px;align-items:center">
                   <input class="pra-input" id="fPhone"/>
-                  <a class="pra-tel-link" id="fPhoneDial" title="Call" style="display:none;flex-shrink:0;font-size:1.1rem">&#128222;</a>
+                  <a class="pra-tel-link" id="fPhoneDial" title="Call" style="display:none;flex-shrink:0"><svg viewBox="0 0 24 24" fill="none"><path d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 5.5 5.5l1.5-2 4 1.5v3a1.5 1.5 0 0 1-1.6 1.5C11.5 18.2 5.8 12.5 5 5.1A1.5 1.5 0 0 1 6.5 3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></a>
                 </div>
               </div>
             </div>
@@ -186,7 +179,7 @@ function hexToRgba(hex, alpha) {
 // the currently selected option's own text length, so a short status like
 // "ENROLLED" renders as a small pill instead of stretching to fit the
 // longest status in the whole list.
-function statusSelectWidthCh(status) { return (status || '').length + 4 + 'ch'; }
+function statusSelectWidthCh(status) { return (status || '').length + 8 + 'ch'; }
 function applyStatusGlow(status) {
   const sel = document.getElementById('fStatus');
   const glow = STATUS_GLOW[status];

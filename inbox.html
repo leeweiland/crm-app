@@ -420,7 +420,7 @@ const STATUS_GLOW = {
 // sizes to its widest OPTION ("FOLLOW UP (They have a Task / Date set)"),
 // not the selected one, so CSS width:auto alone still renders it as a wide
 // bar regardless of which status is actually showing.
-function statusSelectWidthRule(status) { return `width:${(status || 'Change status...').length + 4}ch`; }
+function statusSelectWidthRule(status) { return `width:${(status || 'Change status...').length + 8}ch`; }
 function avatarStyle(status, email) {
   const isStaff = email && allUsers.some(u => u.email?.toLowerCase() === email.toLowerCase());
   const glow = isStaff ? '#009bff' : STATUS_GLOW[status];
@@ -975,7 +975,11 @@ function renderThread() {
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
   document.getElementById('chatStatusSelect').addEventListener('change', async (e) => {
     const status = e.target.value;
-    if (!status || !c.contactId) return;
+    if (!c.contactId) return;
+    // Selecting the blank "Change status..." option explicitly clears the
+    // status back to none -- previously this silently no-opped, so picking
+    // it back after a real status was set never actually saved, and a
+    // reload would revert to whatever status was there before.
     await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
     showToast('Status updated');
     e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
