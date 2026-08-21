@@ -132,7 +132,12 @@ body { margin: 0; }
   background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   z-index: 700;
-  font-family: var(--font-primary); font-weight: 700;
+  /* Poppins first, not var(--font-primary)'s usual Century Gothic-first
+     order -- some Android OEM skins substitute a "Century Gothic" system
+     font with no real bold face for that name, so weight:700 rendered
+     visually identical to normal. Poppins is an actual web font (loaded
+     via the @import above) with real distinct weight faces. */
+  font-family: 'Poppins', 'Century Gothic', 'Trebuchet MS', sans-serif; font-weight: 700;
 }
 .mobile-select-menu.open { display: block; }
 .mobile-select-option { padding: 10px 12px; font-size: .86rem; color: var(--pra-white); cursor: pointer; }
