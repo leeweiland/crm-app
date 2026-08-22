@@ -272,6 +272,71 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns) {
   return added;
 }
 
+// AC's per-contact /activities feed (distinct from the flat /emailActivities
+// resource, which carries no usable open/click signal at all -- confirmed by
+// testing a contact with a KNOWN real open against it and finding nothing).
+// This one returns real per-recipient SEND records (`logs`) and CLICK
+// records (`linkData`, with timestamp/ip/user-agent/click-count) for BOTH
+// bulk and 1:1 campaigns -- broader than mergeAcCampaigns's 265-campaign
+// "1:1 →" name-matching, which stays in place since it's still the only
+// source for aggregate open COUNTS on a send. Pure pixel-only opens (no
+// click) are NOT exposed anywhere in AC's API -- checked the send records,
+// a dedicated trackingLogs resource (turned out to be website page-visit
+// tracking, unrelated), and every linked sub-resource on the campaign
+// object itself. Confirmed absent, not just unfound.
+async function fetchAcContactActivities(acContactId) {
+  const r = await fetch(`${AC_BASE}/api/3/activities?contact=${acContactId}&limit=100`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+  if (!r.ok) return { logs: [], linkData: [] };
+  const d = await r.json();
+  return { logs: d.logs || [], linkData: d.linkData || [] };
+}
+const acCampaignNameCache = new Map();
+async function acCampaignName(campaignId) {
+  if (acCampaignNameCache.has(campaignId)) return acCampaignNameCache.get(campaignId);
+  const r = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+  const name = r.ok ? (await r.json()).campaign?.name : null;
+  acCampaignNameCache.set(campaignId, name || `Campaign ${campaignId}`);
+  return acCampaignNameCache.get(campaignId);
+}
+// Dedup key is AC's own log/linkData row id (stable across re-runs).
+export async function mergeAcContactActivities(contact, acContactId) {
+  const { logs, linkData } = await fetchAcContactActivities(acContactId);
+  const log = readJson(MESSAGE_LOG_FILE, []);
+  const existingIds = new Set(log.filter(m => m.acActivityId).map(m => m.acActivityId));
+  let added = 0;
+  for (const l of logs) {
+    const acActivityId = `ac_send:${l.id}`;
+    if (existingIds.has(acActivityId)) continue;
+    const name = await acCampaignName(l.campaign);
+    log.push({
+      id: randomUUID(), channel: "email", direction: "outbound",
+      contactId: contact.id, sourceType: "ac_import", sourceId: null, providerMessageId: null,
+      to: contact.email, from: null, subject: `Sent: ${name}`, body: "", bodyPreview: name,
+      status: "sent", statusHistory: [{ status: "sent", at: l.tstamp }],
+      sentAt: l.tstamp, createdAt: l.tstamp || new Date().toISOString(),
+      inboxDone: true, acActivityId,
+    });
+    added++;
+  }
+  for (const c of linkData) {
+    const acActivityId = `ac_click:${c.id}`;
+    if (existingIds.has(acActivityId)) continue;
+    const name = await acCampaignName(c.campaign);
+    log.push({
+      id: randomUUID(), channel: "email", direction: "outbound",
+      contactId: contact.id, sourceType: "ac_import", sourceId: null, providerMessageId: null,
+      to: contact.email, from: null, subject: `Clicked: ${name}`,
+      body: `ip=${c.ip || ""} ua=${c.ua || ""} times=${c.times || 1}`, bodyPreview: name,
+      status: "clicked", statusHistory: [{ status: "clicked", at: c.tstamp }],
+      sentAt: c.tstamp, createdAt: c.tstamp || new Date().toISOString(),
+      inboxDone: true, acActivityId,
+    });
+    added++;
+  }
+  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  return added;
+}
+
 // Matched first by the provider's own id (repeatable imports never
 // duplicate), falling back to email match (catches a contact that already
 // exists from a Framer form submission or manual entry, so importing
@@ -537,6 +602,7 @@ export async function importCloseSegment(query, limit) {
           await enrichAcContact(stored, acContact.id, tagMap, listMap);
           writeJson(CONTACTS_FILE, all);
           mergeAcCampaigns(stored, oneToOneCampaigns);
+          await mergeAcContactActivities(stored, acContact.id);
         }
       }
 
