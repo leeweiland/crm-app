@@ -18,7 +18,7 @@ const CLOSE_BASE = "https://api.close.com/api/v1";
 function acConfigured() { return !!process.env.AC_API_KEY; }
 function closeConfigured() { return !!process.env.CLOSE_API_KEY; }
 
-async function fetchAcBatch(offset, limit) {
+export async function fetchAcBatch(offset, limit) {
   const r = await fetch(`${AC_BASE}/api/3/contacts?limit=${limit}&offset=${offset}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
   if (!r.ok) return { ok: false, reason: `ActiveCampaign API error ${r.status}` };
   const data = await r.json();
@@ -37,7 +37,7 @@ async function fetchCloseBatch(skip, limit) {
 // resolving what they're actually called takes a separate full account-wide
 // fetch of /tags and /lists (paginated, done ONCE per import run and reused
 // across every contact in the batch, not re-fetched per contact).
-async function fetchAcIdNameMap(resource) {
+export async function fetchAcIdNameMap(resource) {
   const headers = { "Api-Token": process.env.AC_API_KEY };
   const map = new Map();
   let offset = 0;
@@ -58,27 +58,32 @@ async function fetchAcContactTagIds(acContactId) {
   const data = await r.json();
   return (data.contactTags || []).map(ct => String(ct.tag));
 }
-async function fetchAcContactListIds(acContactId) {
+async function fetchAcContactLists(acContactId) {
   const r = await fetch(`${AC_BASE}/api/3/contacts/${acContactId}/contactLists`, { headers: { "Api-Token": process.env.AC_API_KEY } });
   if (!r.ok) return [];
   const data = await r.json();
-  return (data.contactLists || []).map(cl => String(cl.list));
+  return data.contactLists || [];
 }
 // Applies AC's tags/lists onto the matching CRM contact, translating AC's
 // numeric ids to real names via the pre-fetched maps, then get-or-create so
-// re-running an import never creates duplicate CRM tags/lists.
-async function enrichAcContact(contact, acContactId, tagMap, listMap) {
-  const [tagIds, listIds] = await Promise.all([fetchAcContactTagIds(acContactId), fetchAcContactListIds(acContactId)]);
+// re-running an import never creates duplicate CRM tags/lists. Also sets
+// emailOptOut from AC's own per-list subscription status ("2" = unsubscribed,
+// confirmed via live contactLists data) -- unsubscribed from ANY list is
+// treated as opted out account-wide, erring toward not emailing someone who
+// asked to stop rather than only respecting the specific list they left.
+export async function enrichAcContact(contact, acContactId, tagMap, listMap) {
+  const [tagIds, contactLists] = await Promise.all([fetchAcContactTagIds(acContactId), fetchAcContactLists(acContactId)]);
   tagIds.forEach(id => {
     const name = tagMap.get(id);
     const tag = name ? getOrCreateTag(name) : null;
     if (tag && !contact.tags.includes(tag.id)) contact.tags.push(tag.id);
   });
-  listIds.forEach(id => {
-    const name = listMap.get(id);
+  contactLists.forEach(cl => {
+    const name = listMap.get(String(cl.list));
     const list = name ? getOrCreateList(name) : null;
     if (list && !contact.listIds.includes(list.id)) contact.listIds.push(list.id);
   });
+  if (contactLists.some(cl => cl.status === "2")) contact.emailOptOut = true;
 }
 
 // Close doesn't have AC-style freeform tags, but sequence enrollment
@@ -341,7 +346,7 @@ export async function mergeAcContactActivities(contact, acContactId) {
 // duplicate), falling back to email match (catches a contact that already
 // exists from a Framer form submission or manual entry, so importing
 // doesn't create a second copy of someone already in the system).
-async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
+export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
   const contacts = readJson(CONTACTS_FILE, []);
   const email = (acContact.email || "").toLowerCase();
   let contact = contacts.find(c => c.externalIds?.acContactId === acContact.id) || findContactMatch(contacts, email, acContact.phone);
