@@ -117,18 +117,28 @@ export function readJson(file, fallback) {
   // silently destroying data.
   if (!existsSync(p)) { if (_batchIo) _jsonCache.set(file, fallback); return fallback; }
   const stat = statSync(p);
+  // Large files always go through the streaming reader, regardless of
+  // batch-IO mode -- JSON.parse(readFileSync()) throws ERR_STRING_TOO_LONG
+  // past V8's ~512MB string ceiling no matter who's calling it. Confirmed
+  // live tonight: the bulk AC import (which runs with IMPORT_BATCH_IO=1)
+  // crashed on its very first read of the 936MB message log, because this
+  // check used to be gated on `!_batchIo` and skipped straight to
+  // JSON.parse. Batch mode still gets its persistence: the streamed
+  // result is cached in _jsonCache below just like the non-streamed path,
+  // so this only costs one streaming read per file per run, not per call.
+  //
   // Large files are deliberately NOT kept in _mtimeCache on the live
   // server: caching means holding a full parsed copy in memory for as
   // long as the process lives, and this app's data files only grow. The
-  // bulk AC import process needs that persistence (IMPORT_BATCH_IO keeps
-  // its own separate in-memory copy across thousands of calls in the same
-  // run), but the live server re-reading fresh each request lets V8
-  // garbage-collect the parsed data after the response is sent instead of
-  // accumulating forever. Confirmed live tonight: the live server's own
-  // heap hit Node's default ~2GB ceiling and crashed with a genuine OOM
-  // while holding cached copies of a 936MB message log.
-  if (stat.size >= LARGE_FILE_STREAM_THRESHOLD && !_batchIo) {
-    return readJsonArrayStreaming(p);
+  // live server re-reading fresh each request lets V8 garbage-collect the
+  // parsed data after the response is sent instead of accumulating
+  // forever. Confirmed live tonight: the live server's own heap hit
+  // Node's default ~2GB ceiling and crashed with a genuine OOM while
+  // holding cached copies of a 936MB message log.
+  if (stat.size >= LARGE_FILE_STREAM_THRESHOLD) {
+    const data = readJsonArrayStreaming(p);
+    if (_batchIo) _jsonCache.set(file, data);
+    return data;
   }
   const cached = _mtimeCache.get(file);
   let data;
