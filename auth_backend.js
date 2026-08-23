@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -42,20 +42,89 @@ const _dirtyFiles = new Set();
 // single-process server where every write goes through writeJson below.
 const _mtimeCache = new Map(); // file -> { mtimeMs, data }
 
+// Mirrors writeJsonToDisk's reasoning on the read side: JSON.parse(string)
+// requires the ENTIRE file to exist as one JS string first, which hits the
+// same ~536MB V8 ceiling as JSON.stringify once a data file gets large
+// enough -- confirmed live tonight when this silently (before the fix
+// above) or would now loudly fail on crm_message_log.json. A Buffer has a
+// much higher size ceiling than a string (low GB, not ~536MB), so this
+// reads the whole file as a Buffer and scans it BYTE-BY-BYTE (never
+// decoding the whole thing to a string) to find each top-level array
+// element's boundaries, converting only that one small slice to a string
+// for JSON.parse. Byte-level scanning for structural characters ({ } [ ] "
+// \ ,) is safe against UTF-8 multi-byte sequences: every continuation byte
+// in UTF-8 is >= 0x80, so none of those ASCII structural bytes can ever
+// appear as part of a multi-byte character -- no risk of splitting one
+// mid-character the way naive chunked string decoding would.
+const LARGE_FILE_STREAM_THRESHOLD = 300 * 1024 * 1024; // 300MB
+function readJsonArrayStreaming(p) {
+  const fd = openSync(p, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const buf = Buffer.alloc(size);
+    let filled = 0;
+    while (filled < size) {
+      filled += readSync(fd, buf, filled, Math.min(64 * 1024 * 1024, size - filled), filled);
+    }
+    const results = [];
+    let depth = 0, inString = false, escape = false, itemStart = -1;
+    let i = 0;
+    while (i < size && buf[i] !== 0x5b) i++; // seek opening '['
+    itemStart = ++i;
+    for (; i < size; i++) {
+      const b = buf[i];
+      if (inString) {
+        if (escape) escape = false;
+        else if (b === 0x5c) escape = true; // backslash
+        else if (b === 0x22) inString = false; // "
+        continue;
+      }
+      if (b === 0x22) { inString = true; continue; } // "
+      if (b === 0x7b || b === 0x5b) { depth++; continue; } // { [
+      if (b === 0x7d) { depth--; continue; } // }
+      if (b === 0x5d) { // ]
+        if (depth === 0) {
+          if (i > itemStart) {
+            const s = buf.toString("utf8", itemStart, i).trim();
+            if (s.length) results.push(JSON.parse(s));
+          }
+          break;
+        }
+        depth--;
+        continue;
+      }
+      if (b === 0x2c && depth === 0) { // ,
+        const s = buf.toString("utf8", itemStart, i).trim();
+        if (s.length) results.push(JSON.parse(s));
+        itemStart = i + 1;
+      }
+    }
+    return results;
+  } finally { closeSync(fd); }
+}
 export function readJson(file, fallback) {
   const p = join(DATA_DIR, file);
   if (_batchIo && _jsonCache.has(file)) return _jsonCache.get(file);
+  // A missing file is a normal, expected case (first run, not-yet-created
+  // data file) -- fall back silently. A file that EXISTS but fails to
+  // parse is a completely different situation and must never be treated
+  // the same way: confirmed live tonight that silently substituting an
+  // empty array for a parse failure (crm_message_log.json outgrew what
+  // JSON.parse could handle) let the app carry on as if the file were
+  // genuinely empty, and the next write overwrote 900K+ real records with
+  // just a few thousand. A parse failure on an existing file must crash
+  // loudly instead -- the caller's process dying is vastly preferable to
+  // silently destroying data.
+  if (!existsSync(p)) { if (_batchIo) _jsonCache.set(file, fallback); return fallback; }
+  const stat = statSync(p);
+  const cached = _mtimeCache.get(file);
   let data;
-  try {
-    const stat = statSync(p);
-    const cached = _mtimeCache.get(file);
-    if (cached && cached.mtimeMs === stat.mtimeMs) {
-      data = cached.data;
-    } else {
-      data = JSON.parse(readFileSync(p, "utf8"));
-      _mtimeCache.set(file, { mtimeMs: stat.mtimeMs, data });
-    }
-  } catch { data = fallback; }
+  if (cached && cached.mtimeMs === stat.mtimeMs) {
+    data = cached.data;
+  } else {
+    data = stat.size >= LARGE_FILE_STREAM_THRESHOLD ? readJsonArrayStreaming(p) : JSON.parse(readFileSync(p, "utf8"));
+    _mtimeCache.set(file, { mtimeMs: stat.mtimeMs, data });
+  }
   if (_batchIo) _jsonCache.set(file, data);
   return data;
 }
