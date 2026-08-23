@@ -87,7 +87,10 @@
               <span id="contactTypeBadge"></span>
               <div class="pra-h1" id="contactName">Loading…</div>
             </div>
-            <select class="status-pill-select" id="fStatus" style="margin-top:8px"></select>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+              <select class="status-pill-select" id="fStatus"></select>
+              <span id="optOutBadges" style="display:flex;gap:6px"></span>
+            </div>
           </div>
         </div>
       </div>
@@ -274,6 +277,13 @@ function renderTypeBadge() {
   document.getElementById('contactTypeBadge').innerHTML = html;
   document.getElementById('detailsTypeBadge').innerHTML = html;
 }
+function renderOptOutBadges() {
+  const emailOptOut = document.getElementById('fEmailOptOut').checked;
+  const smsOptOut = document.getElementById('fSmsOptOut').checked;
+  const badge = (label) => `<span class="pra-badge" style="background:#3a1414;color:#ff6b6b;border:1px solid #ff6b6b55">${label}</span>`;
+  document.getElementById('optOutBadges').innerHTML =
+    (emailOptOut ? badge('EMAIL OPT-OUT') : '') + (smsOptOut ? badge('SMS OPT-OUT') : '');
+}
 function renderPhoneDialLink() {
   const link = document.getElementById('fPhoneDial');
   const digits = (contact.phone || '').replace(/[^\d+]/g, '');
@@ -398,6 +408,9 @@ document.getElementById('deleteBtn').onclick = async () => {
   statusSel.addEventListener('change', () => { applyStatusGlow(statusSel.value); autoSaveDetails(); });
   document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
   document.getElementById('fSmsOptOut').checked = !!contact.smsOptOut;
+  renderOptOutBadges();
+  document.getElementById('fEmailOptOut').addEventListener('change', renderOptOutBadges);
+  document.getElementById('fSmsOptOut').addEventListener('change', renderOptOutBadges);
   renderTypeBadge();
   renderPhoneDialLink();
   renderCustomFields();

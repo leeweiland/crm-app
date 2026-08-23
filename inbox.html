@@ -343,7 +343,10 @@
           <span id="ovTypeBadge"></span>
           <div class="pra-h2" id="contactOverlayName" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Contact</div>
         </div>
-        <select class="status-pill-select" id="ovStatus" style="margin-top:6px"></select>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+          <select class="status-pill-select" id="ovStatus"></select>
+          <span id="ovOptOutBadges" style="display:flex;gap:6px"></span>
+        </div>
       </div>
       <a class="pra-btn pra-btn-ghost pra-btn-sm" id="ovFullPageLink" href="#">Open Full Page</a>
       <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" onclick="closeModal('contactOverlayModal')">Close</button>
@@ -1113,6 +1116,7 @@ async function openContactOverlay(contactId) {
   document.getElementById('ovPhone').value = overlayContact.phone || '';
   document.getElementById('ovEmailOptOut').checked = !!overlayContact.emailOptOut;
   document.getElementById('ovSmsOptOut').checked = !!overlayContact.smsOptOut;
+  renderOverlayOptOutBadges();
   document.getElementById('ovFullPageLink').href = '/contact-detail.html?id=' + contactId;
   renderOverlayTags();
   renderOverlayLists();
@@ -1275,7 +1279,16 @@ async function collectAndAutoSaveOverlay() {
   await autoSaveOverlay();
   document.getElementById('contactOverlayName').textContent = `${overlayContact.first} ${overlayContact.last}`.trim() || 'Contact';
 }
+function renderOverlayOptOutBadges() {
+  const emailOptOut = document.getElementById('ovEmailOptOut').checked;
+  const smsOptOut = document.getElementById('ovSmsOptOut').checked;
+  const badge = (label) => `<span class="pra-badge" style="background:#3a1414;color:#ff6b6b;border:1px solid #ff6b6b55">${label}</span>`;
+  document.getElementById('ovOptOutBadges').innerHTML =
+    (emailOptOut ? badge('EMAIL OPT-OUT') : '') + (smsOptOut ? badge('SMS OPT-OUT') : '');
+}
 ['ovFirst', 'ovLast', 'ovAccount', 'ovEmail', 'ovPhone', 'ovEmailOptOut', 'ovSmsOptOut'].forEach(id => document.getElementById(id).addEventListener('change', collectAndAutoSaveOverlay));
+document.getElementById('ovEmailOptOut').addEventListener('change', renderOverlayOptOutBadges);
+document.getElementById('ovSmsOptOut').addEventListener('change', renderOverlayOptOutBadges);
 // Click the dimmed backdrop itself (not the box) to dismiss -- e.target is
 // only the backdrop element when the click didn't land on a descendant.
 document.getElementById('contactOverlayModal').addEventListener('click', (e) => {
