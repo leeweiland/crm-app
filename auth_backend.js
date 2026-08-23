@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -59,15 +59,38 @@ export function readJson(file, fallback) {
   if (_batchIo) _jsonCache.set(file, data);
   return data;
 }
+// JSON.stringify materializes the ENTIRE result as one JS string before
+// writeFileSync ever sees it -- fine at any size that matters for a normal
+// app, but crm_message_log.json crossed V8's ~536MB max string length
+// tonight and JSON.stringify started throwing RangeError: Invalid string
+// length, hard-crashing the process on every write attempt (not just bulk
+// imports -- ANY writeJson call on that file, including the live app's
+// normal request handlers, would hit the same wall). Writing an array
+// element-by-element with separate small writeSync calls never builds one
+// giant string, so there's no size ceiling to hit. Non-arrays are rare and
+// always small in this app (config-shaped files), so they keep the
+// original single-shot pretty-printed write.
+function writeJsonToDisk(p, data) {
+  if (!Array.isArray(data)) { writeFileSync(p, JSON.stringify(data, null, 2), "utf8"); return; }
+  const fd = openSync(p, "w");
+  try {
+    writeSync(fd, "[");
+    data.forEach((item, i) => {
+      if (i > 0) writeSync(fd, ",");
+      writeSync(fd, JSON.stringify(item));
+    });
+    writeSync(fd, "]");
+  } finally { closeSync(fd); }
+}
 export function writeJson(file, data) {
   if (_batchIo) { _jsonCache.set(file, data); _dirtyFiles.add(file); return; }
   const p = join(DATA_DIR, file);
-  writeFileSync(p, JSON.stringify(data, null, 2), "utf8");
+  writeJsonToDisk(p, data);
   try { _mtimeCache.set(file, { mtimeMs: statSync(p).mtimeMs, data }); } catch { _mtimeCache.delete(file); }
 }
 export function flushJsonCache() {
   for (const file of _dirtyFiles) {
-    writeFileSync(join(DATA_DIR, file), JSON.stringify(_jsonCache.get(file), null, 2), "utf8");
+    writeJsonToDisk(join(DATA_DIR, file), _jsonCache.get(file));
   }
   _dirtyFiles.clear();
 }
