@@ -24,7 +24,7 @@ export async function fetchAcBatch(offset, limit) {
   const data = await r.json();
   return { ok: true, contacts: data.contacts || [] };
 }
-async function fetchCloseBatch(skip, limit) {
+export async function fetchCloseBatch(skip, limit) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   const r = await fetch(`${CLOSE_BASE}/lead/?_skip=${skip}&_limit=${limit}`, { headers: { Authorization: auth } });
   if (!r.ok) return { ok: false, reason: `Close API error ${r.status}` };
@@ -147,7 +147,7 @@ function applyFallbackStatus(contact, status) {
 // get joined into one text value since every CRM custom field is type
 // "text". entityType follows the contact's own type so a "lead" record's
 // fields don't collide with a "contact" record's fields of the same label.
-function mergeCloseCustomFields(contact, closeCustom) {
+export function mergeCloseCustomFields(contact, closeCustom) {
   if (!closeCustom) return;
   Object.entries(closeCustom).forEach(([label, value]) => {
     if (value == null || value === "") return;
@@ -390,7 +390,11 @@ export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
 // Close's "Lead" is company-level with a nested contacts[] array -- flatten
 // each nested person into its own CRM contact, sharing the lead's
 // accountName/status.
-function upsertFromCloseLead(lead, defaultStatus) {
+// Close statuses that mean "never text this person again" -- checked
+// against whatever status the lead ends up with (existing contact's
+// current status kept if Close has none, matching the line below).
+const SMS_BLOCKED_STATUSES = ["STOP", "BAD FIT / BLACKLIST"];
+export function upsertFromCloseLead(lead, defaultStatus) {
   const contacts = readJson(CONTACTS_FILE, []);
   const nested = lead.contacts?.length ? lead.contacts : [{ name: lead.display_name, emails: [], phones: [] }];
   let count = 0;
@@ -418,6 +422,10 @@ function upsertFromCloseLead(lead, defaultStatus) {
       };
       contacts.push(contact);
     }
+    // Never downgrades an existing true back to false -- once blocked from
+    // SMS by status, a later re-import with a stale/different status label
+    // must not silently re-enable texting.
+    if (SMS_BLOCKED_STATUSES.includes(contact.status)) contact.smsOptOut = true;
     count++;
     touched.push(contact);
   });
