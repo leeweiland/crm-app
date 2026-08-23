@@ -251,11 +251,19 @@ export async function fetchAcOneToOneCampaigns() {
 // an 'opened'/'clicked' statusHistory entry, matching Close's import
 // behavior -- there's no exact open/click timestamp from AC's aggregate
 // campaign stats, so sdate (send date) stands in for all three.
-export function mergeAcCampaigns(contact, oneToOneCampaigns) {
+// existingIdsIndex is an optional caller-owned Set, mutated in place, so a
+// bulk import can build the dedup index ONCE (single pass over the log) and
+// reuse it across every contact instead of paying log.filter().map() -- a
+// full scan of the ENTIRE message log -- on every single call. At ~900K+
+// log entries that scan alone was confirmed live to dominate per-contact
+// cost and get WORSE as the log grows, on top of the real API latency.
+// Falls back to the old rebuild-from-log behavior when omitted (the
+// single-contact admin/test path, where a fresh scan costs nothing).
+export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex) {
   const matches = oneToOneCampaigns.filter(c => c.email === contact.email?.toLowerCase());
   if (!matches.length) return 0;
   const log = readJson(MESSAGE_LOG_FILE, []);
-  const existingIds = new Set(log.filter(m => m.acCampaignId).map(m => m.acCampaignId));
+  const existingIds = existingIdsIndex || new Set(log.filter(m => m.acCampaignId).map(m => m.acCampaignId));
   let added = 0;
   matches.forEach(c => {
     if (existingIds.has(c.id)) return;
@@ -271,6 +279,7 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns) {
       sentAt: c.sdate, createdAt: c.sdate || new Date().toISOString(),
       inboxDone: true, acCampaignId: c.id,
     });
+    existingIds.add(c.id);
     added++;
   });
   if (added) writeJson(MESSAGE_LOG_FILE, log);
@@ -318,10 +327,11 @@ async function acCampaignName(campaignId) {
   return acCampaignNameCache.get(campaignId);
 }
 // Dedup key is AC's own log/linkData row id (stable across re-runs).
-export async function mergeAcContactActivities(contact, acContactId) {
+// existingIdsIndex: see mergeAcCampaigns's comment -- same fix, same reason.
+export async function mergeAcContactActivities(contact, acContactId, existingIdsIndex) {
   const { logs, linkData } = await fetchAcContactActivities(acContactId);
   const log = readJson(MESSAGE_LOG_FILE, []);
-  const existingIds = new Set(log.filter(m => m.acActivityId).map(m => m.acActivityId));
+  const existingIds = existingIdsIndex || new Set(log.filter(m => m.acActivityId).map(m => m.acActivityId));
   let added = 0;
   for (const l of logs) {
     const acActivityId = `ac_send:${l.id}`;
@@ -335,6 +345,7 @@ export async function mergeAcContactActivities(contact, acContactId) {
       sentAt: l.tstamp, createdAt: l.tstamp || new Date().toISOString(),
       inboxDone: true, acActivityId,
     });
+    existingIds.add(acActivityId);
     added++;
   }
   for (const c of linkData) {
@@ -350,6 +361,7 @@ export async function mergeAcContactActivities(contact, acContactId) {
       sentAt: c.tstamp, createdAt: c.tstamp || new Date().toISOString(),
       inboxDone: true, acActivityId,
     });
+    existingIds.add(acActivityId);
     added++;
   }
   if (added) writeJson(MESSAGE_LOG_FILE, log);
