@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -117,12 +117,25 @@ export function readJson(file, fallback) {
   // silently destroying data.
   if (!existsSync(p)) { if (_batchIo) _jsonCache.set(file, fallback); return fallback; }
   const stat = statSync(p);
+  // Large files are deliberately NOT kept in _mtimeCache on the live
+  // server: caching means holding a full parsed copy in memory for as
+  // long as the process lives, and this app's data files only grow. The
+  // bulk AC import process needs that persistence (IMPORT_BATCH_IO keeps
+  // its own separate in-memory copy across thousands of calls in the same
+  // run), but the live server re-reading fresh each request lets V8
+  // garbage-collect the parsed data after the response is sent instead of
+  // accumulating forever. Confirmed live tonight: the live server's own
+  // heap hit Node's default ~2GB ceiling and crashed with a genuine OOM
+  // while holding cached copies of a 936MB message log.
+  if (stat.size >= LARGE_FILE_STREAM_THRESHOLD && !_batchIo) {
+    return readJsonArrayStreaming(p);
+  }
   const cached = _mtimeCache.get(file);
   let data;
   if (cached && cached.mtimeMs === stat.mtimeMs) {
     data = cached.data;
   } else {
-    data = stat.size >= LARGE_FILE_STREAM_THRESHOLD ? readJsonArrayStreaming(p) : JSON.parse(readFileSync(p, "utf8"));
+    data = JSON.parse(readFileSync(p, "utf8"));
     _mtimeCache.set(file, { mtimeMs: stat.mtimeMs, data });
   }
   if (_batchIo) _jsonCache.set(file, data);
@@ -139,17 +152,32 @@ export function readJson(file, fallback) {
 // giant string, so there's no size ceiling to hit. Non-arrays are rare and
 // always small in this app (config-shaped files), so they keep the
 // original single-shot pretty-printed write.
+//
+// Writes to a TEMP file first, then renameSync's it into place. rename()
+// on the same filesystem is atomic at the OS level -- readers always see
+// either the complete old file or the complete new one, never a partial
+// write. This matters a lot more than it used to: writing element-by-
+// element (many small writeSync calls) takes measurably longer wall-clock
+// time than one big writeFileSync did, which widens the window a
+// concurrent reader could catch the file mid-write. Confirmed live tonight:
+// the live server hit "SyntaxError: Unexpected end of JSON input" reading
+// contacts.json while the bulk import's flush was still writing it.
 function writeJsonToDisk(p, data) {
-  if (!Array.isArray(data)) { writeFileSync(p, JSON.stringify(data, null, 2), "utf8"); return; }
-  const fd = openSync(p, "w");
-  try {
-    writeSync(fd, "[");
-    data.forEach((item, i) => {
-      if (i > 0) writeSync(fd, ",");
-      writeSync(fd, JSON.stringify(item));
-    });
-    writeSync(fd, "]");
-  } finally { closeSync(fd); }
+  const tmp = `${p}.tmp${process.pid}`;
+  if (!Array.isArray(data)) {
+    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  } else {
+    const fd = openSync(tmp, "w");
+    try {
+      writeSync(fd, "[");
+      data.forEach((item, i) => {
+        if (i > 0) writeSync(fd, ",");
+        writeSync(fd, JSON.stringify(item));
+      });
+      writeSync(fd, "]");
+    } finally { closeSync(fd); }
+  }
+  renameSync(tmp, p);
 }
 export function writeJson(file, data) {
   if (_batchIo) { _jsonCache.set(file, data); _dirtyFiles.add(file); return; }
