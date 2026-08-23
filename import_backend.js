@@ -296,6 +296,20 @@ async function fetchAcContactActivities(acContactId) {
   return { logs: d.logs || [], linkData: d.linkData || [] };
 }
 const acCampaignNameCache = new Map();
+// Bulk-populates the same cache acCampaignName() reads from a single
+// paginated sweep of ALL campaigns, instead of one single-record API call
+// per distinct campaign id encountered. Without this, a bulk import hits
+// acCampaignName's lazy per-id fetch for every not-yet-seen campaign on
+// every contact -- a contact with years of send/click history can touch
+// dozens of distinct campaigns, meaning dozens of SEQUENTIAL API calls
+// before that one contact's activities merge finishes. Confirmed live: this
+// alone caused near-every contact to exceed a 20s timeout in the bulk
+// importer. Call once, up front, same pattern as fetchAcOneToOneCampaigns.
+export async function preloadAcCampaignNames() {
+  const map = await fetchAcIdNameMap("campaigns");
+  for (const [id, name] of map) acCampaignNameCache.set(id, name || `Campaign ${id}`);
+  return acCampaignNameCache.size;
+}
 async function acCampaignName(campaignId) {
   if (acCampaignNameCache.has(campaignId)) return acCampaignNameCache.get(campaignId);
   const r = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
