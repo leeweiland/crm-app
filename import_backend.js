@@ -259,10 +259,18 @@ export async function fetchAcOneToOneCampaigns() {
 // cost and get WORSE as the log grows, on top of the real API latency.
 // Falls back to the old rebuild-from-log behavior when omitted (the
 // single-contact admin/test path, where a fresh scan costs nothing).
-export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex) {
+// pendingBuffer: caller-owned array (see appendJsonRecords in
+// auth_backend.js) -- when provided, new records are pushed there instead
+// of being read/written through the full message log array. Confirmed live
+// tonight: readJson(MESSAGE_LOG_FILE) at 4M+ records materializes the whole
+// log as parsed JS objects and blows the import script's heap just to push
+// a handful of new entries. The single-contact/admin path (no pendingBuffer)
+// keeps the old small-scale read-modify-write behavior, which is fine at
+// that scale.
+export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex, pendingBuffer) {
   const matches = oneToOneCampaigns.filter(c => c.email === contact.email?.toLowerCase());
   if (!matches.length) return 0;
-  const log = readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.acCampaignId).map(m => m.acCampaignId));
   let added = 0;
   matches.forEach(c => {
@@ -270,7 +278,7 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex) {
     const statusHistory = [{ status: "sent", at: c.sdate }];
     if (c.opens > 0) statusHistory.push({ status: "opened", at: c.sdate });
     if (c.clicks > 0) statusHistory.push({ status: "clicked", at: c.sdate });
-    log.push({
+    const record = {
       id: randomUUID(), channel: "email", direction: "outbound",
       contactId: contact.id, sourceType: "ac_import", sourceId: null, providerMessageId: null,
       to: contact.email, from: null, subject: c.subject || "(no subject)",
@@ -278,11 +286,12 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex) {
       status: "sent", statusHistory,
       sentAt: c.sdate, createdAt: c.sdate || new Date().toISOString(),
       inboxDone: true, acCampaignId: c.id,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else log.push(record);
     existingIds.add(c.id);
     added++;
   });
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
   return added;
 }
 
@@ -327,24 +336,26 @@ async function acCampaignName(campaignId) {
   return acCampaignNameCache.get(campaignId);
 }
 // Dedup key is AC's own log/linkData row id (stable across re-runs).
-// existingIdsIndex: see mergeAcCampaigns's comment -- same fix, same reason.
-export async function mergeAcContactActivities(contact, acContactId, existingIdsIndex) {
+// existingIdsIndex, pendingBuffer: see mergeAcCampaigns's comment -- same
+// fix, same reason.
+export async function mergeAcContactActivities(contact, acContactId, existingIdsIndex, pendingBuffer) {
   const { logs, linkData } = await fetchAcContactActivities(acContactId);
-  const log = readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.acActivityId).map(m => m.acActivityId));
   let added = 0;
   for (const l of logs) {
     const acActivityId = `ac_send:${l.id}`;
     if (existingIds.has(acActivityId)) continue;
     const name = await acCampaignName(l.campaign);
-    log.push({
+    const record = {
       id: randomUUID(), channel: "email", direction: "outbound",
       contactId: contact.id, sourceType: "ac_import", sourceId: null, providerMessageId: null,
       to: contact.email, from: null, subject: `Sent: ${name}`, body: "", bodyPreview: name,
       status: "sent", statusHistory: [{ status: "sent", at: l.tstamp }],
       sentAt: l.tstamp, createdAt: l.tstamp || new Date().toISOString(),
       inboxDone: true, acActivityId,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else log.push(record);
     existingIds.add(acActivityId);
     added++;
   }
@@ -352,7 +363,7 @@ export async function mergeAcContactActivities(contact, acContactId, existingIds
     const acActivityId = `ac_click:${c.id}`;
     if (existingIds.has(acActivityId)) continue;
     const name = await acCampaignName(c.campaign);
-    log.push({
+    const record = {
       id: randomUUID(), channel: "email", direction: "outbound",
       contactId: contact.id, sourceType: "ac_import", sourceId: null, providerMessageId: null,
       to: contact.email, from: null, subject: `Clicked: ${name}`,
@@ -360,11 +371,12 @@ export async function mergeAcContactActivities(contact, acContactId, existingIds
       status: "clicked", statusHistory: [{ status: "clicked", at: c.tstamp }],
       sentAt: c.tstamp, createdAt: c.tstamp || new Date().toISOString(),
       inboxDone: true, acActivityId,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else log.push(record);
     existingIds.add(acActivityId);
     added++;
   }
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
   return added;
 }
 

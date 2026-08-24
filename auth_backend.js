@@ -202,6 +202,132 @@ export function flushJsonCache() {
   _dirtyFiles.clear();
 }
 
+// Scans a large JSON array file for specific string field values WITHOUT
+// ever building a JS object per element. Confirmed live tonight: the AC
+// bulk import's dedup-index step used readJson (full JSON.parse of every
+// element) just to pull out two id fields per record, and once the message
+// log passed ~4 million records the resulting array of full parsed objects
+// -- each carrying subject/body text, statusHistory arrays, nested sale
+// data, etc -- blew past a 3GB heap ceiling. A raw file Buffer is EXTERNAL
+// memory (outside V8's heap accounting entirely), and per-element strings
+// here are thrown away immediately after their regex match, so the only
+// heap cost is the output Sets of short id strings -- orders of magnitude
+// less than materializing the whole log. Reuses the same byte-level
+// array-boundary scan as readJsonArrayStreaming; see its comment for why
+// scanning structural bytes is UTF-8-safe.
+export function scanJsonArrayFieldSets(file, fieldNames) {
+  const result = {};
+  fieldNames.forEach(f => { result[f] = new Set(); });
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) return result;
+  const fd = openSync(p, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const buf = Buffer.alloc(size);
+    let filled = 0;
+    while (filled < size) {
+      filled += readSync(fd, buf, filled, Math.min(64 * 1024 * 1024, size - filled), filled);
+    }
+    const regexes = fieldNames.map(f => ({ field: f, re: new RegExp(`"${f}":"([^"]*)"`) }));
+    const scanElement = (start, end) => {
+      const s = buf.toString("utf8", start, end);
+      for (const { field, re } of regexes) {
+        const m = re.exec(s);
+        if (m) result[field].add(m[1]);
+      }
+    };
+    let depth = 0, inString = false, escape = false, itemStart = -1;
+    let i = 0;
+    while (i < size && buf[i] !== 0x5b) i++; // seek opening '['
+    itemStart = ++i;
+    for (; i < size; i++) {
+      const b = buf[i];
+      if (inString) {
+        if (escape) escape = false;
+        else if (b === 0x5c) escape = true;
+        else if (b === 0x22) inString = false;
+        continue;
+      }
+      if (b === 0x22) { inString = true; continue; }
+      if (b === 0x7b || b === 0x5b) { depth++; continue; }
+      if (b === 0x7d) { depth--; continue; }
+      if (b === 0x5d) {
+        if (depth === 0) {
+          if (i > itemStart) scanElement(itemStart, i);
+          break;
+        }
+        depth--;
+        continue;
+      }
+      if (b === 0x2c && depth === 0) {
+        scanElement(itemStart, i);
+        itemStart = i + 1;
+      }
+    }
+    return result;
+  } finally { closeSync(fd); }
+}
+
+// Appends records onto a JSON array file WITHOUT ever reading/parsing the
+// existing contents into JS objects -- companion fix to
+// scanJsonArrayFieldSets above, for the same reason: at 4M+ records the
+// message log's parsed form is far too big to hold in memory just to push a
+// few hundred new entries onto it. Copies the file byte-for-byte (fixed-size
+// buffer, O(1) memory regardless of file size) up to its closing ']', then
+// appends the new records and closes the array, writing to a temp file and
+// renaming into place same as writeJsonToDisk -- a concurrent reader always
+// sees either the complete old file or the complete new one.
+export function appendJsonRecords(file, newRecords) {
+  if (!newRecords || !newRecords.length) return;
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) { writeJsonToDisk(p, newRecords); return; }
+  const tmp = `${p}.tmp${process.pid}`;
+  const srcFd = openSync(p, "r");
+  let bodyEnd, isEmpty;
+  try {
+    const size = fstatSync(srcFd).size;
+    const tailLen = Math.min(size, 64);
+    const tailBuf = Buffer.alloc(tailLen);
+    readSync(srcFd, tailBuf, 0, tailLen, size - tailLen);
+    let end = tailLen - 1;
+    while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+    if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecords: ${file} does not end with ']'`);
+    bodyEnd = size - (tailLen - end);
+
+    const headLen = Math.min(size, 256);
+    const headBuf = Buffer.alloc(headLen);
+    readSync(srcFd, headBuf, 0, headLen, 0);
+    let hi = 0;
+    while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
+    hi++;
+    while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+    isEmpty = hi < headLen && headBuf[hi] === 0x5d;
+
+    // Windows (unlike POSIX/Linux) refuses to rename a file over a
+    // destination that still has an open handle pointing at it -- confirmed
+    // testing locally: renameSync threw EPERM until srcFd was closed first.
+    // Not an issue on Railway's Linux containers, but closing before the
+    // rename is correct and safe on both, so do it unconditionally.
+    const dstFd = openSync(tmp, "w");
+    try {
+      const CHUNK = 64 * 1024 * 1024;
+      const copyBuf = Buffer.alloc(Math.min(CHUNK, bodyEnd || 1));
+      let copied = 0;
+      while (copied < bodyEnd) {
+        const n = readSync(srcFd, copyBuf, 0, Math.min(copyBuf.length, bodyEnd - copied), copied);
+        writeSync(dstFd, copyBuf, 0, n);
+        copied += n;
+      }
+      newRecords.forEach((r, i) => {
+        if (!isEmpty || i > 0) writeSync(dstFd, ",");
+        writeSync(dstFd, JSON.stringify(r));
+      });
+      writeSync(dstFd, "]");
+    } finally { closeSync(dstFd); }
+  } finally { closeSync(srcFd); }
+  renameSync(tmp, p);
+}
+
 export function readJsonBody(req) {
   return new Promise((resolve) => {
     let body = "";
