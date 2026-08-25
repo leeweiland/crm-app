@@ -57,50 +57,82 @@ const _mtimeCache = new Map(); // file -> { mtimeMs, data }
 // appear as part of a multi-byte character -- no risk of splitting one
 // mid-character the way naive chunked string decoding would.
 const LARGE_FILE_STREAM_THRESHOLD = 300 * 1024 * 1024; // 300MB
-function readJsonArrayStreaming(p) {
+
+// Calls onElement(rawJsonSubstring) once per top-level array element,
+// reading the file in fixed-size chunks instead of one Buffer.alloc(whole
+// file). Confirmed live tonight: crm_message_log.json reached 4.92GB, and
+// allocating a single Buffer that size (on top of whatever else is
+// resident) is itself now a real crash risk -- for the bulk import script
+// AND for the live server, since every readJson(MESSAGE_LOG_FILE) call on
+// the live server (inbox, reporting, compliance, etc) goes through this
+// same large-file path. Bounding the read to a fixed chunk size (plus
+// whatever partial element carries over a chunk boundary, normally tiny)
+// keeps this read's own memory footprint constant regardless of file size.
+// Byte-level scanning for structural characters ({ } [ ] " \ ,) is safe
+// against UTF-8 multi-byte sequences: every continuation byte in UTF-8 is
+// >= 0x80, so none of those ASCII structural bytes can ever appear as part
+// of a multi-byte character -- no risk of splitting one mid-character, and
+// no risk of splitting one across a chunk boundary either, since the same
+// per-byte state machine (inString/escape/depth) carries across chunks.
+function forEachJsonArrayElement(p, onElement) {
   const fd = openSync(p, "r");
   try {
     const size = fstatSync(fd).size;
-    const buf = Buffer.alloc(size);
-    let filled = 0;
-    while (filled < size) {
-      filled += readSync(fd, buf, filled, Math.min(64 * 1024 * 1024, size - filled), filled);
-    }
-    const results = [];
-    let depth = 0, inString = false, escape = false, itemStart = -1;
-    let i = 0;
-    while (i < size && buf[i] !== 0x5b) i++; // seek opening '['
-    itemStart = ++i;
-    for (; i < size; i++) {
-      const b = buf[i];
-      if (inString) {
-        if (escape) escape = false;
-        else if (b === 0x5c) escape = true; // backslash
-        else if (b === 0x22) inString = false; // "
-        continue;
+    const CHUNK = 64 * 1024 * 1024;
+    const readBuf = Buffer.alloc(Math.min(CHUNK, size || 1));
+    let depth = 0, inString = false, escape = false, seenOpenBracket = false;
+    let carry = Buffer.alloc(0);
+    let bytesReadTotal = 0, finished = false;
+    while (bytesReadTotal < size && !finished) {
+      const toRead = Math.min(readBuf.length, size - bytesReadTotal);
+      const n = readSync(fd, readBuf, 0, toRead, bytesReadTotal);
+      bytesReadTotal += n;
+      const buf = carry.length ? Buffer.concat([carry, readBuf.subarray(0, n)]) : Buffer.from(readBuf.subarray(0, n));
+      carry = Buffer.alloc(0);
+      const len = buf.length;
+      let i = 0, itemStart;
+      if (!seenOpenBracket) {
+        while (i < len && buf[i] !== 0x5b) i++; // seek opening '['
+        if (i >= len) { carry = buf; continue; } // '[' not in this chunk yet -- keep buffering
+        seenOpenBracket = true;
+        itemStart = ++i;
+      } else {
+        itemStart = 0; // buf is entirely a continuation of the in-progress element
       }
-      if (b === 0x22) { inString = true; continue; } // "
-      if (b === 0x7b || b === 0x5b) { depth++; continue; } // { [
-      if (b === 0x7d) { depth--; continue; } // }
-      if (b === 0x5d) { // ]
-        if (depth === 0) {
-          if (i > itemStart) {
-            const s = buf.toString("utf8", itemStart, i).trim();
-            if (s.length) results.push(JSON.parse(s));
-          }
-          break;
+      for (; i < len; i++) {
+        const b = buf[i];
+        if (inString) {
+          if (escape) escape = false;
+          else if (b === 0x5c) escape = true; // backslash
+          else if (b === 0x22) inString = false; // "
+          continue;
         }
-        depth--;
-        continue;
+        if (b === 0x22) { inString = true; continue; } // "
+        if (b === 0x7b || b === 0x5b) { depth++; continue; } // { [
+        if (b === 0x7d) { depth--; continue; } // }
+        if (b === 0x5d) { // ]
+          if (depth === 0) {
+            if (i > itemStart) onElement(buf.toString("utf8", itemStart, i).trim());
+            finished = true;
+            break;
+          }
+          depth--;
+          continue;
+        }
+        if (b === 0x2c && depth === 0) { // ,
+          const s = buf.toString("utf8", itemStart, i).trim();
+          if (s.length) onElement(s);
+          itemStart = i + 1;
+        }
       }
-      if (b === 0x2c && depth === 0) { // ,
-        const s = buf.toString("utf8", itemStart, i).trim();
-        if (s.length) results.push(JSON.parse(s));
-        itemStart = i + 1;
-      }
+      if (!finished && itemStart < len) carry = Buffer.from(buf.subarray(itemStart, len));
     }
-    return results;
   } finally { closeSync(fd); }
+}
+function readJsonArrayStreaming(p) {
+  const results = [];
+  forEachJsonArrayElement(p, (s) => { if (s.length) results.push(JSON.parse(s)); });
+  return results;
 }
 export function readJson(file, fallback) {
   const p = join(DATA_DIR, file);
@@ -220,52 +252,14 @@ export function scanJsonArrayFieldSets(file, fieldNames) {
   fieldNames.forEach(f => { result[f] = new Set(); });
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return result;
-  const fd = openSync(p, "r");
-  try {
-    const size = fstatSync(fd).size;
-    const buf = Buffer.alloc(size);
-    let filled = 0;
-    while (filled < size) {
-      filled += readSync(fd, buf, filled, Math.min(64 * 1024 * 1024, size - filled), filled);
+  const regexes = fieldNames.map(f => ({ field: f, re: new RegExp(`"${f}":"([^"]*)"`) }));
+  forEachJsonArrayElement(p, (s) => {
+    for (const { field, re } of regexes) {
+      const m = re.exec(s);
+      if (m) result[field].add(m[1]);
     }
-    const regexes = fieldNames.map(f => ({ field: f, re: new RegExp(`"${f}":"([^"]*)"`) }));
-    const scanElement = (start, end) => {
-      const s = buf.toString("utf8", start, end);
-      for (const { field, re } of regexes) {
-        const m = re.exec(s);
-        if (m) result[field].add(m[1]);
-      }
-    };
-    let depth = 0, inString = false, escape = false, itemStart = -1;
-    let i = 0;
-    while (i < size && buf[i] !== 0x5b) i++; // seek opening '['
-    itemStart = ++i;
-    for (; i < size; i++) {
-      const b = buf[i];
-      if (inString) {
-        if (escape) escape = false;
-        else if (b === 0x5c) escape = true;
-        else if (b === 0x22) inString = false;
-        continue;
-      }
-      if (b === 0x22) { inString = true; continue; }
-      if (b === 0x7b || b === 0x5b) { depth++; continue; }
-      if (b === 0x7d) { depth--; continue; }
-      if (b === 0x5d) {
-        if (depth === 0) {
-          if (i > itemStart) scanElement(itemStart, i);
-          break;
-        }
-        depth--;
-        continue;
-      }
-      if (b === 0x2c && depth === 0) {
-        scanElement(itemStart, i);
-        itemStart = i + 1;
-      }
-    }
-    return result;
-  } finally { closeSync(fd); }
+  });
+  return result;
 }
 
 // Appends records onto a JSON array file WITHOUT ever reading/parsing the
