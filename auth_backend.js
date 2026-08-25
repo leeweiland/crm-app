@@ -87,17 +87,32 @@ function forEachJsonArrayElement(p, onElement) {
       const toRead = Math.min(readBuf.length, size - bytesReadTotal);
       const n = readSync(fd, readBuf, 0, toRead, bytesReadTotal);
       bytesReadTotal += n;
-      const buf = carry.length ? Buffer.concat([carry, readBuf.subarray(0, n)]) : Buffer.from(readBuf.subarray(0, n));
+      const carryLen = carry.length;
+      const buf = carryLen ? Buffer.concat([carry, readBuf.subarray(0, n)]) : Buffer.from(readBuf.subarray(0, n));
       carry = Buffer.alloc(0);
       const len = buf.length;
-      let i = 0, itemStart;
+      let i, itemStart;
       if (!seenOpenBracket) {
+        i = 0;
         while (i < len && buf[i] !== 0x5b) i++; // seek opening '['
         if (i >= len) { carry = buf; continue; } // '[' not in this chunk yet -- keep buffering
         seenOpenBracket = true;
         itemStart = ++i;
       } else {
-        itemStart = 0; // buf is entirely a continuation of the in-progress element
+        // itemStart=0 so the eventual element slice still includes the
+        // carried-over bytes, but the scan cursor resumes at carryLen --
+        // those bytes already passed through the depth/inString/escape
+        // state machine at the end of the PREVIOUS chunk (that's how they
+        // ended up as carry in the first place). Re-scanning them here
+        // would double-count every brace/bracket in a record that has any
+        // nested structure (statusHistory arrays, hyrosSaleData objects),
+        // corrupting depth until it hits 0 at the wrong byte and the whole
+        // scan thinks the array ended early. Confirmed live: real message
+        // log records (unlike this file's own small test fixtures) have
+        // exactly this nesting, and the double-scan bug made a 4.92GB scan
+        // stop after just 134MB, returning 0 matches instead of millions.
+        itemStart = 0;
+        i = carryLen;
       }
       for (; i < len; i++) {
         const b = buf[i];
@@ -112,7 +127,7 @@ function forEachJsonArrayElement(p, onElement) {
         if (b === 0x7d) { depth--; continue; } // }
         if (b === 0x5d) { // ]
           if (depth === 0) {
-            if (i > itemStart) onElement(buf.toString("utf8", itemStart, i).trim());
+            if (i > itemStart) emitElement(buf, itemStart, i, onElement);
             finished = true;
             break;
           }
@@ -120,8 +135,7 @@ function forEachJsonArrayElement(p, onElement) {
           continue;
         }
         if (b === 0x2c && depth === 0) { // ,
-          const s = buf.toString("utf8", itemStart, i).trim();
-          if (s.length) onElement(s);
+          emitElement(buf, itemStart, i, onElement);
           itemStart = i + 1;
         }
       }
@@ -129,9 +143,19 @@ function forEachJsonArrayElement(p, onElement) {
     }
   } finally { closeSync(fd); }
 }
+// Trims leading/trailing ASCII whitespace by index arithmetic only -- no
+// string materialized here, so a caller that only needs to search for a
+// small substring within the element (scanJsonArrayFieldSets below) never
+// pays for converting the whole record (which can carry a multi-KB email
+// body/subject) to a JS string just to throw it away a moment later.
+function emitElement(buf, start, end, onElement) {
+  while (start < end && (buf[start] === 0x20 || buf[start] === 0x0a || buf[start] === 0x0d || buf[start] === 0x09)) start++;
+  while (end > start && (buf[end - 1] === 0x20 || buf[end - 1] === 0x0a || buf[end - 1] === 0x0d || buf[end - 1] === 0x09)) end--;
+  if (end > start) onElement(buf, start, end);
+}
 function readJsonArrayStreaming(p) {
   const results = [];
-  forEachJsonArrayElement(p, (s) => { if (s.length) results.push(JSON.parse(s)); });
+  forEachJsonArrayElement(p, (buf, start, end) => { results.push(JSON.parse(buf.toString("utf8", start, end))); });
   return results;
 }
 export function readJson(file, fallback) {
@@ -252,11 +276,41 @@ export function scanJsonArrayFieldSets(file, fieldNames) {
   fieldNames.forEach(f => { result[f] = new Set(); });
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return result;
-  const regexes = fieldNames.map(f => ({ field: f, re: new RegExp(`"${f}":"([^"]*)"`) }));
-  forEachJsonArrayElement(p, (s) => {
-    for (const { field, re } of regexes) {
-      const m = re.exec(s);
-      if (m) result[field].add(m[1]);
+  // Searches raw buffer bytes for each field's `"field":"` key pattern
+  // instead of materializing the whole record as a string first. Confirmed
+  // live: with ~9M records (most of them matching one of these two
+  // fields), converting every record to a full string just to run a regex
+  // -- including subject/body/statusHistory/hyrosSaleData content that has
+  // nothing to do with the match -- generated enough garbage to need 7GB+
+  // of heap even though the actual retained Sets are under 1GB. Only the
+  // short matched VALUE gets turned into a string now. Values here are
+  // this app's own generated ids (ac_send:<n>, ac_camp:<n>) with no
+  // embedded quotes or backslashes, so a plain unescaped-quote scan for
+  // the closing delimiter is safe -- not a general-purpose JSON string
+  // parser.
+  const needles = fieldNames.map(f => ({ field: f, needle: Buffer.from(`"${f}":"`) }));
+  forEachJsonArrayElement(p, (buf, start, end) => {
+    // buf.indexOf has no "stop searching at this offset" parameter -- it
+    // scans forward from `start` to the end of the WHOLE underlying chunk
+    // buffer (up to 64MB) looking for the needle, ignoring `end` entirely.
+    // Confirmed live: for any element that doesn't contain a given field
+    // (e.g. a hyros record has neither acActivityId nor acCampaignId, and
+    // even most ac_import records only carry ONE of the two), that turned
+    // into a multi-megabyte scan per miss instead of a check bounded to
+    // this one small record -- the scan that finished in 58s with a
+    // regex-per-full-string approach was still running after 10+ minutes
+    // with this "optimization" before being killed. `.subarray(start,
+    // end)` is a VIEW (no copy), so bounding the search to it costs
+    // nothing extra while guaranteeing indexOf never looks past this
+    // element's own bytes.
+    const view = buf.subarray(start, end);
+    for (const { field, needle } of needles) {
+      const idx = view.indexOf(needle);
+      if (idx === -1) continue;
+      const valueStart = idx + needle.length;
+      let valueEnd = valueStart;
+      while (valueEnd < view.length && view[valueEnd] !== 0x22) valueEnd++;
+      result[field].add(view.toString("utf8", valueStart, valueEnd));
     }
   });
   return result;
