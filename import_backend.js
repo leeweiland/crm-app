@@ -1,9 +1,10 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, scanJsonArrayFieldSets, appendJsonRecords } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch, markFirstSeen } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
-import { CALLS_FILE } from "./inbox_backend.js";
-import { recheckStopStatus } from "./compliance_backend.js";
+import { CALLS_FILE, TASKS_FILE, NOTES_FILE } from "./inbox_backend.js";
+import { recheckStopStatus, isStopKeyword } from "./compliance_backend.js";
+import { getComplianceSettings } from "./integrations_backend.js";
 import { getOrCreateTag, getOrCreateList, getOrCreateCustomField } from "./contacts_backend.js";
 import { hyrosConfigured, fetchHyrosLeadsPage, upsertFromHyros, mergeHyrosActivity, searchHyrosLeadByIdentity } from "./hyros_backend.js";
 
@@ -186,18 +187,27 @@ export async function enrichStatusFromClose(contact) {
   mergeCloseCustomFields(contact, lead.custom);
   persistContact(contact);
 }
-export async function mergeCloseSequences(contact) {
+// existingIdsIndex, pendingBuffer: see mergeAcCampaigns's comment in this
+// same file -- same fix, same reason, now needed here too since the
+// message log this writes into is the same shared, multi-million-record
+// file. The single-contact/admin path (no pendingBuffer) keeps the old
+// small-scale read-modify-write behavior.
+// preFetchedSubs: bulk import path fetches this alongside email/sms/call/
+// note/task in one big Promise.all (see pullCloseHistoryForContactBulk)
+// instead of the extra serialized round-trip an internal fetch here would
+// add on top of everything else already awaited for that contact.
+export async function mergeCloseSequences(contact, existingIdsIndex, pendingBuffer, preFetchedSubs) {
   const leadId = contact.externalIds?.closeLeadId;
   if (!leadId || !closeConfigured()) return 0;
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
-  const subs = await fetchCloseSequenceSubscriptions(leadId);
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  const existingIds = new Set(log.filter(m => m.closeSequenceSubId).map(m => m.closeSequenceSubId));
+  const subs = preFetchedSubs || await fetchCloseSequenceSubscriptions(leadId);
+  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const existingIds = existingIdsIndex || new Set(log.filter(m => m.closeSequenceSubId).map(m => m.closeSequenceSubId));
   let added = 0;
   for (const s of subs) {
     if (existingIds.has(s.id)) continue;
     const name = await closeSequenceName(s.sequence_id, auth);
-    log.push({
+    const record = {
       id: randomUUID(), channel: "activity", direction: "inbound",
       contactId: contact.id, sourceType: "close_import", sourceId: null, providerMessageId: null,
       to: null, from: null,
@@ -207,10 +217,12 @@ export async function mergeCloseSequences(contact) {
       sentAt: null, createdAt: s.date_created || new Date().toISOString(),
       inboxDone: true,
       closeSequenceSubId: s.id,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else log.push(record);
+    existingIds.add(s.id);
     added++;
   }
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
   return added;
 }
 
@@ -418,9 +430,16 @@ export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
 // against whatever status the lead ends up with (existing contact's
 // current status kept if Close has none, matching the line below).
 const SMS_BLOCKED_STATUSES = ["STOP", "BAD FIT / BLACKLIST"];
+// Close's address object shape is {label, address_1, address_2, city,
+// state, zipcode, country} -- joins whichever parts are actually present
+// into one readable line rather than assuming every field is populated.
+export function formatCloseAddress(addr) {
+  return [addr.address_1, addr.address_2, addr.city, addr.state, addr.zipcode, addr.country].filter(Boolean).join(", ");
+}
 export function upsertFromCloseLead(lead, defaultStatus) {
   const contacts = readJson(CONTACTS_FILE, []);
   const nested = lead.contacts?.length ? lead.contacts : [{ name: lead.display_name, emails: [], phones: [] }];
+  const leadAddress = (lead.addresses || []).map(formatCloseAddress).filter(Boolean).join(" | ");
   let count = 0;
   const touched = [];
   nested.forEach(nc => {
@@ -433,12 +452,13 @@ export function upsertFromCloseLead(lead, defaultStatus) {
       contact.accountName = lead.display_name || contact.accountName;
       contact.status = lead.status_label || contact.status;
       contact.externalIds.closeLeadId = lead.id;
+      if (leadAddress) contact.address = leadAddress;
       markFirstSeen(contact, lead.date_created);
       contact.updatedAt = new Date().toISOString();
     } else {
       contact = {
         id: randomUUID(), type: "lead", accountName: lead.display_name || "",
-        first, last, email, phone,
+        first, last, email, phone, address: leadAddress || "",
         status: lead.status_label || defaultStatus || "", tags: [], listIds: [], customFields: {}, source: "close_import", ownerId: null,
         emailOptOut: false, smsOptOut: false, externalIds: { acContactId: null, closeLeadId: lead.id },
         firstSeenAt: lead.date_created || new Date().toISOString(),
@@ -450,6 +470,11 @@ export function upsertFromCloseLead(lead, defaultStatus) {
     // SMS by status, a later re-import with a stale/different status label
     // must not silently re-enable texting.
     if (SMS_BLOCKED_STATUSES.includes(contact.status)) contact.smsOptOut = true;
+    // Close's own native per-email unsubscribe flag (contacts[].emails[].
+    // is_unsubscribed) -- distinct from this app's own SES unsubscribe
+    // link, but the same one-way latch: Close saying "unsubscribed" once
+    // must not get silently cleared by a later re-import.
+    if (nc.emails?.[0]?.is_unsubscribed) contact.emailOptOut = true;
     count++;
     touched.push(contact);
   });
@@ -496,13 +521,13 @@ function closeStatusHistory(a) {
   if (firstOpen?.opened_at) history.push({ status: "opened", at: firstOpen.opened_at });
   return history;
 }
-function mergeCloseEmails(contact, activities) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  const existingIds = new Set(log.filter(m => m.closeActivityId).map(m => m.closeActivityId));
+function mergeCloseEmails(contact, activities, existingIdsIndex, pendingBuffer) {
+  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const existingIds = existingIdsIndex || new Set(log.filter(m => m.closeActivityId).map(m => m.closeActivityId));
   let added = 0;
   activities.forEach(a => {
     if (existingIds.has(a.id)) return;
-    log.push({
+    const record = {
       id: randomUUID(), channel: "email",
       direction: a.direction === "incoming" ? "inbound" : "outbound",
       contactId: contact.id, sourceType: "close_import", sourceId: null, providerMessageId: null,
@@ -518,10 +543,12 @@ function mergeCloseEmails(contact, activities) {
       // in the Inbox -- never counts toward the unread badge.
       inboxDone: true,
       closeActivityId: a.id,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else log.push(record);
+    existingIds.add(a.id);
     added++;
   });
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
   return added;
 }
 // Close keeps recording opens on an email after the fact (someone can open
@@ -529,6 +556,17 @@ function mergeCloseEmails(contact, activities) {
 // so re-running an import for a contact should also refresh already-merged
 // rows, not just add brand-new ones. Matched by closeActivityId; only ever
 // ADDS an 'opened' entry, never removes one.
+//
+// Not called from the bulk import path at all (see pullCloseHistoryForContact
+// below): this UPDATES an existing row in place, which needs the whole log
+// held as parsed objects to find-and-mutate -- exactly what the bulk path's
+// pendingBuffer/appendJsonRecords design exists to avoid at multi-million-
+// record scale. It's also genuinely a no-op on a first-time historical
+// import: closeStatusHistory already bakes in whatever open state existed
+// at fetch time when mergeCloseEmails creates the row, so there's nothing
+// yet-to-refresh. It stays wired up for the live/admin re-run path, where a
+// contact's activities were already imported earlier and may have picked up
+// a late open since.
 function refreshCloseEmailOpens(activities) {
   const log = readJson(MESSAGE_LOG_FILE, []);
   let updated = 0;
@@ -543,14 +581,14 @@ function refreshCloseEmailOpens(activities) {
   if (updated) writeJson(MESSAGE_LOG_FILE, log);
   return updated;
 }
-function mergeCloseSms(contact, activities) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  const existingIds = new Set(log.filter(m => m.closeActivityId).map(m => m.closeActivityId));
+function mergeCloseSms(contact, activities, existingIdsIndex, pendingBuffer) {
+  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const existingIds = existingIdsIndex || new Set(log.filter(m => m.closeActivityId).map(m => m.closeActivityId));
   let added = 0;
   activities.forEach(a => {
     if (existingIds.has(a.id)) return;
     const outbound = a.direction === "outbound";
-    log.push({
+    const record = {
       id: randomUUID(), channel: "sms", direction: outbound ? "outbound" : "inbound",
       contactId: contact.id, sourceType: "close_import", sourceId: null, providerMessageId: null,
       to: outbound ? a.remote_phone : a.local_phone, from: outbound ? a.local_phone : a.remote_phone,
@@ -560,10 +598,12 @@ function mergeCloseSms(contact, activities) {
       createdAt: a.activity_at || a.date_created || new Date().toISOString(),
       inboxDone: true,
       closeActivityId: a.id,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else log.push(record);
+    existingIds.add(a.id);
     added++;
   });
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
   // Re-derived from the contact's full (now-merged) SMS history rather than
   // per-activity during the loop above -- Close doesn't guarantee activities
   // arrive in chronological order, and only the chronologically LATEST
@@ -571,17 +611,21 @@ function mergeCloseSms(contact, activities) {
   // recheckStopStatus's own doc comment for why: a lead who said "stop"
   // once but kept replying normally afterward must not get retroactively
   // suppressed just because "stop" appears somewhere in their history).
-  if (added) recheckStopStatus(contact.id);
+  // Skipped here in bulk mode (pendingBuffer set) -- the bulk import path
+  // calls recheckStopStatusFromActivities itself with the same SMS
+  // activities already in hand, instead of paying for another full
+  // multi-million-record message-log read per contact.
+  if (added && !pendingBuffer) recheckStopStatus(contact.id);
   return added;
 }
-function mergeCloseCalls(contact, activities) {
-  const calls = readJson(CALLS_FILE, []);
-  const existingIds = new Set(calls.filter(c => c.closeActivityId).map(c => c.closeActivityId));
+function mergeCloseCalls(contact, activities, existingIdsIndex, pendingBuffer) {
+  const calls = pendingBuffer ? null : readJson(CALLS_FILE, []);
+  const existingIds = existingIdsIndex || new Set(calls.filter(c => c.closeActivityId).map(c => c.closeActivityId));
   let added = 0;
   activities.forEach(a => {
     if (existingIds.has(a.id)) return;
     const noteText = (a.note || "").trim();
-    calls.push({
+    const record = {
       id: randomUUID(), contactId: contact.id,
       direction: a.direction === "inbound" ? "inbound" : "outbound",
       notes: noteText || `${a.disposition || a.status || "Call"} · ${a.duration || 0}s`,
@@ -589,11 +633,117 @@ function mergeCloseCalls(contact, activities) {
       createdAt: a.activity_at || a.date_created || new Date().toISOString(),
       createdBy: null,
       closeActivityId: a.id,
-    });
+    };
+    if (pendingBuffer) pendingBuffer.push(record); else calls.push(record);
+    existingIds.add(a.id);
     added++;
   });
-  if (added) writeJson(CALLS_FILE, calls);
+  if (added && !pendingBuffer) writeJson(CALLS_FILE, calls);
   return added;
+}
+// Close's Notes are modeled as an activity type, same /activity/{type}/
+// pagination shape as email/sms/call.
+async function fetchAllCloseNotes(leadId) {
+  return fetchAllCloseActivities(leadId, "note");
+}
+export function mergeCloseNotes(contact, notes, existingIdsIndex, pendingBuffer) {
+  let added = 0;
+  notes.forEach(n => {
+    if (existingIdsIndex.has(n.id)) return;
+    pendingBuffer.push({
+      id: randomUUID(), contactId: contact.id,
+      text: n.note || "",
+      createdAt: n.activity_at || n.date_created || new Date().toISOString(),
+      createdBy: null,
+      closeNoteId: n.id,
+    });
+    existingIdsIndex.add(n.id);
+    added++;
+  });
+  return added;
+}
+// Close's Tasks live under a top-level /task/ resource filtered by
+// lead_id, NOT under /activity/{type}/ like email/sms/call/note -- separate
+// paginator to match.
+async function fetchAllCloseTasks(leadId) {
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  const all = [];
+  let skip = 0;
+  while (all.length < CLOSE_HISTORY_MAX_PER_TYPE) {
+    const r = await fetch(`${CLOSE_BASE}/task/?lead_id=${leadId}&_skip=${skip}&_limit=${CLOSE_HISTORY_PAGE_LIMIT}`, { headers: { Authorization: auth } });
+    if (!r.ok) throw new Error(`Close task API error ${r.status}`);
+    const data = await r.json();
+    all.push(...(data.data || []));
+    if (!data.has_more || !data.data?.length) break;
+    skip += data.data.length;
+  }
+  return all;
+}
+export function mergeCloseTasks(contact, tasks, existingIdsIndex, pendingBuffer) {
+  let added = 0;
+  tasks.forEach(t => {
+    if (existingIdsIndex.has(t.id)) return;
+    pendingBuffer.push({
+      id: randomUUID(), contactId: contact.id,
+      type: "task", title: t.text || "Task",
+      dueAt: t.due_date || t.date || null,
+      done: !!t.is_complete,
+      createdAt: t.date_created || new Date().toISOString(),
+      createdBy: null,
+      closeTaskId: t.id,
+    });
+    existingIdsIndex.add(t.id);
+    added++;
+  });
+  return added;
+}
+// Bulk-safe stop-keyword check: recheckStopStatus (compliance_backend.js)
+// re-reads the ENTIRE message log to find a contact's latest inbound SMS --
+// fine at live-server scale, but at 4M+ log records that's the same
+// materialize-everything cost already fixed everywhere else in the bulk
+// import path. The SMS activities for this contact are already sitting in
+// memory right here (mergeCloseSms just processed them), so the latest
+// inbound one can be found directly from that array instead. Same one-way
+// latch semantics as the original: only ever sets STOP, never clears it.
+export function recheckStopStatusFromActivities(contact, smsActivities, stopKeywords) {
+  if (!stopKeywords?.length || contact.status === "STOP") return false;
+  const inbound = smsActivities.filter(a => a.direction !== "outbound");
+  if (!inbound.length) return false;
+  const latest = inbound.reduce((a, b) =>
+    new Date(b.activity_at || b.date_created || 0) > new Date(a.activity_at || a.date_created || 0) ? b : a);
+  if (!isStopKeyword(latest.text || "", stopKeywords)) return false;
+  contact.status = "STOP";
+  contact.smsOptOut = true;
+  contact.updatedAt = new Date().toISOString();
+  return true;
+}
+// Runs every fetch this contact needs from Close in ONE Promise.all instead
+// of the multiple separately-awaited round-trips the single-contact/admin
+// path uses (pullCloseHistoryForContact + mergeCloseSequences's own
+// internal fetch) -- confirmed with AC tonight that serializing several
+// independent API calls per record, multiplied across hundreds of
+// thousands of records, is the dominant cost once concurrency and the
+// message-log bottlenecks are fixed. indexes/buffers are the bulk import
+// script's shared dedup Sets and pending-write arrays (message log, calls,
+// notes, tasks) -- see _tmp_close_full_import.mjs.
+export async function pullCloseHistoryForContactBulk(contact, indexes, buffers, stopKeywords) {
+  const leadId = contact.externalIds?.closeLeadId;
+  if (!leadId || !closeConfigured()) return;
+  const [emails, sms, calls, notes, tasks, subs] = await Promise.all([
+    fetchAllCloseActivities(leadId, "email"),
+    fetchAllCloseActivities(leadId, "sms"),
+    fetchAllCloseActivities(leadId, "call"),
+    fetchAllCloseNotes(leadId),
+    fetchAllCloseTasks(leadId),
+    fetchCloseSequenceSubscriptions(leadId),
+  ]);
+  mergeCloseEmails(contact, emails, indexes.closeActivityId, buffers.log);
+  mergeCloseSms(contact, sms, indexes.closeActivityId, buffers.log);
+  recheckStopStatusFromActivities(contact, sms, stopKeywords);
+  mergeCloseCalls(contact, calls, indexes.closeCallId, buffers.calls);
+  mergeCloseNotes(contact, notes, indexes.closeNoteId, buffers.notes);
+  mergeCloseTasks(contact, tasks, indexes.closeTaskId, buffers.tasks);
+  await mergeCloseSequences(contact, indexes.closeSequenceSubId, buffers.log, subs);
 }
 // Targeted single-identity lookup (vs fetchAcBatch's bulk paginated sweep)
 // -- for cross-referencing a contact already found via another source.

@@ -8,7 +8,7 @@ import { setConvoMeta } from "./conversation_meta.js";
 // word (case/punctuation-insensitive) to trigger opt-out -- substring
 // matching would false-positive on something like "please don't stop
 // texting me".
-function isStopKeyword(text, keywords) {
+export function isStopKeyword(text, keywords) {
   const cleaned = String(text || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
   if (!cleaned) return false;
   return keywords.some(k => cleaned === String(k).trim().toUpperCase().replace(/[^A-Z]/g, ""));
