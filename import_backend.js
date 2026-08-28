@@ -45,7 +45,7 @@ class RateLimiter {
     }
   }
 }
-const closeLimiter = new RateLimiter(35); // safety margin under the observed ~60/sec shared limit
+const closeLimiter = new RateLimiter(12); // still seeing 429s at 35/sec live -- dropping hard for a reliable run first, tune up only after confirming a clean error rate
 async function closeFetch(url, opts) {
   await closeLimiter.acquire();
   return fetch(url, opts);
