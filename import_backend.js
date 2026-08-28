@@ -19,6 +19,38 @@ const CLOSE_BASE = "https://api.close.com/api/v1";
 function acConfigured() { return !!process.env.AC_API_KEY; }
 function closeConfigured() { return !!process.env.CLOSE_API_KEY; }
 
+// Confirmed live via Close's own response headers (x-ratelimit-limit:
+// "60, 60;w=1, 100;w=1") that /lead/, /activity/{email,sms,call,note}/,
+// and /task/ all share ONE combined ~60-requests/second bucket -- not 60
+// each. Limiting how many LEADS process concurrently doesn't control the
+// actual request RATE landing on Close's server: a bulk import firing
+// several Promise.all'd calls per lead can burst well past 60/sec even at
+// modest concurrency (confirmed live: 3 concurrent leads, 18 simultaneous
+// requests, got 429'd on nearly every single call). A shared token bucket
+// throttles every outgoing Close request to a safe rate regardless of how
+// many leads are in flight at once.
+class RateLimiter {
+  constructor(ratePerSec) {
+    this.ratePerSec = ratePerSec;
+    this.tokens = ratePerSec;
+    this.lastRefill = Date.now();
+  }
+  async acquire() {
+    while (true) {
+      const now = Date.now();
+      this.tokens = Math.min(this.ratePerSec, this.tokens + ((now - this.lastRefill) / 1000) * this.ratePerSec);
+      this.lastRefill = now;
+      if (this.tokens >= 1) { this.tokens -= 1; return; }
+      await new Promise(r => setTimeout(r, 25));
+    }
+  }
+}
+const closeLimiter = new RateLimiter(35); // safety margin under the observed ~60/sec shared limit
+async function closeFetch(url, opts) {
+  await closeLimiter.acquire();
+  return fetch(url, opts);
+}
+
 export async function fetchAcBatch(offset, limit) {
   const r = await fetch(`${AC_BASE}/api/3/contacts?limit=${limit}&offset=${offset}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
   if (!r.ok) return { ok: false, reason: `ActiveCampaign API error ${r.status}` };
@@ -27,7 +59,7 @@ export async function fetchAcBatch(offset, limit) {
 }
 export async function fetchCloseBatch(skip, limit) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
-  const r = await fetch(`${CLOSE_BASE}/lead/?_skip=${skip}&_limit=${limit}`, { headers: { Authorization: auth } });
+  const r = await closeFetch(`${CLOSE_BASE}/lead/?_skip=${skip}&_limit=${limit}`, { headers: { Authorization: auth } });
   if (!r.ok) return { ok: false, reason: `Close API error ${r.status}` };
   const data = await r.json();
   return { ok: true, leads: data.data || [], hasMore: !!data.has_more };
@@ -94,14 +126,14 @@ export async function enrichAcContact(contact, acContactId, tagMap, listMap) {
 const closeSequenceNameCache = new Map();
 async function closeSequenceName(id, auth) {
   if (closeSequenceNameCache.has(id)) return closeSequenceNameCache.get(id);
-  const r = await fetch(`${CLOSE_BASE}/sequence/${id}/`, { headers: { Authorization: auth } });
+  const r = await closeFetch(`${CLOSE_BASE}/sequence/${id}/`, { headers: { Authorization: auth } });
   const name = r.ok ? (await r.json()).name : id;
   closeSequenceNameCache.set(id, name);
   return name;
 }
 async function fetchCloseSequenceSubscriptions(leadId) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
-  const r = await fetch(`${CLOSE_BASE}/sequence_subscription/?lead_id=${leadId}`, { headers: { Authorization: auth } });
+  const r = await closeFetch(`${CLOSE_BASE}/sequence_subscription/?lead_id=${leadId}`, { headers: { Authorization: auth } });
   if (!r.ok) return [];
   const data = await r.json();
   return data.data || [];
@@ -115,14 +147,14 @@ async function fetchCloseSequenceSubscriptions(leadId) {
 // never overwrites one a human (or the Close importer) already set.
 async function fetchCloseLeadById(leadId) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
-  const r = await fetch(`${CLOSE_BASE}/lead/${leadId}/`, { headers: { Authorization: auth } });
+  const r = await closeFetch(`${CLOSE_BASE}/lead/${leadId}/`, { headers: { Authorization: auth } });
   return r.ok ? await r.json() : null;
 }
 async function searchCloseLeadByIdentity(email, phone) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   for (const [field, value] of [["email", email], ["phone", phone]]) {
     if (!value) continue;
-    const r = await fetch(`${CLOSE_BASE}/lead/?query=${encodeURIComponent(`${field}:"${value}"`)}`, { headers: { Authorization: auth } });
+    const r = await closeFetch(`${CLOSE_BASE}/lead/?query=${encodeURIComponent(`${field}:"${value}"`)}`, { headers: { Authorization: auth } });
     if (!r.ok) continue;
     const data = await r.json();
     if (data.data?.length) return data.data[0];
@@ -495,7 +527,7 @@ async function fetchAllCloseActivities(leadId, type) {
   const all = [];
   let skip = 0;
   while (all.length < CLOSE_HISTORY_MAX_PER_TYPE) {
-    const r = await fetch(`${CLOSE_BASE}/activity/${type}/?lead_id=${leadId}&_skip=${skip}&_limit=${CLOSE_HISTORY_PAGE_LIMIT}`, { headers: { Authorization: auth } });
+    const r = await closeFetch(`${CLOSE_BASE}/activity/${type}/?lead_id=${leadId}&_skip=${skip}&_limit=${CLOSE_HISTORY_PAGE_LIMIT}`, { headers: { Authorization: auth } });
     if (!r.ok) throw new Error(`Close ${type} activity API error ${r.status}`);
     const data = await r.json();
     all.push(...(data.data || []));
@@ -670,7 +702,7 @@ async function fetchAllCloseTasks(leadId) {
   const all = [];
   let skip = 0;
   while (all.length < CLOSE_HISTORY_MAX_PER_TYPE) {
-    const r = await fetch(`${CLOSE_BASE}/task/?lead_id=${leadId}&_skip=${skip}&_limit=${CLOSE_HISTORY_PAGE_LIMIT}`, { headers: { Authorization: auth } });
+    const r = await closeFetch(`${CLOSE_BASE}/task/?lead_id=${leadId}&_skip=${skip}&_limit=${CLOSE_HISTORY_PAGE_LIMIT}`, { headers: { Authorization: auth } });
     if (!r.ok) throw new Error(`Close task API error ${r.status}`);
     const data = await r.json();
     all.push(...(data.data || []));
@@ -767,7 +799,7 @@ async function fetchAcContactByEmail(email) {
 // not a different way of importing them.
 export async function importCloseSegment(query, limit) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
-  const r = await fetch(`${CLOSE_BASE}/lead/?${new URLSearchParams({ query, _limit: String(limit) })}`, { headers: { Authorization: auth } });
+  const r = await closeFetch(`${CLOSE_BASE}/lead/?${new URLSearchParams({ query, _limit: String(limit) })}`, { headers: { Authorization: auth } });
   if (!r.ok) throw new Error(`Close search API error ${r.status}`);
   const leads = (await r.json()).data || [];
 
