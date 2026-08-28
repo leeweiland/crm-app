@@ -45,7 +45,11 @@ class RateLimiter {
     }
   }
 }
-const closeLimiter = new RateLimiter(12); // still seeing 429s at 35/sec live -- dropping hard for a reliable run first, tune up only after confirming a clean error rate
+// Configurable via env so the safe ceiling can be tuned by relaunching the
+// bulk import script alone, without a full redeploy each time -- confirmed
+// live tonight that 35/sec still 429'd and 12/sec ran clean, and finding
+// the real number in between needed several iterations.
+const closeLimiter = new RateLimiter(+process.env.CLOSE_RATE_LIMIT || 12);
 async function closeFetch(url, opts) {
   await closeLimiter.acquire();
   return fetch(url, opts);
