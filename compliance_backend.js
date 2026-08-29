@@ -18,6 +18,21 @@ export function isStopKeyword(text, keywords) {
 // opt-out, never email -- email opt-out only ever happens via an explicit
 // unsubscribe-link click.
 //
+// Sets ONLY smsOptOut, never contact.status. Deliberately keeping these
+// separate: status is a sales-pipeline stage (POTENTIAL/APPLICATION/
+// BOOKED/ENROLLED/etc), and someone who is genuinely ENROLLED (or BOOKED,
+// or mid-APPLICATION) can still text STOP just to stop receiving texts --
+// that must suppress SMS, not silently erase their real pipeline stage by
+// overwriting it with "STOP". Confirmed live: this used to also set
+// contact.status = "STOP", and a live audit of imported Close leads found
+// real ENROLLED/APPLICATION/BOOKED people whose status had been clobbered
+// this way, with no way to recover what it used to be. smsOptOut is the
+// one and only source of truth for "don't text this person" now; a
+// contact's status value of "STOP" is reserved for someone a human
+// deliberately moved to that pipeline stage themselves (see
+// applyStatusOptOut below, which reacts to a MANUAL status change instead
+// of driving one).
+//
 // Always re-derives from the contact's chronologically LATEST inbound SMS
 // in the full log, rather than trusting whichever single message triggered
 // the call -- someone who said STOP once but kept replying normally
@@ -41,8 +56,7 @@ export function recheckStopStatus(contactId) {
 
   const contacts = readJson(CONTACTS_FILE, []);
   const contact = contacts.find(c => c.id === contactId);
-  if (!contact || contact.status === "STOP") return false;
-  contact.status = "STOP";
+  if (!contact || contact.smsOptOut) return false;
   contact.smsOptOut = true;
   contact.updatedAt = new Date().toISOString();
   writeJson(CONTACTS_FILE, contacts);

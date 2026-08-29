@@ -233,7 +233,11 @@ export async function handleEmailRequest(req, res, url) {
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find(c => c.id === contactId);
     if (contact) {
-      contact.emailOptOut = true; contact.status = "STOP"; contact.updatedAt = new Date().toISOString();
+      // Only emailOptOut -- never contact.status. Same reasoning as
+      // recheckStopStatus (compliance_backend.js): a genuinely ENROLLED or
+      // BOOKED contact clicking an unsubscribe link must stop receiving
+      // marketing email without their real pipeline stage being erased.
+      contact.emailOptOut = true; contact.updatedAt = new Date().toISOString();
       writeJson(CONTACTS_FILE, contacts);
       setConvoMeta(contact.id, { archived: true });
     }

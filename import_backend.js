@@ -741,14 +741,20 @@ export function mergeCloseTasks(contact, tasks, existingIdsIndex, pendingBuffer)
 // memory right here (mergeCloseSms just processed them), so the latest
 // inbound one can be found directly from that array instead. Same one-way
 // latch semantics as the original: only ever sets STOP, never clears it.
+// Sets ONLY smsOptOut, never contact.status -- see recheckStopStatus's
+// comment in compliance_backend.js for why: an ENROLLED/BOOKED/APPLICATION
+// contact who texts STOP just to stop receiving texts must not have their
+// real pipeline stage silently erased by this. Confirmed live: the old
+// version here set contact.status = "STOP" too, and a post-import audit of
+// Close leads found real ENROLLED/BOOKED/APPLICATION people whose status
+// had been clobbered this way with no way to recover the original value.
 export function recheckStopStatusFromActivities(contact, smsActivities, stopKeywords) {
-  if (!stopKeywords?.length || contact.status === "STOP") return false;
+  if (!stopKeywords?.length || contact.smsOptOut) return false;
   const inbound = smsActivities.filter(a => a.direction !== "outbound");
   if (!inbound.length) return false;
   const latest = inbound.reduce((a, b) =>
     new Date(b.activity_at || b.date_created || 0) > new Date(a.activity_at || a.date_created || 0) ? b : a);
   if (!isStopKeyword(latest.text || "", stopKeywords)) return false;
-  contact.status = "STOP";
   contact.smsOptOut = true;
   contact.updatedAt = new Date().toISOString();
   return true;

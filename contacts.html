@@ -361,7 +361,7 @@ document.getElementById('addListBtn').onclick = async () => {
 
 // ── Segments (Email/SMS tabs) ────────────────────────────────────────────
 function describeCondition(cond) {
-  const fieldLabel = cond.field === 'type' ? 'Type' : cond.field === 'status' ? 'Status' : cond.field === 'tags' ? 'Tag' : cond.field === 'listIds' ? 'List'
+  const fieldLabel = cond.field === 'type' ? 'Type' : cond.field === 'status' ? 'Status' : cond.field === 'smsOptOut' ? 'SMS Opt-Out' : cond.field === 'emailOptOut' ? 'Email Opt-Out' : cond.field === 'tags' ? 'Tag' : cond.field === 'listIds' ? 'List'
     : cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field;
   const opLabel = { eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set' }[cond.op] || cond.op;
   let valueLabel = cond.value;
@@ -408,6 +408,8 @@ function fieldOptionsHtml() {
   return `
     <option value="type">Type (Lead/Contact)</option>
     <option value="status">Status</option>
+    <option value="smsOptOut">SMS Opt-Out</option>
+    <option value="emailOptOut">Email Opt-Out</option>
     <option value="tags">Tag</option>
     <option value="listIds">List</option>
     ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
@@ -421,6 +423,7 @@ function opOptionsHtml(field) {
 function valueInputHtml(field, op) {
   if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
   if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`;
+  if (field === 'smsOptOut' || field === 'emailOptOut') return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
   if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
   if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
   if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
@@ -512,6 +515,14 @@ const BASE_COLUMNS = [
   { key: 'email', label: 'Email', sortable: true, render: c => escapeHtml(c.email || '') },
   { key: 'phone', label: 'Phone', sortable: true, render: c => c.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.phone.replace(/[^\d+]/g, ''))}" onclick="event.stopPropagation()">${escapeHtml(c.phone)}</a>` : '' },
   { key: 'status', label: 'Status', sortable: true, render: c => c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : '' },
+  // Deliberately separate from Status -- a contact can be genuinely
+  // ENROLLED/BOOKED/mid-APPLICATION and still have texted STOP or clicked
+  // an email unsubscribe link just to stop that one channel. These two
+  // columns are the only source of truth for "don't message this person",
+  // so they need their own visibility instead of being inferred from
+  // (or worse, overwriting) the pipeline status.
+  { key: 'smsOptOut', label: 'SMS Opt-Out', sortable: true, render: c => c.smsOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">SMS OPT-OUT</span>` : '' },
+  { key: 'emailOptOut', label: 'Email Opt-Out', sortable: true, render: c => c.emailOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">EMAIL OPT-OUT</span>` : '' },
   { key: 'programType', label: 'Type', sortable: true, render: c => c.programType ? `<span class="pra-badge pra-badge-${c.programType}">${escapeHtml(c.programType)}</span>` : '' },
   { key: 'tags', label: 'Tags', sortable: false, render: c => (c.tags || []).length ? c.tags.length + ' tag(s)' : '' },
   { key: 'createdAt', label: 'Created', sortable: true, render: c => `<span class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</span>` },
@@ -522,7 +533,7 @@ function customFieldColumns() {
 function allColumnDefs() { return [...BASE_COLUMNS, ...customFieldColumns()]; }
 function activeColumns() { return allColumnDefs().filter(c => c.always || visibleColumns.includes(c.key)); }
 
-const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'programType', 'tags', 'createdAt'];
+const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'smsOptOut', 'emailOptOut', 'programType', 'tags', 'createdAt'];
 function loadVisibleColumns() {
   try { return JSON.parse(localStorage.getItem('contactsVisibleColumns')) || DEFAULT_VISIBLE_COLUMNS; }
   catch { return DEFAULT_VISIBLE_COLUMNS; }

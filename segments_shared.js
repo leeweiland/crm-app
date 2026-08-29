@@ -53,7 +53,7 @@ export function markFirstSeen(contact, candidateISO) {
 }
 
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
-// field: "status" | "tags" | "listIds" | "customFields.<fieldId>"
+// field: "status" | "smsOptOut" | "emailOptOut" | "tags" | "listIds" | "customFields.<fieldId>"
 // op: "eq" | "neq" | "includes" | "excludes" | "exists"
 function evalCondition(contact, cond) {
   const { field, op, value } = cond;
@@ -62,6 +62,19 @@ function evalCondition(contact, cond) {
     actual = contact.customFields?.[field.slice("customFields.".length)];
   } else {
     actual = contact[field];
+  }
+  // smsOptOut/emailOptOut are real booleans on the contact, but the filter
+  // UI's <select> always sends a string ("true"/"false") -- coerce both
+  // sides so "eq"/"neq" compares like-for-like instead of a boolean never
+  // strictly-equaling the string "true".
+  if (field === "smsOptOut" || field === "emailOptOut") {
+    actual = !!actual;
+    const boolValue = value === true || value === "true";
+    switch (op) {
+      case "eq": return actual === boolValue;
+      case "neq": return actual !== boolValue;
+      default: return false;
+    }
   }
   switch (op) {
     case "eq": return actual === value;
