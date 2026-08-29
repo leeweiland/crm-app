@@ -1,60 +1,46 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson } from "./auth_backend.js";
+import { appendJsonRecords, updateJsonArrayRecordByField, readJsonArrayFiltered } from "./auth_backend.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 
-// Single source of truth for all send/receive activity across every
-// channel (email now, SMS in Phase 4) and every source (campaign,
-// automation step, workflow step, manual, inbound) -- reporting rolls up
-// from this one file by filtering on sourceType/sourceId, rather than each
-// feature keeping its own duplicate counters.
+// logMessage/updateMessage* used to do readJson(MESSAGE_LOG_FILE,
+// [])+writeJson on every single send/webhook -- at 12GB+ (millions of
+// records, many carrying full email bodies) that parses+restringifies the
+// ENTIRE log for every new message or status update, which both risks OOM
+// and made every send/webhook take 100+ seconds. appendJsonRecords/
+// updateJsonArrayRecordByField never hold the full parsed array.
 export function logMessage({ channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status }) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
   const row = {
     id: randomUUID(), channel, direction,
     contactId: contactId || null,
     sourceType: sourceType || "manual", sourceId: sourceId || null,
     providerMessageId: providerMessageId || null,
     to: to || null, from: from || null, subject: subject || null,
-    body: body || "", // full HTML (email) or full text (sms) -- bodyPreview stays a truncated display copy
-    bodyPreview: bodyPreview || "",
+    body: body || "", bodyPreview: bodyPreview || "",
     status: status || "queued",
     statusHistory: [{ status: status || "queued", at: new Date().toISOString() }],
     sentAt: status === "sent" ? new Date().toISOString() : null,
     createdAt: new Date().toISOString(),
-    inboxDone: false, // Inbox "done" checkbox state -- independent of delivery status
+    inboxDone: false,
   };
-  log.push(row);
-  writeJson(MESSAGE_LOG_FILE, log);
+  appendJsonRecords(MESSAGE_LOG_FILE, [row]);
   return row;
 }
-
-// Delivery/open/click/bounce webhooks (SES/Twilio) arrive keyed by the
-// provider's own message id, not our row id -- this is the join point.
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  const row = log.find(m => m.providerMessageId === providerMessageId);
-  if (!row) return null;
-  row.status = status;
-  row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
-  writeJson(MESSAGE_LOG_FILE, log);
-  return row;
+  if (!providerMessageId) return null;
+  return updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "providerMessageId", providerMessageId, row => {
+    row.status = status;
+    row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
+    return row;
+  });
 }
-
-// Same as above but keyed by OUR row id -- needed right after a send
-// attempt fails before a providerMessageId ever gets assigned (there'd be
-// nothing for updateMessageStatusByProviderId to match), and for setting
-// the providerMessageId itself once a send succeeds.
 export function updateMessageById(id, patch) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  const row = log.find(m => m.id === id);
-  if (!row) return null;
-  Object.assign(row, patch);
-  if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
-  writeJson(MESSAGE_LOG_FILE, log);
-  return row;
+  return updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
+    Object.assign(row, patch);
+    if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
+    return row;
+  });
 }
-
 export function getMessagesForSource(sourceType, sourceId) {
-  return readJson(MESSAGE_LOG_FILE, []).filter(m => m.sourceType === sourceType && m.sourceId === sourceId);
+  return readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === sourceType && m.sourceId === sourceId);
 }

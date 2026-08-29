@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -469,6 +469,55 @@ export function appendJsonRecords(file, newRecords) {
     } finally { closeSync(dstFd); }
   } finally { closeSync(srcFd); }
   renameSync(tmp, p);
+}
+
+// Finds the array element whose `field` property equals `value` and applies
+// updater(el) to it, rewriting the file with only that one element changed --
+// every other element is copied byte-for-byte, never parsed, same
+// don't-touch-what-didn't-match philosophy as scanJsonArrayFieldSets above.
+// Companion to appendJsonRecords for the opposite direction: message_log.js's
+// per-message updates (delivery/open/click webhooks, manual edits) were doing
+// readJson+writeJson against the whole message log to change ONE record --
+// both an OOM risk and needlessly slow at millions of records. Still O(file
+// size) TIME since every byte has to pass through one way or another; this
+// buys crash-safety and avoids paying to stringify records that didn't
+// change, not "instant" updates -- a genuinely fast single-record update
+// needs a real index, not a full-file rewrite.
+export function updateJsonArrayRecordByField(file, field, value, updater) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) return null;
+  const needle = Buffer.from(`"${field}":"${value}"`);
+  let found = null;
+  const tmp = `${p}.tmp${process.pid}`;
+  const dstFd = openSync(tmp, "w");
+  let wroteAny = false;
+  try {
+    writeSync(dstFd, "[");
+    forEachJsonArrayElement(p, (buf, start, end) => {
+      let replaced = null;
+      if (!found) {
+        const view = buf.subarray(start, end);
+        const idx = view.indexOf(needle);
+        if (idx !== -1) {
+          let obj;
+          try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+          if (obj && obj[field] === value) {
+            const updated = updater(obj);
+            found = updated || obj;
+            replaced = found;
+          }
+        }
+      }
+      if (wroteAny) writeSync(dstFd, ",");
+      if (replaced) writeSync(dstFd, JSON.stringify(replaced));
+      else writeSync(dstFd, buf, start, end - start);
+      wroteAny = true;
+    });
+    writeSync(dstFd, "]");
+  } finally { closeSync(dstFd); }
+  if (found) renameSync(tmp, p);
+  else { try { unlinkSync(tmp); } catch {} }
+  return found;
 }
 
 export function readJsonBody(req) {
