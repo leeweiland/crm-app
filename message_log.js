@@ -40,18 +40,21 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
   upsertConversationSummary(row);
   return row;
 }
+// EMERGENCY DISABLE (2026-08-29): this used to scan+rewrite the entire main
+// log to find one row by providerMessageId -- confirmed live, that scan
+// against the 12GB log filled the volume's remaining disk space (the copy
+// needs roughly the file's own size in free space to complete) and blocked
+// the whole single-threaded server for the duration, taking the app down.
+// There is currently no providerMessageId -> contactId index, so there is
+// no cheap way to do this lookup. Delivery/open/click/bounce webhooks now
+// no-op instead of updating anything -- read-receipt ticks and per-message
+// status in the Inbox will not reflect these events until a proper index
+// is built (see the TODO this leaves: a small persisted
+// providerMessageId->{id,contactId} map, appended to via
+// appendJsonRecordFast at send time, exactly like msg_by_contact). Do not
+// re-enable the full-log scan below without that index in place.
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
-  if (!providerMessageId) return null;
-  const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "providerMessageId", providerMessageId, row => {
-    row.status = status;
-    row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
-    return row;
-  });
-  if (found) {
-    updateContactMessage(found.contactId, "providerMessageId", providerMessageId, () => found);
-    recomputeConversationSummary(found.contactId);
-  }
-  return found;
+  return null;
 }
 export function updateMessageById(id, patch) {
   const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
