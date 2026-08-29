@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, readJsonArrayFiltered, reduceJsonArray } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
@@ -36,7 +36,7 @@ export async function handleInboxRequest(req, res, url) {
   const contactActivityMatch = p.match(/^\/api\/inbox\/contact\/([^/]+)$/);
   if (contactActivityMatch && req.method === "GET") {
     const contactId = contactActivityMatch[1];
-    const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
+    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
     const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).filter(t => t.contactId === contactId).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
     const notes = readJson(NOTES_FILE, []).filter(n => n.contactId === contactId).map(n => ({ ...n, itemType: "note", at: n.createdAt }));
@@ -66,31 +66,41 @@ export async function handleInboxRequest(req, res, url) {
     const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("limit"), 10) || 40));
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
     const contacts = readJson(CONTACTS_FILE, []);
-    const messages = readJson(MESSAGE_LOG_FILE, [])
-      .filter(m => ["email", "sms", "form", "booking", "activity"].includes(m.channel))
-      .filter(m => !channel || m.channel === channel);
-
-    const groups = new Map(); // key -> { contactId, key, contact, messages: [] }
-    for (const m of messages) {
+    // Folds directly into a bounded per-contact summary as the log streams
+    // by, instead of collecting every individual message into a per-group
+    // array first -- confirmed live: with the message log past several GB
+    // (millions of records, most carrying full email bodies/statusHistory/
+    // hyrosSaleData), materializing "every message, grouped" crashed the
+    // live server with a real OOM on every sidebar load. Peak memory here
+    // is bounded by (distinct contacts × a few retained message refs each),
+    // not by total message count.
+    const groups = reduceJsonArray(MESSAGE_LOG_FILE, (groups, m) => {
+      if (!["email", "sms", "form", "booking", "activity"].includes(m.channel)) return groups;
+      if (channel && m.channel !== channel) return groups;
       const key = m.contactId || `unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`;
-      if (!groups.has(key)) groups.set(key, { key, contactId: m.contactId || null, messages: [] });
-      groups.get(key).messages.push(m);
-    }
+      let g = groups.get(key);
+      if (!g) { g = { key, contactId: m.contactId || null, last: null, lastMine: null, lastInbound: null, unreadCount: 0 }; groups.set(key, g); }
+      if (!g.last || new Date(m.createdAt) > new Date(g.last.createdAt)) g.last = m;
+      if (m.direction === "outbound" && (!g.lastMine || new Date(m.createdAt) > new Date(g.lastMine.createdAt))) g.lastMine = m;
+      if (m.direction === "inbound") {
+        if (!g.lastInbound || new Date(m.createdAt) > new Date(g.lastInbound.createdAt)) g.lastInbound = m;
+        if (!m.inboxDone) g.unreadCount++;
+      }
+      return groups;
+    }, new Map());
 
     const contactById = new Map(contacts.map(c => [c.id, c]));
     const metaByContactId = getConvoMetaMap();
     const conversations = [...groups.values()].map(g => {
-      const sorted = g.messages.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      const last = sorted[0];
+      const last = g.last;
       const contact = g.contactId ? contactById.get(g.contactId) || null : null;
-      const unreadCount = g.messages.filter(m => m.direction === "inbound" && !m.inboxDone).length;
       const meta = g.contactId ? metaByContactId.get(g.contactId) || null : null;
       // Read-receipt-style status for the last MINE message in this thread
       // (independent of `last`, which could be their most recent inbound
       // reply) -- single check (sent/queued), double grey (delivered), or
       // double blue once we know it was opened (email) -- SMS has no
       // carrier-level "read" signal, so it never goes past delivered.
-      const lastMine = sorted.find(m => m.direction === "outbound") || null;
+      const lastMine = g.lastMine;
       const lastOpened = !!lastMine?.statusHistory?.some(h => h.status === "opened");
       // A contact stuck on an automated drip sequence keeps getting fresh
       // OUTBOUND timestamps forever even if they never reply -- sorting by
@@ -98,19 +108,19 @@ export async function handleInboxRequest(req, res, url) {
       // leads who last engaged a year ago but are still mid-sequence.
       // lastInboundAt is what "Newest first" actually sorts by; lastAt
       // stays the true last-touch for the preview text/ticks.
-      const lastInbound = sorted.find(m => m.direction === "inbound") || null;
+      const lastInbound = g.lastInbound;
       return {
         key: g.key, contactId: g.contactId, contact,
         displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
         lastChannel: last.channel, lastDirection: last.direction,
         lastPreview: last.subject || last.bodyPreview || "",
-        lastAt: last.createdAt, lastInboundAt: lastInbound?.createdAt || null, lastMessageId: last.id, unreadCount,
+        lastAt: last.createdAt, lastInboundAt: lastInbound?.createdAt || null, lastMessageId: last.id, unreadCount: g.unreadCount,
         pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived,
         // "Done" only counts once you've actually seen everything -- new
         // inbound activity after being marked done drops unreadCount back
         // above 0, which is enough on its own to fall out of the DONE
         // filter (unresponded && done are mutually exclusive by construction).
-        done: !!meta?.done && unreadCount === 0,
+        done: !!meta?.done && g.unreadCount === 0,
         lastStatus: lastMine?.status || null, lastOpened,
       };
     });
@@ -244,14 +254,17 @@ export async function handleInboxRequest(req, res, url) {
     // view: 'new' (default, not yet handled) | 'past' (marked done) | 'all'
     const view = url.searchParams.get("view") || "new";
     const contacts = readJson(CONTACTS_FILE, []);
-    const messages = readJson(MESSAGE_LOG_FILE, []).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
-    const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
-    const tasks = readJson(TASKS_FILE, []).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
-
     // Inbox is for things that need a human's attention -- incoming
     // messages, calls, and open tasks/reminders -- not a log of the CRM's
     // own outbound sends (those belong in Contacts/Campaigns reporting).
-    const inbound = messages.filter(m => m.direction === "inbound");
+    // Filtering to inbound-only INSIDE the scan (not after materializing
+    // everything) is what keeps this safe at message-log scale -- most
+    // records are outbound campaign/activity sends and never need to be
+    // held in memory at all for this endpoint.
+    const inbound = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.direction === "inbound")
+      .map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
+    const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
+    const tasks = readJson(TASKS_FILE, []).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
 
     let items;
     if (tab === "emails") items = inbound.filter(m => m.channel === "email");

@@ -158,6 +158,59 @@ function readJsonArrayStreaming(p) {
   forEachJsonArrayElement(p, (buf, start, end) => { results.push(JSON.parse(buf.toString("utf8", start, end))); });
   return results;
 }
+
+// Reads a JSON array file and returns only the elements matching predicate,
+// WITHOUT ever holding the full unfiltered array in memory first. Confirmed
+// live: several inbox endpoints did readJson(MESSAGE_LOG_FILE, []).filter(...)
+// -- once the message log passed several GB (millions of records, most
+// carrying full email bodies/statusHistory/hyrosSaleData), materializing
+// the ENTIRE array just to filter down to one contact's few dozen messages
+// crashed the live server with a real OOM, repeatedly, for every affected
+// page load. Below the streaming threshold this is just readJson+filter
+// (no reason to pay chunk-scanning overhead on a small file); above it,
+// streams via forEachJsonArrayElement and only ever parses+keeps elements
+// that already pass the predicate.
+export function readJsonArrayFiltered(file, predicate) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) return [];
+  const stat = statSync(p);
+  if (stat.size < LARGE_FILE_STREAM_THRESHOLD) {
+    return readJson(file, []).filter(predicate);
+  }
+  const results = [];
+  forEachJsonArrayElement(p, (buf, start, end) => {
+    let obj;
+    try { obj = JSON.parse(buf.toString("utf8", start, end)); } catch { return; }
+    if (predicate(obj)) results.push(obj);
+  });
+  return results;
+}
+
+// Streams a JSON array file element-by-element, folding each one into an
+// accumulator via reducer(acc, element) -- for building a bounded-size
+// SUMMARY from an unbounded-size log (e.g. "latest message per contact")
+// without ever holding more than one element and the (much smaller)
+// accumulator in memory at once. Companion to readJsonArrayFiltered above:
+// that one still costs O(matching records) memory, which is fine for "one
+// contact's messages" but not for "one summary row per contact, computed
+// from millions of messages across all contacts" -- this is the one to use
+// for that shape of query instead.
+export function reduceJsonArray(file, reducer, initial) {
+  const p = join(DATA_DIR, file);
+  let acc = initial;
+  if (!existsSync(p)) return acc;
+  const stat = statSync(p);
+  if (stat.size < LARGE_FILE_STREAM_THRESHOLD) {
+    for (const el of readJson(file, [])) acc = reducer(acc, el);
+    return acc;
+  }
+  forEachJsonArrayElement(p, (buf, start, end) => {
+    let obj;
+    try { obj = JSON.parse(buf.toString("utf8", start, end)); } catch { return; }
+    acc = reducer(acc, obj);
+  });
+  return acc;
+}
 export function readJson(file, fallback) {
   const p = join(DATA_DIR, file);
   if (_batchIo && _jsonCache.has(file)) return _jsonCache.get(file);
