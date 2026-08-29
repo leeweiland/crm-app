@@ -149,7 +149,7 @@ async function fetchCloseSequenceSubscriptions(leadId) {
 // from Close yet) so a person who already has a real Close status keeps
 // it, instead of showing up blank. Only ever fills in a MISSING status --
 // never overwrites one a human (or the Close importer) already set.
-async function fetchCloseLeadById(leadId) {
+export async function fetchCloseLeadById(leadId) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   const r = await closeFetch(`${CLOSE_BASE}/lead/${leadId}/`, { headers: { Authorization: auth } });
   return r.ok ? await r.json() : null;
