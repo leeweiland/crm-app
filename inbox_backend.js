@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, readJsonArrayFiltered, reduceJsonArray } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, readJsonArrayFiltered, reduceJsonArray, topKJsonArray } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
@@ -72,18 +72,27 @@ export async function handleInboxRequest(req, res, url) {
     // (millions of records, most carrying full email bodies/statusHistory/
     // hyrosSaleData), materializing "every message, grouped" crashed the
     // live server with a real OOM on every sidebar load. Peak memory here
-    // is bounded by (distinct contacts × a few retained message refs each),
-    // not by total message count.
+    // is bounded by (distinct contacts × a few retained SLIM refs each),
+    // not by total message count -- and deliberately slim (only the fields
+    // this endpoint actually reads below), not the full parsed message.
+    // Confirmed live tonight: keeping full objects here (with real email
+    // HTML bodies) at ~176K distinct contacts was a second, separate OOM
+    // risk even after the "don't collect every message" fix landed --
+    // caught in review, not in production, but the pattern already bit
+    // once this session and wasn't worth risking twice.
+    function slimMessage(m) {
+      return { id: m.id, channel: m.channel, direction: m.direction, createdAt: m.createdAt, subject: m.subject, bodyPreview: m.bodyPreview, from: m.from, to: m.to, status: m.status, opened: !!m.statusHistory?.some(h => h.status === "opened") };
+    }
     const groups = reduceJsonArray(MESSAGE_LOG_FILE, (groups, m) => {
       if (!["email", "sms", "form", "booking", "activity"].includes(m.channel)) return groups;
       if (channel && m.channel !== channel) return groups;
       const key = m.contactId || `unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`;
       let g = groups.get(key);
-      if (!g) { g = { key, contactId: m.contactId || null, last: null, lastMine: null, lastInbound: null, unreadCount: 0 }; groups.set(key, g); }
-      if (!g.last || new Date(m.createdAt) > new Date(g.last.createdAt)) g.last = m;
-      if (m.direction === "outbound" && (!g.lastMine || new Date(m.createdAt) > new Date(g.lastMine.createdAt))) g.lastMine = m;
+      if (!g) { g = { key, contactId: m.contactId || null, last: null, lastMine: null, lastInboundAt: null, unreadCount: 0 }; groups.set(key, g); }
+      if (!g.last || new Date(m.createdAt) > new Date(g.last.createdAt)) g.last = slimMessage(m);
+      if (m.direction === "outbound" && (!g.lastMine || new Date(m.createdAt) > new Date(g.lastMine.createdAt))) g.lastMine = slimMessage(m);
       if (m.direction === "inbound") {
-        if (!g.lastInbound || new Date(m.createdAt) > new Date(g.lastInbound.createdAt)) g.lastInbound = m;
+        if (!g.lastInboundAt || new Date(m.createdAt) > new Date(g.lastInboundAt)) g.lastInboundAt = m.createdAt;
         if (!m.inboxDone) g.unreadCount++;
       }
       return groups;
@@ -101,20 +110,19 @@ export async function handleInboxRequest(req, res, url) {
       // double blue once we know it was opened (email) -- SMS has no
       // carrier-level "read" signal, so it never goes past delivered.
       const lastMine = g.lastMine;
-      const lastOpened = !!lastMine?.statusHistory?.some(h => h.status === "opened");
+      const lastOpened = !!lastMine?.opened;
       // A contact stuck on an automated drip sequence keeps getting fresh
       // OUTBOUND timestamps forever even if they never reply -- sorting by
       // raw last-activity buries a genuine reply from yesterday under five
       // leads who last engaged a year ago but are still mid-sequence.
       // lastInboundAt is what "Newest first" actually sorts by; lastAt
       // stays the true last-touch for the preview text/ticks.
-      const lastInbound = g.lastInbound;
       return {
         key: g.key, contactId: g.contactId, contact,
         displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
         lastChannel: last.channel, lastDirection: last.direction,
         lastPreview: last.subject || last.bodyPreview || "",
-        lastAt: last.createdAt, lastInboundAt: lastInbound?.createdAt || null, lastMessageId: last.id, unreadCount: g.unreadCount,
+        lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount: g.unreadCount,
         pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived,
         // "Done" only counts once you've actually seen everything -- new
         // inbound activity after being marked done drops unreadCount back
@@ -254,26 +262,46 @@ export async function handleInboxRequest(req, res, url) {
     // view: 'new' (default, not yet handled) | 'past' (marked done) | 'all'
     const view = url.searchParams.get("view") || "new";
     const contacts = readJson(CONTACTS_FILE, []);
-    // Inbox is for things that need a human's attention -- incoming
-    // messages, calls, and open tasks/reminders -- not a log of the CRM's
-    // own outbound sends (those belong in Contacts/Campaigns reporting).
-    // Filtering to inbound-only INSIDE the scan (not after materializing
-    // everything) is what keeps this safe at message-log scale -- most
-    // records are outbound campaign/activity sends and never need to be
-    // held in memory at all for this endpoint.
-    const inbound = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.direction === "inbound")
-      .map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
     const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
 
+    // Bounded to the most recent INBOX_MESSAGE_LIMIT inbound messages
+    // matching this tab/view instead of materializing every inbound
+    // message ever received. Confirmed live: even after switching to a
+    // bounded-memory SCAN (readJsonArrayFiltered), "direction === inbound"
+    // alone still matched millions of records post-import and crashed the
+    // server with a real OOM building that result array -- a bounded scan
+    // isn't enough when the match set itself is unbounded; the RESULT also
+    // has to be capped. topKJsonArray keeps only the K best (here: most
+    // recent) matches in O(k) memory regardless of match count. The
+    // channel/done filters are folded into the predicate here (rather than
+    // applied after, like the old code did) so the top-K cut happens on
+    // the CORRECT final candidate set -- otherwise capping at 1000 overall
+    // inbound messages and THEN filtering by tab/view could throw away
+    // matches that would have made the cut.
+    const needsMessages = tab !== "calls" && tab !== "tasks" && tab !== "reminders";
+    const channelFilter = tab === "emails" ? "email" : tab === "messages" ? "sms" : null;
+    const doneFilter = view === "new" ? false : view === "past" ? true : null;
+    const INBOX_MESSAGE_LIMIT = 1000;
+    const inbound = needsMessages
+      ? topKJsonArray(
+          MESSAGE_LOG_FILE,
+          m => m.direction === "inbound" && (!channelFilter || m.channel === channelFilter) && (doneFilter === null || !!m.inboxDone === doneFilter),
+          INBOX_MESSAGE_LIMIT,
+          (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+        ).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }))
+      : [];
+
     let items;
-    if (tab === "emails") items = inbound.filter(m => m.channel === "email");
-    else if (tab === "messages") items = inbound.filter(m => m.channel === "sms");
+    if (tab === "emails" || tab === "messages") items = inbound;
     else if (tab === "calls") items = calls;
     else if (tab === "tasks") items = tasks.filter(t => t.type === "task");
     else if (tab === "reminders") items = tasks.filter(t => t.type === "reminder");
     else items = [...inbound, ...calls, ...tasks]; // primary
 
+    // Still needed even though `inbound` is pre-filtered by doneFilter --
+    // calls/tasks were never pre-filtered, so this is a no-op for messages
+    // and the real filter for everything else.
     if (view === "new") items = items.filter(i => !i.done);
     else if (view === "past") items = items.filter(i => i.done);
 

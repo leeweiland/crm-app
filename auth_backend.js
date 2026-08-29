@@ -211,6 +211,48 @@ export function reduceJsonArray(file, reducer, initial) {
   });
   return acc;
 }
+
+// Streams a JSON array file and keeps only the top K matching elements by
+// compareFn (higher compareFn(a,b) means a ranks better/first), with
+// memory bounded to O(k) regardless of how many elements match the
+// predicate. readJsonArrayFiltered isn't enough on its own when the
+// predicate itself isn't selective -- confirmed live: filtering the
+// message log down to "direction === inbound" still matched millions of
+// records (most of tonight's Hyros/AC/Close import history genuinely has
+// that direction), and materializing THAT still crashed the server with a
+// real OOM, even though the scan itself was bounded. `top` stays sorted
+// best-to-worst (descending by compareFn) and is maintained via binary
+// search + splice rather than a full re-sort per insertion -- the common
+// case (a candidate worse than the current worst-of-the-best) is rejected
+// in O(1) via a single comparison before ever touching the array, so the
+// expensive O(k) splice only happens for the minority of candidates that
+// actually make the cut.
+function insertTopK(top, obj, k, compareFn) {
+  if (top.length >= k && compareFn(obj, top[top.length - 1]) <= 0) return;
+  let lo = 0, hi = top.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (compareFn(top[mid], obj) < 0) hi = mid; else lo = mid + 1;
+  }
+  top.splice(lo, 0, obj);
+  if (top.length > k) top.length = k;
+}
+export function topKJsonArray(file, predicate, k, compareFn) {
+  const p = join(DATA_DIR, file);
+  const top = [];
+  if (!existsSync(p)) return top;
+  const stat = statSync(p);
+  if (stat.size < LARGE_FILE_STREAM_THRESHOLD) {
+    for (const el of readJson(file, [])) if (predicate(el)) insertTopK(top, el, k, compareFn);
+    return top;
+  }
+  forEachJsonArrayElement(p, (buf, start, end) => {
+    let obj;
+    try { obj = JSON.parse(buf.toString("utf8", start, end)); } catch { return; }
+    if (predicate(obj)) insertTopK(top, obj, k, compareFn);
+  });
+  return top;
+}
 export function readJson(file, fallback) {
   const p = join(DATA_DIR, file);
   if (_batchIo && _jsonCache.has(file)) return _jsonCache.get(file);
