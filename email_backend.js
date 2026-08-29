@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { renderBlocksToHtml, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
-import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
@@ -138,14 +138,14 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
   const fromAddress = from || ses.fromAddress;
 
-  const logRow = logMessage({
+  const bodyPreview = (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "";
+  const baseRow = {
     channel: "email", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: fromAddress || null, subject: renderedSubject,
-    body: html, bodyPreview: (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "",
-    status: client ? "queued" : "failed",
-  });
+    to, from: fromAddress || null, subject: renderedSubject, body: html, bodyPreview,
+  };
 
   if (!client) {
+    logMessage({ ...baseRow, status: "failed" });
     return { ok: false, reason: "ses_not_configured" };
   }
 
@@ -157,13 +157,16 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
       ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
     });
     const result = await client.send(cmd);
-    // Store the real SES MessageId as the join key delivery/open/click
-    // webhooks arrive with -- the log row was created before send()
-    // returned, so this is a follow-up write by our own row id.
-    updateMessageById(logRow.id, { providerMessageId: result.MessageId, status: "sent", sentAt: new Date().toISOString() });
+    // Logged once with the FINAL status/providerMessageId already known,
+    // rather than logging a placeholder row first and patching it after --
+    // that follow-up patch used to mean a full pass over the whole message
+    // log to find our own row again by id, which at 12GB+ hung every send
+    // for 30-100+ seconds. One log call per send, either way it ends up,
+    // still guarantees a row exists even when the send fails.
+    logMessage({ ...baseRow, status: "sent", providerMessageId: result.MessageId });
     return { ok: true, messageId: result.MessageId };
   } catch (e) {
-    updateMessageById(logRow.id, { status: "failed" });
+    logMessage({ ...baseRow, status: "failed" });
     return { ok: false, reason: e.message };
   }
 }

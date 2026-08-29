@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync, unlinkSync, ftruncateSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -420,6 +420,50 @@ export function scanJsonArrayFieldSets(file, fieldNames) {
 // appends the new records and closes the array, writing to a temp file and
 // renaming into place same as writeJsonToDisk -- a concurrent reader always
 // sees either the complete old file or the complete new one.
+// True O(new data) append -- truncates off the closing ']' and writes the
+// new record(s) plus a fresh ']' at that exact byte offset, in place,
+// instead of copying the file. appendJsonRecords (below) copies every
+// existing byte to a temp file first for atomicity, which is fine for bulk
+// imports (one call flushes thousands of records, amortizing that cost) but
+// was fatal for message_log.js's per-message logMessage: confirmed live,
+// every single email/SMS send was copying the ENTIRE 12GB+ message log just
+// to add one row, hanging the send for 30-100+ seconds. There IS a real
+// (tiny) crash-safety tradeoff versus the copy+rename approach: a crash
+// between the truncate and the write would leave the file missing its
+// closing ']' until the next append recovers it -- accepted deliberately
+// here because the alternative (blocking every live send on a multi-GB
+// copy) is far worse in practice, and both truncate+write are synchronous
+// with nothing else able to run in between on this single-threaded process.
+export function appendJsonRecordFast(file, record) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) { writeJsonToDisk(p, [record]); return; }
+  const fd = openSync(p, "r+");
+  try {
+    const size = fstatSync(fd).size;
+    const tailLen = Math.min(size, 64);
+    const tailBuf = Buffer.alloc(tailLen);
+    readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+    let end = tailLen - 1;
+    while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+    if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecordFast: ${file} does not end with ']'`);
+    const bodyEnd = size - (tailLen - end);
+
+    const headLen = Math.min(size, 256);
+    const headBuf = Buffer.alloc(headLen);
+    readSync(fd, headBuf, 0, headLen, 0);
+    let hi = 0;
+    while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
+    hi++;
+    while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+    const isEmpty = hi < headLen && headBuf[hi] === 0x5d;
+
+    const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(record) + "]", "utf8");
+    ftruncateSync(fd, bodyEnd);
+    writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+  } finally { closeSync(fd); }
+  _mtimeCache.delete(file);
+}
+
 export function appendJsonRecords(file, newRecords) {
   if (!newRecords || !newRecords.length) return;
   const p = join(DATA_DIR, file);
@@ -469,6 +513,15 @@ export function appendJsonRecords(file, newRecords) {
     } finally { closeSync(dstFd); }
   } finally { closeSync(srcFd); }
   renameSync(tmp, p);
+  // This writes via raw fs calls, not writeJson, so it never refreshes
+  // _mtimeCache the way writeJson does -- and confirmed live in testing,
+  // two writes to the same file close enough together can land on the
+  // SAME mtimeMs (this filesystem/Node combo doesn't always give
+  // sub-millisecond resolution), which would make readJson's "has mtime
+  // changed?" check wrongly say no and keep serving the pre-append data
+  // forever. Deleting the entry instead of trying to refresh it is the
+  // safe option -- the next readJson call just does one real reparse.
+  _mtimeCache.delete(file);
 }
 
 // Finds the array element whose `field` property equals `value` and applies
@@ -515,7 +568,7 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
     });
     writeSync(dstFd, "]");
   } finally { closeSync(dstFd); }
-  if (found) renameSync(tmp, p);
+  if (found) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
   else { try { unlinkSync(tmp); } catch {} }
   return found;
 }
@@ -566,7 +619,7 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
     });
     writeSync(dstFd, "]");
   } finally { closeSync(dstFd); }
-  if (changed) renameSync(tmp, p);
+  if (changed) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
   else { try { unlinkSync(tmp); } catch {} }
   return updated;
 }

@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import twilio from "twilio";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { logMessage, updateMessageById, updateMessageStatusByProviderId } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings } from "./integrations_backend.js";
 import { recheckStopStatus } from "./compliance_backend.js";
@@ -42,20 +42,21 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   // (source_names.js), matching the el= convention already used everywhere
   // else -- links stay real, direct, recognizable URLs.
   const taggedBody = appendSourceTagToSmsBody(body, `sms-${resolveSendSourceSlug(sourceType, sourceId)}`);
-  const logRow = logMessage({
+  const baseRow = {
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
     to, from: twilioSettings.fromNumber || null, body: taggedBody || "", bodyPreview: (taggedBody || "").slice(0, 140),
-    status: client ? "queued" : "failed",
-  });
+  };
 
-  if (!client) return { ok: false, reason: "twilio_not_configured" };
+  if (!client) { logMessage({ ...baseRow, status: "failed" }); return { ok: false, reason: "twilio_not_configured" }; }
 
   try {
     const msg = await client.messages.create({ to, from: twilioSettings.fromNumber, body: taggedBody });
-    updateMessageById(logRow.id, { providerMessageId: msg.sid, status: msg.status || "sent", sentAt: new Date().toISOString() });
+    // Logged once with the final status/sid already known, same reasoning
+    // as email_backend.js's sendEmail -- see message_log.js's comment.
+    logMessage({ ...baseRow, status: msg.status || "sent", providerMessageId: msg.sid });
     return { ok: true, sid: msg.sid };
   } catch (e) {
-    updateMessageById(logRow.id, { status: "failed" });
+    logMessage({ ...baseRow, status: "failed" });
     return { ok: false, reason: e.message };
   }
 }
