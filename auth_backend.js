@@ -464,6 +464,40 @@ export function appendJsonRecordFast(file, record) {
   _mtimeCache.delete(file);
 }
 
+// Same in-place trick as appendJsonRecordFast, for a JSON OBJECT (keyed
+// lookup) instead of an array -- used for small persisted indexes like
+// providerMessageId -> {id, contactId}, where a webhook needs to find one
+// row by an external id in O(1) instead of scanning the whole message log.
+export function appendToJsonObjectFast(file, key, value) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) { writeJsonToDisk(p, { [key]: value }); return; }
+  const fd = openSync(p, "r+");
+  try {
+    const size = fstatSync(fd).size;
+    const tailLen = Math.min(size, 64);
+    const tailBuf = Buffer.alloc(tailLen);
+    readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+    let end = tailLen - 1;
+    while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+    if (end < 0 || tailBuf[end] !== 0x7d) throw new Error(`appendToJsonObjectFast: ${file} does not end with '}'`);
+    const bodyEnd = size - (tailLen - end);
+
+    const headLen = Math.min(size, 256);
+    const headBuf = Buffer.alloc(headLen);
+    readSync(fd, headBuf, 0, headLen, 0);
+    let hi = 0;
+    while (hi < headLen && headBuf[hi] !== 0x7b) hi++;
+    hi++;
+    while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+    const isEmpty = hi < headLen && headBuf[hi] === 0x7d;
+
+    const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(key) + ":" + JSON.stringify(value) + "}", "utf8");
+    ftruncateSync(fd, bodyEnd);
+    writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+  } finally { closeSync(fd); }
+  _mtimeCache.delete(file);
+}
+
 export function appendJsonRecords(file, newRecords) {
   if (!newRecords || !newRecords.length) return;
   const p = join(DATA_DIR, file);

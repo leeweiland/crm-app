@@ -1,8 +1,17 @@
 import { randomUUID } from "crypto";
-import { appendJsonRecordFast, updateJsonArrayRecordByField, readJsonArrayFiltered } from "./auth_backend.js";
+import { appendJsonRecordFast, appendToJsonObjectFast, updateJsonArrayRecordByField, readJsonArrayFiltered, readJson } from "./auth_backend.js";
 import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary } from "./message_index.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
+// Small persisted index so a delivery/open/click/bounce webhook (arriving
+// with only the provider's own message id) can find "which of our rows is
+// this" in O(1) instead of scanning the whole message log for it -- see
+// updateMessageStatusByProviderId below. Only ever grows going forward from
+// when this was added; historical messages sent before it existed simply
+// aren't in it; a webhook for one of those is a no-op instead of falling
+// back to the full scan that filled the disk and hung the server (2026-08-29
+// incident -- see git history on this file for the postmortem comment).
+export const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
 
 // logMessage/updateMessage* used to do readJson(MESSAGE_LOG_FILE,
 // [])+writeJson on every single send/webhook -- at 12GB+ (millions of
@@ -38,23 +47,33 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
   appendJsonRecordFast(MESSAGE_LOG_FILE, row);
   appendContactMessage(row);
   upsertConversationSummary(row);
+  if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   return row;
 }
-// EMERGENCY DISABLE (2026-08-29): this used to scan+rewrite the entire main
-// log to find one row by providerMessageId -- confirmed live, that scan
-// against the 12GB log filled the volume's remaining disk space (the copy
-// needs roughly the file's own size in free space to complete) and blocked
-// the whole single-threaded server for the duration, taking the app down.
-// There is currently no providerMessageId -> contactId index, so there is
-// no cheap way to do this lookup. Delivery/open/click/bounce webhooks now
-// no-op instead of updating anything -- read-receipt ticks and per-message
-// status in the Inbox will not reflect these events until a proper index
-// is built (see the TODO this leaves: a small persisted
-// providerMessageId->{id,contactId} map, appended to via
-// appendJsonRecordFast at send time, exactly like msg_by_contact). Do not
-// re-enable the full-log scan below without that index in place.
+// Was a full scan+rewrite of the entire main log to find one row by
+// providerMessageId -- confirmed live (2026-08-29) that this filled the
+// volume's remaining disk space (the copy needs roughly the file's own size
+// in free space to complete) and blocked the whole single-threaded server
+// for its duration, taking the app down. Now looks the row up in the small
+// index instead (populated by logMessage above) and only ever touches the
+// per-contact file + conversation summary, both cheap regardless of the
+// main log's size. Deliberately does NOT also patch the main log's own
+// copy of this message -- that still has no cheap update path, so campaign-
+// level reporting that reads status straight from the main log (see
+// getMessagesForSource) can lag behind actual delivery/open/click state.
+// Fine for now: the Inbox (what this fixes) never reads the main log for
+// this anymore either.
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
-  return null;
+  if (!providerMessageId) return null;
+  const entry = readJson(PROVIDER_ID_INDEX_FILE, {})[providerMessageId];
+  if (!entry) return null;
+  const found = updateContactMessage(entry.contactId, "id", entry.id, row => {
+    row.status = status;
+    row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
+    return row;
+  });
+  if (found) recomputeConversationSummary(entry.contactId);
+  return found;
 }
 export function updateMessageById(id, patch) {
   const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
