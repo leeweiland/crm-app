@@ -1,10 +1,15 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, readJsonArrayFiltered, reduceJsonArray, topKJsonArray } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { CONVERSATION_META_FILE, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
+import {
+  getContactMessages, appendContactMessage, updateContactMessagesByIds, deleteContactMessageFile,
+  markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
+  CONVERSATION_INDEX_FILE,
+} from "./message_index.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -36,7 +41,7 @@ export async function handleInboxRequest(req, res, url) {
   const contactActivityMatch = p.match(/^\/api\/inbox\/contact\/([^/]+)$/);
   if (contactActivityMatch && req.method === "GET") {
     const contactId = contactActivityMatch[1];
-    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.contactId === contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
+    const messages = getContactMessages(contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
     const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).filter(t => t.contactId === contactId).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
     const notes = readJson(NOTES_FILE, []).filter(n => n.contactId === contactId).map(n => ({ ...n, itemType: "note", at: n.createdAt }));
@@ -66,41 +71,22 @@ export async function handleInboxRequest(req, res, url) {
     const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("limit"), 10) || 40));
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
     const contacts = readJson(CONTACTS_FILE, []);
-    // Folds directly into a bounded per-contact summary as the log streams
-    // by, instead of collecting every individual message into a per-group
-    // array first -- confirmed live: with the message log past several GB
-    // (millions of records, most carrying full email bodies/statusHistory/
-    // hyrosSaleData), materializing "every message, grouped" crashed the
-    // live server with a real OOM on every sidebar load. Peak memory here
-    // is bounded by (distinct contacts × a few retained SLIM refs each),
-    // not by total message count -- and deliberately slim (only the fields
-    // this endpoint actually reads below), not the full parsed message.
-    // Confirmed live tonight: keeping full objects here (with real email
-    // HTML bodies) at ~176K distinct contacts was a second, separate OOM
-    // risk even after the "don't collect every message" fix landed --
-    // caught in review, not in production, but the pattern already bit
-    // once this session and wasn't worth risking twice.
-    function slimMessage(m) {
-      return { id: m.id, channel: m.channel, direction: m.direction, createdAt: m.createdAt, subject: m.subject, bodyPreview: m.bodyPreview, from: m.from, to: m.to, status: m.status, opened: !!m.statusHistory?.some(h => h.status === "opened") };
-    }
-    const groups = reduceJsonArray(MESSAGE_LOG_FILE, (groups, m) => {
-      if (!["email", "sms", "form", "booking", "activity"].includes(m.channel)) return groups;
-      if (channel && m.channel !== channel) return groups;
-      const key = m.contactId || `unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`;
-      let g = groups.get(key);
-      if (!g) { g = { key, contactId: m.contactId || null, last: null, lastMine: null, lastInboundAt: null, unreadCount: 0 }; groups.set(key, g); }
-      if (!g.last || new Date(m.createdAt) > new Date(g.last.createdAt)) g.last = slimMessage(m);
-      if (m.direction === "outbound" && (!g.lastMine || new Date(m.createdAt) > new Date(g.lastMine.createdAt))) g.lastMine = slimMessage(m);
-      if (m.direction === "inbound") {
-        if (!g.lastInboundAt || new Date(m.createdAt) > new Date(g.lastInboundAt)) g.lastInboundAt = m.createdAt;
-        if (!m.inboxDone) g.unreadCount++;
-      }
-      return groups;
-    }, new Map());
+    // Reads the persisted per-contact summary index (kept incrementally up
+    // to date by message_index.js on every send/receive) instead of folding
+    // the whole message log on every request -- that fold was memory-safe
+    // (bounded by distinct contacts, not total message count) but still
+    // required a full pass over a 12GB+ file, confirmed live to still take
+    // 100+ seconds. This file is one small row per contact -- tens of MB,
+    // not gigabytes -- so reading it is the same order of cost as the
+    // contacts.json read this endpoint already does.
+    const allRows = readJson(CONVERSATION_INDEX_FILE, []);
+    const rowsForChannel = channel
+      ? allRows.filter(g => g.lastByChannel?.[channel]).map(g => ({ ...g, last: g.lastByChannel[channel] }))
+      : allRows;
 
     const contactById = new Map(contacts.map(c => [c.id, c]));
     const metaByContactId = getConvoMetaMap();
-    const conversations = [...groups.values()].map(g => {
+    const conversations = rowsForChannel.map(g => {
       const last = g.last;
       const contact = g.contactId ? contactById.get(g.contactId) || null : null;
       const meta = g.contactId ? metaByContactId.get(g.contactId) || null : null;
@@ -196,10 +182,16 @@ export async function handleInboxRequest(req, res, url) {
     const { done } = await readJsonBody(req);
     const value = done !== false;
     if (value) {
-      const log = readJson(MESSAGE_LOG_FILE, []);
-      let changed = false;
-      log.forEach(m => { if (m.contactId === contactId && m.direction === "inbound" && !m.inboxDone) { m.inboxDone = true; changed = true; } });
-      if (changed) writeJson(MESSAGE_LOG_FILE, log);
+      // The per-contact file already tells us exactly which message ids
+      // need to flip -- patching just those in the main log (byte-level,
+      // via updateJsonArrayRecordsByIds) avoids a full 12GB read+write for
+      // what's normally a handful of unread messages.
+      const idsToFlip = getContactMessages(contactId).filter(m => m.direction === "inbound" && !m.inboxDone).map(m => m.id);
+      if (idsToFlip.length) {
+        markContactMessagesDone(contactId);
+        updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, idsToFlip, m => { m.inboxDone = true; return m; });
+      }
+      recomputeConversationSummary(contactId);
     }
     return sendJson(res, 200, { ok: true, meta: setConvoMeta(contactId, { done: value }) });
   }
@@ -211,18 +203,27 @@ export async function handleInboxRequest(req, res, url) {
   const deleteConvoMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)$/);
   if (deleteConvoMatch && req.method === "DELETE") {
     const key = decodeURIComponent(deleteConvoMatch[1]);
-    const log = readJson(MESSAGE_LOG_FILE, []);
-    let remaining;
     const unmatched = key.match(/^unmatched:(email|sms):(.*)$/);
     if (unmatched) {
+      // Potential Contacts have no contactId, so there's no per-contact
+      // file to shortcut through -- this still has to scan the main log.
+      // Rare in practice (unconfirmed senders don't accumulate at bulk-
+      // import volume), unlike the contactId path below.
       const [, channel, address] = unmatched;
-      remaining = log.filter(m => !(!m.contactId && m.channel === channel && (m.direction === "inbound" ? m.from : m.to) === address));
+      const log = readJson(MESSAGE_LOG_FILE, []);
+      const remaining = log.filter(m => !(!m.contactId && m.channel === channel && (m.direction === "inbound" ? m.from : m.to) === address));
+      if (remaining.length !== log.length) writeJson(MESSAGE_LOG_FILE, remaining);
     } else {
-      remaining = log.filter(m => m.contactId !== key);
+      const messages = getContactMessages(key);
+      if (messages.length) {
+        const ids = messages.map(m => m.id);
+        updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, ids, () => null);
+        deleteContactMessageFile(key);
+      }
       const meta = readJson(CONVERSATION_META_FILE, []).filter(m => m.contactId !== key);
       writeJson(CONVERSATION_META_FILE, meta);
     }
-    if (remaining.length !== log.length) writeJson(MESSAGE_LOG_FILE, remaining);
+    removeConversationSummary(key);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -319,13 +320,15 @@ export async function handleInboxRequest(req, res, url) {
     const idSet = new Set(ids);
     const value = done !== false;
 
-    const log = readJson(MESSAGE_LOG_FILE, []);
-    let changed = false;
-    log.forEach(m => { if (idSet.has(m.id)) { m.inboxDone = value; changed = true; } });
-    if (changed) writeJson(MESSAGE_LOG_FILE, log);
+    const updatedMsgs = updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, ids, m => { m.inboxDone = value; return m; });
+    const touchedContacts = new Set(updatedMsgs.map(m => m.contactId).filter(Boolean));
+    for (const contactId of touchedContacts) {
+      updateContactMessagesByIds(contactId, idSet, m => { m.inboxDone = value; });
+      recomputeConversationSummary(contactId);
+    }
 
     const calls = readJson(CALLS_FILE, []);
-    changed = false;
+    let changed = false;
     calls.forEach(c => { if (idSet.has(c.id)) { c.inboxDone = value; changed = true; } });
     if (changed) writeJson(CALLS_FILE, calls);
 
@@ -384,15 +387,23 @@ export async function handleInboxRequest(req, res, url) {
     writeJson(CONTACTS_FILE, contacts);
 
     let logChanged = false;
+    const migrated = [];
     if (phone) {
       const digits = digitsOnly(phone);
-      log.forEach(m => { if (!m.contactId && digitsOnly(m.direction === "inbound" ? m.from : m.to) === digits) { m.contactId = contact.id; logChanged = true; } });
+      log.forEach(m => { if (!m.contactId && digitsOnly(m.direction === "inbound" ? m.from : m.to) === digits) { m.contactId = contact.id; logChanged = true; migrated.push(m); } });
     }
     if (email) {
       const lower = email.toLowerCase();
-      log.forEach(m => { if (!m.contactId && (m.direction === "inbound" ? m.from : m.to)?.toLowerCase() === lower) { m.contactId = contact.id; logChanged = true; } });
+      log.forEach(m => { if (!m.contactId && (m.direction === "inbound" ? m.from : m.to)?.toLowerCase() === lower) { m.contactId = contact.id; logChanged = true; migrated.push(m); } });
     }
     if (logChanged) writeJson(MESSAGE_LOG_FILE, log);
+    // These messages just went from "no contact" (no per-contact file, only
+    // ever findable via a full log scan) to belonging to a real contact --
+    // feed them into that contact's index now so the Inbox/contact-detail
+    // views find them immediately instead of only after a full reindex.
+    migrated.forEach(m => appendContactMessage(m));
+    if (migrated.length) recomputeConversationSummary(contact.id);
+    migrated.forEach(m => removeConversationSummary(`unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`));
     return sendJson(res, 200, { ok: true, contact });
   }
 

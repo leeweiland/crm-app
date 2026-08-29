@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { appendJsonRecords, updateJsonArrayRecordByField, readJsonArrayFiltered } from "./auth_backend.js";
+import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary } from "./message_index.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 
@@ -24,22 +25,34 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
     inboxDone: false,
   };
   appendJsonRecords(MESSAGE_LOG_FILE, [row]);
+  appendContactMessage(row);
+  upsertConversationSummary(row);
   return row;
 }
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
   if (!providerMessageId) return null;
-  return updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "providerMessageId", providerMessageId, row => {
+  const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "providerMessageId", providerMessageId, row => {
     row.status = status;
     row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
     return row;
   });
+  if (found) {
+    updateContactMessage(found.contactId, "providerMessageId", providerMessageId, () => found);
+    recomputeConversationSummary(found.contactId);
+  }
+  return found;
 }
 export function updateMessageById(id, patch) {
-  return updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
+  const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
     Object.assign(row, patch);
     if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
     return row;
   });
+  if (found) {
+    updateContactMessage(found.contactId, "id", id, () => found);
+    recomputeConversationSummary(found.contactId);
+  }
+  return found;
 }
 export function getMessagesForSource(sourceType, sourceId) {
   return readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === sourceType && m.sourceId === sourceId);

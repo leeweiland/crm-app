@@ -520,6 +520,57 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
   return found;
 }
 
+// Same byte-copy philosophy, generalized to a bounded SET of ids (matched by
+// the record's own "id" field) in one pass -- used for bulk operations like
+// "mark these 30 inbox items done" where the ids are already known (e.g.
+// from a small per-contact index file) rather than discovered by scanning
+// this file. Cost per non-matching element is still just a handful of cheap
+// indexOf checks (one per id) plus a raw byte copy, so this stays fast even
+// against a multi-GB file as long as `ids` itself is small (tens, not
+// millions). updater returning null means "delete this record" (it's
+// dropped instead of rewritten); otherwise the returned/mutated object
+// replaces it. Returns the array of updated (non-deleted) records so
+// callers can tell which ones actually matched, e.g. to know which
+// contacts to also patch in a per-contact index.
+export function updateJsonArrayRecordsByIds(file, ids, updater) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p) || !ids || !ids.length) return [];
+  const idSet = new Set(ids);
+  const needles = ids.map(id => Buffer.from(`"id":"${id}"`));
+  const updated = [];
+  let changed = false;
+  const tmp = `${p}.tmp${process.pid}`;
+  const dstFd = openSync(tmp, "w");
+  let wroteAny = false;
+  try {
+    writeSync(dstFd, "[");
+    forEachJsonArrayElement(p, (buf, start, end) => {
+      const view = buf.subarray(start, end);
+      let candidate = false;
+      for (const needle of needles) { if (view.indexOf(needle) !== -1) { candidate = true; break; } }
+      let dropped = false, toWrite = null;
+      if (candidate) {
+        let obj;
+        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+        if (obj && idSet.has(obj.id)) {
+          const result = updater(obj);
+          if (result === null) { dropped = true; changed = true; }
+          else { toWrite = result || obj; updated.push(toWrite); changed = true; }
+        }
+      }
+      if (dropped) return;
+      if (wroteAny) writeSync(dstFd, ",");
+      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+      else writeSync(dstFd, buf, start, end - start);
+      wroteAny = true;
+    });
+    writeSync(dstFd, "]");
+  } finally { closeSync(dstFd); }
+  if (changed) renameSync(tmp, p);
+  else { try { unlinkSync(tmp); } catch {} }
+  return updated;
+}
+
 export function readJsonBody(req) {
   return new Promise((resolve) => {
     let body = "";
