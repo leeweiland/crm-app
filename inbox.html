@@ -396,7 +396,7 @@ function fmtShort(iso) {
 function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''; }
 
 let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
-let allContacts = [], allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
+let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
 let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
@@ -452,8 +452,13 @@ function readReceiptTicksHtml(status, opened) {
 }
 
 async function loadRefs() {
-  const [contactsRes, statusesRes, usersRes] = await Promise.all([fetch('/api/contacts'), fetch('/api/statuses'), fetch('/api/auth/users')]);
-  allContacts = contactsRes.ok ? (await contactsRes.json()).contacts : [];
+  // Used to also fetch the FULL unpaginated contact list here (all 176K+
+  // contacts, the entire multi-hundred-MB response) just to support one
+  // rare deep-link fallback case (see loadConversations' initialContactId
+  // handling) -- that's now a targeted /api/contacts/:id lookup instead,
+  // done only when actually needed, so a normal Inbox load no longer
+  // downloads and parses the whole contacts database first.
+  const [statusesRes, usersRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/auth/users')]);
   allStatuses = statusesRes.ok ? (await statusesRes.json()).statuses : [];
   allUsers = usersRes.ok ? (await usersRes.json()).users : []; // 403s for a non-admin -- avatarStyle() just falls back to status-only glow
   const statusSel = document.getElementById('convoStatusSelect');
@@ -508,7 +513,11 @@ async function loadConversations() {
   if (initialContactId) {
     const match = conversations.find(c => c.contactId === initialContactId);
     if (match) { selectConversation(match); return; }
-    const contact = allContacts.find(c => c.id === initialContactId);
+    // Not on the first page of conversations (brand-new contact with no
+    // messages yet, or just not among the most recent) -- look it up
+    // directly instead of scanning the full contact list client-side.
+    const contactRes = await fetch('/api/contacts/' + initialContactId);
+    const contact = contactRes.ok ? (await contactRes.json()).contact : null;
     if (contact) selectConversation({ key: contact.id, contactId: contact.id, contact, displayName: `${contact.first} ${contact.last}`.trim(), lastAt: null, unreadCount: 0 });
   } else if (selectedConvo) {
     const stillThere = conversations.find(c => c.key === selectedConvo.key);
