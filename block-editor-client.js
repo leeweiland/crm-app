@@ -145,7 +145,9 @@ window.BlockEditor = (function () {
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option></select>
             <span class="be-link-popover" id="beLinkPopover" style="display:none">
               <input type="text" id="beLinkUrl" placeholder="https://"/>
+              <input type="color" id="beLinkColor" title="Link color"/>
               <button type="button" id="beLinkApply">Apply</button>
+              <button type="button" id="beLinkUnlink">Unlink</button>
               <button type="button" id="beLinkCancel">Cancel</button>
             </span>
           </div>
@@ -447,6 +449,34 @@ window.BlockEditor = (function () {
           const { block, isFooter } = findBlock(el.dataset.id);
           if (block) { block.html = el.innerHTML; notifyChange(isFooter); }
         });
+        // Pasted HTML (e.g. from an old ActiveCampaign template) often
+        // carries its own inline padding/margin/border on wrapper elements.
+        // Left in place, that becomes a second, hidden layout source the
+        // style panel's Border/Margin/Padding fields don't control or even
+        // show -- stacking with whatever the block's own style is set to
+        // and looking like padding that "can't be removed". Stripping just
+        // those three properties (not color/font/etc, which are wanted)
+        // keeps paste useful while preventing that.
+        el.addEventListener('paste', (e) => {
+          e.preventDefault();
+          const html = (e.clipboardData || window.clipboardData).getData('text/html');
+          const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+          if (html) {
+            const frag = document.createElement('div');
+            frag.innerHTML = html;
+            frag.querySelectorAll('[style]').forEach(node => {
+              node.style.removeProperty('padding');
+              ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'].forEach(p => node.style.removeProperty(p));
+              node.style.removeProperty('margin');
+              ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach(p => node.style.removeProperty(p));
+              node.style.removeProperty('border');
+              if (!node.getAttribute('style')) node.removeAttribute('style');
+            });
+            document.execCommand('insertHTML', false, frag.innerHTML);
+          } else {
+            document.execCommand('insertText', false, text);
+          }
+        });
       });
       canvas.querySelectorAll('[data-move]').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -508,25 +538,83 @@ window.BlockEditor = (function () {
     // some embedded/sandboxed browser contexts (e.g. iframed previews),
     // and a small popover matches the rest of this editor's UI anyway.
     let savedRange = null;
+    let linkColorTouched = false;
     const linkPopover = toolbar.querySelector('#beLinkPopover');
     const linkUrlInput = toolbar.querySelector('#beLinkUrl');
+    const linkColorInput = toolbar.querySelector('#beLinkColor');
+    // Walks up from a selection node to find an enclosing <a>, stopping at
+    // the canvas boundary -- used both to pre-fill the popover when
+    // re-opening it on already-linked text, and to locate the anchor(s)
+    // Apply just created/updated.
+    function findLinkAncestor(node) {
+      while (node && node !== canvas) {
+        if (node.nodeType === 1 && node.tagName === 'A') return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+    function rgbToHex(rgb) {
+      const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb || '');
+      if (!m) return '#0000ff';
+      return '#' + [m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('');
+    }
     toolbar.querySelector('#beLinkBtn').addEventListener('click', () => {
       const sel = window.getSelection();
-      savedRange = sel.rangeCount ? sel.getRangeAt(0) : null;
-      linkUrlInput.value = 'https://';
+      let range = sel.rangeCount ? sel.getRangeAt(0) : null;
+      const existingLink = range ? findLinkAncestor(range.startContainer) : null;
+      // A collapsed selection (just a cursor) inside an existing link can't
+      // be re-linked/unlinked as-is -- execCommand needs characters
+      // selected. Expand to the whole link's text so Apply/Unlink act on
+      // it, matching what a user placing the cursor there would expect.
+      if (existingLink && range && range.collapsed) {
+        range = document.createRange();
+        range.selectNodeContents(existingLink);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      savedRange = range;
+      linkColorTouched = false;
+      linkUrlInput.value = existingLink ? (existingLink.getAttribute('href') || '') : 'https://';
+      linkColorInput.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '#0000ff';
       linkPopover.style.display = 'inline-flex';
       linkUrlInput.focus();
       linkUrlInput.select();
     });
+    linkColorInput.addEventListener('input', () => { linkColorTouched = true; });
     function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; }
     toolbar.querySelector('#beLinkCancel').addEventListener('click', closeLinkPopover);
     toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
       const url = linkUrlInput.value.trim();
       if (url && savedRange) {
+        // Captured before unlink/createLink mutate the DOM -- those can
+        // replace the text nodes savedRange pointed at, so the range itself
+        // isn't safe to re-query afterward, but the containing block-body
+        // element survives (only its contents change).
+        const startContainer = savedRange.startContainer;
+        const startEl = startContainer.nodeType === 1 ? startContainer : startContainer.parentElement;
+        const bodyEl = startEl ? startEl.closest('.be-block-body') : null;
         const sel = window.getSelection();
         sel.removeAllRanges();
         sel.addRange(savedRange);
+        // Re-targeting text that's already inside an <a> is unreliable
+        // across browsers with createLink alone (it can silently no-op or
+        // leave the old href in place) -- unlinking first makes this work
+        // consistently whether the selection is plain text or an existing link.
+        document.execCommand('unlink', false, null);
         document.execCommand('createLink', false, url);
+        if (linkColorTouched && bodyEl) {
+          bodyEl.querySelectorAll(`a[href="${CSS.escape(url)}"]`).forEach(a => { a.style.color = linkColorInput.value; });
+        }
+        syncSelectedText();
+      }
+      closeLinkPopover();
+    });
+    toolbar.querySelector('#beLinkUnlink').addEventListener('click', () => {
+      if (savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+        document.execCommand('unlink', false, null);
         syncSelectedText();
       }
       closeLinkPopover();
