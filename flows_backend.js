@@ -337,6 +337,61 @@ export async function handleFlowsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, flow });
   }
 
+  // ── Google Sheets browsing -- powers the google_sheet step's visual
+  // picker (search a spreadsheet by name -> pick a real tab -> map real
+  // column headers) instead of making someone paste a spreadsheet ID and
+  // guess column order blind. Placed ahead of the generic /api/flows/:id
+  // matcher below since these are multi-segment paths under /api/flows/
+  // that would otherwise never be reached (same shadowing bug already hit
+  // once with /api/flows/sheets-status).
+  if (p === "/api/flows/sheets/search" && req.method === "GET") {
+    if (!sheetsConfigured()) return sendJson(res, 200, { files: [] });
+    try {
+      const accessToken = await getSheetsAccessToken();
+      const q = (url.searchParams.get("q") || "").trim();
+      const nameClause = q ? ` and name contains '${q.replace(/[\\']/g, "\\$&")}'` : "";
+      const driveQuery = `mimeType='application/vnd.google-apps.spreadsheet' and trashed=false${nameClause}`;
+      const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(driveQuery)}&fields=files(id,name)&pageSize=20&orderBy=modifiedTime desc`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const d = await r.json();
+      if (!r.ok) return sendJson(res, 200, { files: [], error: d.error?.message });
+      return sendJson(res, 200, { files: d.files || [] });
+    } catch (e) {
+      return sendJson(res, 200, { files: [], error: e.message });
+    }
+  }
+  const sheetTabsMatch = p.match(/^\/api\/flows\/sheets\/([^/]+)\/tabs$/);
+  if (sheetTabsMatch && req.method === "GET") {
+    try {
+      const accessToken = await getSheetsAccessToken();
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetTabsMatch[1]}?fields=sheets.properties.title`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const d = await r.json();
+      if (!r.ok) return sendJson(res, 400, { error: d.error?.message || "Could not read that spreadsheet" });
+      return sendJson(res, 200, { tabs: (d.sheets || []).map(s => s.properties.title) });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+  const sheetHeadersMatch = p.match(/^\/api\/flows\/sheets\/([^/]+)\/headers$/);
+  if (sheetHeadersMatch && req.method === "GET") {
+    try {
+      const accessToken = await getSheetsAccessToken();
+      const tab = url.searchParams.get("tab") || "Sheet1";
+      const range = encodeURIComponent(`'${tab}'!1:1`);
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetHeadersMatch[1]}/values/${range}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const d = await r.json();
+      if (!r.ok) return sendJson(res, 400, { error: d.error?.message || "Could not read that tab" });
+      return sendJson(res, 200, { headers: (d.values && d.values[0]) || [] });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+
   if (p === "/api/flows/sheets-status" && req.method === "GET") {
     return sendJson(res, 200, { configured: sheetsConfigured() });
   }

@@ -55,7 +55,28 @@
   .bk-confirm .big { font-size: 2.4rem; margin-bottom: 10px; }
   .cal-links { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 20px; }
   .status-badge { display: inline-block; margin-top: 12px; padding: 4px 14px; border-radius: 12px; font-size: .78rem; font-weight: 600; }
-  @media (max-width: 720px) { .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; } .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); } .bk-times-col { border-left: none; border-top: 1px solid var(--bk-border); } }
+
+  /* ── Mobile-only step elements -- hidden on desktop, where the info
+       panel, calendar, and times all fit side by side at once. ── */
+  .mobile-back-row, .mobile-tz-row, .mobile-duration-row, .mobile-select-time-label { display: none; }
+
+  /* ── Mobile (<=640px): a real multi-step flow, same as Calendly's own --
+       step 1 is the info panel + full-width calendar with no times column;
+       tapping an available day hides the info panel and calendar and shows
+       ONLY the times step (back arrow, date, timezone, duration, times),
+       instead of cramming three columns into one narrow scrolling page. ── */
+  @media (max-width: 640px) {
+    .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; }
+    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); }
+    .bk-grid.with-times .bk-info, .bk-grid.with-times .bk-body { display: none; }
+    .bk-times-col { border-left: none; border-top: none; padding: 24px 20px; }
+    .mobile-back-row { display: block; margin-bottom: 14px; }
+    .mobile-back-btn { background: var(--bk-bg); border: 1px solid var(--bk-border); border-radius: 50%; width: 42px; height: 42px; font-size: 1.2rem; line-height: 1; cursor: pointer; color: var(--bk-accent); font-family: inherit; }
+    .bk-times-col .bk-h2 { text-align: center; }
+    .mobile-tz-row { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: .82rem; color: var(--bk-dim); margin: 6px 0 18px; text-align: center; }
+    .mobile-duration-row { display: block; font-size: .84rem; color: var(--bk-dim); margin-bottom: 4px; text-align: center; }
+    .mobile-select-time-label { display: block; font-family: var(--bk-font-primary); font-weight: 700; font-size: 1rem; margin: 10px 0 14px; text-align: center; }
+  }
 </style>
 </head>
 <body>
@@ -231,7 +252,11 @@ function renderPicker() {
       </div>
       ${selectedDate ? `
         <div class="bk-times-col">
+          <div class="mobile-back-row"><button class="mobile-back-btn" id="mobileBackBtn" aria-label="Back to calendar" type="button">&larr;</button></div>
           <div class="bk-h2">${new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+          <div class="mobile-tz-row">🌐 ${escapeHtml(tzLabel(selectedTz))}</div>
+          <div class="mobile-duration-row">Duration: ${eventType.durationMinutes} min</div>
+          <div class="mobile-select-time-label">Select a Time</div>
           <div class="time-slots">${times || '<div class="time-placeholder">No times this day</div>'}</div>
         </div>
       ` : ''}
@@ -246,6 +271,8 @@ function renderPicker() {
   if (nextBtn) nextBtn.onclick = () => { viewMonth = new Date(year, month + 1, 1); renderPicker(); };
   const tzSelect = document.getElementById('tzSelect');
   if (tzSelect) tzSelect.onchange = () => { selectedTz = tzSelect.value; regroupSlots(); renderPicker(); };
+  const mobileBackBtn = document.getElementById('mobileBackBtn');
+  if (mobileBackBtn) mobileBackBtn.onclick = () => { selectedDate = null; renderPicker(); };
 }
 
 function renderForm() {

@@ -45,6 +45,11 @@
   .type-picker button:hover { border-color: var(--pra-blue); }
   .type-picker button svg { width: 18px; height: 18px; overflow: visible; flex-shrink: 0; }
   .sheet-col-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .sheet-col-label { width: 130px; flex-shrink: 0; font-size: .82rem; color: var(--pra-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sheet-search-results { margin-top: 6px; max-height: 180px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 8px; }
+  .sheet-search-result { padding: 8px 12px; font-size: .84rem; cursor: pointer; border-bottom: 1px solid var(--pra-border); }
+  .sheet-search-result:last-child { border-bottom: none; }
+  .sheet-search-result:hover { background: rgba(0,155,255,0.08); color: var(--pra-blue); }
 </style>
 </head>
 <body>
@@ -199,7 +204,7 @@ function stepSummary(step) {
   if (step.type === 'filter') return `Continue only if ${c.filter?.all?.[0]?.field || '—'} ${c.filter?.all?.[0]?.op || ''} ${escapeHtml(String(c.filter?.all?.[0]?.value ?? ''))}`;
   if (step.type === 'if_then') return `If ${c.filter?.all?.[0]?.field || '—'} ${c.filter?.all?.[0]?.op || ''} ${escapeHtml(String(c.filter?.all?.[0]?.value ?? ''))}`;
   if (step.type === 'delay') return `Wait ${c.amount || 0} ${c.unit || 'minutes'}`;
-  if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.sheetName || '—')}"${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
+  if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
   if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
   if (step.type === 'change_status') return `Set status to "${escapeHtml(c.statusId || '—')}"`;
@@ -477,7 +482,7 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
 function defaultConfig(type) {
   if (type === 'filter' || type === 'if_then') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
   if (type === 'delay') return { amount: 1, unit: 'hours' };
-  if (type === 'google_sheet') return { spreadsheetId: '', sheetName: 'Sheet1', columns: [''] };
+  if (type === 'google_sheet') return { spreadsheetId: '', spreadsheetName: '', sheetName: '', columns: [], headers: [] };
   if (type === 'enroll_automation') return { automationId: '' };
   if (type === 'enroll_workflow') return { workflowId: '' };
   if (type === 'change_status') return { statusId: '' };
@@ -503,11 +508,19 @@ function deleteStep(stepId) {
 function sheetColRowHtml(value) {
   return `<div class="sheet-col-row" data-sheet-col-row><input class="pra-input" placeholder="{{first}} {{last}}, {{email}}, {{payload.message}}…" value="${escapeHtml(value || '')}" data-sheet-col/><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
 }
+function sheetColHeaderRowHtml(header, value, index) {
+  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><input class="pra-input" placeholder="{{first}}, static text, …" value="${escapeHtml(value || '')}" data-sheet-col/></div>`;
+}
 
 function openStepConfigModal(step, isNew) {
   editingStepId = step.id;
   document.getElementById('stepConfigTitle').textContent = TYPE_LABELS[step.type];
   const body = document.getElementById('stepConfigBody');
+  // Shared across the google_sheet branch's helper functions and its save
+  // handler below -- one object instead of separate DOM-input reads, since
+  // the spreadsheet/tab pickers replace simple <input>s with async,
+  // multi-step selection state.
+  const sheetPicked = { id: step.config.spreadsheetId || '', name: step.config.spreadsheetName || '', tab: step.config.sheetName || '', headers: step.config.headers || [] };
 
   if (step.type === 'filter' || step.type === 'if_then') {
     const c = step.config.filter?.all?.[0] || { field: 'status', op: 'eq', value: '' };
@@ -540,21 +553,115 @@ function openStepConfigModal(step, isNew) {
   } else if (step.type === 'google_sheet') {
     body.innerHTML = `
       ${sheetsIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Google Sheets isn\'t connected yet -- add GOOGLE_REFRESH_TOKEN_LW to .env. The step still saves and will start working once that\'s set.</div>'}
-      <div class="field"><label class="pra-label">Spreadsheet ID</label><input class="pra-input" id="cfgSpreadsheetId" value="${escapeHtml(step.config.spreadsheetId || '')}" placeholder="From the sheet's URL"/></div>
-      <div class="field"><label class="pra-label">Sheet/tab name</label><input class="pra-input" id="cfgSheetName" value="${escapeHtml(step.config.sheetName || 'Sheet1')}"/></div>
-      <div class="pra-label" style="margin:14px 0 8px">Columns, left to right</div>
-      <div id="sheetColRows">${(step.config.columns && step.config.columns.length ? step.config.columns : ['']).map(sheetColRowHtml).join('')}</div>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSheetColBtn">+ Add Column</button>
-      <div class="pra-label" style="margin:14px 0 6px">Insert a field (click a column above first, then a chip)</div>
-      <div class="chip-multiselect" id="sheetFieldChips"><span class="pra-muted" style="font-size:.78rem">Loading…</span></div>
+      <div class="field">
+        <label class="pra-label">Spreadsheet</label>
+        <div id="sheetPickedRow" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,0.04);border:1px solid var(--pra-border);border-radius:8px">
+            <span style="flex:1;font-size:.86rem" id="sheetPickedName"></span>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="changeSheetBtn">Change</button>
+          </div>
+        </div>
+        <div id="sheetSearchRow">
+          <input class="pra-input" id="cfgSheetSearch" placeholder="Search your Google Sheets by name…" autocomplete="off"/>
+          <div class="sheet-search-results" id="sheetSearchResults" style="display:none"></div>
+        </div>
+      </div>
+      <div class="field" id="sheetTabField" style="display:none">
+        <label class="pra-label">Tab</label>
+        <select class="pra-select" id="cfgSheetTab"></select>
+      </div>
+      <div id="sheetColumnsArea" style="display:none">
+        <div class="pra-label" style="margin:14px 0 8px">Columns</div>
+        <div id="sheetColRows"></div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSheetColBtn" style="display:none;margin-top:6px">+ Add Column</button>
+        <div class="pra-label" style="margin:14px 0 6px">Insert a field (click a column value first, then a chip)</div>
+        <div class="chip-multiselect" id="sheetFieldChips"><span class="pra-muted" style="font-size:.78rem">Loading…</span></div>
+      </div>
     `;
+
+    function renderSheetColumns() {
+      const wrap = document.getElementById('sheetColRows');
+      const addBtn = document.getElementById('addSheetColBtn');
+      const savedColumns = (step.config.spreadsheetId === sheetPicked.id && step.config.sheetName === sheetPicked.tab) ? (step.config.columns || []) : [];
+      if (sheetPicked.headers.length) {
+        addBtn.style.display = 'none';
+        wrap.innerHTML = sheetPicked.headers.map((h, i) => sheetColHeaderRowHtml(h, savedColumns[i], i)).join('');
+      } else {
+        addBtn.style.display = 'inline-block';
+        wrap.innerHTML = (savedColumns.length ? savedColumns : ['']).map(sheetColRowHtml).join('');
+      }
+      lastFocusedSheetColInput = null;
+      wrap.querySelectorAll('[data-sheet-col-row]').forEach(wireSheetColRow);
+    }
     document.getElementById('addSheetColBtn').onclick = () => {
       document.getElementById('sheetColRows').insertAdjacentHTML('beforeend', sheetColRowHtml(''));
       wireSheetColRow(document.getElementById('sheetColRows').lastElementChild);
     };
-    lastFocusedSheetColInput = null;
-    document.querySelectorAll('#sheetColRows [data-sheet-col]').forEach(el => el.addEventListener('focus', () => { lastFocusedSheetColInput = el; }));
-    document.querySelectorAll('[data-remove-sheet-col]').forEach(btn => wireSheetColRow(btn.closest('[data-sheet-col-row]')));
+
+    async function loadTabsAndColumns() {
+      document.getElementById('sheetTabField').style.display = 'block';
+      const tabSel = document.getElementById('cfgSheetTab');
+      tabSel.innerHTML = '<option>Loading…</option>';
+      document.getElementById('sheetColumnsArea').style.display = 'none';
+      const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/tabs`);
+      const d = await r.json();
+      if (!r.ok || !d.tabs?.length) { tabSel.innerHTML = '<option value="">(could not load tabs)</option>'; return; }
+      tabSel.innerHTML = d.tabs.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+      tabSel.value = d.tabs.includes(sheetPicked.tab) ? sheetPicked.tab : d.tabs[0];
+      await onTabChosen(tabSel.value);
+    }
+    async function onTabChosen(tab) {
+      sheetPicked.tab = tab;
+      document.getElementById('sheetColumnsArea').style.display = 'block';
+      const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/headers?tab=${encodeURIComponent(tab)}`);
+      const d = await r.json();
+      sheetPicked.headers = (r.ok && d.headers) || [];
+      renderSheetColumns();
+    }
+    document.getElementById('cfgSheetTab').addEventListener('change', (e) => onTabChosen(e.target.value));
+
+    function showPicked() {
+      sheetPicked.id && (document.getElementById('sheetPickedRow').style.display = 'block');
+      document.getElementById('sheetPickedName').textContent = sheetPicked.name || sheetPicked.id;
+      document.getElementById('sheetSearchRow').style.display = 'none';
+    }
+    function showSearch() {
+      document.getElementById('sheetPickedRow').style.display = 'none';
+      document.getElementById('sheetSearchRow').style.display = 'block';
+      document.getElementById('sheetTabField').style.display = 'none';
+      document.getElementById('sheetColumnsArea').style.display = 'none';
+    }
+    document.getElementById('changeSheetBtn').onclick = showSearch;
+
+    let searchTimer;
+    document.getElementById('cfgSheetSearch').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      const q = e.target.value.trim();
+      searchTimer = setTimeout(async () => {
+        const resultsEl = document.getElementById('sheetSearchResults');
+        resultsEl.style.display = 'block';
+        resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">Searching…</div>';
+        const r = await fetch('/api/flows/sheets/search?q=' + encodeURIComponent(q));
+        const d = await r.json();
+        if (!d.files?.length) { resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">No spreadsheets found.</div>'; return; }
+        resultsEl.innerHTML = d.files.map(f => `<div class="sheet-search-result" data-id="${f.id}" data-name="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>`).join('');
+        resultsEl.querySelectorAll('[data-id]').forEach(row => row.onclick = () => {
+          sheetPicked.id = row.dataset.id; sheetPicked.name = row.dataset.name; sheetPicked.tab = ''; sheetPicked.headers = [];
+          showPicked();
+          loadTabsAndColumns();
+        });
+      }, 300);
+    });
+
+    if (sheetsIsConfigured && sheetPicked.id) {
+      showPicked();
+      loadTabsAndColumns();
+    } else {
+      showSearch();
+      // A brief "recent sheets" list without typing anything, same courtesy
+      // as Zapier's own spreadsheet picker.
+      document.getElementById('cfgSheetSearch').dispatchEvent(new Event('input'));
+    }
     renderSheetFieldChips();
   } else if (step.type === 'enroll_automation') {
     body.innerHTML = `<div class="field"><label class="pra-label">Automation</label><select class="pra-select" id="cfgAutomation">${allAutomations.map(a => `<option value="${a.id}" ${step.config.automationId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>`;
@@ -576,8 +683,10 @@ function openStepConfigModal(step, isNew) {
     if (step.type === 'filter' || step.type === 'if_then') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
     else if (step.type === 'delay') { step.config.amount = Number(document.getElementById('cfgAmount').value) || 1; step.config.unit = document.getElementById('cfgUnit').value; }
     else if (step.type === 'google_sheet') {
-      step.config.spreadsheetId = document.getElementById('cfgSpreadsheetId').value.trim();
-      step.config.sheetName = document.getElementById('cfgSheetName').value.trim() || 'Sheet1';
+      step.config.spreadsheetId = sheetPicked.id;
+      step.config.spreadsheetName = sheetPicked.name;
+      step.config.sheetName = sheetPicked.tab || 'Sheet1';
+      step.config.headers = sheetPicked.headers;
       step.config.columns = [...document.querySelectorAll('#sheetColRows [data-sheet-col]')].map(el => el.value);
     }
     else if (step.type === 'enroll_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
@@ -593,7 +702,8 @@ function openStepConfigModal(step, isNew) {
   openModal('stepConfigModal');
 }
 function wireSheetColRow(el) {
-  el.querySelector('[data-remove-sheet-col]').onclick = () => el.remove();
+  const removeBtn = el.querySelector('[data-remove-sheet-col]');
+  if (removeBtn) removeBtn.onclick = () => el.remove(); // absent in real-header rows -- columns there are fixed by the sheet itself
   const input = el.querySelector('[data-sheet-col]');
   if (input) input.addEventListener('focus', () => { lastFocusedSheetColInput = input; });
 }
