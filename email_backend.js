@@ -128,6 +128,10 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
 
   let html = buildPreheaderHtml(previewText) + renderBlocksToHtml(blocks, theme) + resolveFooterHtml(footerTemplateId, contactId);
   if (contact) html = applyMergeTags(html, contact);
+  // %UNSUBSCRIBE% resolves the same URL the footer's own unsubscribe link
+  // uses (see resolveFooterHtml above), so it works as a link typed
+  // directly into body text -- left literal on test sends (no contactId).
+  if (contactId) html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId)}`);
   // Tagged before logging, so the stored body matches exactly what the
   // recipient received (same convention sms_backend.js's sendSms() uses).
   // "el=email-<slug>" resolved from THIS send's own sourceType/sourceId

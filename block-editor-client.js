@@ -142,7 +142,7 @@ window.BlockEditor = (function () {
             </select>
             <select id="beFontSize"><option value="2">Small</option><option value="3" selected>Normal</option><option value="5">Large</option><option value="7">XL</option></select>
             <button type="button" id="beLinkBtn">Link</button>
-            <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option></select>
+            <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option></select>
             <span class="be-link-popover" id="beLinkPopover" style="display:none">
               <input type="text" id="beLinkUrl" placeholder="https://"/>
               <button type="button" id="beLinkApply">Apply</button>
