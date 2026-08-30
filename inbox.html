@@ -147,6 +147,13 @@
   .compose-row { display: flex; gap: 8px; align-items: flex-end; }
   .compose-row textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; }
   .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
+  /* Shows who a reply sends as -- the sender is always the logged-in user
+     (see inbox_backend.js, not client-controlled), this is display-only so
+     teammates are visible but never look clickable. */
+  .compose-from-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .compose-from-option { font-size: .74rem; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--pra-border); color: var(--pra-dim); }
+  .compose-from-option.self { border-color: var(--pra-blue); color: var(--pra-blue); background: var(--pra-blue-dim); font-weight: 700; }
+  .compose-from-option.other { opacity: .45; cursor: not-allowed; }
 
   /* Native date/time pickers render a black-on-black calendar icon on a
      dark background otherwise -- color-scheme flips both to the light
@@ -398,6 +405,7 @@ function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([],
 let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
+let currentUser = null, teamUsers = [];
 let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
 // rows at a time (filtered/sorted server-side first, see inbox_backend.js)
@@ -458,9 +466,14 @@ async function loadRefs() {
   // handling) -- that's now a targeted /api/contacts/:id lookup instead,
   // done only when actually needed, so a normal Inbox load no longer
   // downloads and parses the whole contacts database first.
-  const [statusesRes, usersRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/auth/users')]);
+  const [statusesRes, usersRes, meRes, teamRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/auth/users'), fetch('/api/auth/me'), fetch('/api/auth/team')]);
   allStatuses = statusesRes.ok ? (await statusesRes.json()).statuses : [];
   allUsers = usersRes.ok ? (await usersRes.json()).users : []; // 403s for a non-admin -- avatarStyle() just falls back to status-only glow
+  currentUser = meRes.ok ? (await meRes.json()).user : null;
+  // /api/auth/team (not /api/auth/users) -- readable by every staff member,
+  // not just admins, since the compose panel's From display needs to show
+  // teammates exist even to non-admin senders.
+  teamUsers = teamRes.ok ? (await teamRes.json()).users : [];
   const statusSel = document.getElementById('convoStatusSelect');
   statusSel.innerHTML = '<option value="">All statuses</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}"${STATUS_GLOW[s.label] ? ` data-color="${STATUS_GLOW[s.label]}"` : ''}>${escapeHtml(s.label)}</option>`).join('');
 }
@@ -990,6 +1003,11 @@ function renderThread() {
         <div class="compose-channel-toggle">
           <button type="button" data-ch="email" class="${composeChannel === 'email' ? 'active' : ''}">Send Email</button>
           <button type="button" data-ch="sms" class="${composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
+        </div>
+      ` : ''}
+      ${composeChannel === 'email' && teamUsers.length > 1 ? `
+        <div class="compose-from-row" title="Replies always send from your own address">
+          ${teamUsers.map(u => `<span class="compose-from-option ${currentUser && u.id === currentUser.id ? 'self' : 'other'}">${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</span>`).join('')}
         </div>
       ` : ''}
       ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}

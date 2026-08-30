@@ -84,7 +84,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaigns = readJson(CAMPAIGNS_FILE, []);
     const campaign = {
       id: randomUUID(), name: name || "Untitled Campaign", status: "draft",
-      subject: "", previewText: "", blocks: [], theme: { background: "#f4f4f4", maxWidth: 650 }, footerTemplateId: null,
+      subject: "", previewText: "", blocks: [], theme: { background: "#ffffff", maxWidth: 650 }, footerTemplateId: null,
       recipients: { listIds: [], tagIds: [], segmentId: null, excludeListIds: [] },
       scheduledAt: null, sentAt: null,
       stats: { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 },
@@ -103,7 +103,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const copy = {
       id: randomUUID(), name: `Copy of ${source.name}`, status: "draft",
       subject: source.subject, blocks: JSON.parse(JSON.stringify(source.blocks)),
-      theme: JSON.parse(JSON.stringify(source.theme || { background: "#f4f4f4", maxWidth: 650 })),
+      theme: JSON.parse(JSON.stringify(source.theme || { background: "#ffffff", maxWidth: 650 })),
       footerTemplateId: source.footerTemplateId,
       recipients: JSON.parse(JSON.stringify(source.recipients)),
       scheduledAt: null, sentAt: null,

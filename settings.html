@@ -211,7 +211,7 @@
         <div class="pra-h2" style="margin-bottom:14px">Team Users</div>
         <div style="overflow-x:auto">
           <table class="data-table" id="usersTable">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Footer</th><th></th></tr></thead>
             <tbody id="usersBody"></tbody>
           </table>
         </div>
@@ -364,16 +364,33 @@ document.getElementById('addFieldBtn').onclick = async () => {
 async function loadUsers() {
   const r = await fetch('/api/auth/users');
   const body = document.getElementById('usersBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="4" class="pra-muted">Admins only.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Admins only.</td></tr>'; return; }
   const { users } = await r.json();
+  // Each user's own footer for their Inbox 1:1 replies -- independent of
+  // the org-wide default used by campaigns/automations (email_backend.js's
+  // resolveFooterHtml falls back to the default when a user has none set).
+  const footerTemplates = (await (await fetch('/api/footer-templates')).json()).templates;
+  const footerOptions = (selectedId) => `<option value="">Org default</option>` +
+    footerTemplates.map(f => `<option value="${f.id}" ${selectedId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   body.innerHTML = users.map(u => `
     <tr>
       <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
       <td class="pra-muted">${escapeHtml(u.email)}</td>
       <td><span class="pra-badge pra-badge-${u.role}">${u.role}</span></td>
+      <td><select class="pra-select" data-user-footer="${u.id}" style="font-size:.8rem;padding:4px 8px">${footerOptions(u.footerTemplateId)}</select></td>
       <td>${u.archived ? '<span class="pra-muted">Archived</span>' : ''}</td>
     </tr>
   `).join('');
+  body.querySelectorAll('[data-user-footer]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const r = await fetch(`/api/auth/users/${sel.dataset.userFooter}/footer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ footerTemplateId: sel.value || null }),
+      });
+      if (!r.ok) { showToast('Could not save', true); return; }
+      showToast('Saved');
+    });
+  });
 }
 document.getElementById('addUserBtn').onclick = () => document.getElementById('userModal').classList.add('show');
 document.getElementById('cancelUserBtn').onclick = () => document.getElementById('userModal').classList.remove('show');

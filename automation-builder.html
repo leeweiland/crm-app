@@ -25,7 +25,7 @@
   .ab-zoom-controls button:hover { background: rgba(255,255,255,0.08); }
   .ab-zoom-controls span { font-size: .74rem; color: var(--pra-dim); min-width: 34px; text-align: center; }
   .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
-  .chain-arrow-wrap { position: relative; display: flex; align-items: center; justify-content: center; height: 26px; }
+  .chain-arrow-wrap { position: relative; display: flex; align-items: center; justify-content: center; height: 48px; }
   .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s; }
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
@@ -287,6 +287,17 @@ function stepCardHtml(stepId, isLast) {
   `;
 }
 
+// Same insert-step-btn affordance renderChainHtml already uses between two
+// existing steps (see below), reused for the arrow immediately before the
+// step chain starts (trigger->first-step, or goal->first-step when a goal
+// card is present) -- previously a plain, unwrapped, shorter arrow with no
+// way to insert a step ahead of the existing first one.
+function arrowHtml(showInsert, path, after) {
+  return showInsert
+    ? `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-path="${path}" data-after="${after}" title="Insert a step here">+</button></div>`
+    : `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div></div>`;
+}
+
 function renderChainHtml(startId, path) {
   const ids = [];
   let cur = startId;
@@ -330,15 +341,21 @@ function render() {
       <div class="pra-label">Goal</div>
       <div style="margin-top:4px">${automation.goal.status ? escapeHtml(automation.goal.status) : 'Any status change'}</div>
     </div>
-    <div class="chain-arrow">&darr;</div>
   ` : '';
+  // Only one of these two arrows is ever "the one right before the step
+  // chain starts" -- when there's a goal card, that's the arrow after it
+  // (trigger->goal stays a plain arrow); with no goal, it's the arrow right
+  // after the trigger itself. That's the one that gets the insert-step
+  // affordance, gated on there actually being an existing first step to
+  // insert ahead of.
   canvas.innerHTML = `
     <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
       <div class="pra-label">Start automation when</div>
       <div style="margin-top:4px">${trigLabelMap[trig.type]}</div>
     </div>
-    <div class="chain-arrow">&darr;</div>
+    ${automation.goal ? arrowHtml(false, '', '') : ''}
     ${goalHtml}
+    ${arrowHtml(!!automation.startStepId, 'root', '__start__')}
     ${renderChainHtml(automation.startStepId, 'root')}
   `;
   document.getElementById('triggerCardBtn').onclick = openTriggerModal;
@@ -458,7 +475,14 @@ document.getElementById('saveTriggerBtn').onclick = () => {
 // ── Add step: type picker -> config ─────────────────────────────────────
 function attachNewStep(step) {
   automation.steps[step.id] = step;
-  if (pendingAddPath === 'root' && !pendingAddAfter) {
+  if (pendingAddPath === 'root' && pendingAddAfter === '__start__') {
+    // Inserting ahead of an existing first step (via the arrow right before
+    // the chain, not the empty-chain "root"/no-after case below) -- the new
+    // step takes over as startStepId, and the old first step now comes
+    // right after it.
+    step.nextStepId = automation.startStepId;
+    automation.startStepId = step.id;
+  } else if (pendingAddPath === 'root' && !pendingAddAfter) {
     automation.startStepId = step.id;
   } else if (pendingAddAfter) {
     const prevStep = automation.steps[pendingAddAfter];
@@ -481,7 +505,7 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
   };
 });
 function defaultConfig(type) {
-  if (type === 'send_email') return { subject: '', previewText: '', blocks: [], theme: { background: '#f4f4f4', maxWidth: 650 }, footerTemplateId: null };
+  if (type === 'send_email') return { subject: '', previewText: '', blocks: [], theme: { background: '#ffffff', maxWidth: 650 }, footerTemplateId: null };
   if (type === 'wait') return { amount: 1, unit: 'hours' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };

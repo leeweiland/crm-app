@@ -48,7 +48,7 @@ window.BlockEditor = (function () {
   }
   function renderBlocksToHtml(blocks, theme) {
     const t = theme || {};
-    const bg = t.background || '#f4f4f4';
+    const bg = t.background || '#ffffff';
     const maxWidth = t.maxWidth || 650;
     return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:${maxWidth}px;margin:0 auto;background:#ffffff">${(blocks || []).map(renderBlockHtml).join('')}</div></div>`;
   }
@@ -62,7 +62,7 @@ window.BlockEditor = (function () {
   function init(rootEl, initialState, onChange, onFooterChange) {
     initialState = initialState || {};
     let blocks = (initialState.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
-    let theme = { background: '#f4f4f4', maxWidth: 650, ...(initialState.theme || {}) };
+    let theme = { background: '#ffffff', maxWidth: 650, ...(initialState.theme || {}) };
     let selectedId = null;
     let showingThemePanel = false;
     let footerBlocks = [];
@@ -108,9 +108,9 @@ window.BlockEditor = (function () {
     }
 
     function newBlock(type) {
-      return type === 'text' ? { id: uid(), type, html: 'New text block', style: { padding: '10px' } }
-        : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: { padding: '10px' }, linkAction: null }
-        : { id: uid(), type, text: 'Click here', link: '', style: { padding: '10px', textAlign: 'center' }, linkAction: null };
+      return type === 'text' ? { id: uid(), type, html: 'New text block', style: {} }
+        : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: {}, linkAction: null }
+        : { id: uid(), type, text: 'Click here', link: '', style: { textAlign: 'center' }, linkAction: null };
     }
     function selectBlock(block) {
       showingThemePanel = false;
@@ -580,7 +580,11 @@ window.BlockEditor = (function () {
       linkUrlInput.focus();
       linkUrlInput.select();
     });
+    // Some browsers only fire 'change' (not 'input') for a native color
+    // swatch depending on how the OS picker is used -- listening to both
+    // is what actually makes "did the user touch this" reliable.
     linkColorInput.addEventListener('input', () => { linkColorTouched = true; });
+    linkColorInput.addEventListener('change', () => { linkColorTouched = true; });
     function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; }
     toolbar.querySelector('#beLinkCancel').addEventListener('click', closeLinkPopover);
     toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
@@ -602,8 +606,20 @@ window.BlockEditor = (function () {
         // consistently whether the selection is plain text or an existing link.
         document.execCommand('unlink', false, null);
         document.execCommand('createLink', false, url);
-        if (linkColorTouched && bodyEl) {
-          bodyEl.querySelectorAll(`a[href="${CSS.escape(url)}"]`).forEach(a => { a.style.color = linkColorInput.value; });
+        if (linkColorTouched) {
+          // Primary: the live selection right after createLink still sits
+          // inside the anchor it just made/updated in every tested browser
+          // -- walking up from there avoids re-deriving a CSS selector from
+          // an arbitrary URL string, which is fragile for quote/backslash
+          // characters a real link could contain.
+          const sel2 = window.getSelection();
+          const liveNode = sel2.rangeCount ? sel2.getRangeAt(0).startContainer : null;
+          const liveAnchor = liveNode ? findLinkAncestor(liveNode) : null;
+          if (liveAnchor) {
+            liveAnchor.style.color = linkColorInput.value;
+          } else if (bodyEl) {
+            bodyEl.querySelectorAll('a[href]').forEach(a => { if (a.getAttribute('href') === url) a.style.color = linkColorInput.value; });
+          }
         }
         syncSelectedText();
       }
@@ -640,7 +656,7 @@ window.BlockEditor = (function () {
       getState: () => ({ blocks, theme }),
       setState: (state) => {
         blocks = (state?.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
-        theme = { background: '#f4f4f4', maxWidth: 650, ...(state?.theme || {}) };
+        theme = { background: '#ffffff', maxWidth: 650, ...(state?.theme || {}) };
         selectedId = null; showingThemePanel = false;
         render(); renderStylePanel();
       },

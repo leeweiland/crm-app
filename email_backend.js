@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { renderBlocksToHtml, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
+import { renderBlocksToHtml, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
+import { markContactEmailEngagement } from "./contacts_backend.js";
 import { getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { resolveSendSourceSlug } from "./source_names.js";
 import { setConvoMeta } from "./conversation_meta.js";
@@ -82,10 +83,17 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   const unsubscribeUrl = `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
   const social = (footer.socialLinks || []).map(s => `<a href="${s.url}" style="margin:0 6px;color:#888">${s.platform}</a>`).join("");
   // footer.blocks is the current (BlockEditor) format; footer.html is a
-  // fallback for footers created before the editor conversion.
-  const content = (footer.blocks && footer.blocks.length) ? renderBlocksToHtml(footer.blocks, footer.theme) : (footer.html || "");
+  // fallback for footers created before the editor conversion. Uses
+  // renderBlocksInner (not renderBlocksToHtml) -- the latter wraps its
+  // output in its own full canvas div (background + 24px padding + a
+  // max-width container), which was stacking a second nested copy of that
+  // wrapper inside this one, on top of the body's own. Also dropped the
+  // forced text-align:center/border-top this div used to carry -- footer
+  // blocks now render with exactly the alignment/spacing set in the editor,
+  // not overridden by an assumption that footers are short centered text.
+  const content = (footer.blocks && footer.blocks.length) ? renderBlocksInner(footer.blocks) : (footer.html || "");
   return `
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;font-size:11px;color:#888;text-align:center">
+    <div style="margin-top:24px;font-size:11px;color:#888">
       ${content}
       ${footer.physicalAddress ? `<div style="margin-top:8px">${footer.physicalAddress}</div>` : ""}
       ${social ? `<div style="margin-top:8px">${social}</div>` : ""}
@@ -105,10 +113,28 @@ function resolveFooterHtml(footerTemplateId, contactId) {
 function buildPreheaderHtml(previewText) {
   if (!previewText) return "";
   const padding = "&#8199;&zwnj;".repeat(120);
-  return `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#fff;opacity:0">${escapeHtml(previewText)}${padding}</div>`;
+  // Typing the literal entity "&zwnj;" is a shorthand for "no visible
+  // preview at all" -- render the actual zero-width character instead of
+  // escaping it to literal on-screen text, so inbox list snippets show
+  // nothing next to the subject rather than the string "&zwnj;".
+  const content = previewText.trim() === "&zwnj;" ? "&zwnj;" : escapeHtml(previewText);
+  return `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#fff;opacity:0">${content}${padding}</div>`;
 }
 function escapeHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Uploaded images are stored/rendered as root-relative paths ("/uploads/..")
+// -- correct for the in-app editor preview (resolves against the CRM's own
+// origin), but meaningless inside a sent email, which has no page origin to
+// resolve against. An email client just can't load a relative image src at
+// all, so it renders as a broken-image icon. Only rewrites the one path this
+// app actually serves uploads from, not relative links generally (a block's
+// own link field pointing at, say, "/some-page" on the marketing site is
+// left alone -- that's a different domain than this CRM app's own).
+function absolutizeUploadUrls(html, baseUrl) {
+  if (!baseUrl) return html;
+  return html.replace(/src="\/uploads\//g, `src="${baseUrl}/uploads/`);
 }
 
 // `from` optionally overrides ses.fromAddress -- used by the Inbox so a
@@ -127,6 +153,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   }
 
   let html = buildPreheaderHtml(previewText) + renderBlocksToHtml(blocks, theme) + resolveFooterHtml(footerTemplateId, contactId);
+  html = absolutizeUploadUrls(html, getPublicBaseUrl());
   if (contact) html = applyMergeTags(html, contact);
   // %UNSUBSCRIBE% resolves the same URL the footer's own unsubscribe link
   // uses (see resolveFooterHtml above), so it works as a link typed
@@ -196,8 +223,8 @@ export async function handleEmailRequest(req, res, url) {
         const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
         if (providerMessageId && statusMap[eventType]) {
           const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
-          if (row?.contactId && statusMap[eventType] === "opened") { fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); }
-          if (row?.contactId && statusMap[eventType] === "clicked") { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
+          if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); }
+          if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
         }
       } catch (e) { console.error("[SES webhook] parse failed", e.message); }
     }

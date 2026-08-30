@@ -41,10 +41,18 @@ function renderBlock(block) {
 }
 
 export function renderBlocksToHtml(blocks, theme) {
-  const bg = theme?.background || "#f4f4f4";
+  const bg = theme?.background || "#ffffff";
   const maxWidth = theme?.maxWidth || 650;
-  const body = (blocks || []).map(renderBlock).join("");
+  const body = renderBlocksInner(blocks);
   return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:${maxWidth}px;margin:0 auto;background:#ffffff">${body}</div></div>`;
+}
+
+// Just the blocks themselves, no outer canvas/background wrapper -- for
+// embedding inside content that already has its own wrapper (the footer,
+// appended inside the body's existing canvas rather than starting a second
+// nested one).
+export function renderBlocksInner(blocks) {
+  return (blocks || []).map(renderBlock).join("");
 }
 
 // AC-style %TOKEN% merge tags (not {{token}}) so Lee's existing AC email

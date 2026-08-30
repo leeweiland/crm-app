@@ -242,7 +242,7 @@ export async function handleInboxRequest(req, res, url) {
       if (!contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
       const result = await sendEmail({
         to: contact.email, subject: subject || "(no subject)",
-        blocks: [{ id: "b1", type: "text", html: body.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: null,
+        blocks: [{ id: "b1", type: "text", html: body.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: me.footerTemplateId || null,
         contactId, sourceType: "inbox", sourceId: me.id,
         from: `${me.first} ${me.last} <${me.email}>`,
       });

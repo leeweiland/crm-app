@@ -830,7 +830,7 @@ export async function handleAuthRequest(req, res, url) {
     const { salt, hash } = hashPassword(password);
     const newUser = {
       id: randomUUID(), email: String(email).toLowerCase(), passwordSalt: salt, passwordHash: hash,
-      first, last, role, archived: false, createdAt: new Date().toISOString(),
+      first, last, role, archived: false, footerTemplateId: null, createdAt: new Date().toISOString(),
     };
     users.push(newUser);
     writeJson(USERS_FILE, users);
@@ -862,6 +862,29 @@ export async function handleAuthRequest(req, res, url) {
     target.archived = !!archived;
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
+  const footerMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/footer$/);
+  if (footerMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { footerTemplateId } = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === footerMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    target.footerTemplateId = footerTemplateId || null;
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
+
+  // Lightweight roster any logged-in user can read (not just admins) --
+  // used by the Inbox compose panel to show who a reply will send as, and
+  // that teammates exist even though only the session user is selectable.
+  // No role/archived/footer internals, just enough to display a name+email.
+  if (p === "/api/auth/team" && req.method === "GET") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    const users = readJson(USERS_FILE, []).filter(u => !u.archived);
+    return sendJson(res, 200, { users: users.map(u => ({ id: u.id, first: u.first, last: u.last, email: u.email })) });
   }
 
   return false;
