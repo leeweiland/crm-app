@@ -90,6 +90,59 @@ export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
   ensureSourceDir();
   updateJsonArrayRecordByField(sourceFile(sourceType, sourceId), "id", id, m => ({ ...m, ...patch }));
 }
+
+// Per-day running counts (by CURRENT status, same classification
+// statsFromMessages/smsStatsFromMessages in reporting_backend.js already
+// use) so the overview/email-daily/sms-daily dashboards never scan
+// crm_message_log.json either -- same reasoning as msg_by_source above,
+// bucketed by day+category instead of by source. Small regardless of
+// message volume: bounded by (distinct days) x (a handful of status
+// counters), not by messages ever sent.
+// Bucketed by the message's own createdAt date, not whenever a later
+// status update lands -- a message sent on day X that's opened on day X+2
+// still counts toward day X's "opened" bucket, matching how these
+// dashboards have always grouped (by send day, not by event day).
+export const DAILY_STATS_FILE = "crm_daily_message_stats.json";
+function dayKey(iso) { return String(iso || "").slice(0, 10); }
+function emptyDayBucket() { return { emailOut: {}, smsOut: {}, smsInCount: 0, automationEmailOut: {}, workflowSmsOut: {} }; }
+function bumpStatus(obj, status, delta) {
+  const next = (obj[status] || 0) + delta;
+  if (next > 0) obj[status] = next; else delete obj[status];
+}
+function applyDailyDelta(bucket, row, status, delta) {
+  if (row.channel === "email" && row.direction === "outbound") {
+    bumpStatus(bucket.emailOut, status, delta);
+    if (row.sourceType === "automation_step") bumpStatus(bucket.automationEmailOut, status, delta);
+  } else if (row.channel === "sms" && row.direction === "inbound") {
+    bucket.smsInCount = Math.max(0, (bucket.smsInCount || 0) + delta);
+  } else if (row.channel === "sms") {
+    bumpStatus(bucket.smsOut, status, delta);
+    if (row.sourceType === "workflow_step") bumpStatus(bucket.workflowSmsOut, status, delta);
+  }
+  // Other channels (form/booking/activity/manual) don't feed these
+  // dashboards -- no bucket to touch.
+}
+export function recordDailyStatsNew(row) {
+  const all = readJson(DAILY_STATS_FILE, {});
+  const bucket = all[dayKey(row.createdAt)] || (all[dayKey(row.createdAt)] = emptyDayBucket());
+  applyDailyDelta(bucket, row, row.status, 1);
+  writeJson(DAILY_STATS_FILE, all);
+}
+export function recordDailyStatsTransition(row, oldStatus, newStatus) {
+  if (oldStatus === newStatus) return;
+  const all = readJson(DAILY_STATS_FILE, {});
+  const bucket = all[dayKey(row.createdAt)] || (all[dayKey(row.createdAt)] = emptyDayBucket());
+  applyDailyDelta(bucket, row, oldStatus, -1);
+  applyDailyDelta(bucket, row, newStatus, 1);
+  writeJson(DAILY_STATS_FILE, all);
+}
+export function getDailyStatsInRange(startMs, endMs) {
+  const all = readJson(DAILY_STATS_FILE, {});
+  return Object.entries(all)
+    .filter(([date]) => { const t = new Date(date + "T00:00:00Z").getTime(); return t >= startMs && t <= endMs; })
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, bucket]) => ({ date, ...bucket }));
+}
 export function deleteContactMessageFile(contactId) {
   if (!contactId) return;
   const p = join(DATA_DIR, contactFile(contactId));
@@ -114,7 +167,12 @@ export function updateContactMessagesByIds(contactId, idSet, updater) {
 }
 
 function slimMessage(m) {
-  return { id: m.id, channel: m.channel, direction: m.direction, createdAt: m.createdAt, subject: m.subject, bodyPreview: m.bodyPreview, from: m.from, to: m.to, status: m.status, opened: !!m.statusHistory?.some(h => h.status === "opened") };
+  // A click can't happen without an open first -- pixel-based open tracking
+  // is unreliable on its own (many mail clients block the tracking image by
+  // default), so a recorded click is treated as proof of an open too, same
+  // convention already used by campaigns_backend.js/reporting_backend.js.
+  const opened = !!m.statusHistory?.some(h => h.status === "opened" || h.status === "clicked");
+  return { id: m.id, channel: m.channel, direction: m.direction, createdAt: m.createdAt, subject: m.subject, bodyPreview: m.bodyPreview, from: m.from, to: m.to, status: m.status, opened };
 }
 export function conversationKey(m) {
   return m.contactId || `unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`;

@@ -885,8 +885,12 @@ document.getElementById('saveConfirmBtn').onclick = async () => {
 
 // ── Chat: thread panel ────────────────────────────────────────────────────
 function emailBubbleHtml(item, idx) {
-  const opened = (item.statusHistory || []).find(h => h.status === 'opened');
   const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
+  // A click can't happen without an open first -- pixel-based open tracking
+  // alone is unreliable (many mail clients block the tracking image), so a
+  // recorded click counts as an open too, same convention used everywhere
+  // else opened/clicked stats are computed (see message_index.js).
+  const opened = (item.statusHistory || []).find(h => h.status === 'opened') || clicked;
   return `
     <div class="bubble-row ${item.direction}">
       <div class="email-bubble" data-email-toggle="${idx}">
@@ -936,7 +940,7 @@ function noteBubbleHtml(item) {
 function emailStatsHtml(items) {
   const sent = items.filter(i => i.itemType === 'email' && i.direction === 'outbound');
   if (!sent.length) return '';
-  const opened = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'opened')).length;
+  const opened = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'opened' || h.status === 'clicked')).length;
   const clicked = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'clicked')).length;
   const pct = (n) => Math.round((n / sent.length) * 100);
   return `
