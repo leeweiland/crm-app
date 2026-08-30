@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { appendJsonRecordFast, appendToJsonObjectFast, updateJsonArrayRecordByField, readJson } from "./auth_backend.js";
-import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages } from "./message_index.js";
+import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition } from "./message_index.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -47,6 +47,7 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
   appendJsonRecordFast(MESSAGE_LOG_FILE, row);
   appendContactMessage(row);
   appendSourceMessage(row);
+  recordDailyStatsNew(row);
   upsertConversationSummary(row);
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   return row;
@@ -68,7 +69,9 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   if (!providerMessageId) return null;
   const entry = readJson(PROVIDER_ID_INDEX_FILE, {})[providerMessageId];
   if (!entry) return null;
+  let oldStatus = null;
   const found = updateContactMessage(entry.contactId, "id", entry.id, row => {
+    oldStatus = row.status;
     row.status = status;
     row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
     return row;
@@ -76,6 +79,7 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   if (found) {
     recomputeConversationSummary(entry.contactId);
     if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
+    recordDailyStatsTransition(found, oldStatus, status);
   }
   return found;
 }
@@ -84,7 +88,9 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
 // this doesn't quietly reintroduce a stale/incomplete update path if
 // something starts calling it again later.
 export function updateMessageById(id, patch) {
+  let oldStatus = null;
   const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
+    oldStatus = row.status;
     Object.assign(row, patch);
     if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
     return row;
@@ -93,6 +99,7 @@ export function updateMessageById(id, patch) {
     updateContactMessage(found.contactId, "id", id, () => found);
     recomputeConversationSummary(found.contactId);
     if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
+    if (patch.status) recordDailyStatsTransition(found, oldStatus, patch.status);
   }
   return found;
 }

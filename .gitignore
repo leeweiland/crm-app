@@ -11,5 +11,11 @@ crm_*.json
 # Volume, not in git.
 uploads/
 
+# Per-contact/per-source message splits (message_index.js) -- same runtime
+# data as crm_*.json above, just organized as one-file-per-key instead of
+# one big file, so the crm_*.json glob doesn't already catch it.
+msg_by_contact/
+msg_by_source/
+
 # This tool's own local session config, not app code.
 .claude/

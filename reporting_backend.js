@@ -1,14 +1,22 @@
-import { readJson, readJsonArrayFiltered, sendJson, getSessionUser } from "./auth_backend.js";
-import { getMessagesForSource, MESSAGE_LOG_FILE } from "./message_log.js";
+import { readJson, sendJson, getSessionUser } from "./auth_backend.js";
+import { getMessagesForSource } from "./message_log.js";
+import { getDailyStatsInRange } from "./message_index.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { AUTOMATIONS_FILE } from "./automations_backend.js";
 import { WORKFLOWS_FILE } from "./workflows_backend.js";
 
-// Cross-channel dashboards -- everything here reads crm_message_log.json,
-// the one file every channel (email now, SMS since Phase 4) and every
-// source (campaign, automation step, workflow step, manual, inbound)
-// writes to, so adding a new channel later never means adding a new
-// reporting data path, just a new filter over the same rows.
+// Cross-channel dashboards -- these used to read crm_message_log.json
+// directly (12+GB and growing; a full scan blocks the whole single-threaded
+// server for however long it takes -- see message_log.js's postmortem
+// comment). getDailyStatsInRange reads a small per-day running-count index
+// instead (message_index.js), updated incrementally at send/webhook time --
+// same "keep it small, update it as you go" pattern as msg_by_source below.
+// These helpers turn a day-bucket's (or several summed together) CURRENT-
+// status counts into the same {sent,delivered,opened,...} shape the old
+// per-message fold produced -- e.g. "sent" = however many messages are
+// currently sitting at sent-or-later, since status only ever moves forward.
+// Still used by the per-source endpoints below (getMessagesForSource
+// returns real slim message rows, not pre-aggregated counts).
 function statsFromMessages(messages) {
   const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, complained: 0, failed: 0 };
   for (const m of messages) {
@@ -32,39 +40,24 @@ function smsStatsFromMessages(messages) {
   }
   return stats;
 }
-
-// Day-bucketed counts for the Email/SMS UX dashboards -- same source rows
-// as everything else here (crm_message_log.json), just grouped by
-// createdAt's date instead of aggregated into one lifetime total, so the
-// dashboards can chart trend over the selected date range.
-function emailDailyBreakdown(messages, startMs, endMs) {
-  const byDate = {};
-  for (const m of messages) {
-    const t = new Date(m.createdAt).getTime();
-    if (t < startMs || t > endMs) continue;
-    const day = m.createdAt.slice(0, 10);
-    const c = byDate[day] || (byDate[day] = { sent: 0, opened: 0, clicked: 0, bounced: 0, failed: 0 });
-    if (["sent", "delivered", "opened", "clicked"].includes(m.status)) c.sent++;
-    if (["opened", "clicked"].includes(m.status)) c.opened++;
-    if (m.status === "clicked") c.clicked++;
-    if (m.status === "bounced") c.bounced++;
-    if (m.status === "failed") c.failed++;
-  }
-  return Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, counts]) => ({ date, ...counts }));
+function statsFromByStatus(byStatus) {
+  const c = (statuses) => statuses.reduce((sum, s) => sum + (byStatus[s] || 0), 0);
+  return {
+    sent: c(["sent", "delivered", "opened", "clicked"]),
+    delivered: c(["delivered", "opened", "clicked"]),
+    opened: c(["opened", "clicked"]),
+    clicked: c(["clicked"]),
+    bounced: c(["bounced"]),
+    complained: c(["complained"]),
+    failed: c(["failed"]),
+  };
 }
-function smsDailyBreakdown(messages, startMs, endMs) {
-  const byDate = {};
-  for (const m of messages) {
-    const t = new Date(m.createdAt).getTime();
-    if (t < startMs || t > endMs) continue;
-    const day = m.createdAt.slice(0, 10);
-    const c = byDate[day] || (byDate[day] = { sent: 0, delivered: 0, received: 0, failed: 0 });
-    if (m.direction === "inbound") { c.received++; continue; }
-    if (["queued", "sent", "delivered"].includes(m.status)) c.sent++;
-    if (m.status === "delivered") c.delivered++;
-    if (m.status === "failed") c.failed++;
-  }
-  return Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).map(([date, counts]) => ({ date, ...counts }));
+function smsStatsFromByStatus(byStatus, receivedCount) {
+  const c = (statuses) => statuses.reduce((sum, s) => sum + (byStatus[s] || 0), 0);
+  return { sent: c(["queued", "sent", "delivered"]), delivered: c(["delivered"]), failed: c(["failed"]), received: receivedCount || 0 };
+}
+function sumByStatus(days, key) {
+  return days.reduce((acc, d) => { for (const [s, n] of Object.entries(d[key] || {})) acc[s] = (acc[s] || 0) + n; return acc; }, {});
 }
 
 // Shared with ads_backend.js's period presets on the frontend -- the
@@ -85,32 +78,35 @@ export async function handleReportingRequest(req, res, url) {
 
   if (p === "/api/reporting/overview" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
-    const inRange = (m) => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; };
-    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, inRange);
-    const email = messages.filter(m => m.channel === "email" && m.direction === "outbound");
-    const sms = messages.filter(m => m.channel === "sms");
-    const automationEmail = email.filter(m => m.sourceType === "automation_step");
-    const workflowSms = sms.filter(m => m.sourceType === "workflow_step");
+    const days = getDailyStatsInRange(startMs, endMs);
+    const totalSmsIn = days.reduce((sum, d) => sum + (d.smsInCount || 0), 0);
     return sendJson(res, 200, {
-      email: statsFromMessages(email),
-      sms: smsStatsFromMessages(sms),
+      email: statsFromByStatus(sumByStatus(days, "emailOut")),
+      sms: smsStatsFromByStatus(sumByStatus(days, "smsOut"), totalSmsIn),
       campaigns: { total: readJson(CAMPAIGNS_FILE, []).length },
-      automations: statsFromMessages(automationEmail),
-      workflows: smsStatsFromMessages(workflowSms),
+      automations: statsFromByStatus(sumByStatus(days, "automationEmailOut")),
+      workflows: smsStatsFromByStatus(sumByStatus(days, "workflowSmsOut"), 0),
     });
   }
 
   if (p === "/api/reporting/email-daily" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
-    const inRange = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.channel === "email" && m.direction === "outbound");
-    const totals = inRange.filter(m => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; });
-    return sendJson(res, 200, { days: emailDailyBreakdown(inRange, startMs, endMs), totals: statsFromMessages(totals) });
+    const days = getDailyStatsInRange(startMs, endMs);
+    const dayRows = days.map(d => {
+      const c = (statuses) => statuses.reduce((sum, s) => sum + (d.emailOut[s] || 0), 0);
+      return { date: d.date, sent: c(["sent", "delivered", "opened", "clicked"]), opened: c(["opened", "clicked"]), clicked: c(["clicked"]), bounced: c(["bounced"]), failed: c(["failed"]) };
+    });
+    return sendJson(res, 200, { days: dayRows, totals: statsFromByStatus(sumByStatus(days, "emailOut")) });
   }
   if (p === "/api/reporting/sms-daily" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
-    const inRange = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.channel === "sms");
-    const totals = inRange.filter(m => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; });
-    return sendJson(res, 200, { days: smsDailyBreakdown(inRange, startMs, endMs), totals: smsStatsFromMessages(totals) });
+    const days = getDailyStatsInRange(startMs, endMs);
+    const dayRows = days.map(d => {
+      const c = (statuses) => statuses.reduce((sum, s) => sum + (d.smsOut[s] || 0), 0);
+      return { date: d.date, sent: c(["queued", "sent", "delivered"]), delivered: c(["delivered"]), received: d.smsInCount || 0, failed: c(["failed"]) };
+    });
+    const totalSmsIn = days.reduce((sum, d) => sum + (d.smsInCount || 0), 0);
+    return sendJson(res, 200, { days: dayRows, totals: smsStatsFromByStatus(sumByStatus(days, "smsOut"), totalSmsIn) });
   }
 
   const campaignMatch = p.match(/^\/api\/reporting\/campaigns\/([^/]+)$/);
