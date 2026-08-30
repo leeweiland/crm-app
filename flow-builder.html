@@ -715,6 +715,7 @@ async function renderSheetFieldChips() {
   const payloadKeys = sampleKeys(samples);
   if (!chipsEl.isConnected) return; // modal may have been closed/reopened while this was in flight
   const chips = [
+    { label: 'Date/Time Captured', token: '{{timestamp}}' },
     ...contactTokens.map(t => ({ label: t, token: `{{${t}}}` })),
     ...payloadKeys.map(k => ({ label: k, token: `{{payload.${k}}}` })),
   ];

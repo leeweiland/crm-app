@@ -96,10 +96,14 @@ async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
 // {{first}}/{{email}}/{{customFields.x}} resolve against the contact;
 // {{payload.rawFieldName}} reaches into the original trigger payload (the
 // raw webhook body, or {} for form/booking triggers) for anything not
-// mapped onto the contact itself.
-function resolveTemplate(str, { contact, payload }) {
+// mapped onto the contact itself; {{timestamp}} is when the run's trigger
+// actually fired (run.enteredAt) -- not "whenever this step happens to
+// execute", which would read differently if an earlier delay step pushed
+// this step minutes/hours/days past the real capture time.
+function resolveTemplate(str, { contact, payload, timestamp }) {
   return String(str || "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
     const parts = path.split(".");
+    if (parts[0] === "timestamp") return timestamp || "";
     let obj;
     if (parts[0] === "payload") { obj = payload; parts.shift(); }
     else { obj = contact; if (parts[0] === "contact") parts.shift(); }
@@ -130,7 +134,10 @@ async function advanceFlowRun(run, flow) {
     if (!step) { completeRun(run); return; }
     run.history.push({ stepId: step.id, at: new Date().toISOString() });
     const contact = getContact(run.contactId);
-    const ctx = { contact, payload: run.triggerPayload || {} };
+    const ctx = {
+      contact, payload: run.triggerPayload || {},
+      timestamp: new Date(run.enteredAt).toLocaleString("en-US", { timeZone: "America/Anchorage", dateStyle: "medium", timeStyle: "short" }),
+    };
 
     if (step.type === "delay") {
       const ms = step.config.unit === "days" ? step.config.amount * 86400000
