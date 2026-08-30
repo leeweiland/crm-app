@@ -1,6 +1,8 @@
 import { readJson, readJsonArrayFiltered, sendJson, getSessionUser } from "./auth_backend.js";
 import { getMessagesForSource, MESSAGE_LOG_FILE } from "./message_log.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
+import { AUTOMATIONS_FILE } from "./automations_backend.js";
+import { WORKFLOWS_FILE } from "./workflows_backend.js";
 
 // Cross-channel dashboards -- everything here reads crm_message_log.json,
 // the one file every channel (email now, SMS since Phase 4) and every
@@ -118,19 +120,25 @@ export async function handleReportingRequest(req, res, url) {
   }
 
   // Automation email steps log with sourceId "<automationId>:<stepId>" --
-  // aggregate everything starting with this automation's id, then break
-  // down per-step too for the builder's own per-step counts elsewhere.
+  // used to be a prefix-scan over crm_message_log.json (12+GB, blocks the
+  // whole single-threaded server for however long that scan takes -- see
+  // message_log.js's postmortem comment). The automation's own step list is
+  // small and already known, so this just reads each step's own small
+  // per-source file (see message_index.js's getSourceMessages) and merges
+  // them -- O(this automation's steps), never O(every message ever sent).
   const automationMatch = p.match(/^\/api\/reporting\/automations\/([^/]+)$/);
   if (automationMatch && req.method === "GET") {
-    const prefix = automationMatch[1] + ":";
-    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === "automation_step" && m.sourceId?.startsWith(prefix));
+    const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === automationMatch[1]);
+    const stepIds = automation ? Object.keys(automation.steps || {}) : [];
+    const messages = stepIds.flatMap(stepId => getMessagesForSource("automation_step", `${automationMatch[1]}:${stepId}`));
     return sendJson(res, 200, { stats: statsFromMessages(messages), messages });
   }
 
   const workflowMatch = p.match(/^\/api\/reporting\/workflows\/([^/]+)$/);
   if (workflowMatch && req.method === "GET") {
-    const prefix = workflowMatch[1] + ":";
-    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === "workflow_step" && m.sourceId?.startsWith(prefix));
+    const workflow = readJson(WORKFLOWS_FILE, []).find(w => w.id === workflowMatch[1]);
+    const stepIds = workflow ? (workflow.steps || []).map(s => s.id) : [];
+    const messages = stepIds.flatMap(stepId => getMessagesForSource("workflow_step", `${workflowMatch[1]}:${stepId}`));
     return sendJson(res, 200, { stats: smsStatsFromMessages(messages), messages });
   }
 

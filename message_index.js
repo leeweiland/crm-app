@@ -48,6 +48,48 @@ export function updateContactMessage(contactId, field, value, updater) {
   ensureDir();
   return updateJsonArrayRecordByField(contactFile(contactId), field, value, updater);
 }
+
+// Same split as msg_by_contact above, but keyed by (sourceType, sourceId)
+// instead of contactId -- this is what lets a campaign/automation-step/
+// workflow-step reporting query read "just this source's own messages"
+// instead of scanning crm_message_log.json (12+GB and growing; see
+// message_log.js's postmortem comment). sourceId is sometimes compound
+// ("<automationId>:<stepId>") -- the ":" becomes "_" below, which is fine
+// since callers always know the exact sourceType+sourceId pair up front
+// (from the automation/workflow's own step list) rather than needing to
+// parse it back out of the filename.
+const SOURCE_MSG_DIR = "msg_by_source";
+let sourceDirReady = false;
+function ensureSourceDir() {
+  if (sourceDirReady) return;
+  const p = join(DATA_DIR, SOURCE_MSG_DIR);
+  if (!existsSync(p)) mkdirSync(p, { recursive: true });
+  sourceDirReady = true;
+}
+function sourceFile(sourceType, sourceId) {
+  return `${SOURCE_MSG_DIR}/${safeId(sourceType)}__${safeId(sourceId)}.json`;
+}
+// Slim rows only -- these can hold every message a busy campaign or
+// automation step ever sent, so the same "keep it small" reasoning as
+// slimMessage() above applies: enough for stats and a recipient-list table
+// (campaign-report.html), not full bodies.
+function slimSourceMessage(m) {
+  return { id: m.id, contactId: m.contactId, to: m.to, status: m.status, sentAt: m.sentAt || m.createdAt };
+}
+export function getSourceMessages(sourceType, sourceId) {
+  if (!sourceType || !sourceId) return [];
+  return readJson(sourceFile(sourceType, sourceId), []);
+}
+export function appendSourceMessage(message) {
+  if (!message.sourceType || !message.sourceId) return;
+  ensureSourceDir();
+  appendJsonRecords(sourceFile(message.sourceType, message.sourceId), [slimSourceMessage(message)]);
+}
+export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
+  if (!sourceType || !sourceId) return;
+  ensureSourceDir();
+  updateJsonArrayRecordByField(sourceFile(sourceType, sourceId), "id", id, m => ({ ...m, ...patch }));
+}
 export function deleteContactMessageFile(contactId) {
   if (!contactId) return;
   const p = join(DATA_DIR, contactFile(contactId));

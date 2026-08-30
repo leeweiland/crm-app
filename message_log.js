@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
-import { appendJsonRecordFast, appendToJsonObjectFast, updateJsonArrayRecordByField, readJsonArrayFiltered, readJson } from "./auth_backend.js";
-import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary } from "./message_index.js";
+import { appendJsonRecordFast, appendToJsonObjectFast, updateJsonArrayRecordByField, readJson } from "./auth_backend.js";
+import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages } from "./message_index.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -46,6 +46,7 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
   };
   appendJsonRecordFast(MESSAGE_LOG_FILE, row);
   appendContactMessage(row);
+  appendSourceMessage(row);
   upsertConversationSummary(row);
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   return row;
@@ -55,14 +56,14 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
 // volume's remaining disk space (the copy needs roughly the file's own size
 // in free space to complete) and blocked the whole single-threaded server
 // for its duration, taking the app down. Now looks the row up in the small
-// index instead (populated by logMessage above) and only ever touches the
-// per-contact file + conversation summary, both cheap regardless of the
-// main log's size. Deliberately does NOT also patch the main log's own
-// copy of this message -- that still has no cheap update path, so campaign-
-// level reporting that reads status straight from the main log (see
-// getMessagesForSource) can lag behind actual delivery/open/click state.
-// Fine for now: the Inbox (what this fixes) never reads the main log for
-// this anymore either.
+// index instead (populated by logMessage above) and only touches the
+// per-contact file, the per-source file, and the conversation summary, all
+// cheap regardless of the main log's size. Deliberately does NOT also patch
+// the main log's own copy of this message -- crm_message_log.json is
+// write-once-append-only now; nothing reads it back for status (see
+// getMessagesForSource below, which used to read stale status straight off
+// it -- that staleness is exactly what routing status updates through the
+// per-source file here fixes, not just the speed).
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
   if (!providerMessageId) return null;
   const entry = readJson(PROVIDER_ID_INDEX_FILE, {})[providerMessageId];
@@ -72,9 +73,16 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
     row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
     return row;
   });
-  if (found) recomputeConversationSummary(entry.contactId);
+  if (found) {
+    recomputeConversationSummary(entry.contactId);
+    if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
+  }
   return found;
 }
+// No current callers (the send path logs once with a final status instead,
+// see logMessage's own comment) -- kept updating all three places anyway so
+// this doesn't quietly reintroduce a stale/incomplete update path if
+// something starts calling it again later.
 export function updateMessageById(id, patch) {
   const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
     Object.assign(row, patch);
@@ -84,9 +92,10 @@ export function updateMessageById(id, patch) {
   if (found) {
     updateContactMessage(found.contactId, "id", id, () => found);
     recomputeConversationSummary(found.contactId);
+    if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
   }
   return found;
 }
 export function getMessagesForSource(sourceType, sourceId) {
-  return readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === sourceType && m.sourceId === sourceId);
+  return getSourceMessages(sourceType, sourceId);
 }
