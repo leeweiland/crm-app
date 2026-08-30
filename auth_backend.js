@@ -20,6 +20,28 @@ function migrateDataFile(file) {
 export const USERS_FILE = "crm_users.json";
 export const SESSIONS_FILE = "crm_sessions.json";
 [USERS_FILE, SESSIONS_FILE].forEach(migrateDataFile);
+// Declared locally (matching segments_shared.js's own reasoning) rather than
+// imported from email_backend.js, which already imports from this file --
+// that import would be circular.
+const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
+
+// Every new user (any role) gets their own blank footer template up front,
+// named after them and pre-linked via footerTemplateId, so their 1:1 Inbox
+// replies never default to someone else's signature/photo just because
+// nobody remembered to set one up. Content stays empty until they (or an
+// admin) fill it in via the same footer editor everything else uses.
+function createFooterForUser(first, last) {
+  const templates = readJson(FOOTER_TEMPLATES_FILE, []);
+  const template = {
+    id: randomUUID(), name: `${first} ${last} Footer`, blocks: [], theme: {},
+    unsubscribeLinkText: "Unsubscribe", physicalAddress: "", socialLinks: [],
+    isDefault: templates.length === 0,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+  templates.push(template);
+  writeJson(FOOTER_TEMPLATES_FILE, templates);
+  return template.id;
+}
 
 // Opt-in write-behind cache for bulk import scripts, which call readJson/
 // writeJson once per record -- fine at small scale, but each call reparses/
@@ -758,7 +780,7 @@ export async function handleAuthRequest(req, res, url) {
     const { salt, hash } = hashPassword(password);
     const user = {
       id: randomUUID(), email: String(email).toLowerCase(), passwordSalt: salt, passwordHash: hash,
-      first, last, role: "admin", archived: false, createdAt: new Date().toISOString(),
+      first, last, role: "admin", archived: false, footerTemplateId: createFooterForUser(first, last), createdAt: new Date().toISOString(),
     };
     users.push(user);
     writeJson(USERS_FILE, users);
@@ -830,7 +852,7 @@ export async function handleAuthRequest(req, res, url) {
     const { salt, hash } = hashPassword(password);
     const newUser = {
       id: randomUUID(), email: String(email).toLowerCase(), passwordSalt: salt, passwordHash: hash,
-      first, last, role, archived: false, footerTemplateId: null, createdAt: new Date().toISOString(),
+      first, last, role, archived: false, footerTemplateId: createFooterForUser(first, last), createdAt: new Date().toISOString(),
     };
     users.push(newUser);
     writeJson(USERS_FILE, users);
