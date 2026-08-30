@@ -1,4 +1,4 @@
-import { readJson, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, readJsonArrayFiltered, sendJson, getSessionUser } from "./auth_backend.js";
 import { getMessagesForSource, MESSAGE_LOG_FILE } from "./message_log.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 
@@ -84,7 +84,7 @@ export async function handleReportingRequest(req, res, url) {
   if (p === "/api/reporting/overview" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
     const inRange = (m) => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; };
-    const messages = readJson(MESSAGE_LOG_FILE, []).filter(inRange);
+    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, inRange);
     const email = messages.filter(m => m.channel === "email" && m.direction === "outbound");
     const sms = messages.filter(m => m.channel === "sms");
     const automationEmail = email.filter(m => m.sourceType === "automation_step");
@@ -100,13 +100,13 @@ export async function handleReportingRequest(req, res, url) {
 
   if (p === "/api/reporting/email-daily" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
-    const inRange = readJson(MESSAGE_LOG_FILE, []).filter(m => m.channel === "email" && m.direction === "outbound");
+    const inRange = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.channel === "email" && m.direction === "outbound");
     const totals = inRange.filter(m => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; });
     return sendJson(res, 200, { days: emailDailyBreakdown(inRange, startMs, endMs), totals: statsFromMessages(totals) });
   }
   if (p === "/api/reporting/sms-daily" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
-    const inRange = readJson(MESSAGE_LOG_FILE, []).filter(m => m.channel === "sms");
+    const inRange = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.channel === "sms");
     const totals = inRange.filter(m => { const t = new Date(m.createdAt).getTime(); return t >= startMs && t <= endMs; });
     return sendJson(res, 200, { days: smsDailyBreakdown(inRange, startMs, endMs), totals: smsStatsFromMessages(totals) });
   }
@@ -123,14 +123,14 @@ export async function handleReportingRequest(req, res, url) {
   const automationMatch = p.match(/^\/api\/reporting\/automations\/([^/]+)$/);
   if (automationMatch && req.method === "GET") {
     const prefix = automationMatch[1] + ":";
-    const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.sourceType === "automation_step" && m.sourceId?.startsWith(prefix));
+    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === "automation_step" && m.sourceId?.startsWith(prefix));
     return sendJson(res, 200, { stats: statsFromMessages(messages), messages });
   }
 
   const workflowMatch = p.match(/^\/api\/reporting\/workflows\/([^/]+)$/);
   if (workflowMatch && req.method === "GET") {
     const prefix = workflowMatch[1] + ":";
-    const messages = readJson(MESSAGE_LOG_FILE, []).filter(m => m.sourceType === "workflow_step" && m.sourceId?.startsWith(prefix));
+    const messages = readJsonArrayFiltered(MESSAGE_LOG_FILE, m => m.sourceType === "workflow_step" && m.sourceId?.startsWith(prefix));
     return sendJson(res, 200, { stats: smsStatsFromMessages(messages), messages });
   }
 
