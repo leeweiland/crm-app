@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
@@ -9,6 +9,31 @@ export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaig
 export const LISTS_FILE = "crm_lists.json";
 export const TAGS_FILE = "crm_tags.json";
 export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
+
+// Denormalized engagement signals so segment evaluation (segments_shared.js's
+// evalCondition) never has to scan crm_message_log.json or
+// crm_page_visits.json -- both can grow huge in production, and a full-file
+// scan against the message log already caused a real outage (see
+// message_log.js). Written incrementally, one record at a time, from the
+// exact code paths that already handle these events: email_backend.js's SES
+// webhook and tracking_backend.js's pageview handler.
+export function markContactEmailEngagement(contactId, kind) { // kind: "opened" | "clicked"
+  if (!contactId) return;
+  updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+    c.emailEngagement = c.emailEngagement || {};
+    c.emailEngagement[kind] = true;
+    c.emailEngagement[`${kind}At`] = new Date().toISOString();
+    return c;
+  });
+}
+export function markContactVisitedPage(contactId, path) {
+  if (!contactId || !path) return;
+  updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+    c.visitedPaths = c.visitedPaths || [];
+    if (!c.visitedPaths.includes(path)) c.visitedPaths.push(path);
+    return c;
+  });
+}
 
 // Matched by exact name (case-insensitive) -- used by every importer
 // (AC tags, Hyros tags, AC lists) so re-running an import never creates a
