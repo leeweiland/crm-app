@@ -11,19 +11,8 @@
   .cb-name-input:focus { border-bottom-color: var(--pra-blue); }
   .cb-status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); }
   .not-configured-banner { background: rgba(255,193,7,0.12); border: 1px solid #ffc107; color: #ffc107; border-radius: 8px; padding: 10px 14px; font-size: .8rem; margin-bottom: 16px; }
-  /* Searchable multi-select -- replaces dumping every list/tag as a flat
-     wall of pill buttons (unusable once an account has 50+ tags). Selected
-     items show as removable chips; typing filters a dropdown of the rest. */
-  .search-multiselect { position: relative; margin-top: 6px; }
-  .ms-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-  .ms-chips:empty { margin-bottom: 0; }
-  .ms-dropdown { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 50; max-height: 220px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
-  .ms-dropdown.open { display: block; }
-  .ms-option { padding: 8px 12px; font-size: .82rem; cursor: pointer; }
-  .ms-option:hover { background: rgba(255,255,255,0.06); }
-  .ms-option-empty { padding: 8px 12px; font-size: .8rem; color: var(--pra-dim); }
-  .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); }
-  .tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
+  /* .search-multiselect/.ms-*/.tag-pill now live in crm-design-system.css
+     (shared with condition-row-client.js's multi-value condition picker). */
   .time-picker-row { display: flex; gap: 6px; margin-top: 6px; }
   .time-picker-row select { flex: 1; min-width: 0; }
   .history-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -66,7 +55,10 @@
             <div class="pra-label" style="margin-top:12px">Tags</div>
             <div class="search-multiselect" id="tagChips"></div>
             <div class="pra-label" style="margin-top:12px">Segment</div>
-            <select class="pra-select" id="segmentSelect"><option value="">None</option></select>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select class="pra-select" id="segmentSelect" style="flex:1"><option value="">None</option></select>
+              <a class="pra-link" id="newSegmentLink" style="font-size:.78rem;white-space:nowrap;cursor:pointer">+ New</a>
+            </div>
             <div class="pra-label" style="margin-top:12px">Exclude lists</div>
             <div class="search-multiselect" id="excludeChips"></div>
             <div class="pra-muted" style="font-size:.8rem;margin-top:12px" id="recipientCount">— recipients</div>
@@ -125,8 +117,37 @@
   </div>
 </div>
 
+<!-- New Segment -->
+<div class="modal-backdrop" id="newSegmentModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">New Segment</div>
+    <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="newSegmentName"/></div>
+    <div class="field">
+      <label class="pra-label">Channel</label>
+      <div style="display:flex;gap:20px;margin-top:6px">
+        <label class="pra-label" style="cursor:pointer;font-weight:400"><input type="radio" name="newSegmentChannel" value="email" checked/> Email</label>
+        <label class="pra-label" style="cursor:pointer;font-weight:400"><input type="radio" name="newSegmentChannel" value="sms"/> SMS</label>
+      </div>
+    </div>
+    <div class="match-toggle" style="margin:16px 0 12px">
+      Match
+      <select class="pra-select" id="newSegmentMatchMode" style="width:auto"><option value="all">ALL</option><option value="any">ANY</option></select>
+      of the following conditions:
+    </div>
+    <div id="newSegmentCondRows"></div>
+    <div class="filter-actions">
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addNewSegmentCondBtn" type="button">+ Add Condition</button>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="saveNewSegmentBtn" style="flex:1">Save Segment</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('newSegmentModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script src="/block-editor-client.js"></script>
+<script src="/condition-row-client.js"></script>
 <script>
 const campaignId = new URLSearchParams(location.search).get('id');
 let campaign = null, editor = null, allLists = [], allTags = [], allSegments = [], allFooters = [];
@@ -165,8 +186,9 @@ async function restoreVersion(versionId) {
 document.getElementById('historyBtn').onclick = openHistoryModal;
 
 async function loadRefs() {
-  const [listsRes, tagsRes, segmentsRes, footersRes, sesRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/segments'), fetch('/api/footer-templates'), fetch('/api/email/config-status')
+  const [listsRes, tagsRes, segmentsRes, footersRes, sesRes, statusesRes, customFieldsRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/segments'), fetch('/api/footer-templates'), fetch('/api/email/config-status'),
+    fetch('/api/statuses'), fetch('/api/custom-fields?entityType=contact')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
@@ -174,7 +196,34 @@ async function loadRefs() {
   allFooters = (await footersRes.json()).templates;
   const { configured } = await sesRes.json();
   document.getElementById('sesBanner').style.display = configured ? 'none' : 'block';
+  const allStatuses = (await statusesRes.json()).statuses;
+  const allCustomFields = (await customFieldsRes.json()).fields;
+  window.ConditionRowBuilder.init({ statuses: allStatuses, tags: allTags, lists: allLists, customFields: allCustomFields });
 }
+
+// ── New Segment (inline, without leaving the campaign builder) ──────────
+document.getElementById('newSegmentLink').onclick = () => {
+  document.getElementById('newSegmentCondRows').innerHTML = '';
+  document.getElementById('newSegmentName').value = '';
+  window.ConditionRowBuilder.addRow(document.getElementById('newSegmentCondRows'));
+  openModal('newSegmentModal');
+};
+document.getElementById('addNewSegmentCondBtn').onclick = () => window.ConditionRowBuilder.addRow(document.getElementById('newSegmentCondRows'));
+document.getElementById('saveNewSegmentBtn').onclick = async () => {
+  const name = document.getElementById('newSegmentName').value.trim();
+  if (!name) { showToast('Segment name is required', true); return; }
+  const filter = window.ConditionRowBuilder.buildFilter(document.getElementById('newSegmentCondRows'), document.getElementById('newSegmentMatchMode').value);
+  if (!filter) { showToast('Add at least one condition first', true); return; }
+  const channel = document.querySelector('input[name="newSegmentChannel"]:checked').value;
+  const r = await fetch('/api/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter, channel }) });
+  if (!r.ok) { showToast('Could not save segment', true); return; }
+  const { segment } = await r.json();
+  allSegments.push(segment);
+  campaign.recipients.segmentId = segment.id;
+  closeModal('newSegmentModal');
+  renderAll(); saveDebounced();
+  showToast('Segment saved');
+};
 
 // Searchable multi-select -- the skeleton (search input + dropdown) is
 // built ONCE per container and left alone on later calls, since renderAll()

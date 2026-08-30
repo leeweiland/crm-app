@@ -34,10 +34,8 @@
   .filter-toggle { font-size: .8rem; }
   .filter-panel { display: none; margin-bottom: 16px; padding: 16px; }
   .filter-panel.show { display: block; }
-  .cond-row { display: grid; grid-template-columns: 1fr 140px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
-  @media (max-width: 900px) { .cond-row { grid-template-columns: 1fr; } }
-  .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
-  .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
+  /* .cond-row/.match-toggle/.filter-actions now live in crm-design-system.css
+     (shared with campaign-builder.html's "+ New Segment" modal). */
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
@@ -268,6 +266,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/condition-row-client.js"></script>
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
 let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
@@ -360,21 +359,9 @@ document.getElementById('addListBtn').onclick = async () => {
 };
 
 // ── Segments (Email/SMS tabs) ────────────────────────────────────────────
-function describeCondition(cond) {
-  const fieldLabel = cond.field === 'type' ? 'Type' : cond.field === 'status' ? 'Status' : cond.field === 'smsOptOut' ? 'SMS Opt-Out' : cond.field === 'emailOptOut' ? 'Email Opt-Out' : cond.field === 'tags' ? 'Tag' : cond.field === 'listIds' ? 'List'
-    : cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field;
-  const opLabel = { eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set' }[cond.op] || cond.op;
-  let valueLabel = cond.value;
-  if (cond.field === 'tags') valueLabel = allTags.find(t => t.id === cond.value)?.name || cond.value;
-  if (cond.field === 'listIds') valueLabel = allLists.find(l => l.id === cond.value)?.name || cond.value;
-  return `${fieldLabel} ${opLabel}${cond.op === 'exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
-}
-function describeFilter(filter) {
-  if (!filter) return '';
-  const conds = filter.all || filter.any || [];
-  const joiner = filter.all ? ' AND ' : ' OR ';
-  return conds.map(describeCondition).join(joiner);
-}
+// describeCondition/describeFilter now live in condition-row-client.js
+// (window.ConditionRowBuilder), shared with campaign-builder.html.
+const describeFilter = (filter) => window.ConditionRowBuilder.describeFilter(filter);
 async function loadSegments() {
   const r = await fetch('/api/segments');
   allSegments = (await r.json()).segments;
@@ -404,58 +391,10 @@ function renderSegmentList(channel, elId) {
 }
 
 // ── Advanced filter builder ─────────────────────────────────────────────
-function fieldOptionsHtml() {
-  return `
-    <option value="type">Type (Lead/Contact)</option>
-    <option value="status">Status</option>
-    <option value="smsOptOut">SMS Opt-Out</option>
-    <option value="emailOptOut">Email Opt-Out</option>
-    <option value="tags">Tag</option>
-    <option value="listIds">List</option>
-    ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
-  `;
-}
-function opOptionsHtml(field) {
-  if (field === 'tags' || field === 'listIds') return `<option value="includes">Includes</option><option value="excludes">Excludes</option>`;
-  if (field && field.startsWith('customFields.')) return `<option value="eq">Is</option><option value="neq">Is not</option><option value="exists">Is set</option>`;
-  return `<option value="eq">Is</option><option value="neq">Is not</option>`;
-}
-function valueInputHtml(field, op) {
-  if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
-  if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`;
-  if (field === 'smsOptOut' || field === 'emailOptOut') return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
-  if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
-  if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
-  if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
-  return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
-}
-function addConditionRow(initial) {
-  const wrap = document.getElementById('condRows');
-  const row = document.createElement('div');
-  row.className = 'cond-row';
-  row.innerHTML = `
-    <select class="pra-select" data-cond-field>${fieldOptionsHtml()}</select>
-    <select class="pra-select" data-cond-op></select>
-    <span data-cond-value-wrap></span>
-    <button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-cond>&times;</button>
-  `;
-  wrap.appendChild(row);
-  const fieldSel = row.querySelector('[data-cond-field]');
-  const opSel = row.querySelector('[data-cond-op]');
-  const valueWrap = row.querySelector('[data-cond-value-wrap]');
-  function refreshOps() { opSel.innerHTML = opOptionsHtml(fieldSel.value); }
-  function refreshValue() { valueWrap.innerHTML = valueInputHtml(fieldSel.value, opSel.value); }
-  fieldSel.onchange = () => { refreshOps(); refreshValue(); };
-  opSel.onchange = refreshValue;
-  refreshOps(); refreshValue();
-  if (initial) {
-    fieldSel.value = initial.field; refreshOps();
-    opSel.value = initial.op; refreshValue();
-    const valEl = row.querySelector('[data-cond-value]');
-    if (valEl) valEl.value = initial.value ?? '';
-  }
-  row.querySelector('[data-remove-cond]').onclick = () => row.remove();
-}
+// Field/op/value rendering now lives in condition-row-client.js
+// (window.ConditionRowBuilder) -- init() is called once loadStatuses/
+// loadTags/loadLists/loadCustomFields have all resolved, see below.
+function addConditionRow(initial) { return window.ConditionRowBuilder.addRow(document.getElementById('condRows'), initial); }
 document.getElementById('addCondBtn').onclick = () => addConditionRow();
 document.getElementById('filterToggle').onclick = () => {
   const panel = document.getElementById('filterPanel');
@@ -463,16 +402,7 @@ document.getElementById('filterToggle').onclick = () => {
   if (panel.classList.contains('show') && !document.getElementById('condRows').children.length) addConditionRow();
 };
 function buildFilterFromRows() {
-  const conds = [...document.getElementById('condRows').children].map(row => {
-    const field = row.querySelector('[data-cond-field]').value;
-    const op = row.querySelector('[data-cond-op]').value;
-    const valueEl = row.querySelector('[data-cond-value]');
-    const value = op === 'exists' ? undefined : valueEl?.value;
-    return { field, op, value };
-  }).filter(c => c.op === 'exists' || (c.value !== undefined && c.value !== ''));
-  if (!conds.length) return null;
-  const mode = document.getElementById('matchMode').value;
-  return mode === 'any' ? { any: conds } : { all: conds };
+  return window.ConditionRowBuilder.buildFilter(document.getElementById('condRows'), document.getElementById('matchMode').value);
 }
 document.getElementById('applyFilterBtn').onclick = () => { activeFilter = buildFilterFromRows(); contactsPage = 1; loadContacts(); };
 document.getElementById('clearFilterBtn').onclick = () => {
@@ -810,6 +740,7 @@ document.getElementById('scanDuplicatesBtn').onclick = async () => {
   await loadCustomFields();
   renderColumnsPanel();
   await Promise.all([loadTags(), loadLists()]);
+  window.ConditionRowBuilder.init({ statuses: allStatuses, tags: allTags, lists: allLists, customFields: allCustomFields });
   await loadSegments();
   await loadContacts();
   loadImportStatus();

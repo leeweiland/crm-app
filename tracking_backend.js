@@ -2,6 +2,7 @@ import { readJson, writeJson, getCookie } from "./auth_backend.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
+import { markContactVisitedPage } from "./contacts_backend.js";
 
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
 const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
@@ -85,6 +86,7 @@ export async function handleTrackingRequest(req, res, url) {
     // "page_visit" automation/workflow triggers only make sense for a KNOWN
     // contact -- an anonymous visit has nothing to enroll or advance.
     if (cid) {
+      markContactVisitedPage(cid, parsed.path || "");
       fireTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
       fireWorkflowTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
     }

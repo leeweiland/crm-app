@@ -54,20 +54,49 @@ export function markFirstSeen(contact, candidateISO) {
 
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
 // field: "status" | "smsOptOut" | "emailOptOut" | "tags" | "listIds" | "customFields.<fieldId>"
-// op: "eq" | "neq" | "includes" | "excludes" | "exists"
+//      | "emailOpened" | "emailClicked" | "visitedPage"
+// op: "eq" | "neq" | "includes" | "excludes" | "exists"           (legacy, still fully supported)
+//   | "any_of" | "all_of" | "not_any_of" | "not_all_of"           (new -- value is an array, array-valued fields only)
+//   | "contains"                                                   (new -- substring match, visitedPage only)
+//
+// emailOpened/emailClicked and visitedPage are deliberately NOT read from
+// crm_message_log.json / crm_page_visits.json here -- both can grow huge in
+// production (crm_message_log.json is 12+GB and a full-file scan against it
+// already caused a real outage, see message_log.js's postmortem comment).
+// Instead they read two small denormalized properties written directly onto
+// the contact record as each event happens (see contacts_backend.js's
+// markContactEmailEngagement/markContactVisitedPage, called from
+// email_backend.js's SES webhook and tracking_backend.js's pageview
+// handler) -- matchesSegment stays exactly as cheap as it already was,
+// touching only the contact object already in memory.
 function evalCondition(contact, cond) {
   const { field, op, value } = cond;
+
+  if (field === "visitedPage") {
+    const paths = contact.visitedPaths || [];
+    switch (op) {
+      case "eq": return paths.includes(value);
+      case "neq": return !paths.includes(value);
+      case "contains": return paths.some(p => p.toLowerCase().includes(String(value || "").toLowerCase()));
+      default: return false;
+    }
+  }
+
   let actual;
   if (field.startsWith("customFields.")) {
     actual = contact.customFields?.[field.slice("customFields.".length)];
+  } else if (field === "emailOpened") {
+    actual = !!contact.emailEngagement?.opened;
+  } else if (field === "emailClicked") {
+    actual = !!contact.emailEngagement?.clicked;
   } else {
     actual = contact[field];
   }
-  // smsOptOut/emailOptOut are real booleans on the contact, but the filter
-  // UI's <select> always sends a string ("true"/"false") -- coerce both
-  // sides so "eq"/"neq" compares like-for-like instead of a boolean never
-  // strictly-equaling the string "true".
-  if (field === "smsOptOut" || field === "emailOptOut") {
+  // smsOptOut/emailOptOut/emailOpened/emailClicked are real booleans, but
+  // the filter UI's <select> always sends a string ("true"/"false") --
+  // coerce both sides so "eq"/"neq" compares like-for-like instead of a
+  // boolean never strictly-equaling the string "true".
+  if (field === "smsOptOut" || field === "emailOptOut" || field === "emailOpened" || field === "emailClicked") {
     actual = !!actual;
     const boolValue = value === true || value === "true";
     switch (op) {
@@ -82,6 +111,10 @@ function evalCondition(contact, cond) {
     case "includes": return Array.isArray(actual) && actual.includes(value);
     case "excludes": return Array.isArray(actual) && !actual.includes(value);
     case "exists": return actual !== undefined && actual !== null && actual !== "";
+    case "any_of": return Array.isArray(actual) && Array.isArray(value) && value.some(v => actual.includes(v));
+    case "all_of": return Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v));
+    case "not_any_of": return !(Array.isArray(actual) && Array.isArray(value) && value.some(v => actual.includes(v)));
+    case "not_all_of": return !(Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v)));
     default: return false;
   }
 }

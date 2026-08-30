@@ -419,3 +419,26 @@ body { margin: 0; }
   .cb-layout, .be-shell { grid-template-columns: 1fr; }
   .be-side-panel { position: static; }
 }
+
+/* Searchable multi-select chip widget -- moved here from being locally
+   defined only in campaign-builder.html so condition-row-client.js's "is
+   any of"/"is all of" value picker (and contacts.html once it adopts that
+   module) can use the identical look without duplicating these rules. */
+.search-multiselect { position: relative; margin-top: 6px; }
+.ms-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ms-chips:empty { margin-bottom: 0; }
+.ms-dropdown { display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 50; max-height: 220px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.ms-dropdown.open { display: block; }
+.ms-option { padding: 8px 12px; font-size: .82rem; cursor: pointer; }
+.ms-option:hover { background: rgba(255,255,255,0.06); }
+.ms-option-empty { padding: 8px 12px; font-size: .8rem; color: var(--pra-dim); }
+.tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); }
+.tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
+
+/* Condition-row builder (condition-row-client.js) -- also moved here from
+   contacts.html's local <style> so campaign-builder.html's inline "+ New
+   Segment" modal renders identically without its own copy. */
+.cond-row { display: grid; grid-template-columns: 1fr 140px 1fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+@media (max-width: 900px) { .cond-row { grid-template-columns: 1fr; } }
+.match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
+.filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
