@@ -4,6 +4,7 @@ import { advanceDueEnrollments } from "./automations_backend.js";
 import { advanceDueWorkflowEnrollments } from "./workflows_backend.js";
 import { advanceDueFlowRuns } from "./flows_backend.js";
 import { runScheduledDuplicateScan } from "./duplicates_backend.js";
+import { syncWritingCacheIfDue } from "./ai_agents_backend.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
 // Phase 2 only checks scheduled campaigns; Phase 3 adds automation
@@ -24,6 +25,7 @@ async function tick() {
     await advanceDueWorkflowEnrollments();
     await advanceDueFlowRuns();
     runScheduledDuplicateScan();
+    await syncWritingCacheIfDue();
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }

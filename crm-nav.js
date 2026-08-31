@@ -10,6 +10,7 @@
     { href: "/campaigns.html", label: "Email Campaigns" },
     { href: "/automations.html", label: "Email Automations" },
     { href: "/workflows.html", label: "SMS Sequences" },
+    { href: "/ai-agents.html", label: "AI Agents" },
     { href: "/reporting.html", label: "Reporting" },
     { href: "/settings.html", label: "Settings" },
   ];

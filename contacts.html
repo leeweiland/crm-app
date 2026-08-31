@@ -276,6 +276,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/inline-edit.js"></script>
 <script src="/condition-row-client.js"></script>
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
@@ -454,16 +455,16 @@ const BASE_COLUMNS = [
   { key: 'last', label: 'Last', sortable: true, frozen: 2, always: true, render: c => escapeHtml(c.last) },
   { key: 'email', label: 'Email', sortable: true, render: c => escapeHtml(c.email || '') },
   { key: 'phone', label: 'Phone', sortable: true, render: c => c.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.phone.replace(/[^\d+]/g, ''))}" onclick="event.stopPropagation()">${escapeHtml(c.phone)}</a>` : '' },
-  { key: 'status', label: 'Status', sortable: true, render: c => c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : '' },
+  { key: 'status', label: 'Status', sortable: true, editable: true, render: c => c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
   // Deliberately separate from Status -- a contact can be genuinely
   // ENROLLED/BOOKED/mid-APPLICATION and still have texted STOP or clicked
   // an email unsubscribe link just to stop that one channel. These two
   // columns are the only source of truth for "don't message this person",
   // so they need their own visibility instead of being inferred from
   // (or worse, overwriting) the pipeline status.
-  { key: 'smsOptOut', label: 'SMS Opt-Out', sortable: true, render: c => c.smsOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">SMS OPT-OUT</span>` : '' },
-  { key: 'emailOptOut', label: 'Email Opt-Out', sortable: true, render: c => c.emailOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">EMAIL OPT-OUT</span>` : '' },
-  { key: 'programType', label: 'Type', sortable: true, render: c => c.programType ? `<span class="pra-badge pra-badge-${c.programType}">${escapeHtml(c.programType)}</span>` : '' },
+  { key: 'smsOptOut', label: 'SMS Opt-Out', sortable: true, editable: true, render: c => c.smsOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">SMS OPT-OUT</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
+  { key: 'emailOptOut', label: 'Email Opt-Out', sortable: true, editable: true, render: c => c.emailOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">EMAIL OPT-OUT</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
+  { key: 'programType', label: 'Type', sortable: true, editable: true, render: c => c.programType ? `<span class="pra-badge pra-badge-${c.programType}">${escapeHtml(c.programType)}</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
   { key: 'tags', label: 'Tags', sortable: false, render: c => (c.tags || []).length ? c.tags.length + ' tag(s)' : '' },
   { key: 'createdAt', label: 'Created', sortable: true, render: c => `<span class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</span>` },
 ];
@@ -612,7 +613,7 @@ function renderContactsTable() {
   if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; }
   else body.innerHTML = currentContacts.map(c => `
     <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
-      ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}">${col.render(c)}</td>`).join('')}
+      ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}"${col.editable ? ` data-inline-field="${col.key}" data-contact-id="${c.id}" title="Right-click to change"` : ''}>${col.render(c)}</td>`).join('')}
     </tr>
   `).join('');
 
@@ -838,6 +839,19 @@ document.getElementById('scanDuplicatesBtn').onclick = async () => {
   msg.textContent = r.ok ? `Found ${d.added} new possible duplicate${d.added === 1 ? '' : 's'}.` : 'Scan failed.';
   if (r.ok) loadDuplicates();
 };
+
+wireInlineEditTable(document.getElementById('contactsBody'), {
+  onSaved: (cell, value) => {
+    const contactId = cell.dataset.contactId;
+    const field = cell.dataset.inlineField;
+    const contact = currentContacts.find(c => c.id === contactId);
+    if (!contact) return;
+    contact[field] = value;
+    const col = allColumnDefs().find(c => c.key === field);
+    if (col) cell.innerHTML = col.render(contact);
+    if (window.showToast) showToast('Saved');
+  },
+});
 
 (async function init() {
   await loadColumnPreferences();

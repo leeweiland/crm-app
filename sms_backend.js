@@ -8,6 +8,7 @@ import { getTwilioSettings } from "./integrations_backend.js";
 import { recheckStopStatus } from "./compliance_backend.js";
 import { appendSourceTagToSmsBody } from "./block_editor_shared.js";
 import { resolveSendSourceSlug } from "./source_names.js";
+import { triggerAiAssist } from "./ai_agents_backend.js";
 
 export const SMS_TEMPLATES_FILE = "crm_sms_templates.json";
 
@@ -92,6 +93,13 @@ export async function handleSmsRequest(req, res, url) {
       logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
       checkConversionGoal("incoming_sms", contact.id);
       recheckStopStatus(contact.id);
+      // Fire-and-forget: doesn't block the Twilio webhook response (which
+      // must return fast) on an LLM call. Only actually does anything if an
+      // active, AI-Assist-enabled agent's targeting matches this contact.
+      triggerAiAssist({
+        contact, channel: "sms", inboundText: body,
+        sendFn: (replyText) => sendSms({ to: contact.phone, body: replyText, contactId: contact.id, sourceType: "ai_agent", sourceId: null }),
+      }).catch((err) => console.error("triggerAiAssist error:", err.message));
     } else {
       // Message from a number with no matching contact -- still logged
       // (contactId: null) so it's visible in the Inbox, just unattributed.

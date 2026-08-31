@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>AI Agents — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
+  .agent-active-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
+  .agent-on { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .agent-off { background: rgba(255,255,255,0.1); color: #fff; }
+  .send-mode-pill { font-size: .66rem; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--pra-dim); }
+  .send-mode-auto { background: rgba(255,159,10,.15); color: #ff9f0a; }
+  .editor-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; z-index: 500; }
+  .editor-panel { background: #16161a; border: 1px solid #2a2a30; border-radius: 12px; padding: 24px; width: 100%; max-width: 680px; }
+  .editor-row { margin-bottom: 16px; }
+  .editor-row label { display: block; font-size: .8rem; color: var(--pra-dim); margin-bottom: 6px; }
+  .editor-row input[type=text], .editor-row textarea, .editor-row select { width: 100%; background: #0d0d10; border: 1px solid #2a2a30; border-radius: 8px; color: #eee; padding: 9px 11px; font-size: .88rem; font-family: inherit; }
+  .editor-row textarea { min-height: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8rem; line-height: 1.5; resize: vertical; }
+  .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+  .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: #eee; background: #0d0d10; border: 1px solid #2a2a30; border-radius: 8px; padding: 6px 10px; }
+  .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="mobile-sticky-header">
+        <div class="toolbar">
+          <div class="pra-h1" style="flex:1">AI Agents</div>
+          <button class="pra-btn" id="newAgentBtn">+ New Agent</button>
+        </div>
+        <div class="pra-muted" style="font-size:.82rem">Agents start OFF and in Draft mode (replies wait for your review) until you deliberately turn them on. Each agent has its own system prompt and targeting rules for which leads it's active for.</div>
+      </div>
+      <div class="pra-panel" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Status</th><th>Send Mode</th><th>Targeting</th><th>Last Updated</th><th></th>
+          </tr></thead>
+          <tbody id="agentsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="editor-backdrop" id="editorBackdrop" style="display:none">
+  <div class="editor-panel">
+    <div class="pra-h2" id="editorTitle" style="margin-bottom:18px">New Agent</div>
+
+    <div class="editor-row">
+      <label>Name</label>
+      <input type="text" id="fName" placeholder="e.g. Alexis — Sales Closer"/>
+    </div>
+    <div class="editor-row">
+      <label>Description</label>
+      <input type="text" id="fDescription" placeholder="What this agent is for"/>
+    </div>
+    <div class="editor-row">
+      <label><input type="checkbox" id="fActive" style="width:auto;margin-right:6px"/> Active</label>
+    </div>
+    <div class="editor-row">
+      <label><input type="checkbox" id="fAiAssist" style="width:auto;margin-right:6px"/> AI Assist — auto-generate a reply when a matching lead messages in, and show it in the Inbox for review</label>
+      <div class="pra-muted" style="font-size:.74rem;margin-top:4px">Off by default. When off, this agent only responds when you chat with it directly from this page — it never touches real conversations.</div>
+    </div>
+    <div class="editor-row">
+      <label>Send mode (only matters if AI Assist is on)</label>
+      <select id="fSendMode">
+        <option value="draft">Draft for review (replies wait for a human to approve/send)</option>
+        <option value="auto">Auto-send (replies go out immediately, no review)</option>
+      </select>
+    </div>
+    <div class="editor-row">
+      <label>Active for lead type</label>
+      <div class="checkbox-grid" id="fProgramTypes">
+        <label><input type="checkbox" value="online"/> Online</label>
+        <label><input type="checkbox" value="gym"/> Gym</label>
+      </div>
+      <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all types</div>
+    </div>
+    <div class="editor-row">
+      <label>Active for status</label>
+      <div class="checkbox-grid" id="fStatuses"></div>
+      <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all statuses</div>
+    </div>
+    <div class="editor-row">
+      <label>Steps in for these users (when they're marked away)</label>
+      <div class="checkbox-grid" id="fCoverUsers"></div>
+    </div>
+    <div class="editor-row">
+      <label>System prompt</label>
+      <textarea id="fSystemPrompt"></textarea>
+    </div>
+
+    <div class="editor-actions">
+      <button class="pra-btn pra-btn-ghost" id="editorCancelBtn" type="button">Cancel</button>
+      <button class="pra-btn" id="editorSaveBtn" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+
+let allStatuses = [], allUsers = [], editingAgentId = null;
+
+async function loadStatuses() {
+  try {
+    const r = await fetch('/api/statuses');
+    const data = await r.json();
+    allStatuses = Array.isArray(data) ? data : (data.statuses || []);
+  } catch { allStatuses = []; }
+}
+async function loadUsers() {
+  try {
+    const r = await fetch('/api/auth/users');
+    const data = await r.json();
+    allUsers = Array.isArray(data) ? data : (data.users || []);
+  } catch { allUsers = []; }
+}
+
+async function loadAgents() {
+  const r = await fetch('/api/ai-agents');
+  const body = document.getElementById('agentsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load agents.</td></tr>'; return; }
+  const { agents } = await r.json();
+  if (!agents.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No agents yet — click "+ New Agent" to create one.</td></tr>'; return; }
+  const sorted = [...agents].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  body.innerHTML = sorted.map(a => {
+    const targeting = [];
+    if (a.targeting?.programTypes?.length) targeting.push(a.targeting.programTypes.join('/'));
+    if (a.targeting?.statuses?.length) targeting.push(a.targeting.statuses.length + ' status(es)');
+    if (a.targeting?.coverForUserIds?.length) targeting.push('covers ' + a.targeting.coverForUserIds.length + ' user(s)');
+    return `
+    <tr>
+      <td class="clickable" style="cursor:pointer" data-edit="${a.id}">${escapeHtml(a.name)}</td>
+      <td><span class="agent-active-pill ${a.active ? 'agent-on' : 'agent-off'}">${a.active ? 'Active' : 'Off'}</span>${a.aiAssist ? '<span class="agent-active-pill agent-on" style="margin-left:4px">AI Assist</span>' : ''}</td>
+      <td><span class="send-mode-pill ${a.sendMode === 'auto' ? 'send-mode-auto' : ''}">${a.sendMode === 'auto' ? 'Auto-send' : 'Draft'}</span></td>
+      <td class="pra-muted" style="font-size:.8rem">${targeting.length ? escapeHtml(targeting.join(' · ')) : 'All leads'}</td>
+      <td class="pra-muted">${fmtDate(a.updatedAt)}</td>
+      <td style="white-space:nowrap">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${a.id}">Edit</button>
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${a.id}">Delete</button>
+      </td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => openEditor(el.dataset.edit)));
+  body.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm('Delete this agent? This cannot be undone.')) return;
+    await fetch(`/api/ai-agents/${el.dataset.del}`, { method: 'DELETE' });
+    loadAgents();
+  }));
+}
+
+function renderStatusCheckboxes(selected) {
+  document.getElementById('fStatuses').innerHTML = allStatuses.map(s =>
+    `<label><input type="checkbox" value="${escapeHtml(s.label)}" ${selected.includes(s.label) ? 'checked' : ''}/> ${escapeHtml(s.label)}</label>`
+  ).join('');
+}
+function renderUserCheckboxes(selected) {
+  document.getElementById('fCoverUsers').innerHTML = allUsers.map(u =>
+    `<label><input type="checkbox" value="${u.id}" ${selected.includes(u.id) ? 'checked' : ''}/> ${escapeHtml(u.name || u.email)}</label>`
+  ).join('');
+}
+
+async function openEditor(agentId) {
+  editingAgentId = agentId || null;
+  let agent = { name: '', description: '', systemPrompt: '', active: false, sendMode: 'draft', targeting: { programTypes: [], statuses: [], coverForUserIds: [] } };
+  if (agentId) {
+    const r = await fetch(`/api/ai-agents/${agentId}`);
+    if (r.ok) agent = (await r.json()).agent;
+  } else {
+    // seed a brand-new agent server-side first so we have an id + default
+    // system prompt to edit, matching the existing forms.html create flow
+    const r = await fetch('/api/ai-agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Agent' }) });
+    const { agent: created } = await r.json();
+    agent = created;
+    editingAgentId = created.id;
+  }
+  document.getElementById('editorTitle').textContent = agentId ? 'Edit Agent' : 'New Agent';
+  document.getElementById('fName').value = agent.name || '';
+  document.getElementById('fDescription').value = agent.description || '';
+  document.getElementById('fActive').checked = !!agent.active;
+  document.getElementById('fAiAssist').checked = !!agent.aiAssist;
+  document.getElementById('fSendMode').value = agent.sendMode || 'draft';
+  document.getElementById('fSystemPrompt').value = agent.systemPrompt || '';
+  document.querySelectorAll('#fProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
+  renderStatusCheckboxes(agent.targeting?.statuses || []);
+  renderUserCheckboxes(agent.targeting?.coverForUserIds || []);
+  document.getElementById('editorBackdrop').style.display = 'flex';
+}
+function closeEditor() {
+  document.getElementById('editorBackdrop').style.display = 'none';
+  editingAgentId = null;
+}
+
+async function saveAgent() {
+  const payload = {
+    name: document.getElementById('fName').value.trim() || 'Untitled Agent',
+    description: document.getElementById('fDescription').value.trim(),
+    active: document.getElementById('fActive').checked,
+    aiAssist: document.getElementById('fAiAssist').checked,
+    sendMode: document.getElementById('fSendMode').value,
+    systemPrompt: document.getElementById('fSystemPrompt').value,
+    targeting: {
+      programTypes: Array.from(document.querySelectorAll('#fProgramTypes input:checked')).map(cb => cb.value),
+      statuses: Array.from(document.querySelectorAll('#fStatuses input:checked')).map(cb => cb.value),
+      coverForUserIds: Array.from(document.querySelectorAll('#fCoverUsers input:checked')).map(cb => cb.value),
+    },
+  };
+  await fetch(`/api/ai-agents/${editingAgentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  closeEditor();
+  loadAgents();
+}
+
+document.getElementById('newAgentBtn').addEventListener('click', () => openEditor(null));
+document.getElementById('editorCancelBtn').addEventListener('click', closeEditor);
+document.getElementById('editorSaveBtn').addEventListener('click', saveAgent);
+document.getElementById('editorBackdrop').addEventListener('click', (e) => { if (e.target.id === 'editorBackdrop') closeEditor(); });
+
+(async function init() {
+  await Promise.all([loadStatuses(), loadUsers()]);
+  loadAgents();
+})();
+</script>
+</body>
+</html>
