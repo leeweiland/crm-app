@@ -715,7 +715,43 @@ function applyTransform() {
 }
 document.getElementById('zoomInBtn').onclick = () => { zoom = Math.min(1.5, +(zoom + 0.1).toFixed(2)); applyTransform(); };
 document.getElementById('zoomOutBtn').onclick = () => { zoom = Math.max(0.4, +(zoom - 0.1).toFixed(2)); applyTransform(); };
-document.getElementById('zoomResetBtn').onclick = () => { zoom = 1; panX = 0; panY = 0; applyTransform(); };
+document.getElementById('zoomResetBtn').onclick = () => fitToScreen();
+
+// Centers the whole flow in the visible canvas at whatever zoom level (down
+// to 0.4x, never zoomed in past 100%) fits it without needing to pan --
+// .ab-canvas carries large left/right padding (40vw) as pan slack, which
+// would throw off a naive "measure the canvas element" fit, so this measures
+// the actual rendered cards/rows instead of the padded wrapper around them.
+function fitToScreen() {
+  const wrap = document.getElementById('canvasWrap');
+  const canvas = document.getElementById('canvas');
+  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card, .branch-row')];
+  if (!cards.length) { zoom = 1; panX = 0; panY = 0; applyTransform(); return; }
+  const zoomLayer = document.getElementById('zoomLayer');
+  const prevTransform = zoomLayer.style.transform;
+  zoomLayer.style.transform = 'none'; // measure at true 1:1 scale, restored via applyTransform() below
+  const canvasRect = canvas.getBoundingClientRect();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  cards.forEach(el => {
+    const r = el.getBoundingClientRect();
+    minX = Math.min(minX, r.left - canvasRect.left); maxX = Math.max(maxX, r.right - canvasRect.left);
+    minY = Math.min(minY, r.top - canvasRect.top); maxY = Math.max(maxY, r.bottom - canvasRect.top);
+  });
+  zoomLayer.style.transform = prevTransform;
+  const wrapRect = wrap.getBoundingClientRect();
+  const contentWidth = maxX - minX, contentHeight = maxY - minY;
+  const margin = 40;
+  zoom = Math.max(0.4, Math.min(1, (wrapRect.width - margin * 2) / contentWidth, (wrapRect.height - margin * 2) / contentHeight));
+  panX = wrapRect.width / 2 - ((minX + maxX) / 2) * zoom;
+  panY = wrapRect.height / 2 - ((minY + maxY) / 2) * zoom;
+  applyTransform();
+}
+// Re-fit on load and on resize -- NOT after every in-place render() (adding
+// a step, editing a card), which would yank away a pan/zoom the user just
+// set up mid-edit. Debounced so a window drag-resize doesn't recompute the
+// (layout-reading) fit on every intermediate frame.
+let fitResizeTimer;
+window.addEventListener('resize', () => { clearTimeout(fitResizeTimer); fitResizeTimer = setTimeout(fitToScreen, 150); });
 
 const canvasWrap = document.getElementById('canvasWrap');
 let panning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
@@ -841,7 +877,7 @@ document.getElementById('historyBtn').onclick = async () => {
     });
   }
   render();
-  applyTransform();
+  fitToScreen();
 })();
 </script>
 </body>
