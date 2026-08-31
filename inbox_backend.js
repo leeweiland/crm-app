@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, USERS_FILE } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
@@ -253,11 +253,12 @@ export async function handleInboxRequest(req, res, url) {
 
     if (channel === "email") {
       if (!contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
-      // Sending "as" a teammate (compose panel's From dropdown) -- only
-      // trusts fromUserId enough to look up a REAL other user record, never
-      // takes name/email straight from the request body itself.
+      // Sending "as" a teammate (compose panel's From dropdown) -- admin
+      // only (enforced here too, not just by hiding the dropdown client-
+      // side), and only trusts fromUserId enough to look up a REAL other
+      // user record, never takes name/email straight from the request body.
       let sender = me;
-      if (fromUserId && fromUserId !== me.id) {
+      if (fromUserId && fromUserId !== me.id && isAdmin(me)) {
         const teamUsers = readJson(USERS_FILE, []);
         const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
         if (other) sender = other;

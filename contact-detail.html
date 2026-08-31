@@ -86,6 +86,7 @@
             <div style="display:flex;align-items:center;gap:10px">
               <span id="contactTypeBadge"></span>
               <div class="pra-h1" id="contactName">Loading…</div>
+              <span id="contactOwnerField"></span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
               <select class="status-pill-select" id="fStatus"></select>
@@ -390,6 +391,9 @@ document.getElementById('deleteBtn').onclick = async () => {
 
 (async function init() {
   if (!contactId) { document.getElementById('contactName').textContent = 'No contact selected.'; return; }
+  // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
+  // crmTeamUsers -- those are only guaranteed populated after this resolves.
+  await window.crmNavReady;
   await loadRefs();
   const statusSel = document.getElementById('fStatus');
   statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
@@ -398,6 +402,9 @@ document.getElementById('deleteBtn').onclick = async () => {
   if (!r.ok) { document.getElementById('contactName').textContent = 'Contact not found.'; return; }
   contact = (await r.json()).contact;
   document.getElementById('contactName').textContent = contact.first + ' ' + contact.last;
+  const ownerFieldEl = document.getElementById('contactOwnerField');
+  ownerFieldEl.innerHTML = ownerFieldHtml(contact);
+  wireOwnerFields(ownerFieldEl, (_, ownerId) => { contact.ownerId = ownerId; });
   document.getElementById('fFirst').value = contact.first || '';
   document.getElementById('fLast').value = contact.last || '';
   document.getElementById('fAccount').value = contact.accountName || '';

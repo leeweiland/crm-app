@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, isAdmin } from "./auth_backend.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
@@ -202,6 +202,10 @@ export async function handleContactsRequest(req, res, url) {
       const body = await readJsonBody(req);
       const prevListIds = [...contact.listIds], prevTags = [...contact.tags], prevStatus = contact.status;
       const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
+      // Assigning who owns a contact is admin-only -- everything else on
+      // this shared PATCH endpoint (status changes, tags, etc.) stays open
+      // to any staff member who can already reach it.
+      if ("ownerId" in body && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
       for (const k of allowed) if (k in body) contact[k] = body[k];
       if (contact.status !== prevStatus) applyStatusOptOut(contact);
       contact.updatedAt = new Date().toISOString();

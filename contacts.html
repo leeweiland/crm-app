@@ -465,6 +465,7 @@ const BASE_COLUMNS = [
   { key: 'smsOptOut', label: 'SMS Opt-Out', sortable: true, editable: true, render: c => c.smsOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">SMS OPT-OUT</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
   { key: 'emailOptOut', label: 'Email Opt-Out', sortable: true, editable: true, render: c => c.emailOptOut ? `<span class="pra-badge" style="background:#4a1d1d;color:#ff8a8a">EMAIL OPT-OUT</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
   { key: 'programType', label: 'Type', sortable: true, editable: true, render: c => c.programType ? `<span class="pra-badge pra-badge-${c.programType}">${escapeHtml(c.programType)}</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
+  { key: 'ownerId', label: 'Assigned', sortable: false, render: c => ownerFieldHtml(c) },
   { key: 'tags', label: 'Tags', sortable: false, render: c => (c.tags || []).length ? c.tags.length + ' tag(s)' : '' },
   { key: 'createdAt', label: 'Created', sortable: true, render: c => `<span class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</span>` },
 ];
@@ -493,7 +494,7 @@ function activeColumns() {
   return [...frozen, ...sortedRest];
 }
 
-const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'smsOptOut', 'emailOptOut', 'programType', 'tags', 'createdAt'];
+const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'ownerId', 'smsOptOut', 'emailOptOut', 'programType', 'tags', 'createdAt'];
 // Column visibility + order are saved per-user (server-side, via
 // /api/auth/me/preferences) rather than per-browser localStorage -- Lee,
 // Alexis, and Josh each see their own layout regardless of which device
@@ -611,11 +612,17 @@ function renderContactsTable() {
 
   const body = document.getElementById('contactsBody');
   if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; }
-  else body.innerHTML = currentContacts.map(c => `
-    <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
-      ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}"${col.editable ? ` data-inline-field="${col.key}" data-contact-id="${c.id}" title="Right-click to change"` : ''}>${col.render(c)}</td>`).join('')}
-    </tr>
-  `).join('');
+  else {
+    body.innerHTML = currentContacts.map(c => `
+      <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
+        ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}"${col.editable ? ` data-inline-field="${col.key}" data-contact-id="${c.id}" title="Right-click to change"` : ''}>${col.render(c)}</td>`).join('')}
+      </tr>
+    `).join('');
+    wireOwnerFields(body, (contactId, ownerId) => {
+      const row = currentContacts.find(c => c.id === contactId);
+      if (row) row.ownerId = ownerId;
+    });
+  }
 
   const pageCount = Math.max(1, Math.ceil(contactsTotal / contactsPageSize));
   const start = contactsTotal ? (contactsPage - 1) * contactsPageSize + 1 : 0;
@@ -854,6 +861,9 @@ wireInlineEditTable(document.getElementById('contactsBody'), {
 });
 
 (async function init() {
+  // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
+  // crmTeamUsers -- those are only guaranteed populated after this resolves.
+  await window.crmNavReady;
   await loadColumnPreferences();
   await loadStatuses();
   await loadCustomFields();

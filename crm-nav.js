@@ -1,6 +1,14 @@
 // Shared sidebar nav — injected into any page with an empty <div id="appSidebar">,
 // same "one shared script, injected per page" pattern chat-app uses for chat-header.js.
-(async function () {
+//
+// window.crmNavReady: this whole IIFE runs its fetches (me/team/etc) async,
+// so window.crmMe/crmTeamUsers aren't guaranteed set by the time a page's
+// OWN init code runs -- a page's rendering can easily resolve first (race,
+// not sequence). Any code calling ownerFieldHtml/wireOwnerFields must
+// `await window.crmNavReady` first so the shared globals it reads are
+// actually populated, not silently render as "no admin, no team" on a page
+// that happens to load fast.
+window.crmNavReady = (async function () {
   const NAV_ITEMS = [
     { href: "/inbox.html", label: "Inbox" },
     { href: "/contacts.html", label: "Contacts" },
@@ -18,14 +26,17 @@
   const sidebar = document.getElementById("appSidebar");
   if (!sidebar) return;
 
-  const [meRes, siteRes, navPermRes] = await Promise.all([
-    fetch("/api/auth/me"), fetch("/api/integrations/site"), fetch("/api/integrations/nav-permissions"),
+  const [meRes, siteRes, navPermRes, teamRes] = await Promise.all([
+    fetch("/api/auth/me"), fetch("/api/integrations/site"), fetch("/api/integrations/nav-permissions"), fetch("/api/auth/team"),
   ]);
   if (!meRes.ok) {
     location.href = "/login.html?next=" + encodeURIComponent(location.pathname);
     return;
   }
   const me = (await meRes.json()).user;
+  // Shared by every page's "assigned to" dropdown (inbox sidebar/chat panel,
+  // contacts table, contact detail page) so each doesn't fetch its own copy.
+  window.crmTeamUsers = teamRes.ok ? (await teamRes.json()).users : [];
   const logoUrl = siteRes.ok ? (await siteRes.json()).logoUrl : "";
   // Admin is never restricted (see integrations_backend.js's
   // getNavPermissions comment) -- user/superuser only see whichever tabs an
@@ -98,6 +109,46 @@
 
   window.crmMe = me;
 })();
+
+// ── "Assigned to" (contact.ownerId) -- shared across the Inbox sidebar/chat
+// panel, the Contacts table, and the contact detail page, so all four stay
+// visually/behaviorally consistent instead of four separate implementations.
+// Admin-only to edit (contacts_backend.js's PATCH enforces this too, not
+// just this UI) -- everyone else sees the current assignee as plain text.
+function ownerFieldHtml(contact, extraClass) {
+  const teamUsers = window.crmTeamUsers || [];
+  const isAdmin = window.crmMe?.role === "admin";
+  if (!isAdmin) {
+    const owner = teamUsers.find(u => u.id === contact?.ownerId);
+    return `<span class="owner-field-label${extraClass ? ' ' + extraClass : ''}">${owner ? escapeHtmlForOwnerField(owner.first) : 'Unassigned'}</span>`;
+  }
+  const options = `<option value="">Unassigned</option>` + teamUsers.map(u =>
+    `<option value="${u.id}" ${contact?.ownerId === u.id ? 'selected' : ''}>${escapeHtmlForOwnerField(u.first)} ${escapeHtmlForOwnerField(u.last)}</option>`
+  ).join('');
+  return `<select class="pra-select owner-field-select${extraClass ? ' ' + extraClass : ''}" data-owner-contact="${contact?.id || ''}">${options}</select>`;
+}
+function escapeHtmlForOwnerField(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
+// Call once after inserting ownerFieldHtml() output into the DOM -- wires
+// every unwired owner-field-select inside `root` (defaults to the whole
+// page). No-op for non-admins (there's no <select> to wire, just the label).
+function wireOwnerFields(root, onSaved) {
+  (root || document).querySelectorAll('.owner-field-select:not([data-owner-wired])').forEach(sel => {
+    sel.dataset.ownerWired = "1";
+    sel.addEventListener('click', (e) => e.stopPropagation());
+    sel.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const contactId = sel.dataset.ownerContact;
+      if (!contactId) return;
+      const r = await fetch(`/api/contacts/${contactId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerId: sel.value || null }),
+      });
+      if (!r.ok) { showToast('Could not save assignment', true); return; }
+      showToast('Assigned');
+      if (onSaved) onSaved(contactId, sel.value || null);
+    });
+  });
+}
 
 function showToast(message, isError) {
   let el = document.getElementById("crmToast");

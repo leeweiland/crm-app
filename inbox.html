@@ -573,6 +573,7 @@ function convoRowHtml(c) {
         <div class="convo-top">
           ${c.pinned ? `<span class="convo-pinned-mark" title="Pinned">${PIN_ICON}</span>` : ''}
           <span class="convo-name">${escapeHtml(c.displayName)}</span>
+          ${c.contactId ? ownerFieldHtml(c.contact, 'convo-owner-field') : ''}
         </div>
         <div class="convo-preview">${c.lastDirection === 'outbound' ? previewTicks + ' You: ' : ''}${previewText}</div>
         ${!c.contactId ? '<button class="pra-btn pra-btn-ghost pra-btn-sm convo-add-btn" data-add-contact type="button">+ Add Contact</button>' : ''}
@@ -643,11 +644,20 @@ function wireConvoRow(row) {
     btn.dataset.starOn = starred ? '0' : '1';
   });
 }
+// Updates the in-memory row (not just the <select>'s own value, which
+// already reflects the change natively) so a later re-render of the same
+// list -- filter/sort change, scroll-triggered append -- doesn't show the
+// assignment reverting to whatever it was when this page was first loaded.
+function applyOwnerChangeToConvoState(contactId, ownerId) {
+  const row = conversations.find(c => c.contactId === contactId);
+  if (row?.contact) row.contact.ownerId = ownerId;
+}
 function renderSidebar() {
   const list = document.getElementById('chatSidebarList');
   if (!conversations.length) { list.innerHTML = `<div class="pra-muted" style="padding:16px;font-size:.82rem">${convoSearchQuery.trim() ? 'No matches.' : 'No conversations yet.'}</div>`; return; }
   list.innerHTML = conversations.map(convoRowHtml).join('');
   list.querySelectorAll('[data-convo]').forEach(wireConvoRow);
+  wireOwnerFields(list, applyOwnerChangeToConvoState);
 }
 // Appends just the newly-loaded page (scroll-triggered) instead of
 // re-rendering the whole list -- keeps existing rows' DOM nodes (and the
@@ -658,6 +668,7 @@ function appendConvoRows(newRows) {
   const frag = document.createElement('div');
   frag.innerHTML = newRows.map(convoRowHtml).join('');
   [...frag.children].forEach(row => { wireConvoRow(row); list.appendChild(row); });
+  wireOwnerFields(list, applyOwnerChangeToConvoState);
 }
 // Infinite scroll -- bound once to the stable list container (its
 // innerHTML changes on every render, but the container element itself
@@ -982,6 +993,7 @@ function renderThread() {
         <span class="chat-panel-name-row">
           <span class="pra-badge pra-badge-${c.contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${c.contact?.programType ? escapeHtml(c.contact.programType) : 'SET TYPE'}</span>
           <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(c.displayName)}</a>
+          ${c.contactId ? ownerFieldHtml(c.contact) : ''}
         </span>
         <div class="chat-panel-sub">${escapeHtml(c.contact?.email || '')}${c.contact?.email && c.contact?.phone ? ' · ' : ''}${c.contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(c.contact.phone)}</a>` : ''}${c.contact?.firstSeenAt ? ` · <span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : ''}</div>
       </div>
@@ -1029,7 +1041,7 @@ function renderThread() {
           <button type="button" data-ch="sms" class="${composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
         </div>
       ` : ''}
-      ${composeChannel === 'email' && teamUsers.length > 1 ? `
+      ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
         <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
           ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</option>`).join('')}
         </select>
@@ -1069,6 +1081,7 @@ function renderThread() {
   document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
   document.getElementById('chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); toggleNotePanel(c.contactId); };
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
+  wireOwnerFields(panel, (contactId, ownerId) => { if (c.contact) c.contact.ownerId = ownerId; applyOwnerChangeToConvoState(contactId, ownerId); });
   if (c.contactId) {
     wireInlineEditClick(document.getElementById('chatPanelTypeBadge'), {
       field: 'programType',
@@ -1495,6 +1508,9 @@ const SIDEBAR_MIN_WIDTH = 220, SIDEBAR_MAX_WIDTH = 560;
 })();
 
 (async function init() {
+  // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
+  // crmTeamUsers -- those are only guaranteed populated after this resolves.
+  await window.crmNavReady;
   await loadRefs();
   await loadConversations();
 })();

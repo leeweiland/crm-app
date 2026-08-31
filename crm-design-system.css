@@ -94,6 +94,13 @@ body { margin: 0; }
 .pra-select { -webkit-appearance: none; appearance: none; cursor: pointer; }
 .pra-select option { background: var(--pra-panel); color: var(--pra-white); }
 
+/* "Assigned to" -- shared by crm-nav.js's ownerFieldHtml/wireOwnerFields
+   across the Inbox sidebar/chat panel, Contacts table, and contact detail
+   page. Compact by default (fits inline next to a name); pages needing a
+   larger touch target add their own extra class alongside these. */
+.owner-field-label { font-size: .72rem; color: var(--pra-dim); white-space: nowrap; }
+.owner-field-select { font-size: .72rem; padding: 2px 20px 2px 6px; max-width: 110px; }
+
 /* ── Mobile select enhancer (built by crm-nav.js) ──────────────────────
    Android's native <select> falls back to a full-screen "tap Done" list
    picker once there are more than a few options -- every <select> on the
