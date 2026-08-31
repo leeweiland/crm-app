@@ -19,9 +19,13 @@ async function _getStatusOptions() {
   return _statusOptionsCache;
 }
 
+// label stays lowercase (the actual stored value) -- .pra-badge's own CSS
+// (text-transform: uppercase) is what makes it READ as "ONLINE"/"GYM",
+// same as every other programType badge in the app. Hardcoding the label
+// as already-uppercase text here just meant this one menu didn't match.
 const _PROGRAM_TYPE_OPTIONS = [
-  { value: 'online', label: 'ONLINE' },
-  { value: 'gym', label: 'GYM' },
+  { value: 'online', label: 'online', badge: true },
+  { value: 'gym', label: 'gym', badge: true },
 ];
 const _OPT_OUT_OPTIONS = [
   { value: false, label: 'Not opted out' },
@@ -57,16 +61,17 @@ async function openInlineEditMenu({ x, y, field, contactId, onSaved }) {
   const menu = document.createElement('div');
   menu.className = 'inline-edit-menu';
   const vw = window.innerWidth, vh = window.innerHeight;
-  menu.style.cssText = `position:fixed; top:${Math.min(y, vh - 40)}px; left:${Math.min(x, vw - 180)}px; z-index:9999; background:#1a1a1f; border:1px solid #333; border-radius:8px; padding:4px; min-width:160px; max-height:min(320px,${vh - 20}px); overflow-y:auto; box-shadow:0 8px 24px rgba(0,0,0,.45); font-family:inherit;`;
+  // Same panel treatment as crm-nav.js's .mobile-select-menu (CSS variables,
+  // not one-off hex values) so this reads as the same app, not a bolted-on
+  // widget -- see crm-design-system.css.
+  menu.style.cssText = `position:fixed; top:${Math.min(y, vh - 40)}px; left:${Math.min(x, vw - 180)}px; max-height:min(320px,${vh - 20}px);`;
   menu.innerHTML = options.map((o, i) =>
-    `<div class="inline-edit-opt" data-i="${i}" style="padding:7px 12px; border-radius:5px; cursor:pointer; font-size:.82rem; color:#eee; white-space:nowrap;">${_escapeInlineEdit(o.label)}</div>`
+    `<div class="inline-edit-opt" data-i="${i}">${o.badge ? `<span class="pra-badge pra-badge-${_escapeInlineEdit(o.value)}">${_escapeInlineEdit(o.label)}</span>` : _escapeInlineEdit(o.label)}</div>`
   ).join('');
   document.body.appendChild(menu);
   _inlineEditMenuEl = menu;
 
   menu.querySelectorAll('.inline-edit-opt').forEach(el => {
-    el.addEventListener('mouseenter', () => (el.style.background = '#2a2a30'));
-    el.addEventListener('mouseleave', () => (el.style.background = ''));
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
       const opt = options[Number(el.dataset.i)];

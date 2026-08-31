@@ -144,6 +144,18 @@ body { margin: 0; }
 .mobile-select-menu.open { display: block; }
 .mobile-select-option { padding: 10px 12px; color: var(--pra-white); cursor: pointer; }
 .mobile-select-option:hover, .mobile-select-option.selected { background: rgba(255,255,255,0.06); }
+
+/* inline-edit.js's click-to-change popup (contact status/type/opt-out
+   badges) -- same panel treatment as .mobile-select-menu above, just
+   without the fixed-position/width being set inline at open time instead
+   of via media query. */
+.inline-edit-menu {
+  z-index: 700; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px;
+  padding: 4px; min-width: 160px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  font-family: var(--font-primary); font-size: .88rem; font-weight: 400;
+}
+.inline-edit-opt { padding: 8px 12px; border-radius: 5px; cursor: pointer; color: var(--pra-white); white-space: nowrap; }
+.inline-edit-opt:hover { background: rgba(255,255,255,0.06); }
 /* Options carrying a data-color attribute (status dropdowns) glow the
    closed trigger box itself in that color once selected -- "status at a
    glance", same idea as the colored avatar rings elsewhere in the app. */
