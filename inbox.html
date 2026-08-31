@@ -154,10 +154,7 @@
   /* Shows who a reply sends as -- the sender is always the logged-in user
      (see inbox_backend.js, not client-controlled), this is display-only so
      teammates are visible but never look clickable. */
-  .compose-from-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .compose-from-option { font-size: .74rem; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--pra-border); color: var(--pra-dim); }
-  .compose-from-option.self { border-color: var(--pra-blue); color: var(--pra-blue); background: var(--pra-blue-dim); font-weight: 700; }
-  .compose-from-option.other { opacity: .45; cursor: not-allowed; }
+  .compose-from-select { font-size: .78rem; padding: 5px 10px; margin-bottom: 8px; max-width: 320px; }
 
   /* Native date/time pickers render a black-on-black calendar icon on a
      dark background otherwise -- color-scheme flips both to the light
@@ -1033,9 +1030,9 @@ function renderThread() {
         </div>
       ` : ''}
       ${composeChannel === 'email' && teamUsers.length > 1 ? `
-        <div class="compose-from-row" title="Replies always send from your own address">
-          ${teamUsers.map(u => `<span class="compose-from-option ${currentUser && u.id === currentUser.id ? 'self' : 'other'}">${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</span>`).join('')}
-        </div>
+        <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
+          ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</option>`).join('')}
+        </select>
       ` : ''}
       ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
       <div class="compose-row">
@@ -1169,11 +1166,12 @@ async function sendComposeMessage() {
   const body = document.getElementById('composeBody').value.trim();
   if (!body || !selectedConvo?.contactId) return;
   const subject = composeChannel === 'email' ? document.getElementById('composeSubject').value.trim() : undefined;
+  const fromUserId = composeChannel === 'email' ? document.getElementById('composeFromUserId')?.value : undefined;
   const btn = document.getElementById('composeSendBtn');
   btn.disabled = true; btn.textContent = 'Sending…';
   const r = await fetch('/api/inbox/send', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contactId: selectedConvo.contactId, channel: composeChannel, subject, body }),
+    body: JSON.stringify({ contactId: selectedConvo.contactId, channel: composeChannel, subject, body, fromUserId }),
   });
   const d = await r.json();
   btn.disabled = false; btn.textContent = 'Send';

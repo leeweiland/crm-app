@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, USERS_FILE } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
@@ -245,7 +245,7 @@ export async function handleInboxRequest(req, res, url) {
   // logged-in staff member's own address (see email_backend.js's `from`
   // override), not the single shared campaign sender.
   if (p === "/api/inbox/send" && req.method === "POST") {
-    const { contactId, channel, subject, body } = await readJsonBody(req);
+    const { contactId, channel, subject, body, fromUserId } = await readJsonBody(req);
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find(c => c.id === contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
@@ -253,11 +253,20 @@ export async function handleInboxRequest(req, res, url) {
 
     if (channel === "email") {
       if (!contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
+      // Sending "as" a teammate (compose panel's From dropdown) -- only
+      // trusts fromUserId enough to look up a REAL other user record, never
+      // takes name/email straight from the request body itself.
+      let sender = me;
+      if (fromUserId && fromUserId !== me.id) {
+        const teamUsers = readJson(USERS_FILE, []);
+        const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
+        if (other) sender = other;
+      }
       const result = await sendEmail({
         to: contact.email, subject: subject || "(no subject)",
-        blocks: [{ id: "b1", type: "text", html: body.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: me.footerTemplateId || null,
-        contactId, sourceType: "inbox", sourceId: me.id,
-        from: `${me.first} ${me.last} <${me.email}>`,
+        blocks: [{ id: "b1", type: "text", html: body.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: sender.footerTemplateId || null,
+        contactId, sourceType: "inbox", sourceId: sender.id,
+        from: `${sender.first} ${sender.last} <${sender.email}>`,
       });
       if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
       return sendJson(res, 200, { ok: true });
