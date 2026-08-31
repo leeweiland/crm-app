@@ -3,7 +3,6 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
-import { SMS_TEMPLATES_FILE } from "./sms_backend.js";
 
 export const WORKFLOWS_FILE = "crm_workflows.json";
 export const WF_ENROLLMENTS_FILE = "crm_workflow_enrollments.json";
@@ -125,10 +124,9 @@ export async function advanceDueWorkflowEnrollments() {
 
     if (step.type === "sms") {
       const contact = getContact(enrollment.contactId);
-      const template = readJson(SMS_TEMPLATES_FILE, []).find(t => t.id === step.config.smsTemplateId);
-      if (contact && template && contact.phone) {
+      if (contact && step.config.body && contact.phone) {
         const result = await sendSms({
-          to: contact.phone, body: applyMergeTags(template.body, contact), contactId: contact.id,
+          to: contact.phone, body: applyMergeTags(step.config.body, contact), contactId: contact.id,
           sourceType: "workflow_step", sourceId: `${workflow.id}:${step.id}`,
         });
         if (!result.ok && result.reason !== "twilio_not_configured" && result.reason !== "opted_out") enrollment.status = "errored";

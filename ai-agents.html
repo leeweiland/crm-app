@@ -26,15 +26,33 @@
   .editor-row input[type=text], .editor-row textarea, .editor-row select { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); padding: 9px 11px; font-size: .88rem; font-family: inherit; }
   .editor-row input[type=text]:focus, .editor-row textarea:focus, .editor-row select:focus { outline: none; border-color: var(--pra-blue); box-shadow: 0 0 0 3px var(--pra-blue-dim); }
   .editor-row textarea { min-height: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8rem; line-height: 1.5; resize: vertical; }
-  /* Single boolean toggles (Active, AI Assist) -- a plain browser checkbox
-     reads as unstyled/broken against this dark theme, so give it the app's
-     accent color instead of stark white. */
-  .editor-row > label input[type=checkbox] { width: auto; margin-right: 6px; accent-color: var(--pra-blue); transform: scale(1.05); vertical-align: -2px; }
-  .checkbox-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--pra-dim); background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; padding: 6px 10px; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
-  .checkbox-grid label:hover { border-color: var(--pra-dim); }
-  .checkbox-grid label:has(input:checked) { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-white); }
-  .checkbox-grid input[type=checkbox] { accent-color: var(--pra-blue); }
+  /* Active / AI Assist toggles -- same track+thumb switch as flow-builder.html's
+     .active-toggle, so a boolean setting looks and behaves the same way
+     everywhere in the app instead of a plain checkbox. */
+  .toggle-row { display: flex; gap: 28px; margin-bottom: 20px; }
+  .toggle-item { display: flex; align-items: center; gap: 10px; }
+  .toggle-item .toggle-label { font-size: .86rem; color: var(--pra-white); font-weight: 700; cursor: pointer; }
+  .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .active-toggle.on { background: var(--pra-green); }
+  .active-toggle.on::after { left: 20px; }
+
+  /* Dropdown multi-selects (lead type / status / covering users) -- a
+     button showing a summary of what's picked, opening a checkbox panel,
+     instead of a wall of always-visible chips. */
+  .multiselect { position: relative; }
+  .multiselect-btn { width: 100%; text-align: left; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); padding: 9px 11px; font-size: .88rem; font-family: inherit; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .multiselect-btn .ms-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .multiselect-btn .ms-chev { color: var(--pra-dim); flex-shrink: 0; transition: transform .12s; }
+  .multiselect.open .multiselect-btn .ms-chev { transform: rotate(180deg); }
+  .multiselect-btn:hover { border-color: var(--pra-dim); }
+  .multiselect.open .multiselect-btn { border-color: var(--pra-blue); box-shadow: 0 0 0 3px var(--pra-blue-dim); }
+  .multiselect.invalid .multiselect-btn { border-color: var(--pra-red); }
+  .multiselect-panel { display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 6px; max-height: 220px; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+  .multiselect.open .multiselect-panel { display: block; }
+  .multiselect-panel label { display: flex; align-items: center; gap: 8px; padding: 7px 8px; font-size: .84rem; color: var(--pra-white); border-radius: 6px; cursor: pointer; }
+  .multiselect-panel label:hover { background: rgba(255,255,255,0.06); }
+  .multiselect-panel input[type=checkbox] { accent-color: var(--pra-blue); flex-shrink: 0; }
   .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
   /* ── Test Conversation panel -- same iMessage-bubble pattern as the
@@ -100,15 +118,18 @@
           <label>Description</label>
           <input type="text" id="fDescription" placeholder="What this agent is for"/>
         </div>
-        <div class="editor-row">
-          <label><input type="checkbox" id="fActive"/> Active</label>
+        <div class="editor-row toggle-row">
+          <div class="toggle-item">
+            <button type="button" class="active-toggle" id="fActiveToggle"></button>
+            <span class="toggle-label" id="fActiveLabel">Active</span>
+          </div>
+          <div class="toggle-item">
+            <button type="button" class="active-toggle" id="fAiAssistToggle"></button>
+            <span class="toggle-label" id="fAiAssistLabel">AI Assist</span>
+          </div>
         </div>
         <div class="editor-row">
-          <label><input type="checkbox" id="fAiAssist"/> AI Assist — auto-generate a reply when a matching lead messages in, and show it in the Inbox for review</label>
-          <div class="pra-muted" style="font-size:.74rem;margin-top:4px">Off by default. When off, this agent only responds when you chat with it directly from this page — it never touches real conversations.</div>
-        </div>
-        <div class="editor-row">
-          <label>Send mode (only matters if AI Assist is on)</label>
+          <label>Send mode</label>
           <select id="fSendMode">
             <option value="draft">Draft for review (replies wait for a human to approve/send)</option>
             <option value="auto">Auto-send (replies go out immediately, no review)</option>
@@ -116,20 +137,27 @@
         </div>
         <div class="editor-row">
           <label>Active for lead type</label>
-          <div class="checkbox-grid" id="fProgramTypes">
-            <label><input type="checkbox" value="online"/> Online</label>
-            <label><input type="checkbox" value="gym"/> Gym</label>
+          <div class="multiselect" id="msProgramTypes">
+            <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
+            <div class="multiselect-panel">
+              <label><input type="checkbox" value="online" data-label="Online"/> Online</label>
+              <label><input type="checkbox" value="gym" data-label="Gym"/> Gym</label>
+            </div>
           </div>
-          <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all types</div>
         </div>
         <div class="editor-row">
           <label>Active for status</label>
-          <div class="checkbox-grid" id="fStatuses"></div>
-          <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all statuses</div>
+          <div class="multiselect" id="msStatuses">
+            <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
+            <div class="multiselect-panel" id="fStatuses"></div>
+          </div>
         </div>
         <div class="editor-row">
           <label>Steps in for these users (when they're marked away)</label>
-          <div class="checkbox-grid" id="fCoverUsers"></div>
+          <div class="multiselect" id="msCoverUsers">
+            <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
+            <div class="multiselect-panel" id="fCoverUsers"></div>
+          </div>
         </div>
         <div class="editor-row" style="margin-bottom:0">
           <label>System prompt</label>
