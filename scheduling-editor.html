@@ -150,12 +150,15 @@
             <div class="field"><label class="pra-label">Uses calendar</label>
               <select class="pra-select" id="fCalendar"></select>
             </div>
+            <div class="field"><label class="pra-label">Timezone</label>
+              <select class="pra-select" id="calTimezone"></select>
+            </div>
             <div class="field" style="margin-bottom:8px">
-              <label class="pra-label">Weekly hours (<span id="calTzLabel"></span>)</label>
+              <label class="pra-label">Weekly hours</label>
               <div id="calWeekEditor"></div>
             </div>
             <div class="cal-inline-row">
-              <div class="field"><label class="pra-label">Min notice (min)</label><input class="pra-input" type="number" min="0" id="calMinNotice"/></div>
+              <div class="field"><label class="pra-label">Min notice (hrs)</label><input class="pra-input" type="number" min="0" step="0.5" id="calMinNotice"/></div>
               <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" id="calBufferBefore"/></div>
               <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" id="calBufferAfter"/></div>
             </div>
@@ -530,12 +533,26 @@ function renderCalendarSelect() {
 // ── Inline calendar availability editor -- same fields as scheduling.html's
 // Calendars tab, ported into the sidebar so hours/buffers/rolling window are
 // visible and editable right here instead of a link to a different page. ──
+// Full IANA list where the browser supports it (Chrome/Edge 99+), falling
+// back to a short curated list of the zones this business actually spans
+// otherwise -- either way it's a real, editable field now, not a label.
+const TIMEZONE_OPTIONS = (() => {
+  try { const list = Intl.supportedValuesOf('timeZone'); if (list?.length) return list; } catch {}
+  return ['America/Anchorage', 'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Pacific/Honolulu', 'UTC'];
+})();
+document.getElementById('calTimezone').innerHTML = TIMEZONE_OPTIONS.map(tz => `<option value="${tz}">${tz}</option>`).join('');
+document.getElementById('calTimezone').addEventListener('change', () => {
+  const cal = calendarsState[draft.calendarId];
+  cal.availability.timezone = document.getElementById('calTimezone').value;
+  saveCalendarDebounced();
+});
+
 let calSaveTimer = null;
 function renderCalendarSettings() {
   const cal = calendarsState[draft.calendarId];
   if (!cal) return;
-  document.getElementById('calTzLabel').textContent = cal.availability.timezone;
-  document.getElementById('calMinNotice').value = cal.availability.minNoticeMinutes;
+  document.getElementById('calTimezone').value = cal.availability.timezone;
+  document.getElementById('calMinNotice').value = (cal.availability.minNoticeMinutes ?? 0) / 60;
   document.getElementById('calBufferBefore').value = cal.availability.bufferBeforeMinutes ?? 0;
   document.getElementById('calBufferAfter').value = cal.availability.bufferAfterMinutes ?? 0;
   document.getElementById('calRollingMode').value = cal.availability.rollingMode;
@@ -568,10 +585,18 @@ function renderCalWeekEditor() {
   wrap.querySelectorAll('[data-cal-start]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.calStart].start = inp.value; saveCalendarDebounced(); });
   wrap.querySelectorAll('[data-cal-end]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.calEnd].end = inp.value; saveCalendarDebounced(); });
 }
-['calMinNotice', 'calBufferBefore', 'calBufferAfter', 'calRollingAmount'].forEach(id => {
+document.getElementById('calMinNotice').addEventListener('input', () => {
+  const cal = calendarsState[draft.calendarId];
+  // Stored in minutes (matches the slot-computation code and the old
+  // per-minute field), shown in hours since that's how a real notice
+  // period gets set ("6 hours out", "12 hours out") -- 0.5 step covers
+  // half-hour notice without forcing whole hours.
+  cal.availability.minNoticeMinutes = Math.round((Number(document.getElementById('calMinNotice').value) || 0) * 60);
+  saveCalendarDebounced();
+});
+['calBufferBefore', 'calBufferAfter', 'calRollingAmount'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     const cal = calendarsState[draft.calendarId];
-    cal.availability.minNoticeMinutes = Number(document.getElementById('calMinNotice').value) || 0;
     cal.availability.bufferBeforeMinutes = Number(document.getElementById('calBufferBefore').value) || 0;
     cal.availability.bufferAfterMinutes = Number(document.getElementById('calBufferAfter').value) || 0;
     cal.availability.rollingAmount = Number(document.getElementById('calRollingAmount').value) || 1;
@@ -597,9 +622,14 @@ async function saveCalendarNow() {
   });
   document.getElementById('calSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
   if (r.ok) {
-    calendarsState[cal.id] = (await r.json()).calendar;
-    // Hours/buffers/rolling window could all have just changed -- refresh
-    // the real slots so the preview stays accurate.
+    // Deliberately NOT replacing calendarsState[cal.id] with the server's
+    // echoed object here: the day-toggle/time-input handlers in
+    // renderCalWeekEditor() close over this exact `cal` object, rebound
+    // only when that function re-runs. Swapping in a new object reference
+    // would orphan those closures -- a click landing between an autosave
+    // resolving and the next render would mutate the orphaned copy while
+    // the next render reads the fresh one, silently dropping the click.
+    // We already hold the authoritative state (it's what we just sent).
     await loadPreviewSlots();
     renderCalendar();
   }

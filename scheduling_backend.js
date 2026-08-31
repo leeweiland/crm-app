@@ -160,17 +160,19 @@ function getEventTypes() {
   return eventTypes;
 }
 
-// ── Anchorage-timezone wall-clock <-> UTC, same DST-aware Intl trick used by
+// ── Timezone-aware wall-clock <-> UTC, same DST-aware Intl trick used by
 // ../update_ads_tracking_daily.js -- reimplemented here since scheduling_backend.js
-// is its own deployment with no import path to that script.
-function anchorageOffsetHours(atMs) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Anchorage", timeZoneName: "shortOffset" }).formatToParts(new Date(atMs));
+// is its own deployment with no import path to that script. Takes the
+// timezone as a parameter (each calendar has its own, editable in the
+// Design panel) rather than assuming America/Anchorage for every calendar.
+function tzOffsetHours(atMs, timezone) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, timeZoneName: "shortOffset" }).formatToParts(new Date(atMs));
   const m = (parts.find(p => p.type === "timeZoneName")?.value || "GMT-8").match(/GMT([+-]\d+)/);
   return m ? parseInt(m[1], 10) : -8;
 }
-function localTimeToUTC(dateStr, hhmm) {
+function localTimeToUTC(dateStr, hhmm, timezone) {
   const [h, m] = hhmm.split(":").map(Number);
-  const offset = anchorageOffsetHours(Date.parse(dateStr + "T20:00:00Z")); // midday-ish Anchorage instant, safely inside dateStr
+  const offset = tzOffsetHours(Date.parse(dateStr + "T20:00:00Z"), timezone); // midday-ish instant, safely inside dateStr
   const [y, mo, d] = dateStr.split("-").map(Number);
   return new Date(Date.UTC(y, mo - 1, d, h - offset, m));
 }
@@ -369,8 +371,8 @@ async function computeAvailableSlots(eventType, opts = {}) {
   const previewMode = !!(opts.previewStart && opts.previewEnd);
   const searchEnd = previewMode ? opts.previewEnd : addDays(today, SEARCH_CAP_DAYS);
 
-  const rangeStartISO = localTimeToUTC(previewMode ? opts.previewStart : today, "00:00").toISOString();
-  const rangeEndISO = localTimeToUTC(addDays(searchEnd, 1), "00:00").toISOString();
+  const rangeStartISO = localTimeToUTC(previewMode ? opts.previewStart : today, "00:00", avail.timezone).toISOString();
+  const rangeEndISO = localTimeToUTC(addDays(searchEnd, 1), "00:00", avail.timezone).toISOString();
   let calendarBusy = [];
   if (calendarConfigured()) {
     try { calendarBusy = await fetchFreeBusy(rangeStartISO, rangeEndISO, calendarId); }
@@ -392,8 +394,8 @@ async function computeAvailableSlots(eventType, opts = {}) {
     const rule = override?.closed ? null : (override?.hours || avail.weekly[dow]);
     const daySlots = [];
     if (rule) {
-      const dayStart = localTimeToUTC(cursor, rule.start).getTime();
-      const dayEnd = localTimeToUTC(cursor, rule.end).getTime();
+      const dayStart = localTimeToUTC(cursor, rule.start, avail.timezone).getTime();
+      const dayEnd = localTimeToUTC(cursor, rule.end, avail.timezone).getTime();
       const durationMs = eventType.durationMinutes * 60000;
       for (let t = dayStart; t + durationMs <= dayEnd; t += SLOT_GRID_MINUTES * 60000) {
         if (t < now + minNoticeMs) continue;
