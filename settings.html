@@ -168,6 +168,8 @@
         <div class="field"><label class="pra-label">Pixel ID</label><input class="pra-input" id="convMetaPixelId" placeholder="From Events Manager → Data Sources"/></div>
         <div class="field"><label class="pra-label">Access Token</label><input class="pra-input" type="password" id="convMetaAccessToken" autocomplete="off" placeholder="Paste access token"/></div>
         <div class="field"><label class="pra-label">Test Event Code (optional)</label><input class="pra-input" id="convMetaTestCode" placeholder="From Events Manager → Test Events"/></div>
+        <div class="field"><label class="pra-label">Ad Account ID</label><input class="pra-input" id="convMetaAdAccountId" placeholder="From Ads Manager, e.g. 1234567890"/></div>
+        <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Same access token also powers "Add to Custom Audience" automation steps -- needs the ads_management permission, not just Conversions API access.</div>
 
         <div class="pra-label" style="margin:18px 0 6px">Google Ads <span id="googleConfigBadge" class="pra-muted" style="font-size:.74rem"></span></div>
         <div class="field"><label class="pra-label">Customer ID</label><input class="pra-input" id="convGoogleCustomerId" placeholder="123-456-7890"/></div>
@@ -587,6 +589,7 @@ async function loadConversionSettings() {
   const s = await r.json();
   document.getElementById('convMetaPixelId').value = s.metaPixelId || '';
   document.getElementById('convMetaTestCode').value = s.metaTestEventCode || '';
+  document.getElementById('convMetaAdAccountId').value = s.metaAdAccountId || '';
   document.getElementById('convGoogleCustomerId').value = s.googleAdsCustomerId || '';
   document.getElementById('metaConfigBadge').textContent = s.metaConfigured ? '(connected)' : '(not connected)';
   document.getElementById('googleConfigBadge').textContent = s.googleAdsConfigured ? '(connected)' : '(not connected)';
@@ -606,6 +609,7 @@ document.getElementById('saveConversionTokensBtn').onclick = async () => {
   const body = {
     metaPixelId: document.getElementById('convMetaPixelId').value.trim(),
     metaTestEventCode: document.getElementById('convMetaTestCode').value.trim(),
+    metaAdAccountId: document.getElementById('convMetaAdAccountId').value.trim(),
     googleAdsCustomerId: document.getElementById('convGoogleCustomerId').value.trim(),
   };
   const metaToken = document.getElementById('convMetaAccessToken').value.trim();

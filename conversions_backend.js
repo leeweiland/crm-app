@@ -18,11 +18,17 @@ import { INTEGRATIONS_FILE } from "./integrations_backend.js";
 function readSettings() {
   return readJson(INTEGRATIONS_FILE, {});
 }
-function getConversionSettings() {
+export function getConversionSettings() {
   const c = readSettings().conversions || {};
   return {
     metaPixelId: c.metaPixelId || process.env.META_PIXEL_ID || "",
     metaAccessToken: c.metaAccessToken || process.env.META_ACCESS_TOKEN || "",
+    // Same access token as above is used for both the Conversions API push
+    // here and facebook_backend.js's Custom Audiences sync -- one Meta
+    // System User token with ads_management scope covers both, so this is
+    // the only place it's configured (facebook_backend.js reads it via
+    // getConversionSettings() rather than having its own duplicate field).
+    metaAdAccountId: c.metaAdAccountId || process.env.META_AD_ACCOUNT_ID || process.env.FACEBOOK_AD_ACCOUNT_ID || "",
     metaTestEventCode: c.metaTestEventCode || "",
     googleAdsCustomerId: c.googleAdsCustomerId || process.env.GOOGLE_ADS_CUSTOMER_ID || "",
     googleAdsDeveloperToken: c.googleAdsDeveloperToken || process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "",
@@ -163,7 +169,7 @@ export async function handleConversionsRequest(req, res, url) {
     // actually types a new one (see POST below), so this never needs to
     // round-trip the real token back into the browser.
     return sendJson(res, 200, {
-      metaPixelId: s.metaPixelId, metaAccessTokenSet: !!s.metaAccessToken, metaTestEventCode: s.metaTestEventCode,
+      metaPixelId: s.metaPixelId, metaAccessTokenSet: !!s.metaAccessToken, metaTestEventCode: s.metaTestEventCode, metaAdAccountId: s.metaAdAccountId,
       googleAdsCustomerId: s.googleAdsCustomerId, googleAdsDeveloperTokenSet: !!s.googleAdsDeveloperToken, googleAdsRefreshTokenSet: !!s.googleAdsRefreshToken,
       events: s.events,
       metaConfigured: metaConfigured(), googleAdsConfigured: googleAdsConfigured(),
@@ -175,7 +181,7 @@ export async function handleConversionsRequest(req, res, url) {
     const body = await readJsonBody(req);
     const all = readSettings();
     all.conversions = all.conversions || {};
-    for (const k of ["metaPixelId", "metaTestEventCode", "googleAdsCustomerId"]) if (k in body) all.conversions[k] = String(body[k]).trim();
+    for (const k of ["metaPixelId", "metaTestEventCode", "googleAdsCustomerId", "metaAdAccountId"]) if (k in body) all.conversions[k] = String(body[k]).trim();
     // Secret fields only overwrite when a real (non-empty) value is sent --
     // an empty string means "left blank in the masked field", not "clear it".
     for (const k of ["metaAccessToken", "googleAdsDeveloperToken", "googleAdsRefreshToken"]) {
