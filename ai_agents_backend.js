@@ -225,22 +225,24 @@ async function maybeGenerateAiAssistDraft(contactId) {
   const CONVERSATION_CHANNELS = ["email", "sms", "form", "booking"];
   const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel));
   const last = journey.length ? [...journey].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).at(-1) : null;
-  // We already replied and nothing new has come in since -- there's
-  // nothing to respond to. A brand-new lead with NO history at all is
-  // different: still worth a suggested opener, so that case falls through
-  // instead of returning here.
-  if (last && last.direction !== "inbound") return;
+  // No early return on direction -- a lead who's gone quiet after our last
+  // outbound (e.g. 100 sequence emails, zero replies) still deserves a
+  // suggested follow-up, not silence just because they haven't spoken.
 
-  // Dedup key: the specific message being answered, or -- when there's no
-  // conversation yet -- a fixed per-contact/per-agent sentinel so reopening
-  // an empty conversation doesn't regenerate a fresh opener every time.
+  // Dedup key: the specific message defining the conversation's current
+  // state, or -- when there's no conversation yet -- a fixed per-contact/
+  // per-agent sentinel. Either way, reopening the same still-unchanged
+  // conversation won't regenerate a new draft every time; a NEW message
+  // (either direction) changes the key and is free to draft again.
   const sourceMessageId = last ? last.id : `no-history:${contactId}`;
   const drafts = readJson(AI_DRAFTS_FILE, []);
   if (drafts.some((d) => d.agentId === agent.id && d.sourceMessageId === sourceMessageId)) return;
 
-  const promptText = last
-    ? (last.body || last.bodyPreview || "")
-    : "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)";
+  const promptText = !last
+    ? "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)"
+    : last.direction === "inbound"
+      ? (last.body || last.bodyPreview || "")
+      : `(The lead hasn't replied since our last message to them: "${last.body || last.bodyPreview || ""}". Draft an appropriate follow-up to re-engage them.)`;
 
   try {
     const replyText = await generateAgentReply(agent, contactId, promptText);
