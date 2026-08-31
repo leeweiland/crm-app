@@ -5,7 +5,7 @@
     { href: "/inbox.html", label: "Inbox" },
     { href: "/contacts.html", label: "Contacts" },
     { href: "/forms.html", label: "Forms" },
-    { href: "/scheduling.html", label: "Scheduling" },
+    { href: "/scheduling.html", label: "Calendars" },
     { href: "/flows.html", label: "Connections & Flows" },
     { href: "/campaigns.html", label: "Email Campaigns" },
     { href: "/automations.html", label: "Email Automations" },

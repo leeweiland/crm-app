@@ -133,14 +133,12 @@
           <div class="fb-side-section">
             <div class="fb-side-title">Settings</div>
             <div class="field"><label class="pra-label">Duration (minutes)</label><input class="pra-input" type="number" id="fDuration" min="5" step="5"/></div>
-            <div class="field"><label class="pra-label">Buffer (minutes)</label><input class="pra-input" type="number" id="fBuffer" min="0" step="5"/></div>
             <div class="field"><label class="pra-label">On booking, set contact status to</label>
               <select class="pra-select" id="fStatus"><option value="">Don't change status</option></select>
             </div>
             <div class="field"><label class="pra-label">Calendar</label>
-              <input class="pra-input" id="fCalendar" list="fCalendarOptions" placeholder="Leave blank for your own calendar"/>
-              <datalist id="fCalendarOptions"></datalist>
-              <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Type any email on your Google Workspace domain, or pick a suggestion. Save frequent ones in Scheduling &rarr; Calendar.</div>
+              <select class="pra-select" id="fCalendar"></select>
+              <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Hours, buffers, and rolling window all come from the calendar's own settings in <a class="pra-link" href="/scheduling.html" target="_blank">Calendars</a>.</div>
             </div>
             <div class="field"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" id="fRedirectUrl" placeholder="Leave blank for the built-in confirmation"/></div>
             <div class="field"><label class="pra-label">Booking link</label>
@@ -232,9 +230,9 @@ let rawSlotIsos = [], slotsByLocalDate = {}, selectedDate = null, calViewMonth =
 
 async function loadPreviewSlots() {
   if (!draft?.slug) { rawSlotIsos = []; slotsByLocalDate = {}; return; }
-  const start = new Date().toISOString().slice(0, 10);
-  const end = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
-  const r = await fetch(`/api/scheduling/availability?slug=${draft.slug}&start=${start}&end=${end}`);
+  // No start/end -- this is the true preview of what a real visitor sees:
+  // whatever the calendar's own rolling-days/rolling-slots setting produces.
+  const r = await fetch(`/api/scheduling/availability?slug=${draft.slug}`);
   if (!r.ok) { rawSlotIsos = []; slotsByLocalDate = {}; return; }
   const { slots } = await r.json();
   rawSlotIsos = Object.values(slots).flat();
@@ -397,9 +395,7 @@ function renderPreview() {
 
 function renderSidebar() {
   document.getElementById('fDuration').value = draft.durationMinutes;
-  document.getElementById('fBuffer').value = draft.bufferMinutes;
   document.getElementById('fStatus').value = draft.statusId || '';
-  document.getElementById('fCalendar').value = draft.calendarEmail || '';
   document.getElementById('fRedirectUrl').value = draft.branding.redirectUrl || '';
 
   const b = draft.branding;
@@ -427,8 +423,8 @@ async function saveNow() {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
-      bufferMinutes: draft.bufferMinutes, location: draft.location, statusId: draft.statusId,
-      calendarEmail: draft.calendarEmail, branding: draft.branding,
+      location: draft.location, statusId: draft.statusId,
+      calendarId: draft.calendarId, branding: draft.branding,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -436,8 +432,8 @@ async function saveNow() {
     const d = await r.json();
     draft.slug = d.eventType.slug;
     renderPreview();
-    // Duration/buffer/availability could all have just changed -- refresh
-    // the real slots so the calendar preview stays accurate.
+    // Duration/calendar could both have just changed -- refresh the real
+    // slots so the preview stays accurate.
     await loadPreviewSlots();
     renderCalendar();
   }
@@ -455,16 +451,16 @@ async function loadStatuses() {
   document.getElementById('fStatus').innerHTML = '<option value="">Don\'t change status</option>' + statuses.map(s => `<option value="${s.label}">${s.label}</option>`).join('');
   document.getElementById('fStatus').value = draft.statusId || '';
 }
-// A free-text input with a <datalist> -- unlike a closed <select>, this
-// still lets you type ANY email on the Workspace domain directly, not just
-// ones already saved as a team calendar. Suggestions are just a convenience.
-async function loadTeamCalendars() {
-  const r = await fetch('/api/scheduling/admin/team-calendars');
-  const teamCalendars = r.ok ? (await r.json()).teamCalendars : [];
-  const suggestions = [{ name: 'Lee (your connected account)', email: 'lee@pacificrimathletics.com' }, ...teamCalendars];
-  document.getElementById('fCalendarOptions').innerHTML =
-    suggestions.map(t => `<option value="${t.email}" label="${t.name}"></option>`).join('');
-  document.getElementById('fCalendar').value = draft.calendarEmail || '';
+// Each calendar carries its own hours/buffers/rolling window (managed in
+// Calendars), so picking one here has to be a real reference to a real
+// calendar -- not free text -- or there'd be no availability rules to
+// compute slots from.
+async function loadCalendars() {
+  const r = await fetch('/api/scheduling/admin/calendars');
+  const calendars = r.ok ? (await r.json()).calendars : [];
+  document.getElementById('fCalendar').innerHTML =
+    calendars.map(c => `<option value="${c.id}">${c.name}${c.email ? ' (' + c.email + ')' : ''}</option>`).join('');
+  return calendars;
 }
 
 async function init() {
@@ -479,19 +475,27 @@ async function init() {
     ...(draft.branding || {}),
   };
   renderPreview();
+  const calendars = await loadCalendars();
+  // Event types saved before calendars existed only have the old
+  // calendarEmail field -- resolve it to a real calendarId here (matching
+  // the backend's own fallback) instead of defaulting to "default" and
+  // silently reassigning the calendar on next save.
+  if (!draft.calendarId) {
+    const match = draft.calendarEmail ? calendars.find(c => c.email === draft.calendarEmail) : null;
+    draft.calendarId = match ? match.id : 'default';
+  }
+  document.getElementById('fCalendar').value = draft.calendarId;
   renderSidebar();
   await loadPreviewSlots();
   renderCalendar();
   await loadStatuses();
-  await loadTeamCalendars();
   if (new URLSearchParams(location.search).get('embed') === '1') openEmbedModal();
 }
 
 // ── Sidebar field wiring ────────────────────────────────────────────────
-['fDuration','fBuffer','fRedirectUrl'].forEach(id => {
+['fDuration','fRedirectUrl'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     draft.durationMinutes = Number(document.getElementById('fDuration').value) || 30;
-    draft.bufferMinutes = Number(document.getElementById('fBuffer').value) || 0;
     draft.branding.redirectUrl = document.getElementById('fRedirectUrl').value.trim();
     renderPreview();
     saveDebounced();
@@ -502,7 +506,7 @@ document.getElementById('fStatus').addEventListener('change', () => {
   saveDebounced();
 });
 document.getElementById('fCalendar').addEventListener('change', () => {
-  draft.calendarEmail = document.getElementById('fCalendar').value;
+  draft.calendarId = document.getElementById('fCalendar').value;
   // saveNow() (fired by saveDebounced below) already refreshes the slots
   // preview on success, which is exactly what's needed here too since
   // which calendar's freeBusy gets checked just changed.

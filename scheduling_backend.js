@@ -17,10 +17,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const EVENT_TYPES_FILE = "crm_event_types.json";
 export const BOOKINGS_FILE = "crm_bookings.json";
-export const AVAILABILITY_FILE = "crm_availability.json";
-export const TEAM_CALENDARS_FILE = "crm_team_calendars.json";
+export const AVAILABILITY_FILE = "crm_availability.json"; // legacy global availability -- read once to seed the "default" calendar below, never written again
+export const TEAM_CALENDARS_FILE = "crm_team_calendars.json"; // legacy flat name+email list -- read once to seed CALENDARS_FILE, never written again
+export const CALENDARS_FILE = "crm_calendars.json";
 
-const DEFAULT_AVAILABILITY = {
+// Availability is per-calendar now, not one global setting -- different
+// people (different Google Calendars) have different hours, notice,
+// buffers, and how far out they want to take bookings.
+const DEFAULT_CALENDAR_AVAILABILITY = {
   timezone: "America/Anchorage",
   minNoticeMinutes: 120,
   // 0 = Sunday ... 6 = Saturday. null = closed that day.
@@ -34,9 +38,17 @@ const DEFAULT_AVAILABILITY = {
     "6": null,
   },
   dateOverrides: {}, // "YYYY-MM-DD": { closed: true }
+  bufferBeforeMinutes: 0,
+  bufferAfterMinutes: 0,
+  // "days": show every open slot in the next rollingAmount days, even if
+  // that's zero on a slow month. "slots": keep searching forward (capped at
+  // SEARCH_CAP_DAYS) until rollingAmount actual slots have been found, so a
+  // booked-solid person still always has *something* bookable to show.
+  rollingMode: "days",
+  rollingAmount: 21,
 };
 const SLOT_GRID_MINUTES = 15;
-const DAYS_AHEAD_DEFAULT = 21;
+const SEARCH_CAP_DAYS = 180;
 
 // Same two embed patterns Calendly offers: an inline widget (auto-scans for
 // `.scheduling-inline-widget[data-url]` on load and injects an iframe) and
@@ -85,7 +97,68 @@ const WIDGET_JS = `(function(){
   else initInlineWidgets();
 })();`;
 
-function getAvailability() { return { ...DEFAULT_AVAILABILITY, ...readJson(AVAILABILITY_FILE, {}) }; }
+// Lazily seeds a "default" calendar (the connected account's own) from the
+// legacy global crm_availability.json the first time it's needed, and
+// migrates any legacy flat team-calendars entries into full calendar
+// records (their own default availability to start) -- both one-time,
+// idempotent (re-checked by id/email presence, not a version flag).
+function getCalendars() {
+  let calendars = readJson(CALENDARS_FILE, []);
+  let changed = false;
+  if (!calendars.some(c => c.id === "default")) {
+    const legacyAvailability = readJson(AVAILABILITY_FILE, null);
+    calendars.unshift({
+      id: "default", name: "My Calendar", email: "", isDefault: true,
+      availability: { ...DEFAULT_CALENDAR_AVAILABILITY, ...(legacyAvailability || {}) },
+      createdAt: new Date().toISOString(),
+    });
+    changed = true;
+  }
+  for (const t of readJson(TEAM_CALENDARS_FILE, [])) {
+    if (!calendars.some(c => c.email === t.email)) {
+      calendars.push({ id: t.id, name: t.name, email: t.email, isDefault: false, availability: { ...DEFAULT_CALENDAR_AVAILABILITY }, createdAt: t.createdAt || new Date().toISOString() });
+      changed = true;
+    }
+  }
+  if (changed) writeJson(CALENDARS_FILE, calendars);
+  return calendars;
+}
+function getCalendarById(id) {
+  const calendars = getCalendars();
+  return calendars.find(c => c.id === id) || calendars.find(c => c.id === "default");
+}
+// Event types created before calendars existed only have the old
+// calendarEmail field -- resolved here rather than force-migrated on write,
+// so a stale event type keeps working even if nobody's opened its Design
+// page since this shipped.
+function resolveCalendarForEventType(et) {
+  if (et.calendarId) return getCalendarById(et.calendarId);
+  if (et.calendarEmail) {
+    const match = getCalendars().find(c => c.email === et.calendarEmail);
+    if (match) return match;
+  }
+  return getCalendarById("default");
+}
+
+// Reads event types, resolving+persisting a real calendarId (and dropping
+// the legacy calendarEmail/bufferMinutes fields) for any record still in
+// the pre-calendars shape -- one-time per event type, same lazy-migration
+// pattern as getCalendars() above. Every other route reads through this
+// instead of the raw file so a stale record never lingers past its first load.
+function getEventTypes() {
+  const eventTypes = readJson(EVENT_TYPES_FILE, []);
+  let changed = false;
+  for (const et of eventTypes) {
+    if ("calendarEmail" in et || "bufferMinutes" in et) {
+      if (!et.calendarId) et.calendarId = resolveCalendarForEventType(et).id;
+      delete et.calendarEmail;
+      delete et.bufferMinutes;
+      changed = true;
+    }
+  }
+  if (changed) writeJson(EVENT_TYPES_FILE, eventTypes);
+  return eventTypes;
+}
 
 // ── Anchorage-timezone wall-clock <-> UTC, same DST-aware Intl trick used by
 // ../update_ads_tracking_daily.js -- reimplemented here since scheduling_backend.js
@@ -215,7 +288,7 @@ const DEFAULT_BRANDING = {
   redirectUrl: "",
 };
 
-function newEventType({ name, description, durationMinutes, bufferMinutes, location, branding, statusId, calendarEmail }) {
+function newEventType({ name, description, durationMinutes, location, branding, statusId, calendarId }) {
   const slugBase = String(name || "meeting").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting";
   // Defaults to the "BOOKED" status if one exists, same behavior as before
   // this became configurable -- an event type with no explicit statusId
@@ -227,13 +300,14 @@ function newEventType({ name, description, durationMinutes, bufferMinutes, locat
   const defaultStatusId = readJson(STATUSES_FILE, []).find(s => s.label === "BOOKED")?.label || "";
   return {
     id: randomUUID(), slug: slugBase, name: name || "Meeting", description: description || "",
-    durationMinutes: Number(durationMinutes) || 30, bufferMinutes: Number(bufferMinutes) || 0,
+    durationMinutes: Number(durationMinutes) || 30,
     location: location || { type: "zoom", detail: "" },
     branding: { ...DEFAULT_BRANDING, ...(branding || {}) },
     statusId: statusId !== undefined ? statusId : defaultStatusId,
-    // "" (default) means the connected account's own calendar (getCalendarId());
-    // otherwise a specific Workspace teammate's email from TEAM_CALENDARS_FILE.
-    calendarEmail: calendarEmail || "",
+    // References a crm_calendars.json entry -- that calendar's own
+    // availability (hours, buffers, rolling window) governs this event
+    // type's slots. Defaults to the connected account's own calendar.
+    calendarId: calendarId || "default",
     active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 }
@@ -247,35 +321,45 @@ function uniqueSlug(base, existing, excludeId) {
 }
 
 // ── Slot computation ─────────────────────────────────────────────────────
-async function computeAvailableSlots(eventType, startDateStr, endDateStr) {
-  const availability = getAvailability();
-  // Scoped to the calendar THIS event type actually books onto -- a
-  // confirmed booking on a teammate's calendar shouldn't block slots for an
-  // event type that books onto someone else's (or the default) calendar.
-  const calendarId = eventType.calendarEmail || getCalendarId();
+// opts.previewStart/previewEnd (admin editor preview only): a fixed window,
+// ignoring the calendar's rolling mode, so the Design page can browse any
+// month freely. The real public booking page never passes these -- it
+// always gets however-far-forward the calendar's own rolling setting says.
+async function computeAvailableSlots(eventType, opts = {}) {
+  const calendar = resolveCalendarForEventType(eventType);
+  const avail = { ...DEFAULT_CALENDAR_AVAILABILITY, ...calendar.availability };
+  const calendarId = calendar.email || getCalendarId();
   const bookings = readJson(BOOKINGS_FILE, []).filter(b => b.status === "confirmed" && (b.calendarId || getCalendarId()) === calendarId);
   const now = Date.now();
-  const minNoticeMs = (availability.minNoticeMinutes ?? 120) * 60000;
+  const minNoticeMs = (avail.minNoticeMinutes ?? 120) * 60000;
+  const bufferBeforeMs = (avail.bufferBeforeMinutes ?? 0) * 60000;
+  const bufferAfterMs = (avail.bufferAfterMinutes ?? 0) * 60000;
 
-  const rangeStartISO = localTimeToUTC(startDateStr, "00:00").toISOString();
-  const rangeEndISO = localTimeToUTC(addDays(endDateStr, 1), "00:00").toISOString();
+  const today = ymd(new Date());
+  const previewMode = !!(opts.previewStart && opts.previewEnd);
+  const searchEnd = previewMode ? opts.previewEnd : addDays(today, SEARCH_CAP_DAYS);
+
+  const rangeStartISO = localTimeToUTC(previewMode ? opts.previewStart : today, "00:00").toISOString();
+  const rangeEndISO = localTimeToUTC(addDays(searchEnd, 1), "00:00").toISOString();
   let calendarBusy = [];
   if (calendarConfigured()) {
     try { calendarBusy = await fetchFreeBusy(rangeStartISO, rangeEndISO, calendarId); }
     catch { /* degrade to internal-bookings-only conflict checking below */ }
   }
-  const internalBusy = bookings.map(b => ({
-    start: new Date(b.startAt).getTime() - (b.bufferMinutes || 0) * 60000,
-    end: new Date(b.endAt).getTime() + (b.bufferMinutes || 0) * 60000,
-  }));
-  const busy = [...calendarBusy, ...internalBusy];
+  const internalBusy = bookings.map(b => ({ start: new Date(b.startAt).getTime(), end: new Date(b.endAt).getTime() }));
+  // Buffer is a calendar-level setting applied once here, not snapshotted
+  // per booking -- padding every busy interval (real calendar events and
+  // internal bookings alike) the same way regardless of which event type
+  // originally created it.
+  const busy = [...calendarBusy, ...internalBusy].map(b => ({ start: b.start - bufferBeforeMs, end: b.end + bufferAfterMs }));
 
   const byDate = {};
-  let cursor = startDateStr;
-  while (cursor <= endDateStr) {
-    const override = availability.dateOverrides?.[cursor];
+  let totalSlots = 0;
+  let cursor = previewMode ? opts.previewStart : today;
+  while (cursor <= searchEnd) {
+    const override = avail.dateOverrides?.[cursor];
     const dow = String(new Date(cursor + "T12:00:00Z").getUTCDay());
-    const rule = override?.closed ? null : (override?.hours || availability.weekly[dow]);
+    const rule = override?.closed ? null : (override?.hours || avail.weekly[dow]);
     const daySlots = [];
     if (rule) {
       const dayStart = localTimeToUTC(cursor, rule.start).getTime();
@@ -288,10 +372,15 @@ async function computeAvailableSlots(eventType, startDateStr, endDateStr) {
         if (!conflict) daySlots.push(new Date(t).toISOString());
       }
     }
-    if (daySlots.length) byDate[cursor] = daySlots;
+    if (daySlots.length) { byDate[cursor] = daySlots; totalSlots += daySlots.length; }
     cursor = addDays(cursor, 1);
+
+    if (!previewMode) {
+      if (avail.rollingMode === "slots") { if (totalSlots >= (avail.rollingAmount || 20)) break; }
+      else if (cursor > addDays(today, avail.rollingAmount || 21)) break;
+    }
   }
-  return byDate;
+  return { byDate, timezone: avail.timezone, calendar };
 }
 
 function upsertContactFromBooking({ name, email, phone, statusId }) {
@@ -380,7 +469,7 @@ export async function handleSchedulingRequest(req, res, url) {
   // ── Public: event type lookup, availability, booking create/cancel ──────
   const publicEtMatch = p.match(/^\/api\/scheduling\/event-types\/([^/]+)$/);
   if (publicEtMatch && req.method === "GET") {
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === publicEtMatch[1] && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     return sendJson(res, 200, { eventType: publicEventType(et) });
@@ -388,15 +477,18 @@ export async function handleSchedulingRequest(req, res, url) {
 
   if (p === "/api/scheduling/availability" && req.method === "GET") {
     const slug = url.searchParams.get("slug");
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
-    const today = ymd(new Date());
-    const start = url.searchParams.get("start") || today;
-    const end = url.searchParams.get("end") || addDays(start, DAYS_AHEAD_DEFAULT);
+    // start/end are an optional fixed-window override (only the admin
+    // Design-page preview passes these, to browse any month) -- the real
+    // public booking page always omits them and gets the calendar's own
+    // rolling-days/rolling-slots window instead.
+    const previewStart = url.searchParams.get("start");
+    const previewEnd = url.searchParams.get("end");
     try {
-      const slots = await computeAvailableSlots(et, start, end);
-      return sendJson(res, 200, { timezone: getAvailability().timezone, slots });
+      const { byDate, timezone } = await computeAvailableSlots(et, previewStart && previewEnd ? { previewStart, previewEnd } : {});
+      return sendJson(res, 200, { timezone, slots: byDate });
     } catch (e) {
       return sendJson(res, 500, { error: e.message });
     }
@@ -404,15 +496,15 @@ export async function handleSchedulingRequest(req, res, url) {
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
     const { slug, startAt, name, email, phone, notes, timezone } = await readJsonBody(req);
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (!startAt || !name || !email) return sendJson(res, 400, { error: "startAt, name, and email are required" });
 
     // Race-safe recheck: confirm this exact slot is still open before booking it.
     const dateStr = ymd(new Date(startAt));
-    let freshSlots;
-    try { freshSlots = await computeAvailableSlots(et, dateStr, dateStr); }
+    let freshSlots, calendar;
+    try { ({ byDate: freshSlots, calendar } = await computeAvailableSlots(et)); }
     catch (e) { return sendJson(res, 500, { error: e.message }); }
     if (!(freshSlots[dateStr] || []).includes(new Date(startAt).toISOString())) {
       return sendJson(res, 409, { error: "That time was just booked — please pick another slot." });
@@ -421,8 +513,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const contact = upsertContactFromBooking({ name, email, phone, statusId: et.statusId });
     const start = new Date(startAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
-    const availability = getAvailability();
-    const calendarId = et.calendarEmail || getCalendarId();
+    const calendarId = calendar.email || getCalendarId();
 
     let calendarEventId = null;
     if (calendarConfigured()) {
@@ -431,7 +522,7 @@ export async function handleSchedulingRequest(req, res, url) {
           summary: `${et.name} — ${name}`,
           description: `${notes || ""}\n\nBooked via CRM scheduling.`.trim(),
           startISO: start.toISOString(), durationMinutes: et.durationMinutes,
-          attendees: [{ email, name }], timezone: timezone || availability.timezone,
+          attendees: [{ email, name }], timezone: timezone || calendar.availability.timezone,
           calendarId,
         });
         calendarEventId = created.id;
@@ -442,7 +533,7 @@ export async function handleSchedulingRequest(req, res, url) {
       id: randomUUID(), eventTypeId: et.id, contactId: contact.id,
       name, email: String(email).trim().toLowerCase(), phone: phone || "", notes: notes || "",
       startAt: start.toISOString(), endAt: end.toISOString(),
-      timezone: timezone || availability.timezone, bufferMinutes: et.bufferMinutes,
+      timezone: timezone || calendar.availability.timezone,
       status: "confirmed", calendarEventId, calendarId,
       cancelToken: randomBytes(24).toString("hex"),
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
@@ -491,7 +582,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const bookings = readJson(BOOKINGS_FILE, []);
     const booking = bookings.find(b => b.id === icsMatch[1]);
     if (!booking || booking.cancelToken !== url.searchParams.get("token")) return sendJson(res, 404, { error: "Not found" });
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.id === booking.eventTypeId);
     const ics = buildIcs({ summary: et?.name || "Meeting", description: booking.notes || "", start: new Date(booking.startAt), end: new Date(booking.endAt), uid: booking.id });
     res.writeHead(200, { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": `attachment; filename="event.ics"` });
@@ -504,7 +595,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const bookings = readJson(BOOKINGS_FILE, []);
     const booking = bookings.find(b => b.id === publicBookingMatch[1]);
     if (!booking || booking.cancelToken !== url.searchParams.get("token")) return sendJson(res, 404, { error: "Not found" });
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.id === booking.eventTypeId);
     return sendJson(res, 200, { booking, eventType: et ? publicEventType(et) : null });
   }
@@ -531,36 +622,54 @@ export async function handleSchedulingRequest(req, res, url) {
     return sendJson(res, 200, { calendarConnected: calendarConfigured() });
   }
 
-  // Team calendars -- Workspace teammates' emails an event type can target
-  // instead of the default connected account. Just a name+email list; the
-  // single connected OAuth token can read/write any calendar in the same
-  // Google Workspace domain, so adding one here is enough, no per-person
-  // auth flow needed (same as chat-app's per-coach appointment calendars).
-  if (p === "/api/scheduling/admin/team-calendars" && req.method === "GET") {
-    return sendJson(res, 200, { teamCalendars: readJson(TEAM_CALENDARS_FILE, []) });
+  // Calendars -- each one is a Workspace email (blank = the connected
+  // account's own) PLUS its own full availability (hours, notice, buffers,
+  // rolling window). The single connected OAuth token can read/write any
+  // calendar in the same Google Workspace domain, so adding one here is
+  // enough, no per-person auth flow needed (same as chat-app's per-coach
+  // appointment calendars). Admin-only, same as everything else past the
+  // getSessionUser check above -- one operator manages every calendar.
+  if (p === "/api/scheduling/admin/calendars" && req.method === "GET") {
+    return sendJson(res, 200, { calendars: getCalendars() });
   }
-  if (p === "/api/scheduling/admin/team-calendars" && req.method === "POST") {
+  if (p === "/api/scheduling/admin/calendars" && req.method === "POST") {
     const { name, email } = await readJsonBody(req);
-    if (!email) return sendJson(res, 400, { error: "email is required" });
-    const teamCalendars = readJson(TEAM_CALENDARS_FILE, []);
-    const entry = { id: randomUUID(), name: name || email, email: String(email).trim().toLowerCase(), createdAt: new Date().toISOString() };
-    teamCalendars.push(entry);
-    writeJson(TEAM_CALENDARS_FILE, teamCalendars);
-    return sendJson(res, 200, { ok: true, teamCalendar: entry });
+    const calendars = getCalendars();
+    const entry = {
+      id: randomUUID(), name: name || email || "New Calendar", email: String(email || "").trim().toLowerCase(),
+      isDefault: false, availability: { ...DEFAULT_CALENDAR_AVAILABILITY }, createdAt: new Date().toISOString(),
+    };
+    calendars.push(entry);
+    writeJson(CALENDARS_FILE, calendars);
+    return sendJson(res, 200, { ok: true, calendar: entry });
   }
-  const teamCalMatch = p.match(/^\/api\/scheduling\/admin\/team-calendars\/([^/]+)$/);
-  if (teamCalMatch && req.method === "DELETE") {
-    const teamCalendars = readJson(TEAM_CALENDARS_FILE, []);
-    writeJson(TEAM_CALENDARS_FILE, teamCalendars.filter(t => t.id !== teamCalMatch[1]));
-    return sendJson(res, 200, { ok: true });
+  const calMatch = p.match(/^\/api\/scheduling\/admin\/calendars\/([^/]+)$/);
+  if (calMatch) {
+    const calendars = getCalendars();
+    const cal = calendars.find(c => c.id === calMatch[1]);
+    if (!cal) return sendJson(res, 404, { error: "Calendar not found" });
+    if (req.method === "PATCH") {
+      const body = await readJsonBody(req);
+      if ("name" in body) cal.name = body.name;
+      if ("email" in body) cal.email = String(body.email || "").trim().toLowerCase();
+      if ("availability" in body) cal.availability = { ...DEFAULT_CALENDAR_AVAILABILITY, ...cal.availability, ...(body.availability || {}) };
+      cal.updatedAt = new Date().toISOString();
+      writeJson(CALENDARS_FILE, calendars);
+      return sendJson(res, 200, { ok: true, calendar: cal });
+    }
+    if (req.method === "DELETE") {
+      if (cal.isDefault) return sendJson(res, 400, { error: "Can't delete the default calendar" });
+      writeJson(CALENDARS_FILE, calendars.filter(c => c.id !== calMatch[1]));
+      return sendJson(res, 200, { ok: true });
+    }
   }
 
   if (p === "/api/scheduling/admin/event-types" && req.method === "GET") {
-    return sendJson(res, 200, { eventTypes: readJson(EVENT_TYPES_FILE, []) });
+    return sendJson(res, 200, { eventTypes: getEventTypes() });
   }
   if (p === "/api/scheduling/admin/event-types" && req.method === "POST") {
     const body = await readJsonBody(req);
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = newEventType(body);
     et.slug = uniqueSlug(et.slug, eventTypes, et.id);
     eventTypes.push(et);
@@ -569,12 +678,12 @@ export async function handleSchedulingRequest(req, res, url) {
   }
   const etMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)$/);
   if (etMatch) {
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.id === etMatch[1]);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "bufferMinutes", "location", "active", "statusId", "calendarEmail"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);
@@ -588,20 +697,9 @@ export async function handleSchedulingRequest(req, res, url) {
     }
   }
 
-  if (p === "/api/scheduling/admin/availability" && req.method === "GET") {
-    return sendJson(res, 200, { availability: getAvailability() });
-  }
-  if (p === "/api/scheduling/admin/availability" && req.method === "POST") {
-    const body = await readJsonBody(req);
-    const current = getAvailability();
-    for (const k of ["timezone", "minNoticeMinutes", "weekly", "dateOverrides"]) if (k in body) current[k] = body[k];
-    writeJson(AVAILABILITY_FILE, current);
-    return sendJson(res, 200, { ok: true, availability: current });
-  }
-
   if (p === "/api/scheduling/admin/bookings" && req.method === "GET") {
     const bookings = readJson(BOOKINGS_FILE, []).sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
-    const eventTypes = readJson(EVENT_TYPES_FILE, []);
+    const eventTypes = getEventTypes();
     const withEventType = bookings.map(b => ({ ...b, eventType: eventTypes.find(e => e.id === b.eventTypeId) ? { name: eventTypes.find(e => e.id === b.eventTypeId).name, slug: eventTypes.find(e => e.id === b.eventTypeId).slug } : null }));
     return sendJson(res, 200, { bookings: withEventType });
   }

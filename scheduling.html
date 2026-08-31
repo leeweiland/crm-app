@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Scheduling — CRM</title>
+<title>Calendars — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
@@ -43,14 +43,13 @@
     <div class="app-main">
       <div class="mobile-sticky-header">
         <div class="toolbar">
-          <div class="pra-h1" style="flex:1">Scheduling</div>
+          <div class="pra-h1" style="flex:1">Calendars</div>
           <span class="conn-pill" id="calConnPill">Checking calendar…</span>
         </div>
         <div class="tabs">
           <button class="tab-btn active" data-tab="eventTypes">Event Types</button>
           <button class="tab-btn" data-tab="bookings">Bookings</button>
-          <button class="tab-btn" data-tab="availability">Availability</button>
-          <button class="tab-btn" data-tab="calendar">Calendar</button>
+          <button class="tab-btn" data-tab="calendar">Calendars</button>
         </div>
       </div>
 
@@ -62,7 +61,7 @@
         </div>
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th>Name</th><th>Duration</th><th>Buffer</th><th>Location</th><th>Active</th><th>Booking Link</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Duration</th><th>Calendar</th><th>Location</th><th>Active</th><th>Booking Link</th><th></th></tr></thead>
             <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
@@ -78,34 +77,12 @@
         </div>
       </div>
 
-      <!-- ── Availability ── -->
-      <div class="tab-panel" id="tab-availability">
-        <div class="pra-panel" style="padding:20px;max-width:640px">
-          <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Weekly hours, in <b id="availTz">America/Anchorage</b>. Shared across every event type.</div>
-          <div id="weekEditor"></div>
-          <div class="field" style="margin-top:16px;max-width:260px">
-            <label class="pra-label">Minimum notice (minutes)</label>
-            <input class="pra-input" type="number" id="minNotice" min="0" step="15"/>
-          </div>
-          <button class="pra-btn" id="saveAvailabilityBtn" style="margin-top:16px">Save Availability</button>
-        </div>
-      </div>
-
-      <!-- ── Calendar ── -->
+      <!-- ── Calendars ── -->
       <div class="tab-panel" id="tab-calendar">
-        <div class="pra-panel" style="padding:20px;max-width:560px">
-          <div class="pra-h2" style="margin-bottom:6px">Google Calendar</div>
-          <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px" id="calStatusText">Checking connection…</div>
-
-          <div class="pra-h2" style="margin-bottom:6px;font-size:.95rem">Team Calendars</div>
-          <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px">Add teammates on the same Google Workspace domain here, then pick which one an event type books onto (from that event type's Design page). The connected account can read/write any of these calendars without a separate login for each person.</div>
-          <div id="teamCalendarsList"></div>
-          <div class="add-row" style="margin-top:14px">
-            <input class="pra-input" id="newTeamCalName" placeholder="Name (e.g. Megan)"/>
-            <input class="pra-input" id="newTeamCalEmail" placeholder="Email on the Workspace domain"/>
-            <button class="pra-btn" id="addTeamCalBtn">Add</button>
-          </div>
-        </div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px" id="calStatusText">Checking connection…</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Each calendar has its own hours, buffers, and how far ahead it takes bookings. Add one per person on your Google Workspace domain, then pick which calendar each event type uses from that event type's Design page. You manage every calendar here.</div>
+        <div id="calendarsList"></div>
+        <button class="pra-btn" id="newCalendarBtn" style="margin-top:6px">+ New Calendar</button>
       </div>
     </div>
   </div>
@@ -151,33 +128,118 @@ async function loadStatus() {
     : 'Not connected — set GOOGLE_REFRESH_TOKEN_PRA_CALENDAR in .env. Until then, availability only checks bookings made through this scheduler.';
 }
 
-// ── Team calendars ────────────────────────────────────────────────────────
-async function loadTeamCalendars() {
-  const r = await fetch('/api/scheduling/admin/team-calendars');
-  const { teamCalendars } = await r.json();
-  const list = document.getElementById('teamCalendarsList');
-  if (!teamCalendars.length) { list.innerHTML = '<div class="pra-muted" style="font-size:.82rem">No team calendars added yet — the default is your own connected calendar.</div>'; return; }
-  list.innerHTML = teamCalendars.map(t => `
-    <div class="row-item">
-      <div style="flex:1"><b>${escapeHtml(t.name)}</b> <span class="pra-muted">${escapeHtml(t.email)}</span></div>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-cal="${t.id}">Remove</button>
+// ── Calendars (each with its own availability) ──────────────────────────
+const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+let calendarsState = {};
+
+function calendarCardHtml(cal) {
+  const a = cal.availability;
+  return `
+    <div class="pra-panel cal-card" style="padding:18px;margin-bottom:14px">
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:14px">
+        <div style="flex:1">
+          <input class="pra-input" data-cal-name="${cal.id}" value="${escapeHtml(cal.name)}" style="font-weight:700;margin-bottom:8px"/>
+          <input class="pra-input" data-cal-email="${cal.id}" value="${escapeHtml(cal.email)}" placeholder="${cal.isDefault ? 'Blank = your connected account' : 'Email on the Workspace domain'}"/>
+        </div>
+        ${cal.isDefault ? '<span class="pra-badge" style="margin-top:8px">Default</span>' : `<button class="pra-btn pra-btn-sm pra-btn-danger" style="margin-top:8px" data-del-cal="${cal.id}">Delete</button>`}
+      </div>
+
+      <div class="pra-label" style="margin-bottom:8px">Weekly hours (${escapeHtml(a.timezone)})</div>
+      <div id="weekEditor-${cal.id}"></div>
+
+      <div class="add-row" style="margin-top:14px">
+        <div class="field"><label class="pra-label">Min notice (min)</label><input class="pra-input" type="number" min="0" data-min-notice="${cal.id}" value="${a.minNoticeMinutes}"/></div>
+        <div class="field"><label class="pra-label">Buffer before (min)</label><input class="pra-input" type="number" min="0" data-buffer-before="${cal.id}" value="${a.bufferBeforeMinutes ?? 0}"/></div>
+        <div class="field"><label class="pra-label">Buffer after (min)</label><input class="pra-input" type="number" min="0" data-buffer-after="${cal.id}" value="${a.bufferAfterMinutes ?? 0}"/></div>
+      </div>
+
+      <div class="add-row" style="align-items:flex-end">
+        <div class="field"><label class="pra-label">Rolling window</label>
+          <select class="pra-select" data-rolling-mode="${cal.id}">
+            <option value="days" ${a.rollingMode === 'days' ? 'selected' : ''}>Next N days</option>
+            <option value="slots" ${a.rollingMode === 'slots' ? 'selected' : ''}>Next N available slots</option>
+          </select>
+        </div>
+        <div class="field"><label class="pra-label" data-rolling-label="${cal.id}">${a.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead'}</label><input class="pra-input" type="number" min="1" data-rolling-amount="${cal.id}" value="${a.rollingAmount}"/></div>
+      </div>
+      <div class="pra-muted" style="font-size:.74rem;margin:2px 0 4px">If a month or week has no openings, the booking page always skips ahead to the next one that does — this just controls how far it's allowed to look.</div>
+
+      <button class="pra-btn pra-btn-sm" data-save-cal="${cal.id}" style="margin-top:10px">Save Calendar</button>
+      <span class="pra-muted" style="font-size:.78rem;margin-left:8px" data-save-msg="${cal.id}"></span>
     </div>
-  `).join('');
-  document.querySelectorAll('[data-del-cal]').forEach(btn => btn.onclick = async () => {
-    if (!confirm('Remove this team calendar? Event types using it will fall back to your default calendar.')) return;
-    await fetch('/api/scheduling/admin/team-calendars/' + btn.dataset.delCal, { method: 'DELETE' });
-    loadTeamCalendars();
-  });
+  `;
 }
-document.getElementById('addTeamCalBtn').onclick = async () => {
-  const name = document.getElementById('newTeamCalName').value.trim();
-  const email = document.getElementById('newTeamCalEmail').value.trim();
-  if (!email) { showToast('Email is required', true); return; }
-  const r = await fetch('/api/scheduling/admin/team-calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email }) });
-  if (!r.ok) { showToast('Failed to add', true); return; }
-  document.getElementById('newTeamCalName').value = '';
-  document.getElementById('newTeamCalEmail').value = '';
-  loadTeamCalendars();
+
+async function loadCalendars() {
+  const r = await fetch('/api/scheduling/admin/calendars');
+  const { calendars } = await r.json();
+  calendarsState = {};
+  calendars.forEach(c => calendarsState[c.id] = c);
+  document.getElementById('calendarsList').innerHTML = calendars.map(calendarCardHtml).join('');
+  calendars.forEach(c => { renderWeekEditor(c.id); wireCalendarCard(c.id); });
+  return calendars;
+}
+
+function renderWeekEditor(calId) {
+  const cal = calendarsState[calId];
+  const wrap = document.getElementById('weekEditor-' + calId);
+  wrap.innerHTML = DAY_LABELS.map((label, i) => {
+    const rule = cal.availability.weekly[String(i)];
+    const on = !!rule;
+    return `
+      <div class="week-row">
+        <div>${label}</div>
+        <div class="toggle-switch ${on ? 'on' : ''}" data-day="${i}"></div>
+        <input class="pra-input" type="time" data-start="${i}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
+        <input class="pra-input" type="time" data-end="${i}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
+      </div>
+    `;
+  }).join('');
+  wrap.querySelectorAll('[data-day]').forEach(sw => sw.onclick = () => {
+    const isOn = sw.classList.toggle('on');
+    cal.availability.weekly[sw.dataset.day] = isOn ? { start: '09:00', end: '17:00' } : null;
+    renderWeekEditor(calId);
+  });
+  wrap.querySelectorAll('[data-start]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.start].start = inp.value; });
+  wrap.querySelectorAll('[data-end]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.end].end = inp.value; });
+}
+
+function wireCalendarCard(calId) {
+  const rollingModeSel = document.querySelector(`[data-rolling-mode="${calId}"]`);
+  const rollingLabel = document.querySelector(`[data-rolling-label="${calId}"]`);
+  rollingModeSel.onchange = () => { rollingLabel.textContent = rollingModeSel.value === 'slots' ? 'Number of slots' : 'Days ahead'; };
+
+  const delBtn = document.querySelector(`[data-del-cal="${calId}"]`);
+  if (delBtn) delBtn.onclick = async () => {
+    if (!confirm('Delete this calendar? Event types using it will need a new calendar picked on their Design page.')) return;
+    await fetch('/api/scheduling/admin/calendars/' + calId, { method: 'DELETE' });
+    loadCalendars();
+  };
+
+  document.querySelector(`[data-save-cal="${calId}"]`).onclick = async () => {
+    const cal = calendarsState[calId];
+    const payload = {
+      name: document.querySelector(`[data-cal-name="${calId}"]`).value.trim(),
+      email: document.querySelector(`[data-cal-email="${calId}"]`).value.trim(),
+      availability: {
+        ...cal.availability,
+        minNoticeMinutes: Number(document.querySelector(`[data-min-notice="${calId}"]`).value) || 0,
+        bufferBeforeMinutes: Number(document.querySelector(`[data-buffer-before="${calId}"]`).value) || 0,
+        bufferAfterMinutes: Number(document.querySelector(`[data-buffer-after="${calId}"]`).value) || 0,
+        rollingMode: rollingModeSel.value,
+        rollingAmount: Number(document.querySelector(`[data-rolling-amount="${calId}"]`).value) || 1,
+      },
+    };
+    const r = await fetch('/api/scheduling/admin/calendars/' + calId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const msgEl = document.querySelector(`[data-save-msg="${calId}"]`);
+    if (r.ok) { calendarsState[calId] = (await r.json()).calendar; msgEl.textContent = 'Saved at ' + new Date().toLocaleTimeString(); loadEventTypes(); }
+    else msgEl.textContent = 'Failed to save';
+  };
+}
+document.getElementById('newCalendarBtn').onclick = async () => {
+  const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Calendar', email: '' }) });
+  if (!r.ok) { showToast('Failed to create', true); return; }
+  loadCalendars();
 };
 
 // ── Bookings ──────────────────────────────────────────────────────────────
@@ -214,7 +276,7 @@ async function loadEventTypes() {
     <tr>
       <td>${escapeHtml(et.name)}</td>
       <td>${et.durationMinutes} min</td>
-      <td>${et.bufferMinutes} min</td>
+      <td>${escapeHtml(calendarsState[et.calendarId]?.name || (et.calendarEmail || 'Default'))}</td>
       <td>${escapeHtml(et.location?.type || '')}</td>
       <td>${et.active ? 'Yes' : 'No'}</td>
       <td><div class="link-row"><code>/book/${escapeHtml(et.slug)}</code><a class="pra-link" href="/book/${escapeHtml(et.slug)}" target="_blank">Open</a></div></td>
@@ -241,55 +303,12 @@ document.getElementById('saveEtBtn').onclick = async () => {
   location.href = '/scheduling-editor.html?id=' + d.eventType.id;
 };
 
-// ── Availability ──────────────────────────────────────────────────────────
-const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-let availabilityState = null;
-async function loadAvailability() {
-  const r = await fetch('/api/scheduling/admin/availability');
-  const { availability } = await r.json();
-  availabilityState = availability;
-  document.getElementById('availTz').textContent = availability.timezone;
-  document.getElementById('minNotice').value = availability.minNoticeMinutes;
-  renderWeekEditor();
-}
-function renderWeekEditor() {
-  const wrap = document.getElementById('weekEditor');
-  wrap.innerHTML = DAY_LABELS.map((label, i) => {
-    const rule = availabilityState.weekly[String(i)];
-    const on = !!rule;
-    return `
-      <div class="week-row">
-        <div>${label}</div>
-        <div class="toggle-switch ${on ? 'on' : ''}" data-day="${i}"></div>
-        <input class="pra-input" type="time" data-start="${i}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
-        <input class="pra-input" type="time" data-end="${i}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
-      </div>
-    `;
-  }).join('');
-  wrap.querySelectorAll('[data-day]').forEach(sw => sw.onclick = () => {
-    const day = sw.dataset.day;
-    const isOn = sw.classList.toggle('on');
-    availabilityState.weekly[day] = isOn ? { start: '09:00', end: '17:00' } : null;
-    renderWeekEditor();
-  });
-  wrap.querySelectorAll('[data-start]').forEach(inp => inp.onchange = () => {
-    availabilityState.weekly[inp.dataset.start].start = inp.value;
-  });
-  wrap.querySelectorAll('[data-end]').forEach(inp => inp.onchange = () => {
-    availabilityState.weekly[inp.dataset.end].end = inp.value;
-  });
-}
-document.getElementById('saveAvailabilityBtn').onclick = async () => {
-  availabilityState.minNoticeMinutes = Number(document.getElementById('minNotice').value) || 0;
-  const r = await fetch('/api/scheduling/admin/availability', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(availabilityState) });
-  showToast(r.ok ? 'Availability saved' : 'Failed to save', !r.ok);
-};
-
-loadStatus();
-loadBookings();
-loadEventTypes();
-loadAvailability();
-loadTeamCalendars();
+(async function init() {
+  loadStatus();
+  loadBookings();
+  await loadCalendars();
+  loadEventTypes();
+})();
 </script>
 </body>
 </html>

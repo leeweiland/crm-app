@@ -196,6 +196,13 @@
               </div>
             </div>
 
+            <div class="fb-side-section">
+              <div class="fb-side-title">Automate</div>
+              <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Route every submission to Google Sheets, an Email Automation, or an SMS Sequence — powered by Connections & Flows.</div>
+              <div id="formFlowsList"></div>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newFormFlowBtn" style="width:100%;margin-top:8px">+ New Flow for this Form</button>
+            </div>
+
           </div>
           <div class="fb-canvas-shell">
             <div class="fb-canvas" id="fbCanvas"></div>
@@ -287,10 +294,11 @@ const FIELD_META = {
   headline: { label: 'Headline', icon: ICONS.headline },
   image: { label: 'Image', icon: ICONS.image },
   video: { label: 'Video', icon: ICONS.video },
+  calendar: { label: 'Calendar', icon: ICONS.date },
   page_break: { label: 'Page Break', icon: ICONS.page_break },
 };
-const NO_REQUIRE = ['statement', 'page_break', 'headline', 'image', 'video'];
-const NO_GEAR = ['page_break', 'headline', 'video'];
+const NO_REQUIRE = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar'];
+const NO_GEAR = ['page_break', 'headline', 'video', 'calendar'];
 const LOGIC_OPS = [
   { value: 'equals', label: 'equals' },
   { value: 'not_equals', label: 'does not equal' },
@@ -367,16 +375,17 @@ function wistiaIdFromInput(v) {
 }
 
 const formId = new URLSearchParams(location.search).get('id');
-let form = null, allStatuses = [], allTags = [], allLists = [];
+let form = null, allStatuses = [], allTags = [], allLists = [], allEventTypes = [];
 let saveTimer, dragFromIdx = null;
 let openPanel = null; // { idx, kind: 'gear'|'logic' } | null
 let paletteOpen = false;
 
 async function loadRefs() {
-  const [statusesRes, tagsRes, listsRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/tags'), fetch('/api/lists')]);
+  const [statusesRes, tagsRes, listsRes, eventTypesRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/tags'), fetch('/api/lists'), fetch('/api/scheduling/admin/event-types')]);
   allStatuses = (await statusesRes.json()).statuses;
   allTags = (await tagsRes.json()).tags;
   allLists = (await listsRes.json()).lists;
+  allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes.filter(e => e.active) : [];
 }
 
 async function loadForm() {
@@ -499,6 +508,19 @@ function renderBlockBody(f, i) {
       </div>
     `;
   }
+  if (f.type === 'calendar') {
+    const picked = allEventTypes.find(e => e.slug === f.eventTypeSlug);
+    return `
+      <div class="fb-image-block">
+        ${picked ? `<div class="fb-image-placeholder">${ICONS.date}<span>Booking step: ${escapeHtml(picked.name)} (${picked.durationMinutes} min)</span></div>` : `<div class="fb-image-placeholder">${ICONS.date}<span>Pick which booking page to embed</span></div>`}
+        <select class="pra-select" style="margin-top:8px" data-calendar-idx="${i}">
+          <option value="">Choose an event type…</option>
+          ${allEventTypes.map(e => `<option value="${escapeHtml(e.slug)}" ${f.eventTypeSlug === e.slug ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
+        </select>
+        ${!allEventTypes.length ? `<div class="pra-muted" style="font-size:.78rem;margin-top:6px">No event types yet — create one in <a class="pra-link" href="/scheduling.html" target="_blank">Calendars</a> first.</div>` : ''}
+      </div>
+    `;
+  }
   if (f.type === 'statement') {
     return `
       <div class="fb-statement-text" contenteditable="true" data-statement-idx="${i}">${escapeHtml(f.label)}</div>
@@ -596,6 +618,10 @@ function bindCanvas(canvas) {
     el.addEventListener('input', e => { form.fields[+e.target.dataset.videoUrlIdx].videoUrl = e.target.value; saveDebounced(); });
     el.addEventListener('change', () => renderCanvas()); // re-render on blur to refresh the embed preview
   });
+  canvas.querySelectorAll('[data-calendar-idx]').forEach(el => el.addEventListener('change', e => {
+    form.fields[+e.target.dataset.calendarIdx].eventTypeSlug = e.target.value;
+    saveDebounced(); renderCanvas();
+  }));
   const submitPreview = document.getElementById('submitPreview');
   if (submitPreview) {
     submitPreview.addEventListener('input', e => {
@@ -684,6 +710,7 @@ function bindCanvas(canvas) {
     if (type === 'headline') { field.label = 'Headline'; }
     else if (type === 'image') { field.src = ''; field.alt = ''; field.link = ''; }
     else if (type === 'video') { field.videoUrl = ''; }
+    else if (type === 'calendar') { field.eventTypeSlug = ''; }
     else if (type !== 'page_break') {
       field.label = FIELD_META[type].label; field.placeholder = ''; field.required = false; field.helpText = '';
       if (FIELD_META[type].hasOptions) field.options = [{ id: uid(), label: 'Option 1' }];
@@ -828,6 +855,37 @@ async function loadResponses() {
   wrap.querySelectorAll('[data-resp-idx]').forEach(row => row.onclick = () => row.classList.toggle('open'));
 }
 
+// ── Left sidebar: Automate (Connections & Flows scoped to this form) ────
+// Flows already own the Google Sheets / Email Automation / SMS Sequence
+// engine (flows_backend.js) -- this is just a shortcut so "route this
+// form's submissions somewhere" doesn't require leaving the form to
+// discover Connections & Flows exists.
+async function loadFormFlows() {
+  const wrap = document.getElementById('formFlowsList');
+  const r = await fetch('/api/flows');
+  if (!r.ok) { wrap.innerHTML = ''; return; }
+  const { flows } = await r.json();
+  const mine = flows.filter(f => f.trigger?.type === 'form_submitted' && f.trigger.config?.formId === form.id);
+  if (!mine.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.8rem">No flows yet for this form.</div>'; return; }
+  wrap.innerHTML = mine.map(f => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--pra-border)">
+      <span style="width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${f.active ? 'var(--pra-green)' : 'var(--pra-dim)'}"></span>
+      <a class="pra-link" style="font-size:.84rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" href="/flow-builder.html?id=${f.id}">${escapeHtml(f.name)}</a>
+      <span class="pra-muted" style="font-size:.72rem;white-space:nowrap">${f.totalRuns || 0} run${f.totalRuns === 1 ? '' : 's'}</span>
+    </div>
+  `).join('');
+}
+document.getElementById('newFormFlowBtn').onclick = async () => {
+  const r = await fetch('/api/flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${form.name} — Form Flow` }) });
+  const d = await r.json();
+  if (!r.ok) { showToast('Could not create flow', true); return; }
+  await fetch('/api/flows/' + d.flow.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trigger: { type: 'form_submitted', config: { formId: form.id } } }),
+  });
+  location.href = '/flow-builder.html?id=' + d.flow.id;
+};
+
 // ── Header + tabs ────────────────────────────────────────────────────────
 function render() {
   document.getElementById('formName').value = form.name;
@@ -838,6 +896,7 @@ function render() {
   renderCanvas();
   renderSettings();
   renderDesign();
+  loadFormFlows();
 }
 
 document.getElementById('formName').addEventListener('input', e => { form.name = e.target.value; saveDebounced(); });

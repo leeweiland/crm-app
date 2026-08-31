@@ -144,6 +144,14 @@ function renderField(f) {
     if (!wistiaId) return '';
     return `<div class="pf-field"><div class="pf-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div>`;
   }
+  if (f.type === 'calendar') {
+    if (!f.eventTypeSlug) return '';
+    // Same crm-app instance serves both this form and /book/:slug, so a
+    // plain relative origin is always right -- no public-URL setting to
+    // resolve, unlike book.html's own embed snippet (meant for other sites).
+    const url = `${location.origin}/book/${encodeURIComponent(f.eventTypeSlug)}`;
+    return `<div class="pf-field"><div class="scheduling-inline-widget" data-url="${escapeHtml(url)}" style="min-width:280px;height:650px"></div></div>`;
+  }
   const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
   const val = answers[f.id];
   if (f.type === 'long_text') {
@@ -231,6 +239,22 @@ function validateStep(fields) {
   return ok;
 }
 
+// scheduling_backend.js's /widget.js only auto-scans for
+// .scheduling-inline-widget divs once, on its own load -- fine for a
+// static page, but this is a multi-step form where a later step's
+// calendar div doesn't exist in the DOM yet the first time the script
+// would run. Re-appending a fresh <script> tag each time a step with a
+// calendar field renders makes it re-scan and pick up the new div; the
+// data-scheduling-initialized guard on the widget side keeps it from
+// double-embedding one that's already there (e.g. after Back then Next).
+function loadCalendarWidgetsForStep(fields) {
+  if (!fields.some(f => f.type === 'calendar' && f.eventTypeSlug)) return;
+  const s = document.createElement('script');
+  s.src = '/widget.js';
+  s.async = true;
+  document.body.appendChild(s);
+}
+
 function renderStep() {
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
@@ -245,6 +269,7 @@ function renderStep() {
   `;
   bindStepInputs();
   updateNextVisibility();
+  loadCalendarWidgetsForStep(fields);
   if (stepIndex > 0) document.getElementById('pfBack').onclick = () => { stepIndex--; renderStep(); };
   document.getElementById('pfNext').onclick = async () => {
     const redirect = matchingRule(fields, 'redirect');

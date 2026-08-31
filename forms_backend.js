@@ -14,17 +14,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const FORMS_FILE = "crm_forms.json";
 export const RESPONSES_FILE = "crm_form_responses.json";
 
-// "statement"/"headline"/"image"/"video" are display-only content blocks (no
-// answer), "page_break" is a layout marker (splits the public renderer into
-// steps, Tally's one-question-at-a-time feel) -- none of these are
-// validated as required and none ever carry an answer.
+// "statement"/"headline"/"image"/"video"/"calendar" are display-only content
+// blocks (no answer), "page_break" is a layout marker (splits the public
+// renderer into steps, Tally's one-question-at-a-time feel) -- none of
+// these are validated as required and none ever carry an answer. "calendar"
+// embeds one of scheduling_backend.js's booking pages inline (same
+// .scheduling-inline-widget + /widget.js pattern book.html's own embed
+// snippet uses) -- the booking itself still happens on that system, this
+// step is just where it's shown in the form's flow.
 export const FIELD_TYPES = [
   "short_text", "long_text", "email", "phone", "first_name", "last_name",
   "number", "dropdown", "multiple_choice", "checkboxes", "date",
-  "statement", "headline", "image", "video", "page_break",
+  "statement", "headline", "image", "video", "calendar", "page_break",
 ];
 const CHOICE_TYPES = ["dropdown", "multiple_choice", "checkboxes"];
-const NON_ANSWERABLE_TYPES = ["statement", "headline", "image", "video", "page_break"];
+const NON_ANSWERABLE_TYPES = ["statement", "headline", "image", "video", "calendar", "page_break"];
 const ANSWERABLE_TYPES = FIELD_TYPES.filter(t => !NON_ANSWERABLE_TYPES.includes(t));
 
 // Same two embed patterns scheduling_backend.js's widget.js offers (inline

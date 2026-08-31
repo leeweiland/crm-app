@@ -168,9 +168,9 @@ async function loadEventType() {
 }
 
 async function loadSlots() {
-  const start = new Date().toISOString().slice(0, 10);
-  const end = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
-  const r = await fetch(`/api/scheduling/availability?slug=${slug}&start=${start}&end=${end}`);
+  // No start/end -- the calendar's own rolling-days/rolling-slots setting
+  // (Scheduling → Calendars) decides how far forward to search.
+  const r = await fetch(`/api/scheduling/availability?slug=${slug}`);
   if (!r.ok) { rawSlotIsos = []; return; }
   const { slots } = await r.json();
   rawSlotIsos = Object.values(slots).flat();
@@ -368,11 +368,25 @@ async function renderManage() {
   };
 }
 
+// If the month the calendar opens to has zero openings, jump straight to
+// the first month that has any -- a visitor should never land on a wall of
+// greyed-out days when the next real opening might be right after it.
+// Only runs once on initial load, not after a manual prev/next click, so
+// deliberately browsing to an empty month still works.
+function snapToFirstAvailableMonth() {
+  const dates = Object.keys(slotsByLocalDate).sort();
+  if (!dates.length) return;
+  const year = viewMonth.getFullYear(), month = viewMonth.getMonth();
+  const inViewMonth = dates.some(d => { const dt = new Date(d + 'T12:00:00'); return dt.getFullYear() === year && dt.getMonth() === month; });
+  if (!inViewMonth) { const first = new Date(dates[0] + 'T12:00:00'); viewMonth = new Date(first.getFullYear(), first.getMonth(), 1); }
+}
+
 (async function init() {
   if (isManage) { await renderManage(); return; }
   const ok = await loadEventType();
   if (!ok) return;
   await loadSlots();
+  snapToFirstAvailableMonth();
   renderPicker();
 })();
 </script>
