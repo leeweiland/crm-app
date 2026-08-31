@@ -12,7 +12,12 @@
   .agent-off { background: rgba(255,255,255,0.1); color: #fff; }
   .send-mode-pill { font-size: .66rem; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--pra-dim); }
   .send-mode-auto { background: rgba(255,159,10,.15); color: #ff9f0a; }
-  .editor-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; z-index: 500; }
+  /* .editor-backdrop is a sibling of .pra-root (not a descendant), same as
+     every .modal-backdrop elsewhere in the app -- without an explicit
+     color/font here it falls back to the browser default (black text),
+     invisible against the dark panel underneath. Same fix as
+     .modal-backdrop in crm-design-system.css, just not sharing that class. */
+  .editor-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; z-index: 500; font-family: var(--font-primary); color: var(--pra-white); }
   .editor-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 12px; padding: 24px; width: 100%; max-width: 1040px; }
   .editor-grid { display: flex; gap: 24px; align-items: flex-start; }
   .editor-settings { flex: 1; min-width: 0; }
