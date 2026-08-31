@@ -248,14 +248,59 @@ async function loadAgents() {
 
 function renderStatusCheckboxes(selected) {
   document.getElementById('fStatuses').innerHTML = allStatuses.map(s =>
-    `<label><input type="checkbox" value="${escapeHtml(s.label)}" ${selected.includes(s.label) ? 'checked' : ''}/> ${escapeHtml(s.label)}</label>`
+    `<label><input type="checkbox" value="${escapeHtml(s.label)}" data-label="${escapeHtml(s.label)}" ${selected.includes(s.label) ? 'checked' : ''}/> ${escapeHtml(s.label)}</label>`
   ).join('');
+  updateMsSummary('msStatuses', 'Select status(es)…');
 }
 function renderUserCheckboxes(selected) {
   document.getElementById('fCoverUsers').innerHTML = allUsers.map(u =>
-    `<label><input type="checkbox" value="${u.id}" ${selected.includes(u.id) ? 'checked' : ''}/> ${escapeHtml(u.name || u.email)}</label>`
+    `<label><input type="checkbox" value="${u.id}" data-label="${escapeHtml(u.name || u.email)}" ${selected.includes(u.id) ? 'checked' : ''}/> ${escapeHtml(u.name || u.email)}</label>`
   ).join('');
+  updateMsSummary('msCoverUsers', 'Select user(s)…');
 }
+
+// ── Toggle switches (Active, AI Assist) ──────────────────────────────────
+function setToggle(btnId, on) { document.getElementById(btnId).classList.toggle('on', !!on); }
+function getToggle(btnId) { return document.getElementById(btnId).classList.contains('on'); }
+document.getElementById('fActiveToggle').addEventListener('click', () => setToggle('fActiveToggle', !getToggle('fActiveToggle')));
+document.getElementById('fAiAssistToggle').addEventListener('click', () => setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')));
+document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
+document.getElementById('fAiAssistLabel').addEventListener('click', () => document.getElementById('fAiAssistToggle').click());
+
+// ── Dropdown multi-selects (lead type / status / covering users) ────────
+// One listener per panel via delegation ('change' bubbles from the
+// checkboxes) survives renderStatusCheckboxes/renderUserCheckboxes
+// replacing the panel's innerHTML on every openEditor() call.
+function closeAllMultiselects(except) {
+  document.querySelectorAll('.multiselect.open').forEach(m => { if (m !== except) m.classList.remove('open'); });
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.multiselect')) closeAllMultiselects(); });
+function msSummaryText(panel, placeholder) {
+  const checked = Array.from(panel.querySelectorAll('input:checked'));
+  if (!checked.length) return placeholder;
+  if (checked.length <= 2) return checked.map(cb => cb.dataset.label || cb.value).join(', ');
+  return checked.length + ' selected';
+}
+function updateMsSummary(msId, placeholder) {
+  const ms = document.getElementById(msId);
+  ms.querySelector('.ms-summary').textContent = msSummaryText(ms.querySelector('.multiselect-panel'), placeholder);
+  if (placeholder) ms.dataset.placeholder = placeholder;
+}
+function initMultiselect(msId, placeholder) {
+  const ms = document.getElementById(msId);
+  const panel = ms.querySelector('.multiselect-panel');
+  ms.querySelector('.multiselect-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = !ms.classList.contains('open');
+    closeAllMultiselects();
+    ms.classList.toggle('open', willOpen);
+  });
+  panel.addEventListener('change', () => { updateMsSummary(msId, ms.dataset.placeholder); ms.classList.remove('invalid'); });
+  updateMsSummary(msId, placeholder);
+}
+initMultiselect('msProgramTypes', 'Select lead type(s)…');
+initMultiselect('msStatuses', 'Select status(es)…');
+initMultiselect('msCoverUsers', 'Select user(s)…');
 
 async function openEditor(agentId) {
   editingAgentId = agentId || null;
@@ -274,13 +319,16 @@ async function openEditor(agentId) {
   document.getElementById('editorTitle').textContent = agentId ? 'Edit Agent' : 'New Agent';
   document.getElementById('fName').value = agent.name || '';
   document.getElementById('fDescription').value = agent.description || '';
-  document.getElementById('fActive').checked = !!agent.active;
-  document.getElementById('fAiAssist').checked = !!agent.aiAssist;
+  setToggle('fActiveToggle', agent.active);
+  setToggle('fAiAssistToggle', agent.aiAssist);
   document.getElementById('fSendMode').value = agent.sendMode || 'draft';
   document.getElementById('fSystemPrompt').value = agent.systemPrompt || '';
-  document.querySelectorAll('#fProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
+  document.querySelectorAll('#msProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
+  updateMsSummary('msProgramTypes', 'Select lead type(s)…');
   renderStatusCheckboxes(agent.targeting?.statuses || []);
   renderUserCheckboxes(agent.targeting?.coverForUserIds || []);
+  document.querySelectorAll('.multiselect.invalid').forEach(m => m.classList.remove('invalid'));
+  closeAllMultiselects();
   resetTestChat();
   document.getElementById('editorBackdrop').style.display = 'flex';
 }
@@ -405,18 +453,26 @@ document.getElementById('tcInput').addEventListener('input', (e) => {
 });
 
 async function saveAgent() {
+  const programTypes = Array.from(document.querySelectorAll('#msProgramTypes input:checked')).map(cb => cb.value);
+  const statuses = Array.from(document.querySelectorAll('#fStatuses input:checked')).map(cb => cb.value);
+  const coverForUserIds = Array.from(document.querySelectorAll('#fCoverUsers input:checked')).map(cb => cb.value);
+  // Lead type and status used to default to "all" when left unchecked --
+  // now a deliberate choice is required for both, same as any other
+  // required field.
+  let invalid = false;
+  document.getElementById('msProgramTypes').classList.toggle('invalid', !programTypes.length);
+  document.getElementById('msStatuses').classList.toggle('invalid', !statuses.length);
+  if (!programTypes.length || !statuses.length) invalid = true;
+  if (invalid) { showToast('Select at least one lead type and status', true); return; }
+
   const payload = {
     name: document.getElementById('fName').value.trim() || 'Untitled Agent',
     description: document.getElementById('fDescription').value.trim(),
-    active: document.getElementById('fActive').checked,
-    aiAssist: document.getElementById('fAiAssist').checked,
+    active: getToggle('fActiveToggle'),
+    aiAssist: getToggle('fAiAssistToggle'),
     sendMode: document.getElementById('fSendMode').value,
     systemPrompt: document.getElementById('fSystemPrompt').value,
-    targeting: {
-      programTypes: Array.from(document.querySelectorAll('#fProgramTypes input:checked')).map(cb => cb.value),
-      statuses: Array.from(document.querySelectorAll('#fStatuses input:checked')).map(cb => cb.value),
-      coverForUserIds: Array.from(document.querySelectorAll('#fCoverUsers input:checked')).map(cb => cb.value),
-    },
+    targeting: { programTypes, statuses, coverForUserIds },
   };
   await fetch(`/api/ai-agents/${editingAgentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   closeEditor();
