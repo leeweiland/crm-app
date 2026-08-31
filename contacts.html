@@ -46,11 +46,21 @@
      with content. */
   .contacts-table .frozen-col-1, .contacts-table .frozen-col-2 {
     position: sticky; background: var(--pra-panel); z-index: 1;
-    max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    /* width (not just max-width) -- frozen-col-2's sticky offset below
+       assumes frozen-col-1 is exactly 110px. With only max-width, a short
+       name (e.g. "Eric") renders the cell narrower than 110px, leaving a
+       gap between the two frozen columns that the (unfrozen) column
+       behind them slides through on horizontal scroll. */
+    width: 110px; min-width: 110px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .contacts-table .frozen-col-1 { left: 0; }
   .contacts-table .frozen-col-2 { left: 110px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
   .contacts-table tr.clickable:hover .frozen-col-1, .contacts-table tr.clickable:hover .frozen-col-2 { background: var(--pra-panel-2); }
+  .col-drag-handle { cursor: grab; opacity: .45; margin-right: 5px; font-size: .72rem; touch-action: none; user-select: none; }
+  .col-drag-handle:hover { opacity: .9; }
+  th.col-dragging { opacity: .35; }
+  th.col-drop-before { box-shadow: inset 3px 0 0 var(--pra-blue); }
+  th.col-drop-after { box-shadow: inset -3px 0 0 var(--pra-blue); }
   .columns-panel { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 400; width: 240px; max-height: 340px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 10px; }
   .columns-panel.show { display: block; }
   .columns-panel label { display: flex; align-items: center; gap: 8px; font-size: .82rem; padding: 5px 4px; cursor: pointer; }
@@ -461,14 +471,48 @@ function customFieldColumns() {
   return allCustomFields.map(f => ({ key: 'customFields.' + f.id, label: f.label, sortable: false, render: c => escapeHtml(c.customFields?.[f.id] || '') }));
 }
 function allColumnDefs() { return [...BASE_COLUMNS, ...customFieldColumns()]; }
-function activeColumns() { return allColumnDefs().filter(c => c.always || visibleColumns.includes(c.key)); }
+// Frozen columns (First/Last) always lead, in their fixed order -- their
+// sticky "left" offsets assume they're the first two columns, so they're
+// never subject to visibility toggling or drag-reordering. Everything
+// else is filtered to what's visible, then sorted by columnOrder (a
+// column missing from a saved order -- e.g. a custom field added after
+// the order was last saved -- falls back to its natural definition
+// position, via Infinity sorting it after everything that IS ordered).
+function activeColumns() {
+  const active = allColumnDefs().filter(c => c.always || visibleColumns.includes(c.key));
+  const frozen = active.filter(c => c.frozen);
+  const rest = active.filter(c => !c.frozen);
+  if (!columnOrder || !columnOrder.length) return [...frozen, ...rest];
+  const orderIndex = new Map(columnOrder.map((k, i) => [k, i]));
+  const sortedRest = rest.map((c, i) => ({ c, i })).sort((a, b) => {
+    const ai = orderIndex.has(a.c.key) ? orderIndex.get(a.c.key) : Infinity;
+    const bi = orderIndex.has(b.c.key) ? orderIndex.get(b.c.key) : Infinity;
+    return ai !== bi ? ai - bi : a.i - b.i;
+  }).map(x => x.c);
+  return [...frozen, ...sortedRest];
+}
 
 const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'smsOptOut', 'emailOptOut', 'programType', 'tags', 'createdAt'];
-function loadVisibleColumns() {
-  try { return JSON.parse(localStorage.getItem('contactsVisibleColumns')) || DEFAULT_VISIBLE_COLUMNS; }
-  catch { return DEFAULT_VISIBLE_COLUMNS; }
+// Column visibility + order are saved per-user (server-side, via
+// /api/auth/me/preferences) rather than per-browser localStorage -- Lee,
+// Alexis, and Josh each see their own layout regardless of which device
+// they're on, instead of it being tied to one browser.
+let visibleColumns = DEFAULT_VISIBLE_COLUMNS, columnOrder = null;
+async function loadColumnPreferences() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const prefs = (await r.json()).user?.preferences?.contactsColumns;
+    if (prefs?.visible) visibleColumns = prefs.visible;
+    if (prefs?.order) columnOrder = prefs.order;
+  } catch {}
 }
-let visibleColumns = loadVisibleColumns();
+function saveColumnPreferences() {
+  fetch('/api/auth/me/preferences', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contactsColumns: { visible: visibleColumns, order: columnOrder } }),
+  });
+}
 function renderColumnsPanel() {
   document.getElementById('columnsPanel').innerHTML = allColumnDefs().map(col => `
     <label><input type="checkbox" data-col-toggle="${col.key}" ${col.always || visibleColumns.includes(col.key) ? 'checked' : ''} ${col.always ? 'disabled' : ''}/> ${escapeHtml(col.label)}</label>
@@ -477,7 +521,7 @@ function renderColumnsPanel() {
     const key = cb.dataset.colToggle;
     if (cb.checked) { if (!visibleColumns.includes(key)) visibleColumns.push(key); }
     else visibleColumns = visibleColumns.filter(k => k !== key);
-    localStorage.setItem('contactsVisibleColumns', JSON.stringify(visibleColumns));
+    saveColumnPreferences();
     renderContactsTable();
   });
 }
@@ -485,6 +529,61 @@ document.getElementById('columnsToggle').onclick = (e) => { e.stopPropagation();
 document.addEventListener('click', (e) => {
   if (!e.target.closest('#columnsPanel') && !e.target.closest('#columnsToggle')) document.getElementById('columnsPanel').classList.remove('show');
 });
+
+// ── Column drag-to-reorder ───────────────────────────────────────────────
+// Pointer Events (not HTML5 drag-and-drop, which has no real touch
+// support) so this works the same on a mouse and on a phone. Rewired
+// after every renderContactsTable() call since headRow.innerHTML is
+// rebuilt each time, dropping any listeners bound to the old nodes.
+let colDrag = null;
+function wireColumnDrag() {
+  document.querySelectorAll('#contactsHeadRow th[data-col-key] .col-drag-handle').forEach(handle => {
+    handle.onpointerdown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const th = handle.closest('th');
+      colDrag = { key: th.dataset.colKey, th, dropTarget: null, dropBefore: false };
+      th.classList.add('col-dragging');
+      document.addEventListener('pointermove', onColDragMove);
+      document.addEventListener('pointerup', onColDragEnd, { once: true });
+    };
+  });
+}
+function onColDragMove(e) {
+  if (!colDrag) return;
+  const ths = [...document.querySelectorAll('#contactsHeadRow th[data-col-key]:not(.frozen-col-1):not(.frozen-col-2)')];
+  ths.forEach(th => th.classList.remove('col-drop-before', 'col-drop-after'));
+  const overTh = ths.find(th => {
+    const r = th.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  });
+  if (overTh && overTh !== colDrag.th) {
+    const r = overTh.getBoundingClientRect();
+    const before = e.clientX < r.left + r.width / 2;
+    overTh.classList.add(before ? 'col-drop-before' : 'col-drop-after');
+    colDrag.dropTarget = overTh.dataset.colKey;
+    colDrag.dropBefore = before;
+  } else {
+    colDrag.dropTarget = null;
+  }
+}
+function onColDragEnd() {
+  document.removeEventListener('pointermove', onColDragMove);
+  if (!colDrag) return;
+  colDrag.th.classList.remove('col-dragging');
+  document.querySelectorAll('.col-drop-before, .col-drop-after').forEach(el => el.classList.remove('col-drop-before', 'col-drop-after'));
+  if (colDrag.dropTarget && colDrag.dropTarget !== colDrag.key) {
+    const rest = activeColumns().filter(c => !c.frozen).map(c => c.key);
+    rest.splice(rest.indexOf(colDrag.key), 1);
+    let toIdx = rest.indexOf(colDrag.dropTarget);
+    if (!colDrag.dropBefore) toIdx += 1;
+    rest.splice(toIdx, 0, colDrag.key);
+    columnOrder = rest;
+    saveColumnPreferences();
+    renderContactsTable();
+  }
+  colDrag = null;
+}
 
 function renderContactsTable() {
   const countEl = document.getElementById('contactsCount');
@@ -495,14 +594,19 @@ function renderContactsTable() {
     const frozenClass = col.frozen === 1 ? ' frozen-col-1' : col.frozen === 2 ? ' frozen-col-2' : '';
     const sortedClass = col.sortable && contactSort.field === col.key ? ' sorted' : '';
     const arrow = col.sortable && contactSort.field === col.key ? `<span class="sort-arrow">${contactSort.dir === 1 ? '▲' : '▼'}</span>` : '';
-    return `<th class="${col.sortable ? 'sortable' : ''}${sortedClass}${frozenClass}"${col.sortable ? ` data-sort="${col.key}"` : ''}>${escapeHtml(col.label)}${arrow}</th>`;
+    // First/Last stay pinned (no drag handle) -- everything else can be
+    // dragged to reorder among itself.
+    const dragHandle = col.frozen ? '' : `<span class="col-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>`;
+    return `<th class="${col.sortable ? 'sortable' : ''}${sortedClass}${frozenClass}" data-col-key="${col.key}"${col.sortable ? ` data-sort="${col.key}"` : ''}>${dragHandle}${escapeHtml(col.label)}${arrow}</th>`;
   }).join('');
-  headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+  headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = (e) => {
+    if (e.target.closest('.col-drag-handle')) return; // dragging, not sorting
     if (contactSort.field === th.dataset.sort) contactSort.dir *= -1;
     else contactSort = { field: th.dataset.sort, dir: 1 };
     contactsPage = 1;
     loadContacts();
   });
+  wireColumnDrag();
 
   const body = document.getElementById('contactsBody');
   if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; }
@@ -736,6 +840,7 @@ document.getElementById('scanDuplicatesBtn').onclick = async () => {
 };
 
 (async function init() {
+  await loadColumnPreferences();
   await loadStatuses();
   await loadCustomFields();
   renderColumnsPanel();

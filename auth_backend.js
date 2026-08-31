@@ -898,6 +898,23 @@ export async function handleAuthRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
 
+  // Per-user UI preferences (e.g. which contacts-table columns are visible
+  // and what order they're in) -- merge-patch semantics, only the keys
+  // present in the body are touched, so one page's save (e.g. column
+  // order) never clobbers another page's preferences saved earlier. Keyed
+  // to the logged-in user, not the browser, so it follows Lee/Alexis/Josh
+  // across devices instead of being per-device like localStorage was.
+  if (p === "/api/auth/me/preferences" && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    const body = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === me.id);
+    target.preferences = { ...(target.preferences || {}), ...body };
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, preferences: target.preferences });
+  }
+
   // Lightweight roster any logged-in user can read (not just admins) --
   // used by the Inbox compose panel to show who a reply will send as, and
   // that teammates exist even though only the session user is selectable.
