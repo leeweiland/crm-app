@@ -51,6 +51,11 @@
   .step-day-input:focus { outline: none; background: rgba(0,155,255,0.1); }
   .step-unit-select { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); border-radius: 7px; color: var(--pra-white); font-size: .8rem; font-weight: 600; padding: 5px 8px; }
   .step-unit-select:focus { outline: none; border-color: var(--pra-blue); }
+  /* The dropdown POPUP list is a separate rendering surface from the closed
+     select -- Chromium fills it in using the select's own dark background/
+     text color unless every option overrides them, which read as blank
+     white boxes. Force plain black-on-white here regardless. */
+  .step-unit-select option { background: #fff; color: #000; }
   /* Height is set by JS (autoGrow) to fit the actual content -- resize:none
      because a manual drag-handle would fight the auto-grow on the next
      keystroke, overflow:hidden so it never shows an internal scrollbar. */
