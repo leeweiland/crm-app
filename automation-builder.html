@@ -743,7 +743,7 @@ function fitToScreen() {
   const margin = 40;
   zoom = Math.max(0.4, Math.min(1, (wrapRect.width - margin * 2) / contentWidth, (wrapRect.height - margin * 2) / contentHeight));
   panX = wrapRect.width / 2 - ((minX + maxX) / 2) * zoom;
-  panY = wrapRect.height / 2 - ((minY + maxY) / 2) * zoom;
+  panY = margin - minY * zoom; // top-anchored, not vertically centered -- a flow reads top-down, so it should start at the top of the view, not float in the middle
   applyTransform();
 }
 // Re-fit on load and on resize -- NOT after every in-place render() (adding
