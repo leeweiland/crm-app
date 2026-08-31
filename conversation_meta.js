@@ -1,4 +1,5 @@
 import { readJson, writeJson } from "./auth_backend.js";
+import { syncMetaFields } from "./sqlite_inbox.js";
 
 export const CONVERSATION_META_FILE = "crm_conversation_meta.json";
 
@@ -28,5 +29,8 @@ export function setConvoMeta(contactId, patch) {
   if (!row) { row = { contactId, pinned: false, starred: false, done: false, archived: false }; all.push(row); }
   Object.assign(row, patch);
   writeJson(CONVERSATION_META_FILE, all);
+  // Best-effort, same reasoning as message_index.js's safeSqliteSync -- a
+  // sync bug here shouldn't block the actual pin/star/archive/done toggle.
+  try { syncMetaFields(contactId, row); } catch (e) { console.error("[sqlite_inbox] meta sync failed:", e.message); }
   return row;
 }

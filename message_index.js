@@ -1,6 +1,7 @@
 import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson, writeJson, appendJsonRecords, updateJsonArrayRecordByField } from "./auth_backend.js";
+import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
 
 // The Inbox's two hottest reads -- "everything said with contact X" and
 // "one summary row per contact, most-recently-active first" -- both used to
@@ -207,6 +208,14 @@ function foldMessageIntoGroup(g, m) {
     if (!m.inboxDone) g.unreadCount++;
   }
 }
+// SQLite sync is best-effort -- never let a bug in the new/less-proven path
+// take down the actual message send/receive it's piggybacking on. Worst
+// case a row goes stale until the next thing touches it, not a lost
+// message. (JSON index writes above have no equivalent guard because
+// they're the original, load-bearing path -- a failure there SHOULD
+// surface.)
+function safeSqliteSync(fn) { try { fn(); } catch (e) { console.error("[sqlite_inbox] sync failed:", e.message); } }
+
 export function upsertConversationSummary(m) {
   if (!SIDEBAR_CHANNELS.includes(m.channel)) return;
   const key = conversationKey(m);
@@ -215,6 +224,7 @@ export function upsertConversationSummary(m) {
   if (!g) { g = emptyGroup(key, m.contactId); rows.push(g); }
   foldMessageIntoGroup(g, m);
   writeJson(CONVERSATION_INDEX_FILE, rows);
+  safeSqliteSync(() => syncMessageFields(g));
 }
 // Recomputes one contact's summary row from scratch from its own (small)
 // message file -- used after a status/inboxDone mutation, where relative
@@ -224,14 +234,20 @@ export function recomputeConversationSummary(contactId) {
   const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
   const rows = readJson(CONVERSATION_INDEX_FILE, []);
   const idx = rows.findIndex(r => r.contactId === contactId);
-  if (!messages.length) { if (idx >= 0) { rows.splice(idx, 1); writeJson(CONVERSATION_INDEX_FILE, rows); } return; }
+  if (!messages.length) {
+    if (idx >= 0) { rows.splice(idx, 1); writeJson(CONVERSATION_INDEX_FILE, rows); }
+    safeSqliteSync(() => deleteConversationRow(contactId));
+    return;
+  }
   const g = emptyGroup(contactId, contactId);
   for (const m of messages) foldMessageIntoGroup(g, m);
   if (idx >= 0) rows[idx] = g; else rows.push(g);
   writeJson(CONVERSATION_INDEX_FILE, rows);
+  safeSqliteSync(() => syncMessageFields(g));
 }
 export function removeConversationSummary(key) {
   const rows = readJson(CONVERSATION_INDEX_FILE, []);
   const next = rows.filter(r => r.key !== key);
   if (next.length !== rows.length) writeJson(CONVERSATION_INDEX_FILE, next);
+  safeSqliteSync(() => deleteConversationRow(key));
 }

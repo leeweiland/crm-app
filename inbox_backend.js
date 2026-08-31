@@ -72,15 +72,16 @@ export async function handleInboxRequest(req, res, url) {
     const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("limit"), 10) || 40));
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
 
-    // TEST-ONLY toggle (?_sqlite=1) -- see sqlite_inbox.js's own comment for
-    // why this isn't the default yet (the prototype DB is a one-time
-    // snapshot, not kept live). Everything below this block is the existing,
-    // unchanged JSON-based path.
-    if (url.searchParams.get("_sqlite") === "1") {
+    // SQLite is the default path now that message_index.js/conversation_meta.js/
+    // contacts_backend.js keep it live-synced on every write (see sqlite_inbox.js's
+    // header comment for the exact trigger points). Falls through to the full
+    // JSON fold below only when the .db file doesn't exist -- local dev without
+    // it built, or (deliberately, ?_sqlite=0) forcing the JSON path to compare
+    // against or to recover from a bad sync without waiting on a redeploy.
+    if (url.searchParams.get("_sqlite") !== "0") {
       const t0 = Date.now();
       const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, bucket, sortDir, search, limit, offset });
       if (result) return sendJson(res, 200, { ...result, _queryMs: Date.now() - t0, _engine: "sqlite" });
-      // Falls through to the normal path below if the prototype DB isn't present (e.g. local dev).
     }
     const _t0 = Date.now();
     const contacts = readJson(CONTACTS_FILE, []);

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, isAdmin } from "./auth_backend.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
@@ -210,6 +211,9 @@ export async function handleContactsRequest(req, res, url) {
       if (contact.status !== prevStatus) applyStatusOptOut(contact);
       contact.updatedAt = new Date().toISOString();
       writeJson(CONTACTS_FILE, contacts);
+      // Best-effort, same reasoning as message_index.js's safeSqliteSync --
+      // a sync bug here shouldn't block the actual contact save.
+      try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
       // Only fire for genuinely NEW list/tag membership, not every patch --
       // an automation shouldn't re-enroll someone just because their email
       // was edited.
