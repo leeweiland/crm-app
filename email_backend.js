@@ -76,24 +76,6 @@ function getContact(contactId) {
   return readJson(CONTACTS_FILE, []).find(c => c.id === contactId) || null;
 }
 
-// Gmail (and others) auto-detect a street address in the raw text and
-// silently turn it into their OWN blue "location chip" link client-side,
-// after the email arrives -- happens even when the text is already inside
-// a real <a> with an explicit color, so wrapping it in a link doesn't
-// actually stop it. An HTML comment inserted into the street number didn't
-// stop it either -- Gmail's detector most likely runs against the DOM's
-// flattened text content, which skips right over comment nodes and sees
-// the digits as contiguous again. A zero-width non-joiner is different: it
-// lives INSIDE the actual text content (same technique buildPreheaderHtml
-// above already uses to fool inbox-preview-snippet extraction), so a
-// text-content-based scan can't see through it the way it can a comment.
-function breakAddressPattern(address) {
-  // The street number is rarely at position 0 -- "Business Name, 3427
-  // Street..." -- so this finds the first run of 2+ digits anywhere (the
-  // street number) rather than anchoring to the start of the string.
-  return String(address || "").replace(/(\d)(\d+)/, (m, first, rest) => `${first}&zwnj;${rest}`);
-}
-
 function resolveFooterHtml(footerTemplateId, contactId) {
   const templates = readJson(FOOTER_TEMPLATES_FILE, []);
   const footer = templates.find(f => f.id === footerTemplateId) || templates.find(f => f.isDefault) || null;
@@ -125,7 +107,7 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   return `
     <div style="margin-top:24px">
       ${content}
-      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888">${breakAddressPattern(footer.physicalAddress)}</div>` : ""}
+      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888">${footer.physicalAddress}</div>` : ""}
       ${social ? `<div style="margin-top:8px;font-size:11px;color:#888">${social}</div>` : ""}
       ${hasOwnUnsubscribe ? "" : `<div style="margin-top:8px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>`}
     </div>`;
