@@ -201,33 +201,54 @@ function contactMatchesTargeting(contact, targeting) {
 // at yet; checking only the one contact someone actually clicked into
 // costs nothing extra for everyone else.
 //
-// "Active" gates whether the agent can be invoked at all; "AI Assist"
-// gates whether that specific agent drafts replies. Both are required, but
-// neither implies constant background work -- the work only happens at
-// the moment of the click.
+// AI Assist alone gates this -- "Active" isn't required. Everything this
+// function does lands as a "pending" draft a human reviews before anything
+// reaches a real lead (see below), so there's nothing for a broader
+// "Active" master switch to guard against here; that toggle is reserved
+// for whatever future capability actually needs a bigger blast-radius gate
+// (e.g. autonomous sending), not this always-human-reviewed draft flow.
 async function maybeGenerateAiAssistDraft(contactId) {
   if (!contactId) return;
   const contacts = readJson(CONTACTS_FILE, []);
   const contact = contacts.find((c) => c.id === contactId);
   if (!contact) return;
   const agents = readJson(AI_AGENTS_FILE, []);
-  const agent = agents.find((a) => a.active && a.aiAssist && contactMatchesTargeting(contact, a.targeting));
+  const agent = agents.find((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
   if (!agent) return;
 
-  const journey = getContactMessages(contactId);
-  if (!journey.length) return;
-  const last = [...journey].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).at(-1);
-  if (last.direction !== "inbound") return; // nothing unanswered to draft a reply to
+  // Only the same channels the Inbox itself treats as a real conversation
+  // (see inbox.html/contact-detail.html's thread filter) -- excludes
+  // "activity" rows (automation bookkeeping like "sequence started", which
+  // can carry direction:"inbound" as a technical artifact despite the lead
+  // never having said anything) so a draft never gets generated in reply
+  // to a system note instead of an actual message from them.
+  const CONVERSATION_CHANNELS = ["email", "sms", "form", "booking"];
+  const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel));
+  const last = journey.length ? [...journey].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).at(-1) : null;
+  // We already replied and nothing new has come in since -- there's
+  // nothing to respond to. A brand-new lead with NO history at all is
+  // different: still worth a suggested opener, so that case falls through
+  // instead of returning here.
+  if (last && last.direction !== "inbound") return;
 
+  // Dedup key: the specific message being answered, or -- when there's no
+  // conversation yet -- a fixed per-contact/per-agent sentinel so reopening
+  // an empty conversation doesn't regenerate a fresh opener every time.
+  const sourceMessageId = last ? last.id : `no-history:${contactId}`;
   const drafts = readJson(AI_DRAFTS_FILE, []);
-  if (drafts.some((d) => d.agentId === agent.id && d.sourceMessageId === last.id)) return; // already drafted for this exact message
+  if (drafts.some((d) => d.agentId === agent.id && d.sourceMessageId === sourceMessageId)) return;
+
+  const promptText = last
+    ? (last.body || last.bodyPreview || "")
+    : "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)";
 
   try {
-    const replyText = await generateAgentReply(agent, contactId, last.body || last.bodyPreview || "");
+    const replyText = await generateAgentReply(agent, contactId, promptText);
     if (!replyText) return;
     drafts.push({
       id: randomUUID(), agentId: agent.id, agentName: agent.name, contactId,
-      channel: last.channel, draftText: replyText, sourceMessageId: last.id,
+      channel: last ? last.channel : (contact.phone ? "sms" : "email"),
+      draftText: replyText, sourceMessageId,
       status: "pending", createdAt: new Date().toISOString(),
     });
     writeJson(AI_DRAFTS_FILE, drafts);
