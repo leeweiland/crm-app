@@ -80,6 +80,7 @@ export function renderEmailBody(bodyBlocks, footerHtml, theme) {
   // footer disclaimer). Pre-empting it with a real link the color:inherit's
   // from wherever it sits stops the recipient's client from re-styling it.
   wrapped = autoLinkPlainEmails(wrapped);
+  wrapped = colorStreetAddresses(wrapped);
   return applyDefaultLinkColor(wrapped, t.linkColor);
 }
 
@@ -90,14 +91,24 @@ function autoLinkPlainEmails(html) {
     return part.replace(emailRe, (m) => `<a href="mailto:${m}" style="color:inherit;text-decoration:inherit">${m}</a>`);
   }).join("");
 }
-// A street address (unlike an email address above) is NOT something this
-// stops Gmail from re-styling -- three different approaches were tried
-// (wrapping in a real link, an HTML comment, a zero-width character) and
-// none survived a real send. That strongly suggests Gmail's address
-// detection runs server-side when the mail is processed, before any of
-// this HTML ever reaches a browser to render -- which no sender-side
-// markup trick can defeat. Left as plain text; this is standard,
-// unavoidable behavior for any email with a footer address.
+// Gmail turns a street number + street name into its own blue "location
+// chip", client-side, regardless of the surrounding text's color -- three
+// prior attempts to stop it from happening at all (wrapping in a plain
+// link, an HTML comment, a zero-width character) all failed against a real
+// send. This doesn't try to prevent the chip -- just wraps the specific
+// span Gmail targets in a link of our own with !important, which a real
+// send confirmed DOES win where plain style="color:inherit" (no
+// !important) didn't. Uses inherit rather than a fixed color -- this can
+// sit inside body copy, a footer disclaimer, or anywhere else, each
+// potentially a different color, so it needs to match whatever actually
+// surrounds it, not one hardcoded guess.
+function colorStreetAddresses(html) {
+  const streetRe = /(\d{1,6}\s+[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*){0,3}\s+(?:St|Street|Ave|Avenue|Blvd|Boulevard|Dr|Drive|Rd|Road|Ln|Lane|Pkwy|Parkway|Way|Ct|Court|Pl|Place|Cir|Circle|Ter|Terrace|Hwy|Highway)\.?)/g;
+  return html.split(/(<a\b[^>]*>[\s\S]*?<\/a>)/gi).map(part => {
+    if (/^<a\b/i.test(part)) return part;
+    return part.replace(streetRe, (m) => `<a href="https://maps.google.com/?q=${encodeURIComponent(m)}" style="color:inherit !important;text-decoration:inherit !important;pointer-events:none">${m}</a>`);
+  }).join("");
+}
 
 // A link gets the theme's link color unless it already carries its own
 // explicit color (something a user picked in the Link popover) -- an email
