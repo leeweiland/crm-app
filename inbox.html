@@ -55,7 +55,8 @@
      glance regardless of what status the lead is in. */
   .convo-avatar { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s; }
   .convo-avatar.has-unread { background: #39ff14; color: #0a0a0d; }
-  #chatStatusSelect { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s; }
+  #chatStatusSelect, .convo-status-select { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s; }
+  .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; }
   .convo-meta { flex: 1; min-width: 0; }
   .convo-top { display: flex; align-items: center; gap: 6px; }
   .convo-pinned-mark { flex-shrink: 0; color: var(--pra-blue); display: inline-flex; margin-right: 4px; }
@@ -568,6 +569,17 @@ async function loadMoreConversations() {
 // `conversations` is always exactly the rows that belong on screen, in
 // order. This just turns that array into HTML; it never re-filters or
 // re-sorts it client-side.
+// Same select + glow treatment as the chat panel's #chatStatusSelect
+// (avatarStyle/statusSelectWidthRule), just compact enough to sit in the
+// sidebar row next to the name -- lets a status get changed without
+// opening the conversation.
+function convoStatusFieldHtml(c) {
+  const status = c.contact?.status || '';
+  return `<select class="pra-select convo-status-select" data-status-contact="${c.contactId}" style="${avatarStyle(status)};${statusSelectWidthRule(status)}" title="Change status">
+    <option value="">Set status...</option>
+    ${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+  </select>`;
+}
 function convoRowHtml(c) {
   const hasUnread = c.unreadCount > 0;
   const showTicks = !hasUnread && c.lastDirection === 'outbound' && c.lastStatus;
@@ -580,6 +592,7 @@ function convoRowHtml(c) {
         <div class="convo-top">
           ${c.pinned ? `<span class="convo-pinned-mark" title="Pinned">${PIN_ICON}</span>` : ''}
           <span class="convo-name">${escapeHtml(c.displayName)}</span>
+          ${c.contactId ? convoStatusFieldHtml(c) : ''}
           ${c.contactId ? ownerFieldHtml(c.contact, 'convo-owner-field') : ''}
         </div>
         <div class="convo-preview">${c.lastDirection === 'outbound' ? previewTicks + ' You: ' : ''}${previewText}</div>
@@ -631,6 +644,25 @@ function wireConvoRow(row) {
         },
       });
     }
+  }
+  const statusSel = row.querySelector('.convo-status-select');
+  if (statusSel) {
+    statusSel.addEventListener('click', (e) => e.stopPropagation());
+    statusSel.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const status = e.target.value;
+      const convo = c();
+      if (!convo?.contactId) return;
+      await fetch('/api/contacts/' + convo.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+      showToast('Status updated');
+      if (convo.contact) convo.contact.status = status;
+      e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
+      // A status change can auto-archive the conversation (STOP / Bad Fit &
+      // Blacklist) -- same reload chatStatusSelect's handler does, so a
+      // freshly-archived row actually drops out of the current view instead
+      // of sticking around from the stale local `conversations` array.
+      await loadConversations();
+    });
   }
   row.querySelector('[data-pin]')?.addEventListener('click', async (e) => {
     e.stopPropagation();
