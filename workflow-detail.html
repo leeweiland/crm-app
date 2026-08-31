@@ -271,7 +271,7 @@ const GOAL_SHORT_LABELS = { incoming_email: 'Incoming email', incoming_sms: 'Inc
 // here only for sort order, since the server is the one that actually
 // schedules sends. dayOffset is read as a fallback for steps saved before
 // delayValue/delayUnit existed.
-const DELAY_UNIT_MINUTES = { hours: 60, days: 1440, weeks: 10080, months: 43200 };
+const DELAY_UNIT_MINUTES = { seconds: 1 / 60, minutes: 1, hours: 60, days: 1440, weeks: 10080, months: 43200 };
 function stepDelayMinutes(step) {
   const amount = step.delayValue ?? step.dayOffset ?? 0;
   const unit = step.delayUnit || 'days';
@@ -293,7 +293,7 @@ function renderCanvas() {
   const stepHtml = sorted.map((step, i) => {
     const amount = step.delayValue ?? step.dayOffset ?? 0;
     const unit = step.delayUnit || 'days';
-    const unitOptionsHtml = ['hours', 'days', 'weeks', 'months'].map(u => `<option value="${u}" ${u === unit ? 'selected' : ''}>${u[0].toUpperCase()}${u.slice(1)}</option>`).join('');
+    const unitOptionsHtml = ['seconds', 'minutes', 'hours', 'days', 'weeks', 'months'].map(u => `<option value="${u}" ${u === unit ? 'selected' : ''}>${u[0].toUpperCase()}${u.slice(1)}</option>`).join('');
     return `
     <div class="step-card" data-step-id="${step.id}">
       <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>

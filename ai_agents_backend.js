@@ -192,37 +192,47 @@ function contactMatchesTargeting(contact, targeting) {
   return true;
 }
 
-// Called from the inbound SMS webhook (and, in future, any other inbound
-// channel) right after a real inbound message is logged for a known contact.
-// Finds the first active, AI-Assist-enabled agent whose targeting matches
-// this contact, generates a reply grounded in their real history, and either
-// stores it as a pending draft (default) or sends it immediately if the
-// agent's sendMode is 'auto'. Deliberately picks only ONE matching agent
-// (the first) to avoid a lead getting multiple AI replies to one message --
-// if more than one agent matches, that's a configuration overlap worth
-// fixing in the AI Agents page, not something to paper over here.
-export async function triggerAiAssist({ contact, channel, inboundText, sendFn }) {
-  if (!contact || !inboundText) return;
+// On-demand only -- generation happens exactly when a human opens this
+// contact's conversation (the Inbox already calls GET /api/ai-drafts with
+// contactId every time a conversation is selected; see the route below),
+// never on a timer and never reacting automatically to an inbound message
+// arriving. A periodic sweep across every contact with an unanswered
+// message would burn API credits on conversations nobody's about to look
+// at yet; checking only the one contact someone actually clicked into
+// costs nothing extra for everyone else.
+//
+// "Active" gates whether the agent can be invoked at all; "AI Assist"
+// gates whether that specific agent drafts replies. Both are required, but
+// neither implies constant background work -- the work only happens at
+// the moment of the click.
+async function maybeGenerateAiAssistDraft(contactId) {
+  if (!contactId) return;
+  const contacts = readJson(CONTACTS_FILE, []);
+  const contact = contacts.find((c) => c.id === contactId);
+  if (!contact) return;
   const agents = readJson(AI_AGENTS_FILE, []);
   const agent = agents.find((a) => a.active && a.aiAssist && contactMatchesTargeting(contact, a.targeting));
   if (!agent) return;
 
-  try {
-    const replyText = await generateAgentReply(agent, contact.id, inboundText);
-    if (!replyText) return;
+  const journey = getContactMessages(contactId);
+  if (!journey.length) return;
+  const last = [...journey].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).at(-1);
+  if (last.direction !== "inbound") return; // nothing unanswered to draft a reply to
 
-    if (agent.sendMode === "auto" && typeof sendFn === "function") {
-      await sendFn(replyText);
-      const drafts = readJson(AI_DRAFTS_FILE, []);
-      drafts.push({ id: randomUUID(), agentId: agent.id, agentName: agent.name, contactId: contact.id, channel, draftText: replyText, status: "sent", createdAt: new Date().toISOString() });
-      writeJson(AI_DRAFTS_FILE, drafts);
-    } else {
-      const drafts = readJson(AI_DRAFTS_FILE, []);
-      drafts.push({ id: randomUUID(), agentId: agent.id, agentName: agent.name, contactId: contact.id, channel, draftText: replyText, status: "pending", createdAt: new Date().toISOString() });
-      writeJson(AI_DRAFTS_FILE, drafts);
-    }
+  const drafts = readJson(AI_DRAFTS_FILE, []);
+  if (drafts.some((d) => d.agentId === agent.id && d.sourceMessageId === last.id)) return; // already drafted for this exact message
+
+  try {
+    const replyText = await generateAgentReply(agent, contactId, last.body || last.bodyPreview || "");
+    if (!replyText) return;
+    drafts.push({
+      id: randomUUID(), agentId: agent.id, agentName: agent.name, contactId,
+      channel: last.channel, draftText: replyText, sourceMessageId: last.id,
+      status: "pending", createdAt: new Date().toISOString(),
+    });
+    writeJson(AI_DRAFTS_FILE, drafts);
   } catch (err) {
-    console.error("triggerAiAssist failed:", err.message);
+    console.error(`[ai-assist] agent ${agent.id} contact ${contactId} failed:`, err.message);
   }
 }
 
@@ -233,6 +243,10 @@ export async function handleAiAgentsRequest(req, res, url) {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const contactId = url.searchParams.get("contactId");
+    // The Inbox calls this exact route with contactId every time a
+    // conversation is opened -- that's the one and only trigger point for
+    // AI Assist generation (see maybeGenerateAiAssistDraft's comment).
+    if (contactId) await maybeGenerateAiAssistDraft(contactId);
     let drafts = readJson(AI_DRAFTS_FILE, []).filter((d) => d.status === "pending");
     if (contactId) drafts = drafts.filter((d) => d.contactId === contactId);
     return sendJson(res, 200, { drafts });

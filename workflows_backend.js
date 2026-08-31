@@ -38,14 +38,16 @@ function zonedTimeToUtc(dateStr, timeStr, timeZone) {
   const diff = asIfUtc.getTime() - inZone.getTime();
   return new Date(asIfUtc.getTime() + diff);
 }
-// Steps carry a real delayValue+delayUnit (hours/days/weeks/months) instead
-// of only whole days, matching how Close's own sequences mix a fast
-// same-hour first reply with day/week-scale follow-ups. "hours" is treated
-// as an exact-time offset (a lead who signs up at 2pm shouldn't have their
-// 2-hour follow-up silently pushed to tomorrow's send window) -- everything
-// coarser than a day still goes through the existing sending-day/window/
-// blackout-date search, since those only make sense at day granularity.
-// dayOffset is read as a fallback for steps saved before this field existed.
+// Steps carry a real delayValue+delayUnit (seconds/minutes/hours/days/weeks/
+// months) instead of only whole days, matching how Close's own sequences
+// mix a fast same-minute first reply with day/week-scale follow-ups.
+// Sub-day units (seconds/minutes/hours) are treated as an exact-time offset
+// -- a lead who signs up at 2pm shouldn't have their 2-hour follow-up
+// silently pushed to tomorrow's send window -- everything coarser than a
+// day still goes through the existing sending-day/window/blackout-date
+// search, since those only make sense at day granularity. dayOffset is read
+// as a fallback for steps saved before this field existed.
+const SUB_DAY_UNIT_MS = { seconds: 1000, minutes: 60000, hours: 3600000 };
 function computeStepDueDate(workflow, enrolledAtISO, step) {
   const rs = workflow.recipientSettings || {};
   const tz = rs.timezone || "America/Anchorage";
@@ -55,8 +57,8 @@ function computeStepDueDate(workflow, enrolledAtISO, step) {
   const unit = step?.delayUnit || "days";
   const amount = step?.delayValue ?? step?.dayOffset ?? 0;
 
-  if (unit === "hours") {
-    let target = new Date(new Date(enrolledAtISO).getTime() + amount * 3600000);
+  if (unit in SUB_DAY_UNIT_MS) {
+    let target = new Date(new Date(enrolledAtISO).getTime() + amount * SUB_DAY_UNIT_MS[unit]);
     for (let i = 0; i < 14; i++) {
       const dateStr = target.toISOString().slice(0, 10);
       const wd = weekdayInZone(dateStr, tz);
