@@ -380,6 +380,11 @@ body { margin: 0; }
 .be-drag-handle { cursor: grab; color: #fff; padding: 0 2px; display: inline-flex; align-items: center; flex-shrink: 0; }
 .be-drag-handle:active { cursor: grabbing; }
 .be-block-body { color: #111; }
+/* .be-block sets cursor:pointer for clicking anywhere to select the block,
+   but text content that's actually being typed into should show the normal
+   text-insertion I-beam, not a hand -- only overrides on the contenteditable
+   text itself, not image/button blocks, which stay a pointer. */
+.be-block-body[contenteditable="true"] { cursor: text; }
 .be-block-body img { max-width: 100%; }
 .be-image-upload-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 36px 16px; margin: 10px; border: 2px dashed #cfcfcf; border-radius: 6px; color: #888; cursor: pointer; }
 .be-image-upload-placeholder:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
