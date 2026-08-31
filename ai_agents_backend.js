@@ -282,14 +282,35 @@ export async function handleAiAgentsRequest(req, res, url) {
     const draft = drafts.find((d) => d.id === draftSendMatch[1]);
     if (!draft) return sendJson(res, 404, { error: "Draft not found" });
     const body = await readJsonBody(req);
-    const { sendSms } = await import("./sms_backend.js");
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find((c) => c.id === draft.contactId);
-    if (!contact?.phone) return sendJson(res, 400, { error: "Contact has no phone number" });
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
     const finalText = body.editedText ?? draft.draftText;
-    await sendSms({ to: contact.phone, body: finalText, contactId: contact.id, sourceType: "ai_agent", sourceId: draft.agentId });
+    // channel: 'email' | 'sms' | 'both' -- defaults to the draft's own
+    // originating channel (an SMS-only default here would silently fail
+    // or misfire for a lead whose whole history is email, which is common).
+    const channel = ["email", "sms", "both"].includes(body.channel) ? body.channel : (draft.channel === "email" ? "email" : "sms");
+    const wantsEmail = channel === "email" || channel === "both";
+    const wantsSms = channel === "sms" || channel === "both";
+    if (wantsEmail && !contact.email) return sendJson(res, 400, { error: "Contact has no email address" });
+    if (wantsSms && !contact.phone) return sendJson(res, 400, { error: "Contact has no phone number" });
+
+    if (wantsEmail) {
+      const { sendEmail } = await import("./email_backend.js");
+      await sendEmail({
+        to: contact.email, subject: draft.emailSubject || "(no subject)",
+        blocks: [{ id: "b1", type: "text", html: finalText.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: me.footerTemplateId || null,
+        contactId: contact.id, sourceType: "ai_agent", sourceId: draft.agentId,
+        from: `${me.first} ${me.last} <${me.email}>`,
+      });
+    }
+    if (wantsSms) {
+      const { sendSms } = await import("./sms_backend.js");
+      await sendSms({ to: contact.phone, body: finalText, contactId: contact.id, sourceType: "ai_agent", sourceId: draft.agentId });
+    }
     draft.status = "sent";
     draft.sentText = finalText;
+    draft.sentChannel = channel;
     writeJson(AI_DRAFTS_FILE, drafts);
     return sendJson(res, 200, { ok: true });
   }

@@ -142,9 +142,11 @@
 
   .compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; }
   .ai-draft-card { margin: 0 16px 12px; padding: 12px; border: 1px solid rgba(0,155,255,.35); background: rgba(0,155,255,.06); border-radius: 10px; }
-  .ai-draft-label { font-size: .78rem; color: var(--pra-blue); margin-bottom: 8px; font-weight: 600; }
+  .ai-draft-label { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--pra-blue); margin-bottom: 8px; font-weight: 600; }
+  .ai-draft-label svg { width: 14px; height: 14px; flex-shrink: 0; }
   .ai-draft-text { width: 100%; min-height: 70px; margin-bottom: 8px; }
-  .ai-draft-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .ai-draft-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ai-draft-actions .compose-channel-toggle { margin-bottom: 0; }
   .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
   .compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
   .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
@@ -447,6 +449,11 @@ function avatarStyle(status, email) {
 }
 const PIN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 2.5a1.5 1.5 0 0 1 2.1 0l4.9 4.9a1.5 1.5 0 0 1 0 2.1l-2.1 2.1-1.4-1.4-3.5 3.5.5 4.6-1.6 1.6-4.2-4.2-5.4 5.4-1.1-1.1 5.4-5.4-4.2-4.2 1.6-1.6 4.6.5 3.5-3.5-1.4-1.4Z"/></svg>';
 const STAR_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.6 7.1.7-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.7z"/></svg>';
+// Four-point sparkle -- same "single path, fill:currentColor" icon style
+// as PIN_ICON/STAR_ICON above, used in place of a plain robot emoji for
+// the AI draft banner so it reads as part of this app's own icon set
+// rather than a generic OS emoji.
+const SPARKLE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c.6 5.4 2.2 7 7.6 7.6-5.4.6-7 2.2-7.6 7.6-.6-5.4-2.2-7-7.6-7.6C9.8 9 11.4 7.4 12 2Z"/><path d="M19 17c.25 1.9.85 2.5 2.75 2.75C19.85 20 19.25 20.6 19 22.5c-.25-1.9-.85-2.5-2.75-2.75C18.15 19.5 18.75 18.9 19 17Z"/></svg>';
 // WhatsApp-style read receipts, same as chat-app's: one grey check (sent),
 // two grey checks (delivered), two blue checks (read -- an email "opened"
 // event stands in for read, since SMS has no carrier-level read receipt).
@@ -1151,22 +1158,38 @@ async function loadAiDrafts(contactId) {
     // picks a single matching agent) -- showing all just in case more than
     // one is somehow pending.
     container.innerHTML = drafts.map(d => `
-      <div class="ai-draft-card" data-draft-id="${d.id}">
-        <div class="ai-draft-label">🤖 AI draft from ${escapeHtml(d.agentName)} — review before sending</div>
+      <div class="ai-draft-card" data-draft-id="${d.id}" data-channel="${d.channel === 'email' ? 'email' : 'sms'}">
+        <div class="ai-draft-label">${SPARKLE_ICON} AI draft from ${escapeHtml(d.agentName)} — review before sending</div>
         <textarea class="pra-textarea ai-draft-text">${escapeHtml(d.draftText)}</textarea>
         <div class="ai-draft-actions">
-          <button class="pra-btn pra-btn-ghost pra-btn-sm" data-discard="${d.id}">Discard</button>
-          <button class="pra-btn pra-btn-sm" data-send="${d.id}">Send</button>
+          <div class="compose-channel-toggle ai-draft-channel-toggle">
+            <button type="button" data-ch="email" class="${d.channel === 'email' ? 'active' : ''}">Email</button>
+            <button type="button" data-ch="sms" class="${d.channel !== 'email' ? 'active' : ''}">SMS</button>
+            <button type="button" data-ch="both">Both</button>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-discard="${d.id}">Discard</button>
+            <button class="pra-btn pra-btn-sm" data-send="${d.id}">Send</button>
+          </div>
         </div>
       </div>
     `).join('');
+    container.querySelectorAll('.ai-draft-channel-toggle').forEach(toggle => {
+      toggle.querySelectorAll('button').forEach(btn => btn.onclick = () => {
+        toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        toggle.closest('.ai-draft-card').dataset.channel = btn.dataset.ch;
+      });
+    });
     container.querySelectorAll('[data-send]').forEach(btn => btn.onclick = async () => {
       const card = btn.closest('.ai-draft-card');
       const editedText = card.querySelector('.ai-draft-text').value;
+      const channel = card.dataset.channel;
       btn.disabled = true;
-      const r2 = await fetch(`/api/ai-drafts/${btn.dataset.send}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedText }) });
+      const r2 = await fetch(`/api/ai-drafts/${btn.dataset.send}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedText, channel }) });
+      const d2 = await r2.json().catch(() => ({}));
       if (r2.ok) { showToast('Sent'); card.remove(); if (selectedConvo?.contactId) selectConversation(selectedConvo); }
-      else { showToast('Could not send', true); btn.disabled = false; }
+      else { showToast(d2.error || 'Could not send', true); btn.disabled = false; }
     });
     container.querySelectorAll('[data-discard]').forEach(btn => btn.onclick = async () => {
       const card = btn.closest('.ai-draft-card');
