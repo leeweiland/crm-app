@@ -30,6 +30,21 @@
   .fb-color-field input[type=color] { width: 40px; height: 32px; padding: 2px; border-radius: 6px; border: 1px solid var(--pra-border); background: none; cursor: pointer; flex-shrink: 0; }
   .fb-color-field span { font-size: .78rem; color: var(--pra-dim); font-family: monospace; }
 
+  /* ── Inline per-calendar availability editor -- compact version of the
+       same controls from scheduling.html's Calendars tab, sized for the
+       300px sidebar so hours/buffers/rolling window are editable right
+       here instead of requiring a trip to a different page. ── */
+  .cal-week-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--pra-border); font-size: .76rem; }
+  .cal-week-row:last-child { border-bottom: none; }
+  .cal-week-row .cal-week-day { width: 30px; flex-shrink: 0; color: var(--pra-dim); }
+  .cal-week-row input[type=time] { flex: 1; min-width: 0; padding: 4px 6px; font-size: .72rem; }
+  .toggle-switch { width: 34px; height: 20px; border-radius: 12px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); position: relative; cursor: pointer; flex-shrink: 0; }
+  .toggle-switch::after { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--pra-dim); top: 2px; left: 2px; transition: left .15s, background .15s; }
+  .toggle-switch.on { border-color: var(--pra-blue); }
+  .toggle-switch.on::after { left: 16px; background: var(--pra-blue); }
+  .cal-inline-row { display: flex; gap: 8px; }
+  .cal-inline-row .field { flex: 1; margin-bottom: 12px; min-width: 0; }
+
   /* ── Live preview card — same visual language as the real book.html ── */
   :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   .ed-preview-outer { background: var(--bk-page-bg); }
@@ -131,14 +146,37 @@
           </div>
 
           <div class="fb-side-section">
+            <div class="fb-side-title">Calendar</div>
+            <div class="field"><label class="pra-label">Uses calendar</label>
+              <select class="pra-select" id="fCalendar"></select>
+            </div>
+            <div class="field" style="margin-bottom:8px">
+              <label class="pra-label">Weekly hours (<span id="calTzLabel"></span>)</label>
+              <div id="calWeekEditor"></div>
+            </div>
+            <div class="cal-inline-row">
+              <div class="field"><label class="pra-label">Min notice (min)</label><input class="pra-input" type="number" min="0" id="calMinNotice"/></div>
+              <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" id="calBufferBefore"/></div>
+              <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" id="calBufferAfter"/></div>
+            </div>
+            <div class="cal-inline-row" style="align-items:flex-end">
+              <div class="field"><label class="pra-label">Rolling window</label>
+                <select class="pra-select" id="calRollingMode">
+                  <option value="days">Next N days</option>
+                  <option value="slots">Next N available slots</option>
+                </select>
+              </div>
+              <div class="field"><label class="pra-label" id="calRollingLabel">Days ahead</label><input class="pra-input" type="number" min="1" id="calRollingAmount"/></div>
+            </div>
+            <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-bottom:6px">If a stretch has no openings, the booking page always skips ahead to the next one that does — this just controls how far it's allowed to look. These settings apply to every event type on this calendar.</div>
+            <div class="pra-muted" style="font-size:.74rem" id="calSaveMsg"></div>
+          </div>
+
+          <div class="fb-side-section">
             <div class="fb-side-title">Settings</div>
             <div class="field"><label class="pra-label">Duration (minutes)</label><input class="pra-input" type="number" id="fDuration" min="5" step="5"/></div>
             <div class="field"><label class="pra-label">On booking, set contact status to</label>
               <select class="pra-select" id="fStatus"><option value="">Don't change status</option></select>
-            </div>
-            <div class="field"><label class="pra-label">Calendar</label>
-              <select class="pra-select" id="fCalendar"></select>
-              <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Hours, buffers, and rolling window all come from the calendar's own settings in <a class="pra-link" href="/scheduling.html" target="_blank">Calendars</a>.</div>
             </div>
             <div class="field"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" id="fRedirectUrl" placeholder="Leave blank for the built-in confirmation"/></div>
             <div class="field"><label class="pra-label">Booking link</label>
@@ -218,6 +256,7 @@
 const eventTypeId = new URLSearchParams(location.search).get('id');
 let draft = null, saveTimer = null;
 
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function pad2(n) { return String(n).padStart(2, '0'); }
 function monthLabel(d) { return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); }
 
@@ -451,16 +490,119 @@ async function loadStatuses() {
   document.getElementById('fStatus').innerHTML = '<option value="">Don\'t change status</option>' + statuses.map(s => `<option value="${s.label}">${s.label}</option>`).join('');
   document.getElementById('fStatus').value = draft.statusId || '';
 }
-// Each calendar carries its own hours/buffers/rolling window (managed in
-// Calendars), so picking one here has to be a real reference to a real
-// calendar -- not free text -- or there'd be no availability rules to
-// compute slots from.
+// Each calendar carries its own hours/buffers/rolling window, edited right
+// here (see renderCalendarSettings below) -- not free text, so picking one
+// has to be a real reference to a real calendar or there'd be no
+// availability rules to compute slots from. Also offers any calendar the
+// connected Google account is subscribed to but hasn't been added to the
+// CRM yet, so a teammate's calendar is one click away instead of requiring
+// their exact Workspace email typed in on a separate page.
+let calendarsState = {}, googleCalendarsState = [];
+const DAY_LABELS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 async function loadCalendars() {
   const r = await fetch('/api/scheduling/admin/calendars');
   const calendars = r.ok ? (await r.json()).calendars : [];
-  document.getElementById('fCalendar').innerHTML =
-    calendars.map(c => `<option value="${c.id}">${c.name}${c.email ? ' (' + c.email + ')' : ''}</option>`).join('');
+  calendarsState = {};
+  calendars.forEach(c => calendarsState[c.id] = c);
+  let googleCalendars = [];
+  try {
+    const gr = await fetch('/api/scheduling/admin/google-calendars');
+    if (gr.ok) googleCalendars = (await gr.json()).googleCalendars || [];
+  } catch { /* not connected or a transient error -- just no extra options below */ }
+  const existingEmails = new Set(calendars.map(c => c.email).filter(Boolean));
+  // "primary" is the connected account's own calendar -- already covered by
+  // the always-present "My Calendar" (default, blank email = itself).
+  googleCalendarsState = googleCalendars.filter(g => !g.primary && !existingEmails.has(g.id));
+  renderCalendarSelect();
   return calendars;
+}
+
+function renderCalendarSelect() {
+  const sel = document.getElementById('fCalendar');
+  const prev = sel.value;
+  const calOptions = Object.values(calendarsState).map(c => `<option value="${c.id}">${escapeHtml(c.name)}${c.email ? ' (' + escapeHtml(c.email) + ')' : ''}</option>`).join('');
+  const googleOptions = googleCalendarsState.map(g => `<option value="google:${escapeHtml(g.id)}">+ Add: ${escapeHtml(g.name)} (${escapeHtml(g.id)})</option>`).join('');
+  sel.innerHTML = calOptions + (googleOptions ? `<optgroup label="Subscribed on Google, not yet added">${googleOptions}</optgroup>` : '');
+  if (prev && sel.querySelector(`option[value="${CSS.escape(prev)}"]`)) sel.value = prev;
+}
+
+// ── Inline calendar availability editor -- same fields as scheduling.html's
+// Calendars tab, ported into the sidebar so hours/buffers/rolling window are
+// visible and editable right here instead of a link to a different page. ──
+let calSaveTimer = null;
+function renderCalendarSettings() {
+  const cal = calendarsState[draft.calendarId];
+  if (!cal) return;
+  document.getElementById('calTzLabel').textContent = cal.availability.timezone;
+  document.getElementById('calMinNotice').value = cal.availability.minNoticeMinutes;
+  document.getElementById('calBufferBefore').value = cal.availability.bufferBeforeMinutes ?? 0;
+  document.getElementById('calBufferAfter').value = cal.availability.bufferAfterMinutes ?? 0;
+  document.getElementById('calRollingMode').value = cal.availability.rollingMode;
+  document.getElementById('calRollingAmount').value = cal.availability.rollingAmount;
+  document.getElementById('calRollingLabel').textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+  document.getElementById('calSaveMsg').textContent = '';
+  renderCalWeekEditor();
+}
+function renderCalWeekEditor() {
+  const cal = calendarsState[draft.calendarId];
+  const wrap = document.getElementById('calWeekEditor');
+  wrap.innerHTML = DAY_LABELS_SHORT.map((label, i) => {
+    const rule = cal.availability.weekly[String(i)];
+    const on = !!rule;
+    return `
+      <div class="cal-week-row">
+        <div class="cal-week-day">${label}</div>
+        <div class="toggle-switch ${on ? 'on' : ''}" data-cal-day="${i}"></div>
+        <input class="pra-input" type="time" data-cal-start="${i}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
+        <input class="pra-input" type="time" data-cal-end="${i}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
+      </div>
+    `;
+  }).join('');
+  wrap.querySelectorAll('[data-cal-day]').forEach(sw => sw.onclick = () => {
+    const isOn = sw.classList.toggle('on');
+    cal.availability.weekly[sw.dataset.calDay] = isOn ? { start: '09:00', end: '17:00' } : null;
+    renderCalWeekEditor();
+    saveCalendarDebounced();
+  });
+  wrap.querySelectorAll('[data-cal-start]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.calStart].start = inp.value; saveCalendarDebounced(); });
+  wrap.querySelectorAll('[data-cal-end]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.calEnd].end = inp.value; saveCalendarDebounced(); });
+}
+['calMinNotice', 'calBufferBefore', 'calBufferAfter', 'calRollingAmount'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    const cal = calendarsState[draft.calendarId];
+    cal.availability.minNoticeMinutes = Number(document.getElementById('calMinNotice').value) || 0;
+    cal.availability.bufferBeforeMinutes = Number(document.getElementById('calBufferBefore').value) || 0;
+    cal.availability.bufferAfterMinutes = Number(document.getElementById('calBufferAfter').value) || 0;
+    cal.availability.rollingAmount = Number(document.getElementById('calRollingAmount').value) || 1;
+    saveCalendarDebounced();
+  });
+});
+document.getElementById('calRollingMode').addEventListener('change', () => {
+  const cal = calendarsState[draft.calendarId];
+  cal.availability.rollingMode = document.getElementById('calRollingMode').value;
+  document.getElementById('calRollingLabel').textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+  saveCalendarDebounced();
+});
+function saveCalendarDebounced() {
+  document.getElementById('calSaveMsg').textContent = 'Saving…';
+  clearTimeout(calSaveTimer);
+  calSaveTimer = setTimeout(saveCalendarNow, 500);
+}
+async function saveCalendarNow() {
+  const cal = calendarsState[draft.calendarId];
+  const r = await fetch('/api/scheduling/admin/calendars/' + cal.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ availability: cal.availability }),
+  });
+  document.getElementById('calSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
+  if (r.ok) {
+    calendarsState[cal.id] = (await r.json()).calendar;
+    // Hours/buffers/rolling window could all have just changed -- refresh
+    // the real slots so the preview stays accurate.
+    await loadPreviewSlots();
+    renderCalendar();
+  }
 }
 
 async function init() {
@@ -485,6 +627,7 @@ async function init() {
     draft.calendarId = match ? match.id : 'default';
   }
   document.getElementById('fCalendar').value = draft.calendarId;
+  renderCalendarSettings();
   renderSidebar();
   await loadPreviewSlots();
   renderCalendar();
@@ -505,8 +648,23 @@ document.getElementById('fStatus').addEventListener('change', () => {
   draft.statusId = document.getElementById('fStatus').value;
   saveDebounced();
 });
-document.getElementById('fCalendar').addEventListener('change', () => {
-  draft.calendarId = document.getElementById('fCalendar').value;
+document.getElementById('fCalendar').addEventListener('change', async () => {
+  const val = document.getElementById('fCalendar').value;
+  if (val.startsWith('google:')) {
+    const email = val.slice(7);
+    const g = googleCalendarsState.find(x => x.id === email);
+    const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g?.name || email, email }) });
+    if (!r.ok) { showToast('Failed to add calendar', true); document.getElementById('fCalendar').value = draft.calendarId; return; }
+    const { calendar } = await r.json();
+    calendarsState[calendar.id] = calendar;
+    googleCalendarsState = googleCalendarsState.filter(x => x.id !== email);
+    renderCalendarSelect();
+    draft.calendarId = calendar.id;
+    document.getElementById('fCalendar').value = calendar.id;
+  } else {
+    draft.calendarId = val;
+  }
+  renderCalendarSettings();
   // saveNow() (fired by saveDebounced below) already refreshes the slots
   // preview on success, which is exactly what's needed here too since
   // which calendar's freeBusy gets checked just changed.

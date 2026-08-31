@@ -216,6 +216,21 @@ async function getConnectedCalendarEmail() {
   if (!r.ok) throw new Error("Fetching connected calendar identity failed: " + JSON.stringify(d));
   return d.id || null; // "id" on the primary calendar is the account's email
 }
+// The calendars the connected account can actually see in Google Calendar
+// (its own + anything shared/subscribed to it), so the editor's Calendar
+// picker can offer them directly instead of requiring someone to already
+// know a teammate's exact Workspace email to type in. minAccessRole=writer
+// since a calendar this app can't create/delete events on isn't usable here.
+async function listGoogleCalendars() {
+  if (!calendarConfigured()) return [];
+  const accessToken = await getCalendarAccessToken();
+  const r = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=writer", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error("Listing calendars failed: " + JSON.stringify(d));
+  return (d.items || []).map(c => ({ id: c.id, name: c.summaryOverride || c.summary || c.id, primary: !!c.primary }));
+}
 // Busy intervals for [startISO, endISO) on the given calendar -- merged into
 // slot computation so a real conflict (including events not created by this
 // scheduler, e.g. someone blocking off vacation directly in Google
@@ -650,6 +665,10 @@ export async function handleSchedulingRequest(req, res, url) {
   // getSessionUser check above -- one operator manages every calendar.
   if (p === "/api/scheduling/admin/calendars" && req.method === "GET") {
     return sendJson(res, 200, { calendars: getCalendars() });
+  }
+  if (p === "/api/scheduling/admin/google-calendars" && req.method === "GET") {
+    try { return sendJson(res, 200, { googleCalendars: await listGoogleCalendars() }); }
+    catch (e) { return sendJson(res, 200, { googleCalendars: [], error: e.message }); }
   }
   if (p === "/api/scheduling/admin/calendars" && req.method === "POST") {
     const { name, email } = await readJsonBody(req);
