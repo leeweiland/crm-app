@@ -80,15 +80,18 @@ function getContact(contactId) {
 // silently turn it into their OWN blue "location chip" link client-side,
 // after the email arrives -- happens even when the text is already inside
 // a real <a> with an explicit color, so wrapping it in a link doesn't
-// actually stop it. Splitting the leading street number with an HTML
-// comment breaks their pattern match (a comment renders as nothing, but
-// interrupts the text node Gmail's detector scans) without changing how
-// the address looks or creating any link at all.
+// actually stop it. An HTML comment inserted into the street number didn't
+// stop it either -- Gmail's detector most likely runs against the DOM's
+// flattened text content, which skips right over comment nodes and sees
+// the digits as contiguous again. A zero-width non-joiner is different: it
+// lives INSIDE the actual text content (same technique buildPreheaderHtml
+// above already uses to fool inbox-preview-snippet extraction), so a
+// text-content-based scan can't see through it the way it can a comment.
 function breakAddressPattern(address) {
   // The street number is rarely at position 0 -- "Business Name, 3427
   // Street..." -- so this finds the first run of 2+ digits anywhere (the
   // street number) rather than anchoring to the start of the string.
-  return String(address || "").replace(/(\d)(\d+)/, (m, first, rest) => `${first}<!-- -->${rest}`);
+  return String(address || "").replace(/(\d)(\d+)/, (m, first, rest) => `${first}&zwnj;${rest}`);
 }
 
 function resolveFooterHtml(footerTemplateId, contactId) {
