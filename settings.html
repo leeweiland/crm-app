@@ -244,6 +244,17 @@
           </table>
         </div>
         <button class="pra-btn" id="addUserBtn" style="margin-top:16px">+ Add User</button>
+
+        <div class="pra-h2" style="margin:28px 0 6px">Tab Access by Role</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px">Which sidebar tabs each role can see and open. Admins always have full access and aren't shown here, so this can't lock the admin account out by accident.</div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="navPermsTable">
+            <thead><tr><th>Tab</th><th style="text-align:center">User</th><th style="text-align:center">Super User</th></tr></thead>
+            <tbody id="navPermsBody"></tbody>
+          </table>
+        </div>
+        <button class="pra-btn" id="saveNavPermsBtn" style="margin-top:14px">Save Tab Access</button>
+        <div class="pra-muted" id="navPermsMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-account" style="padding:22px;max-width:420px">
@@ -420,6 +431,47 @@ async function loadUsers() {
     });
   });
 }
+
+// Same list/order as crm-nav.js's NAV_ITEMS -- duplicated rather than
+// shared (this app has no build step/shared-module story for plain
+// <script> pages), so keep the two in sync if a tab is ever added/renamed.
+const SETTINGS_NAV_ITEMS = [
+  { href: '/inbox.html', label: 'Inbox' },
+  { href: '/contacts.html', label: 'Contacts' },
+  { href: '/forms.html', label: 'Forms' },
+  { href: '/scheduling.html', label: 'Calendars' },
+  { href: '/flows.html', label: 'Connections & Flows' },
+  { href: '/campaigns.html', label: 'Email Campaigns' },
+  { href: '/automations.html', label: 'Email Automations' },
+  { href: '/workflows.html', label: 'SMS Sequences' },
+  { href: '/ai-agents.html', label: 'AI Agents' },
+  { href: '/reporting.html', label: 'Reporting' },
+  { href: '/settings.html', label: 'Settings' },
+];
+async function loadNavPermissions() {
+  const r = await fetch('/api/integrations/nav-permissions');
+  if (!r.ok) return;
+  const perms = await r.json();
+  document.getElementById('navPermsBody').innerHTML = SETTINGS_NAV_ITEMS.map(item => `
+    <tr>
+      <td>${escapeHtml(item.label)}</td>
+      <td style="text-align:center"><input type="checkbox" data-nav-user="${item.href}" ${perms.user.includes(item.href) ? 'checked' : ''}/></td>
+      <td style="text-align:center"><input type="checkbox" data-nav-superuser="${item.href}" ${perms.superuser.includes(item.href) ? 'checked' : ''}/></td>
+    </tr>
+  `).join('');
+}
+document.getElementById('saveNavPermsBtn').onclick = async () => {
+  const body = document.getElementById('navPermsBody');
+  const user = Array.from(body.querySelectorAll('[data-nav-user]:checked')).map(el => el.dataset.navUser);
+  const superuser = Array.from(body.querySelectorAll('[data-nav-superuser]:checked')).map(el => el.dataset.navSuperuser);
+  const msg = document.getElementById('navPermsMsg');
+  const r = await fetch('/api/integrations/nav-permissions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user, superuser }),
+  });
+  msg.textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) showToast('Tab access saved');
+};
 document.getElementById('addUserBtn').onclick = () => document.getElementById('userModal').classList.add('show');
 document.getElementById('cancelUserBtn').onclick = () => document.getElementById('userModal').classList.remove('show');
 document.getElementById('saveUserBtn').onclick = async () => {
@@ -823,6 +875,7 @@ document.getElementById('resetAllThemesBtn').onclick = async () => {
 loadStatuses();
 loadFields();
 loadUsers();
+loadNavPermissions();
 loadFooters();
 loadEmailTheme();
 loadSesSettings();

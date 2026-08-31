@@ -77,6 +77,23 @@ export function getTrackingSettings() {
   };
 }
 
+// Which sidebar tabs (crm-nav.js's NAV_ITEMS hrefs) each non-admin role can
+// see and reach -- admin is deliberately never stored here, always full
+// access, so an admin can't accidentally lock themselves out while editing
+// this. Defaults to Inbox + Contacts only for user/superuser until an admin
+// opens it up further from Settings > Users.
+const DEFAULT_NAV_PERMISSIONS = {
+  user: ["/inbox.html", "/contacts.html"],
+  superuser: ["/inbox.html", "/contacts.html"],
+};
+export function getNavPermissions() {
+  const stored = readSettings().navPermissions || {};
+  return {
+    user: Array.isArray(stored.user) ? stored.user : DEFAULT_NAV_PERMISSIONS.user,
+    superuser: Array.isArray(stored.superuser) ? stored.superuser : DEFAULT_NAV_PERMISSIONS.superuser,
+  };
+}
+
 export function getComplianceSettings() {
   const c = readSettings().compliance || {};
   return {
@@ -112,6 +129,12 @@ export async function handleIntegrationsRequest(req, res, url) {
   // theme and to power its own "Reset to default" button.
   if (p === "/api/integrations/email-theme" && req.method === "GET") {
     return sendJson(res, 200, { theme: getEmailTheme() });
+  }
+
+  // Same reasoning as site/email-theme above -- crm-nav.js needs this for
+  // EVERY user, on every page, to know which tabs to render/allow.
+  if (p === "/api/integrations/nav-permissions" && req.method === "GET") {
+    return sendJson(res, 200, getNavPermissions());
   }
 
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
@@ -180,6 +203,17 @@ export async function handleIntegrationsRequest(req, res, url) {
     if (Array.isArray(body.stopKeywords)) all.compliance.stopKeywords = body.stopKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === "/api/integrations/nav-permissions" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const all = readSettings();
+    all.navPermissions = all.navPermissions || {};
+    for (const role of ["user", "superuser"]) {
+      if (Array.isArray(body[role])) all.navPermissions[role] = body[role].filter(h => typeof h === "string");
+    }
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true, ...getNavPermissions() });
   }
 
   if (p === "/api/integrations/site" && req.method === "POST") {

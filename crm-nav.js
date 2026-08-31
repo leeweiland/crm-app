@@ -18,13 +18,22 @@
   const sidebar = document.getElementById("appSidebar");
   if (!sidebar) return;
 
-  const [meRes, siteRes] = await Promise.all([fetch("/api/auth/me"), fetch("/api/integrations/site")]);
+  const [meRes, siteRes, navPermRes] = await Promise.all([
+    fetch("/api/auth/me"), fetch("/api/integrations/site"), fetch("/api/integrations/nav-permissions"),
+  ]);
   if (!meRes.ok) {
     location.href = "/login.html?next=" + encodeURIComponent(location.pathname);
     return;
   }
   const me = (await meRes.json()).user;
   const logoUrl = siteRes.ok ? (await siteRes.json()).logoUrl : "";
+  // Admin is never restricted (see integrations_backend.js's
+  // getNavPermissions comment) -- user/superuser only see whichever tabs an
+  // admin has allowed for their role from Settings > Users, defaulting to
+  // just Inbox + Contacts.
+  const navPerms = navPermRes.ok ? await navPermRes.json() : { user: [], superuser: [] };
+  const allowedHrefs = me.role === "admin" ? null : new Set(navPerms[me.role] || []);
+  const visibleItems = allowedHrefs ? NAV_ITEMS.filter(item => allowedHrefs.has(item.href)) : NAV_ITEMS;
   // A logo replaces the text wordmark entirely rather than sitting next to
   // it -- matches how the booking page's branding works (logo present hides
   // the brand-name line there too).
@@ -33,10 +42,18 @@
     : `Pacific Rim Athletics`;
 
   const path = location.pathname;
+  // Real enforcement, not just hiding the link -- a user/superuser landing
+  // directly on a URL their role isn't allowed (typed in, bookmarked, an
+  // old link) gets bounced to the first tab they DO have, same as an
+  // expired session bouncing to login above.
+  if (allowedHrefs && !allowedHrefs.has(path) && visibleItems.length) {
+    location.href = visibleItems[0].href;
+    return;
+  }
   sidebar.innerHTML = `
     <div class="app-sidebar-logo">${logoHtml}</div>
     <nav>
-      ${NAV_ITEMS.map(item => `<a class="app-nav-link${path === item.href ? " active" : ""}" href="${item.href}">${item.label}</a>`).join("")}
+      ${visibleItems.map(item => `<a class="app-nav-link${path === item.href ? " active" : ""}" href="${item.href}">${item.label}</a>`).join("")}
     </nav>
     <div class="app-sidebar-footer">
       ${me.first} ${me.last}<br/>
