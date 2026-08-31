@@ -274,12 +274,16 @@ export async function handleAiAgentsRequest(req, res, url) {
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
     const agents = readJson(AI_AGENTS_FILE, []);
-    const agent = agents.find((a) => a.id === chatMatch[1]);
-    if (!agent) return sendJson(res, 404, { error: "Agent not found" });
+    const savedAgent = agents.find((a) => a.id === chatMatch[1]);
+    if (!savedAgent) return sendJson(res, 404, { error: "Agent not found" });
 
     try {
-      const { messages, contactId } = await readJsonBody(req);
+      const { messages, contactId, agentDraft } = await readJsonBody(req);
       if (!Array.isArray(messages) || !messages.length) return sendJson(res, 400, { error: "messages array required" });
+      // Test chat from the editor should reflect whatever's in the form right
+      // now, not just what's already saved -- lets you tweak the system
+      // prompt and immediately try it without saving first.
+      const agent = agentDraft && typeof agentDraft === "object" ? { ...savedAgent, ...agentDraft } : savedAgent;
 
       let journeyBlock = "";
       if (contactId) {

@@ -13,14 +13,48 @@
   .send-mode-pill { font-size: .66rem; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--pra-dim); }
   .send-mode-auto { background: rgba(255,159,10,.15); color: #ff9f0a; }
   .editor-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; z-index: 500; }
-  .editor-panel { background: #16161a; border: 1px solid #2a2a30; border-radius: 12px; padding: 24px; width: 100%; max-width: 680px; }
+  .editor-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 12px; padding: 24px; width: 100%; max-width: 1040px; }
+  .editor-grid { display: flex; gap: 24px; align-items: flex-start; }
+  .editor-settings { flex: 1; min-width: 0; }
   .editor-row { margin-bottom: 16px; }
   .editor-row label { display: block; font-size: .8rem; color: var(--pra-dim); margin-bottom: 6px; }
-  .editor-row input[type=text], .editor-row textarea, .editor-row select { width: 100%; background: #0d0d10; border: 1px solid #2a2a30; border-radius: 8px; color: #eee; padding: 9px 11px; font-size: .88rem; font-family: inherit; }
+  .editor-row input[type=text], .editor-row textarea, .editor-row select { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); padding: 9px 11px; font-size: .88rem; font-family: inherit; }
+  .editor-row input[type=text]:focus, .editor-row textarea:focus, .editor-row select:focus { outline: none; border-color: var(--pra-blue); box-shadow: 0 0 0 3px var(--pra-blue-dim); }
   .editor-row textarea { min-height: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8rem; line-height: 1.5; resize: vertical; }
-  .checkbox-grid { display: flex; flex-wrap: wrap; gap: 10px; }
-  .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: #eee; background: #0d0d10; border: 1px solid #2a2a30; border-radius: 8px; padding: 6px 10px; }
+  /* Single boolean toggles (Active, AI Assist) -- a plain browser checkbox
+     reads as unstyled/broken against this dark theme, so give it the app's
+     accent color instead of stark white. */
+  .editor-row > label input[type=checkbox] { width: auto; margin-right: 6px; accent-color: var(--pra-blue); transform: scale(1.05); vertical-align: -2px; }
+  .checkbox-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .checkbox-grid label { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--pra-dim); background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; padding: 6px 10px; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+  .checkbox-grid label:hover { border-color: var(--pra-dim); }
+  .checkbox-grid label:has(input:checked) { background: var(--pra-blue-dim); border-color: var(--pra-blue); color: var(--pra-white); }
+  .checkbox-grid input[type=checkbox] { accent-color: var(--pra-blue); }
   .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+  /* ── Test Conversation panel -- same iMessage-bubble pattern as the
+     stand-alone role-play chat prototype, embedded directly in the editor
+     so a system-prompt edit can be tried immediately without saving first. ── */
+  .tc-panel { display: flex; flex-direction: column; width: 360px; flex-shrink: 0; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; background: var(--pra-panel-2); align-self: stretch; }
+  .tc-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
+  .tc-header .tc-title { font-weight: 700; font-size: .84rem; }
+  .tc-header .tc-sub { font-size: .68rem; color: var(--pra-dim); }
+  .tc-reset-btn { margin-left: auto; background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); border-radius: 7px; padding: 5px 10px; font-size: .72rem; cursor: pointer; flex-shrink: 0; }
+  .tc-reset-btn:hover { color: var(--pra-white); border-color: var(--pra-dim); }
+  .tc-thread { flex: 1; min-height: 320px; max-height: 460px; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .tc-bubble-row { display: flex; }
+  .tc-bubble-row.user { justify-content: flex-end; }
+  .tc-bubble { max-width: 85%; padding: 8px 12px; border-radius: 14px; font-size: .85rem; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }
+  .tc-bubble-row.user .tc-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
+  .tc-bubble-row.assistant .tc-bubble { background: var(--pra-panel); color: var(--pra-white); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
+  .tc-typing { font-size: .76rem; color: var(--pra-dim); padding: 2px 4px; }
+  .tc-empty { color: var(--pra-dim); font-size: .78rem; text-align: center; padding: 30px 16px; line-height: 1.5; margin: auto; }
+  .tc-input-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--pra-border); flex-shrink: 0; }
+  .tc-input-row textarea { flex: 1; resize: none; min-height: 36px; max-height: 100px; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); padding: 8px 10px; font-size: .84rem; font-family: inherit; }
+  .tc-input-row textarea:focus { outline: none; border-color: var(--pra-blue); }
+  .tc-send-btn { background: var(--pra-blue); color: #fff; border: none; border-radius: 8px; padding: 0 16px; font-size: .82rem; font-weight: 700; cursor: pointer; flex-shrink: 0; }
+  .tc-send-btn:disabled { opacity: .5; cursor: default; }
+  @media (max-width: 860px) { .editor-grid { flex-direction: column; } .tc-panel { width: 100%; } }
 </style>
 </head>
 <body>
@@ -51,48 +85,69 @@
   <div class="editor-panel">
     <div class="pra-h2" id="editorTitle" style="margin-bottom:18px">New Agent</div>
 
-    <div class="editor-row">
-      <label>Name</label>
-      <input type="text" id="fName" placeholder="e.g. Alexis — Sales Closer"/>
-    </div>
-    <div class="editor-row">
-      <label>Description</label>
-      <input type="text" id="fDescription" placeholder="What this agent is for"/>
-    </div>
-    <div class="editor-row">
-      <label><input type="checkbox" id="fActive" style="width:auto;margin-right:6px"/> Active</label>
-    </div>
-    <div class="editor-row">
-      <label><input type="checkbox" id="fAiAssist" style="width:auto;margin-right:6px"/> AI Assist — auto-generate a reply when a matching lead messages in, and show it in the Inbox for review</label>
-      <div class="pra-muted" style="font-size:.74rem;margin-top:4px">Off by default. When off, this agent only responds when you chat with it directly from this page — it never touches real conversations.</div>
-    </div>
-    <div class="editor-row">
-      <label>Send mode (only matters if AI Assist is on)</label>
-      <select id="fSendMode">
-        <option value="draft">Draft for review (replies wait for a human to approve/send)</option>
-        <option value="auto">Auto-send (replies go out immediately, no review)</option>
-      </select>
-    </div>
-    <div class="editor-row">
-      <label>Active for lead type</label>
-      <div class="checkbox-grid" id="fProgramTypes">
-        <label><input type="checkbox" value="online"/> Online</label>
-        <label><input type="checkbox" value="gym"/> Gym</label>
+    <div class="editor-grid">
+      <div class="editor-settings">
+        <div class="editor-row">
+          <label>Name</label>
+          <input type="text" id="fName" placeholder="e.g. Alexis — Sales Closer"/>
+        </div>
+        <div class="editor-row">
+          <label>Description</label>
+          <input type="text" id="fDescription" placeholder="What this agent is for"/>
+        </div>
+        <div class="editor-row">
+          <label><input type="checkbox" id="fActive"/> Active</label>
+        </div>
+        <div class="editor-row">
+          <label><input type="checkbox" id="fAiAssist"/> AI Assist — auto-generate a reply when a matching lead messages in, and show it in the Inbox for review</label>
+          <div class="pra-muted" style="font-size:.74rem;margin-top:4px">Off by default. When off, this agent only responds when you chat with it directly from this page — it never touches real conversations.</div>
+        </div>
+        <div class="editor-row">
+          <label>Send mode (only matters if AI Assist is on)</label>
+          <select id="fSendMode">
+            <option value="draft">Draft for review (replies wait for a human to approve/send)</option>
+            <option value="auto">Auto-send (replies go out immediately, no review)</option>
+          </select>
+        </div>
+        <div class="editor-row">
+          <label>Active for lead type</label>
+          <div class="checkbox-grid" id="fProgramTypes">
+            <label><input type="checkbox" value="online"/> Online</label>
+            <label><input type="checkbox" value="gym"/> Gym</label>
+          </div>
+          <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all types</div>
+        </div>
+        <div class="editor-row">
+          <label>Active for status</label>
+          <div class="checkbox-grid" id="fStatuses"></div>
+          <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all statuses</div>
+        </div>
+        <div class="editor-row">
+          <label>Steps in for these users (when they're marked away)</label>
+          <div class="checkbox-grid" id="fCoverUsers"></div>
+        </div>
+        <div class="editor-row" style="margin-bottom:0">
+          <label>System prompt</label>
+          <textarea id="fSystemPrompt"></textarea>
+        </div>
       </div>
-      <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all types</div>
-    </div>
-    <div class="editor-row">
-      <label>Active for status</label>
-      <div class="checkbox-grid" id="fStatuses"></div>
-      <div class="pra-muted" style="font-size:.74rem;margin-top:4px">None checked = all statuses</div>
-    </div>
-    <div class="editor-row">
-      <label>Steps in for these users (when they're marked away)</label>
-      <div class="checkbox-grid" id="fCoverUsers"></div>
-    </div>
-    <div class="editor-row">
-      <label>System prompt</label>
-      <textarea id="fSystemPrompt"></textarea>
+
+      <div class="tc-panel">
+        <div class="tc-header">
+          <div>
+            <div class="tc-title">Test Conversation</div>
+            <div class="tc-sub">Talk to this agent using what's in the form right now</div>
+          </div>
+          <button class="tc-reset-btn" id="tcResetBtn" type="button">Reset</button>
+        </div>
+        <div class="tc-thread" id="tcThread">
+          <div class="tc-empty" id="tcEmpty">Send a message as a lead would — the agent replies using the name, description, system prompt, and send mode currently in this form (even if unsaved).</div>
+        </div>
+        <div class="tc-input-row">
+          <textarea id="tcInput" rows="1" placeholder="Type a message to test…"></textarea>
+          <button class="tc-send-btn" id="tcSendBtn" type="button">Send</button>
+        </div>
+      </div>
     </div>
 
     <div class="editor-actions">
@@ -193,12 +248,128 @@ async function openEditor(agentId) {
   document.querySelectorAll('#fProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
   renderStatusCheckboxes(agent.targeting?.statuses || []);
   renderUserCheckboxes(agent.targeting?.coverForUserIds || []);
+  resetTestChat();
   document.getElementById('editorBackdrop').style.display = 'flex';
 }
 function closeEditor() {
   document.getElementById('editorBackdrop').style.display = 'none';
   editingAgentId = null;
 }
+
+// ── Test Conversation -- same streaming-bubble pattern as the standalone
+// role-play chat prototype, but talking to this agent's real /chat endpoint
+// with whatever's currently in the form (see agentDraft below), not just
+// what's already saved.
+let tcHistory = [];
+const TC_EMPTY_TEXT = document.getElementById('tcEmpty').textContent;
+function tcThread() { return document.getElementById('tcThread'); }
+function resetTestChat() {
+  tcHistory = [];
+  tcThread().innerHTML = `<div class="tc-empty" id="tcEmpty">${escapeHtml(TC_EMPTY_TEXT)}</div>`;
+}
+function tcScrollToBottom() { const t = tcThread(); t.scrollTop = t.scrollHeight; }
+function addTcBubble(role, text) {
+  const empty = document.getElementById('tcEmpty');
+  if (empty) empty.remove();
+  const row = document.createElement('div');
+  row.className = 'tc-bubble-row ' + (role === 'user' ? 'user' : 'assistant');
+  const bubble = document.createElement('div');
+  bubble.className = 'tc-bubble';
+  bubble.textContent = text;
+  row.appendChild(bubble);
+  tcThread().appendChild(row);
+  tcScrollToBottom();
+  return bubble;
+}
+function setTcTyping(on) {
+  let el = document.getElementById('tcTypingIndicator');
+  if (on) {
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'tcTypingIndicator';
+      el.className = 'tc-typing';
+      el.textContent = 'Agent is typing…';
+      tcThread().appendChild(el);
+      tcScrollToBottom();
+    }
+  } else if (el) el.remove();
+}
+function currentAgentDraft() {
+  return {
+    name: document.getElementById('fName').value.trim() || 'Untitled Agent',
+    description: document.getElementById('fDescription').value.trim(),
+    systemPrompt: document.getElementById('fSystemPrompt').value,
+    sendMode: document.getElementById('fSendMode').value,
+  };
+}
+async function sendTestChatMessage() {
+  const input = document.getElementById('tcInput');
+  const sendBtn = document.getElementById('tcSendBtn');
+  const text = input.value.trim();
+  if (!text || !editingAgentId) return;
+  input.value = '';
+  input.style.height = 'auto';
+  addTcBubble('user', text);
+  tcHistory.push({ role: 'user', content: text });
+  sendBtn.disabled = true;
+  setTcTyping(true);
+
+  let bubble = null, full = '';
+  try {
+    const res = await fetch(`/api/ai-agents/${editingAgentId}/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: tcHistory, agentDraft: currentAgentDraft() }),
+    });
+    if (!res.ok || !res.body) {
+      let detail = res.status;
+      try { detail = (await res.json()).error || detail; } catch {}
+      setTcTyping(false);
+      addTcBubble('assistant', '[error contacting agent: ' + detail + ']');
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6);
+        if (payload === '[DONE]') continue;
+        let evt;
+        try { evt = JSON.parse(payload); } catch { continue; }
+        if (evt.text) {
+          if (!bubble) { setTcTyping(false); bubble = addTcBubble('assistant', ''); }
+          full += evt.text;
+          bubble.textContent = full;
+          tcScrollToBottom();
+        }
+      }
+    }
+    setTcTyping(false);
+    if (full) tcHistory.push({ role: 'assistant', content: full });
+    else if (!bubble) addTcBubble('assistant', '[no reply received]');
+  } catch (err) {
+    setTcTyping(false);
+    addTcBubble('assistant', '[network error: ' + err.message + ']');
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+document.getElementById('tcSendBtn').addEventListener('click', sendTestChatMessage);
+document.getElementById('tcResetBtn').addEventListener('click', resetTestChat);
+document.getElementById('tcInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTestChatMessage(); }
+});
+document.getElementById('tcInput').addEventListener('input', (e) => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
+});
 
 async function saveAgent() {
   const payload = {
