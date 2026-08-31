@@ -38,14 +38,38 @@ function zonedTimeToUtc(dateStr, timeStr, timeZone) {
   const diff = asIfUtc.getTime() - inZone.getTime();
   return new Date(asIfUtc.getTime() + diff);
 }
-function computeStepDueDate(workflow, enrolledAtISO, dayOffset) {
+// Steps carry a real delayValue+delayUnit (hours/days/weeks/months) instead
+// of only whole days, matching how Close's own sequences mix a fast
+// same-hour first reply with day/week-scale follow-ups. "hours" is treated
+// as an exact-time offset (a lead who signs up at 2pm shouldn't have their
+// 2-hour follow-up silently pushed to tomorrow's send window) -- everything
+// coarser than a day still goes through the existing sending-day/window/
+// blackout-date search, since those only make sense at day granularity.
+// dayOffset is read as a fallback for steps saved before this field existed.
+function computeStepDueDate(workflow, enrolledAtISO, step) {
   const rs = workflow.recipientSettings || {};
   const tz = rs.timezone || "America/Anchorage";
   const sendingDays = rs.sendingDays?.length ? rs.sendingDays : ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
   const blackoutDates = rs.blackoutDates || [];
   const windowStart = rs.sendingWindow?.start || "09:00";
+  const unit = step?.delayUnit || "days";
+  const amount = step?.delayValue ?? step?.dayOffset ?? 0;
+
+  if (unit === "hours") {
+    let target = new Date(new Date(enrolledAtISO).getTime() + amount * 3600000);
+    for (let i = 0; i < 14; i++) {
+      const dateStr = target.toISOString().slice(0, 10);
+      const wd = weekdayInZone(dateStr, tz);
+      if (sendingDays.includes(wd) && !blackoutDates.includes(dateStr)) return target.toISOString();
+      target = new Date(target.getTime() + 86400000);
+      target = new Date(zonedTimeToUtc(target.toISOString().slice(0, 10), windowStart, tz));
+    }
+    return new Date(Date.now() + 86400000).toISOString();
+  }
+
+  const days = unit === "weeks" ? amount * 7 : unit === "months" ? amount * 30 : amount;
   let d = new Date(enrolledAtISO);
-  d.setUTCDate(d.getUTCDate() + (dayOffset || 0));
+  d.setUTCDate(d.getUTCDate() + (days || 0));
   for (let i = 0; i < 14; i++) {
     const dateStr = d.toISOString().slice(0, 10);
     const wd = weekdayInZone(dateStr, tz);
@@ -72,7 +96,7 @@ export function enrollContactInWorkflow(workflow, contactId) {
   if (!workflow.steps.length) return;
   const enrollment = {
     id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: 0,
-    enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[0].dayOffset || 0),
+    enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[0]),
     completedAt: null, goalMetAt: null,
   };
   enrollments.push(enrollment);
@@ -138,7 +162,7 @@ export async function advanceDueWorkflowEnrollments() {
     enrollment.currentStepIndex = nextIndex;
     if (enrollment.status === "active") {
       if (nextStep) {
-        enrollment.nextStepDueAt = computeStepDueDate(workflow, enrollment.enrolledAt, nextStep.dayOffset || 0);
+        enrollment.nextStepDueAt = computeStepDueDate(workflow, enrollment.enrolledAt, nextStep);
       } else {
         enrollment.status = "completed"; enrollment.completedAt = new Date().toISOString(); enrollment.nextStepDueAt = null;
       }

@@ -37,10 +37,24 @@
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; max-width: 100%; text-align: left; position: relative; transition: border-color .12s; }
-  .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; display: flex; align-items: center; gap: 4px; }
-  .step-day-input { width: 42px; background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); border-radius: 4px; color: var(--pra-white); font-family: var(--font-secondary); font-size: .68rem; text-align: center; padding: 1px 2px; }
-  .step-day-input:focus { outline: none; border-color: var(--pra-blue); }
-  .step-body-input { display: block; width: 100%; background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--pra-white); font-size: .88rem; font-family: inherit; margin-top: 4px; padding: 5px 7px; margin-left: -7px; resize: vertical; line-height: 1.4; }
+  .step-delay-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-right: 26px; }
+  .step-delay-label { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
+  .step-delay-sms-tag { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
+  /* Always-visible +/- buttons instead of relying on native number-input
+     spinners, which fade in on hover only (or not at all) depending on
+     browser/theme -- unreliable for something meant to be a primary control. */
+  .step-day-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--pra-border); border-radius: 7px; overflow: hidden; flex-shrink: 0; }
+  .step-day-stepper button { background: var(--pra-panel); border: none; color: var(--pra-dim); width: 26px; cursor: pointer; font-size: 1rem; line-height: 1; }
+  .step-day-stepper button:hover { background: rgba(255,255,255,0.1); color: var(--pra-white); }
+  .step-day-input { width: 52px; text-align: center; background: rgba(255,255,255,0.05); border: none; border-left: 1px solid var(--pra-border); border-right: 1px solid var(--pra-border); color: var(--pra-white); font-family: var(--font-primary); font-size: 1rem; font-weight: 700; padding: 4px 2px; -moz-appearance: textfield; }
+  .step-day-input::-webkit-outer-spin-button, .step-day-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .step-day-input:focus { outline: none; background: rgba(0,155,255,0.1); }
+  .step-unit-select { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); border-radius: 7px; color: var(--pra-white); font-size: .8rem; font-weight: 600; padding: 5px 8px; }
+  .step-unit-select:focus { outline: none; border-color: var(--pra-blue); }
+  /* Height is set by JS (autoGrow) to fit the actual content -- resize:none
+     because a manual drag-handle would fight the auto-grow on the next
+     keystroke, overflow:hidden so it never shows an internal scrollbar. */
+  .step-body-input { display: block; width: 100%; background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--pra-white); font-size: .88rem; font-family: inherit; margin-top: 8px; padding: 5px 7px; margin-left: -7px; resize: none; overflow: hidden; line-height: 1.4; }
   .step-body-input:hover { border-color: var(--pra-border); }
   .step-body-input:focus { outline: none; border-color: var(--pra-blue); background: rgba(255,255,255,0.03); }
   .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
@@ -194,7 +208,7 @@ function uid() { return 'wst' + Math.random().toString(36).slice(2, 10); }
 
 const workflowId = new URLSearchParams(location.search).get('id');
 let workflow = null, allLists = [], allTags = [], allEventTypes = [];
-let saveTimer, pendingInsertDayOffset;
+let saveTimer, pendingInsertDelay;
 
 // Contacts are NOT preloaded here -- the full list is 176k+ rows (a ~13MB
 // response that took 25+ seconds and blocked the entire page from
@@ -248,24 +262,51 @@ function renderOverview() {
 const TRIG_LABELS = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: 'Contact visits a page', booking_created: 'Booking is created' };
 const GOAL_SHORT_LABELS = { incoming_email: 'Incoming email', incoming_sms: 'Incoming SMS', incoming_call: 'Incoming call', meeting_booked: 'Meeting booked', lead_status_change: 'Lead status change', outcome_met: 'Outcome met' };
 
+// Same conversion table as workflows_backend.js's stepDelayMinutes -- used
+// here only for sort order, since the server is the one that actually
+// schedules sends. dayOffset is read as a fallback for steps saved before
+// delayValue/delayUnit existed.
+const DELAY_UNIT_MINUTES = { hours: 60, days: 1440, weeks: 10080, months: 43200 };
+function stepDelayMinutes(step) {
+  const amount = step.delayValue ?? step.dayOffset ?? 0;
+  const unit = step.delayUnit || 'days';
+  return amount * (DELAY_UNIT_MINUTES[unit] || 1440);
+}
+function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+
 // Same insert-step-btn affordance as automation-builder.html's arrowHtml --
 // wraps an arrow with a hoverable "+" that opens the type picker seeded
 // with a dayOffset that sorts it into this exact gap. insertAfterDay is
 // null for the gap before the very first step.
-function arrowHtml(insertAfterDay) {
-  return `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-insert-after="${insertAfterDay === null ? '' : insertAfterDay}" title="Insert a step here">+</button></div>`;
+function arrowHtml(afterStep) {
+  const attr = afterStep ? `${afterStep.delayValue ?? afterStep.dayOffset ?? 0}|${afterStep.delayUnit || 'days'}` : '';
+  return `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-insert-after="${attr}" title="Insert a step here">+</button></div>`;
 }
 function renderCanvas() {
   const canvas = document.getElementById('wfCanvas');
-  const sorted = [...workflow.steps].sort((a, b) => a.dayOffset - b.dayOffset);
-  const stepHtml = sorted.map((step, i) => `
+  const sorted = [...workflow.steps].sort((a, b) => stepDelayMinutes(a) - stepDelayMinutes(b));
+  const stepHtml = sorted.map((step, i) => {
+    const amount = step.delayValue ?? step.dayOffset ?? 0;
+    const unit = step.delayUnit || 'days';
+    const unitOptionsHtml = ['hours', 'days', 'weeks', 'months'].map(u => `<option value="${u}" ${u === unit ? 'selected' : ''}>${u[0].toUpperCase()}${u.slice(1)}</option>`).join('');
+    return `
     <div class="step-card" data-step-id="${step.id}">
       <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>
-      <div class="step-type">${step.type === 'sms' ? 'DAY' : 'WAIT UNTIL DAY'} <input type="number" min="0" class="step-day-input" data-day-for="${step.id}" value="${step.dayOffset}"/>${step.type === 'sms' ? ' &middot; SMS' : ''}</div>
-      ${step.type === 'sms' ? `<textarea class="step-body-input" data-body-for="${step.id}" rows="2" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>` : ''}
+      <div class="step-delay-row">
+        <span class="step-delay-label">${step.type === 'sms' ? 'Send after' : 'Wait'}</span>
+        <div class="step-day-stepper">
+          <button type="button" class="step-day-dec" data-day-for="${step.id}" title="Decrease">&minus;</button>
+          <input type="number" min="0" class="step-day-input" data-day-for="${step.id}" value="${amount}"/>
+          <button type="button" class="step-day-inc" data-day-for="${step.id}" title="Increase">+</button>
+        </div>
+        <select class="step-unit-select" data-unit-for="${step.id}">${unitOptionsHtml}</select>
+        ${step.type === 'sms' ? '<span class="step-delay-sms-tag">&middot; SMS</span>' : ''}
+      </div>
+      ${step.type === 'sms' ? `<textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>` : ''}
     </div>
-    ${i < sorted.length - 1 ? arrowHtml(step.dayOffset) : '<div class="chain-arrow">&darr;</div>'}
-  `).join('');
+    ${i < sorted.length - 1 ? arrowHtml(step) : '<div class="chain-arrow">&darr;</div>'}
+  `;
+  }).join('');
   // The goal card isn't part of workflow.steps (goals aren't day-ordered --
   // they can fire at any point during enrollment), so it's a fixed card
   // right after Trigger rather than something that sorts into the chain.
@@ -289,7 +330,7 @@ function renderCanvas() {
   document.getElementById('triggerCardBtn').onclick = () => openModal('triggerModal');
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalsModal;
-  document.getElementById('addStepBtn').onclick = () => { pendingInsertDayOffset = undefined; openModal('typePickerModal'); };
+  document.getElementById('addStepBtn').onclick = () => { pendingInsertDelay = undefined; openModal('typePickerModal'); };
   canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
     if (!confirm('Delete this step?')) return;
@@ -297,36 +338,59 @@ function renderCanvas() {
     renderCanvas(); saveDebounced();
   });
   canvas.querySelectorAll('[data-insert-after]').forEach(btn => btn.onclick = () => {
-    pendingInsertDayOffset = btn.dataset.insertAfter === '' ? 0 : Number(btn.dataset.insertAfter);
+    const raw = btn.dataset.insertAfter;
+    if (!raw) { pendingInsertDelay = null; }
+    else { const [v, u] = raw.split('|'); pendingInsertDelay = { value: Number(v), unit: u }; }
     openModal('typePickerModal');
   });
-  // Click straight into a step's day-offset or message to edit -- no popup.
-  // Day-offset changes affect sort order/insert-gaps, so those re-render on
-  // blur; the message body doesn't, so it just saves without disturbing
+  // Click straight into a step's delay amount/unit or message to edit -- no
+  // popup. Delay changes affect sort order/insert-gaps, so those re-render
+  // on blur; the message body doesn't, so it just saves without disturbing
   // whatever else the user might still be typing elsewhere on the canvas.
-  canvas.querySelectorAll('[data-day-for]').forEach(input => input.addEventListener('change', () => {
-    const step = workflow.steps.find(s => s.id === input.dataset.dayFor);
+  function commitDelay(stepId, mutate) {
+    const step = workflow.steps.find(s => s.id === stepId);
     if (!step) return;
-    step.dayOffset = Number(input.value) || 0;
+    mutate(step);
+    delete step.dayOffset; // fully migrated off the old whole-days-only field
     renderCanvas(); saveDebounced();
+  }
+  canvas.querySelectorAll('.step-day-input').forEach(input => input.addEventListener('change', () => {
+    commitDelay(input.dataset.dayFor, step => { step.delayValue = Math.max(0, Number(input.value) || 0); });
   }));
-  canvas.querySelectorAll('[data-body-for]').forEach(textarea => textarea.addEventListener('change', () => {
-    const step = workflow.steps.find(s => s.id === textarea.dataset.bodyFor);
-    if (!step) return;
-    step.config = { body: textarea.value };
-    saveDebounced();
+  canvas.querySelectorAll('.step-day-dec').forEach(btn => btn.onclick = () => {
+    const input = canvas.querySelector(`.step-day-input[data-day-for="${btn.dataset.dayFor}"]`);
+    input.value = Math.max(0, (Number(input.value) || 0) - 1);
+    input.dispatchEvent(new Event('change'));
+  });
+  canvas.querySelectorAll('.step-day-inc').forEach(btn => btn.onclick = () => {
+    const input = canvas.querySelector(`.step-day-input[data-day-for="${btn.dataset.dayFor}"]`);
+    input.value = (Number(input.value) || 0) + 1;
+    input.dispatchEvent(new Event('change'));
+  });
+  canvas.querySelectorAll('[data-unit-for]').forEach(sel => sel.addEventListener('change', () => {
+    commitDelay(sel.dataset.unitFor, step => { step.delayUnit = sel.value; });
   }));
+  canvas.querySelectorAll('[data-body-for]').forEach(textarea => {
+    autoGrow(textarea);
+    textarea.addEventListener('input', () => autoGrow(textarea));
+    textarea.addEventListener('change', () => {
+      const step = workflow.steps.find(s => s.id === textarea.dataset.bodyFor);
+      if (!step) return;
+      step.config = { body: textarea.value };
+      saveDebounced();
+    });
+  });
 }
 
 document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => btn.onclick = () => {
   closeModal('typePickerModal');
   if (btn.dataset.type === 'goal') { openGoalsModal(); return; }
-  const dayOffset = pendingInsertDayOffset ?? (btn.dataset.type === 'sms' ? 0 : 1);
-  const step = { id: uid(), order: workflow.steps.length, dayOffset, type: btn.dataset.type, config: btn.dataset.type === 'sms' ? { body: '' } : {} };
+  const delay = pendingInsertDelay || { value: btn.dataset.type === 'sms' ? 0 : 1, unit: 'days' };
+  const step = { id: uid(), order: workflow.steps.length, delayValue: delay.value, delayUnit: delay.unit, type: btn.dataset.type, config: btn.dataset.type === 'sms' ? { body: '' } : {} };
   workflow.steps.push(step);
   renderCanvas(); saveDebounced();
   const wfCanvas = document.getElementById('wfCanvas');
-  const toFocus = wfCanvas.querySelector(`[data-body-for="${step.id}"]`) || wfCanvas.querySelector(`[data-day-for="${step.id}"]`);
+  const toFocus = wfCanvas.querySelector(`[data-body-for="${step.id}"]`) || wfCanvas.querySelector(`.step-day-input[data-day-for="${step.id}"]`);
   if (toFocus) toFocus.focus();
 });
 
