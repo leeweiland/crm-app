@@ -80,14 +80,6 @@ export function renderEmailBody(bodyBlocks, footerHtml, theme) {
   // footer disclaimer). Pre-empting it with a real link the color:inherit's
   // from wherever it sits stops the recipient's client from re-styling it.
   wrapped = autoLinkPlainEmails(wrapped);
-  // Applied to the WHOLE rendered email (body and footer both) -- an
-  // address typed directly into any text block's own content (not just a
-  // template's dedicated physicalAddress field) gets the same treatment.
-  // Broad on purpose: a "digits + capitalized word" match is a loose
-  // heuristic (would also fire on plain sentences like "2024 Was Great"),
-  // but the character it inserts is invisible either way, so a false match
-  // costs nothing -- there's no real content this needs to avoid touching.
-  wrapped = breakAddressPatterns(wrapped);
   return applyDefaultLinkColor(wrapped, t.linkColor);
 }
 
@@ -98,22 +90,14 @@ function autoLinkPlainEmails(html) {
     return part.replace(emailRe, (m) => `<a href="mailto:${m}" style="color:inherit;text-decoration:inherit">${m}</a>`);
   }).join("");
 }
-
-// Gmail (and others) recognize a street address in the raw text and apply
-// their own "smart chip" styling/link client-side, after the email
-// arrives -- entirely their own rendering step, not something the sent
-// HTML controls, and it happens regardless of surrounding color or even an
-// existing <a> wrapping the text. A zero-width non-joiner inserted right
-// after the leading digit run breaks their pattern match while staying
-// genuinely invisible when rendered (same technique buildPreheaderHtml
-// uses for the inbox-preview snippet).
-function breakAddressPatterns(html) {
-  const numberWordRe = /(\d{2,6})(\s+[A-Za-z])/g;
-  return html.split(/(<a\b[^>]*>[\s\S]*?<\/a>)/gi).map(part => {
-    if (/^<a\b/i.test(part)) return part;
-    return part.replace(numberWordRe, (m, num, tail) => `${num}&zwnj;${tail}`);
-  }).join("");
-}
+// A street address (unlike an email address above) is NOT something this
+// stops Gmail from re-styling -- three different approaches were tried
+// (wrapping in a real link, an HTML comment, a zero-width character) and
+// none survived a real send. That strongly suggests Gmail's address
+// detection runs server-side when the mail is processed, before any of
+// this HTML ever reaches a browser to render -- which no sender-side
+// markup trick can defeat. Left as plain text; this is standard,
+// unavoidable behavior for any email with a footer address.
 
 // A link gets the theme's link color unless it already carries its own
 // explicit color (something a user picked in the Link popover) -- an email
