@@ -312,6 +312,7 @@ body { margin: 0; }
    body AND automation-builder.html's send-email step modal, so editing
    an email looks and behaves identically in both places. ── */
 .cb-layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; }
+.cb-sidebar { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; }
 .cb-sidebar > .pra-panel { padding: 18px; margin-bottom: 16px; }
 
 /* ── Toast ── */
@@ -335,11 +336,18 @@ body { margin: 0; }
 .be-side-panel { display: flex; flex-direction: column; gap: 12px; position: sticky; top: 20px; }
 .be-palette-panel { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 14px; }
 .be-palette-panel .be-add-row { margin-top: 0; }
-.be-toolbar { display: none; gap: 6px; align-items: center; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px 8px 0 0; padding: 8px 10px; flex-wrap: wrap; }
+.be-toolbar { display: none; gap: 6px; align-items: center; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px 8px 0 0; padding: 8px 10px; flex-wrap: wrap; position: sticky; top: 0; z-index: 5; }
 .be-toolbar button { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 4px 9px; cursor: pointer; font-size: .8rem; }
 .be-toolbar button:hover { border-color: var(--pra-blue); }
 .be-toolbar select, .be-toolbar input[type="color"] { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 3px 6px; font-size: .78rem; }
 .be-toolbar select option { background: var(--pra-panel); color: var(--pra-white); }
+/* Hex-first color field -- a text input for typing/pasting a hex value
+   directly (a native <input type="color">'s own picker UI can't be
+   reordered to put hex first), with a small swatch alongside for picking
+   visually; the two stay in sync either way. */
+.be-hex-color { display: inline-flex; align-items: center; gap: 4px; }
+.be-hex-color input[type="text"] { width: 76px; padding: 3px 6px; font-size: .78rem; }
+.be-hex-color input[type="color"] { width: 22px; height: 22px; padding: 1px; flex-shrink: 0; }
 .be-link-popover { display: inline-flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
 .be-link-popover input { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 4px; padding: 3px 6px; font-size: .78rem; width: 180px; }
 .be-canvas-toprow { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 6px; }
@@ -355,6 +363,10 @@ body { margin: 0; }
    actually applied, since normal weight was never asserted anywhere
    inside the canvas. */
 .be-canvas-inner { margin: 0 auto; background: #ffffff; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); overflow: hidden; font-family: Arial, Helvetica, sans-serif; font-weight: 400; }
+/* Matches applyDefaultLinkColor's send-time behavior -- only a link with no
+   explicit color of its own picks this up, since an inline style always
+   outranks this rule regardless of selector specificity. */
+.be-canvas-inner a { color: var(--be-link-color, #009bff); }
 .be-shell:has(.be-toolbar[style*="flex"]) .be-canvas { border-radius: 0 0 8px 8px; }
 .be-block { position: relative; border: 2px dashed transparent; cursor: pointer; }
 .be-block:hover { border-color: rgba(0,155,255,0.3); }

@@ -1,4 +1,5 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { DEFAULT_THEME } from "./block_editor_shared.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
@@ -21,6 +22,17 @@ export function getPublicBaseUrl() {
 export function getLogoUrl() {
   const v = readSettings().site?.logoUrl;
   return v !== undefined ? v : "/assets/pra-logo.png";
+}
+
+// The org-wide starting point for a NEW campaign or automation email-step's
+// theme -- copied in at creation time (not a live reference), same as every
+// other per-entity settings object in this app, so editing the org default
+// later never silently rewrites something someone already customized.
+// "Reset to default" (per-email, in the editor) and "reset all" (bulk, from
+// this settings page) are what re-copy it in deliberately.
+export function getEmailTheme() {
+  const stored = readSettings().emailTheme || {};
+  return { ...DEFAULT_THEME, ...stored };
 }
 
 export function getSesSettings() {
@@ -95,7 +107,25 @@ export async function handleIntegrationsRequest(req, res, url) {
     return sendJson(res, 200, { publicBaseUrl: getPublicBaseUrl(), websiteUrl: readSettings().site?.websiteUrl || "", logoUrl: getLogoUrl() });
   }
 
+  // Also readable by any logged-in user, not just admins -- every campaign/
+  // automation-step editor page needs this to seed a brand-new email's
+  // theme and to power its own "Reset to default" button.
+  if (p === "/api/integrations/email-theme" && req.method === "GET") {
+    return sendJson(res, 200, { theme: getEmailTheme() });
+  }
+
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+
+  if (p === "/api/integrations/email-theme" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const all = readSettings();
+    all.emailTheme = all.emailTheme || {};
+    for (const k of Object.keys(DEFAULT_THEME)) {
+      if (k in body) all.emailTheme[k] = body[k];
+    }
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true, theme: getEmailTheme() });
+  }
 
   if (p === "/api/integrations/ses" && req.method === "GET") {
     const s = getSesSettings();

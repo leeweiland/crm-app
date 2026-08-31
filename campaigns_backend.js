@@ -4,6 +4,7 @@ import { matchesSegment, CONTACTS_FILE, SEGMENTS_FILE } from "./contacts_backend
 import { sendEmail } from "./email_backend.js";
 import { getMessagesForSource } from "./message_log.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
+import { getEmailTheme } from "./integrations_backend.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
@@ -84,7 +85,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaigns = readJson(CAMPAIGNS_FILE, []);
     const campaign = {
       id: randomUUID(), name: name || "Untitled Campaign", status: "draft",
-      subject: "", previewText: "", blocks: [], theme: { background: "#ffffff", maxWidth: 650 }, footerTemplateId: null,
+      subject: "", previewText: "", blocks: [], theme: getEmailTheme(), footerTemplateId: null,
       recipients: { listIds: [], tagIds: [], segmentId: null, excludeListIds: [] },
       scheduledAt: null, sentAt: null,
       stats: { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 },
@@ -103,7 +104,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const copy = {
       id: randomUUID(), name: `Copy of ${source.name}`, status: "draft",
       subject: source.subject, blocks: JSON.parse(JSON.stringify(source.blocks)),
-      theme: JSON.parse(JSON.stringify(source.theme || { background: "#ffffff", maxWidth: 650 })),
+      theme: JSON.parse(JSON.stringify(source.theme || getEmailTheme())),
       footerTemplateId: source.footerTemplateId,
       recipients: JSON.parse(JSON.stringify(source.recipients)),
       scheduledAt: null, sentAt: null,
@@ -113,6 +114,18 @@ export async function handleCampaignsRequest(req, res, url) {
     campaigns.push(copy);
     writeJson(CAMPAIGNS_FILE, campaigns);
     return sendJson(res, 200, { ok: true, campaign: copy });
+  }
+
+  // Bulk reset (Settings > Email Theme's "reset all" button) -- re-copies
+  // the current org theme into every campaign. A single campaign's own
+  // "Reset to default" (in its editor) just updates local state and goes
+  // out through the normal autosave path instead of a dedicated endpoint.
+  if (p === "/api/campaigns/reset-all-themes" && req.method === "POST") {
+    const campaigns = readJson(CAMPAIGNS_FILE, []);
+    const theme = getEmailTheme();
+    campaigns.forEach(c => { c.theme = { ...theme }; c.updatedAt = new Date().toISOString(); });
+    writeJson(CAMPAIGNS_FILE, campaigns);
+    return sendJson(res, 200, { ok: true, count: campaigns.length });
   }
 
   const campaignMatch = p.match(/^\/api\/campaigns\/([^/]+)$/);

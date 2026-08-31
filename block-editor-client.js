@@ -6,6 +6,14 @@
 window.BlockEditor = (function () {
   function uid() { return 'b' + Math.random().toString(36).slice(2, 10); }
 
+  // Mirrors block_editor_shared.js's DEFAULT_THEME by hand (this file can't
+  // import that server module) -- keeps a theme-less email rendering
+  // identically in both the editor's own canvas and the actual sent HTML.
+  const DEFAULT_THEME = {
+    background: '#ffffff', maxWidth: 650, fontFamily: 'Arial, Helvetica, sans-serif',
+    fontSize: 15, textColor: '#222222', linkColor: '#009bff', lineHeight: 1.5, bodyPadding: 24,
+  };
+
   // One consistent line-icon language (Feather-style: 16x16, currentColor
   // stroke) everywhere the editor used to mix Unicode arrows with colorful
   // emoji (camera, radio button) -- the emoji in particular rendered taller
@@ -47,10 +55,27 @@ window.BlockEditor = (function () {
     return '';
   }
   function renderBlocksToHtml(blocks, theme) {
-    const t = theme || {};
-    const bg = t.background || '#ffffff';
-    const maxWidth = t.maxWidth || 650;
-    return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:${maxWidth}px;margin:0 auto;background:#ffffff">${(blocks || []).map(renderBlockHtml).join('')}</div></div>`;
+    const t = { ...DEFAULT_THEME, ...(theme || {}) };
+    const body = (blocks || []).map(renderBlockHtml).join('');
+    return `<div style="background:${t.background};padding:${t.bodyPadding}px 0;font-family:${t.fontFamily};font-size:${t.fontSize}px;line-height:${t.lineHeight};color:${t.textColor}"><div style="max-width:${t.maxWidth}px;margin:0 auto;background:#ffffff">${body}</div></div>`;
+  }
+
+  // A native <input type="color"> opens the OS's own picker, which no page
+  // can control the internal layout of -- on most platforms that buries hex
+  // entry behind RGB/HSL tabs. This pairs a plain text field (hex, typed or
+  // pasted directly -- the primary way to set a color) with a small native
+  // swatch alongside it (still there for picking visually), synced both ways.
+  function hexColorFieldHtml(id, value) {
+    const swatchVal = /^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#000000';
+    return `<span class="be-hex-color"><input type="text" class="pra-input" id="${id}" placeholder="#000000" value="${value || ''}" maxlength="7"/><input type="color" id="${id}Swatch" tabindex="-1" value="${swatchVal}"/></span>`;
+  }
+  function wireHexColorField(scope, id, onChange) {
+    const text = scope.querySelector('#' + id);
+    const swatch = scope.querySelector('#' + id + 'Swatch');
+    const commit = (v) => { if (/^#[0-9a-fA-F]{6}$/i.test(v)) { swatch.value = v; onChange(v); } };
+    text.addEventListener('input', () => commit(text.value.trim()));
+    swatch.addEventListener('input', () => { text.value = swatch.value; onChange(swatch.value); });
+    return text;
   }
 
   // initialState: { blocks: [...], theme: {background, maxWidth} }
@@ -62,7 +87,7 @@ window.BlockEditor = (function () {
   function init(rootEl, initialState, onChange, onFooterChange) {
     initialState = initialState || {};
     let blocks = (initialState.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
-    let theme = { background: '#ffffff', maxWidth: 650, ...(initialState.theme || {}) };
+    let theme = { ...DEFAULT_THEME, ...(initialState.theme || {}) };
     let selectedId = null;
     let showingThemePanel = false;
     let footerBlocks = [];
@@ -132,7 +157,7 @@ window.BlockEditor = (function () {
             <button type="button" data-cmd="justifyLeft">${ICON.alignLeft}</button>
             <button type="button" data-cmd="justifyCenter">${ICON.alignCenter}</button>
             <button type="button" data-cmd="justifyRight">${ICON.alignRight}</button>
-            <input type="color" id="beColor" title="Text color"/>
+            ${hexColorFieldHtml('beColor', '')}
             <select id="beFontFamily" title="Font">
               <option value="">Font...</option>
               <option value="Arial, Helvetica, sans-serif">Arial</option>
@@ -145,7 +170,7 @@ window.BlockEditor = (function () {
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option></select>
             <span class="be-link-popover" id="beLinkPopover" style="display:none">
               <input type="text" id="beLinkUrl" placeholder="https://"/>
-              <input type="color" id="beLinkColor" title="Link color"/>
+              ${hexColorFieldHtml('beLinkColor', '')}
               <button type="button" id="beLinkApply">Apply</button>
               <button type="button" id="beLinkUnlink">Unlink</button>
               <button type="button" id="beLinkCancel">Cancel</button>
@@ -181,11 +206,43 @@ window.BlockEditor = (function () {
       if (showingThemePanel) {
         stylePanel.innerHTML = `
           <div class="pra-label" style="margin-bottom:8px">Email Settings</div>
-          <div class="field"><label class="pra-label">Background</label><input class="pra-input" type="text" id="themeBg" value="${theme.background}"/></div>
+          <div class="field"><label class="pra-label">Background</label>${hexColorFieldHtml('themeBg', theme.background)}</div>
           <div class="field"><label class="pra-label">Content Width (px)</label><input class="pra-input" type="number" id="themeWidth" value="${theme.maxWidth}"/></div>
+          <div class="field"><label class="pra-label">Font</label>
+            <select class="pra-select" id="themeFontFamily">
+              <option value="Arial, Helvetica, sans-serif">Arial</option>
+              <option value="'Century Gothic', 'Apple Gothic', sans-serif">Century Gothic</option>
+              <option value="'Century Gothic Bold', 'Century Gothic', sans-serif">Century Gothic Bold</option>
+              <option value="Aldrich, Arial, sans-serif">Aldrich</option>
+            </select>
+          </div>
+          <div class="field"><label class="pra-label">Font Size (px)</label><input class="pra-input" type="number" id="themeFontSize" value="${theme.fontSize}"/></div>
+          <div class="field"><label class="pra-label">Text Color</label>${hexColorFieldHtml('themeTextColor', theme.textColor)}</div>
+          <div class="field"><label class="pra-label">Link Color</label>${hexColorFieldHtml('themeLinkColor', theme.linkColor)}</div>
+          <div class="field"><label class="pra-label">Padding (px)</label><input class="pra-input" type="number" id="themeBodyPadding" value="${theme.bodyPadding}"/></div>
+          <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="themeResetBtn" style="width:100%;margin-top:6px">Reset to default</button>
+          <div class="pra-muted" id="themeResetMsg" style="font-size:.74rem;margin-top:4px;min-height:1em"></div>
         `;
-        stylePanel.querySelector('#themeBg').addEventListener('input', (e) => { theme.background = e.target.value; renderPreviewBg(); notifyChange(false); });
-        stylePanel.querySelector('#themeWidth').addEventListener('input', (e) => { theme.maxWidth = Number(e.target.value) || 650; renderPreviewBg(); notifyChange(false); });
+        wireHexColorField(stylePanel, 'themeBg', (v) => { theme.background = v; renderPreviewBg(); notifyChange(false); });
+        wireHexColorField(stylePanel, 'themeTextColor', (v) => { theme.textColor = v; render(); notifyChange(false); });
+        wireHexColorField(stylePanel, 'themeLinkColor', (v) => { theme.linkColor = v; render(); notifyChange(false); });
+        stylePanel.querySelector('#themeWidth').addEventListener('input', (e) => { theme.maxWidth = Number(e.target.value) || 650; render(); notifyChange(false); });
+        stylePanel.querySelector('#themeFontSize').addEventListener('input', (e) => { theme.fontSize = Number(e.target.value) || DEFAULT_THEME.fontSize; render(); notifyChange(false); });
+        stylePanel.querySelector('#themeBodyPadding').addEventListener('input', (e) => { theme.bodyPadding = Number(e.target.value) || 0; notifyChange(false); });
+        const fontSel = stylePanel.querySelector('#themeFontFamily');
+        fontSel.value = theme.fontFamily;
+        if (fontSel.value !== theme.fontFamily) { const opt = document.createElement('option'); opt.value = theme.fontFamily; opt.textContent = theme.fontFamily; fontSel.insertBefore(opt, fontSel.firstChild); fontSel.value = theme.fontFamily; }
+        fontSel.addEventListener('change', (e) => { theme.fontFamily = e.target.value; render(); notifyChange(false); });
+        stylePanel.querySelector('#themeResetBtn').addEventListener('click', async () => {
+          const msg = stylePanel.querySelector('#themeResetMsg');
+          msg.textContent = 'Loading...';
+          try {
+            const r = await fetch('/api/integrations/email-theme');
+            const d = await r.json();
+            theme = { ...DEFAULT_THEME, ...d.theme };
+            render(); renderStylePanel(); notifyChange(false);
+          } catch { msg.textContent = 'Could not load the default theme.'; }
+        });
         return;
       }
       const { block, isFooter } = findBlock(selectedId);
@@ -204,7 +261,6 @@ window.BlockEditor = (function () {
         </div>
         <div class="field"><label class="pra-label">Background</label><input class="pra-input" type="text" id="styleBg" placeholder="#ffffff" value="${s.background || ''}"/></div>
         <div class="field"><label class="pra-label">Border</label><input class="pra-input" type="text" id="styleBorder" placeholder="1px solid #eee" value="${s.border || ''}"/></div>
-        <div class="field"><label class="pra-label">Margin</label><input class="pra-input" type="text" id="styleMargin" placeholder="0" value="${s.margin || ''}"/></div>
         <div class="field"><label class="pra-label">Padding</label><input class="pra-input" type="text" id="stylePadding" placeholder="10px" value="${s.padding || ''}"/></div>
         ${block.type === 'image' ? `
           <div class="field">
@@ -238,7 +294,6 @@ window.BlockEditor = (function () {
       const bind = (id, key, target) => { const el = stylePanel.querySelector('#' + id); if (el) el.addEventListener('input', () => { target[key] = el.value; render(); notifyChange(isFooter); }); };
       bind('styleBg', 'background', block.style = block.style || {});
       bind('styleBorder', 'border', block.style);
-      bind('styleMargin', 'margin', block.style);
       bind('stylePadding', 'padding', block.style);
       if (block.type === 'image') {
         bind('imgSrc', 'src', block); bind('imgLink', 'link', block); bind('imgWidth', 'width', block);
@@ -345,6 +400,16 @@ window.BlockEditor = (function () {
 
     function render() {
       canvasInner.style.maxWidth = theme.maxWidth + 'px';
+      canvasInner.style.fontFamily = theme.fontFamily;
+      canvasInner.style.fontSize = theme.fontSize + 'px';
+      canvasInner.style.lineHeight = theme.lineHeight;
+      canvasInner.style.color = theme.textColor;
+      // Baseline for any link that hasn't been given its own explicit color
+      // (see .be-canvas-inner a in crm-design-system.css) -- an inline
+      // color from the Link popover still wins since inline styles always
+      // beat a stylesheet rule, matching applyDefaultLinkColor's same
+      // "only touch links without their own color" logic at send time.
+      canvasInner.style.setProperty('--be-link-color', theme.linkColor);
       renderPreviewBg();
       const blockHtml = blocks.map((b, i) => `
         <div class="be-block${b.id === selectedId && !showingThemePanel ? ' selected' : ''}" data-id="${b.id}">
@@ -526,7 +591,7 @@ window.BlockEditor = (function () {
     toolbar.querySelectorAll('[data-cmd]').forEach(btn => {
       btn.addEventListener('click', () => { document.execCommand(btn.dataset.cmd, false, null); syncSelectedText(); });
     });
-    toolbar.querySelector('#beColor').addEventListener('input', (e) => { document.execCommand('foreColor', false, e.target.value); syncSelectedText(); });
+    wireHexColorField(toolbar, 'beColor', (v) => { document.execCommand('foreColor', false, v); syncSelectedText(); });
     toolbar.querySelector('#beFontSize').addEventListener('change', (e) => { document.execCommand('fontSize', false, e.target.value); syncSelectedText(); });
     toolbar.querySelector('#beFontFamily').addEventListener('change', (e) => {
       if (!e.target.value) return;
@@ -542,6 +607,7 @@ window.BlockEditor = (function () {
     const linkPopover = toolbar.querySelector('#beLinkPopover');
     const linkUrlInput = toolbar.querySelector('#beLinkUrl');
     const linkColorInput = toolbar.querySelector('#beLinkColor');
+    const linkColorSwatch = toolbar.querySelector('#beLinkColorSwatch');
     // Walks up from a selection node to find an enclosing <a>, stopping at
     // the canvas boundary -- used both to pre-fill the popover when
     // re-opening it on already-linked text, and to locate the anchor(s)
@@ -575,16 +641,13 @@ window.BlockEditor = (function () {
       savedRange = range;
       linkColorTouched = false;
       linkUrlInput.value = existingLink ? (existingLink.getAttribute('href') || '') : 'https://';
-      linkColorInput.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '#0000ff';
+      linkColorInput.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '';
+      linkColorSwatch.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '#0000ff';
       linkPopover.style.display = 'inline-flex';
       linkUrlInput.focus();
       linkUrlInput.select();
     });
-    // Some browsers only fire 'change' (not 'input') for a native color
-    // swatch depending on how the OS picker is used -- listening to both
-    // is what actually makes "did the user touch this" reliable.
-    linkColorInput.addEventListener('input', () => { linkColorTouched = true; });
-    linkColorInput.addEventListener('change', () => { linkColorTouched = true; });
+    wireHexColorField(toolbar, 'beLinkColor', () => { linkColorTouched = true; });
     function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; }
     toolbar.querySelector('#beLinkCancel').addEventListener('click', closeLinkPopover);
     toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
@@ -656,7 +719,7 @@ window.BlockEditor = (function () {
       getState: () => ({ blocks, theme }),
       setState: (state) => {
         blocks = (state?.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
-        theme = { background: '#ffffff', maxWidth: 650, ...(state?.theme || {}) };
+        theme = { ...DEFAULT_THEME, ...(state?.theme || {}) };
         selectedId = null; showingThemePanel = false;
         render(); renderStylePanel();
       },

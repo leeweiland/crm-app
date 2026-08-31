@@ -230,10 +230,14 @@ function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 const automationId = new URLSearchParams(location.search).get('id');
 let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [], allForms = [], allEventTypes = [];
 let saveTimer, emailStepEditor = null, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
+// Fetched once at load, not per-step -- a brand new send_email step starts
+// from the org's current email theme (Settings > Email Theme), same as a
+// brand new campaign does server-side.
+let orgEmailTheme = { background: '#ffffff', maxWidth: 650 };
 
 async function loadRefs() {
-  const [listsRes, tagsRes, statusesRes, footersRes, autosRes, fbRes, formsRes, eventTypesRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations'), fetch('/api/facebook/config-status'), fetch('/api/forms'), fetch('/api/scheduling/admin/event-types')
+  const [listsRes, tagsRes, statusesRes, footersRes, autosRes, fbRes, formsRes, eventTypesRes, themeRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations'), fetch('/api/facebook/config-status'), fetch('/api/forms'), fetch('/api/scheduling/admin/event-types'), fetch('/api/integrations/email-theme')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
@@ -243,6 +247,7 @@ async function loadRefs() {
   facebookIsConfigured = fbRes.ok ? (await fbRes.json()).configured : false;
   allForms = formsRes.ok ? (await formsRes.json()).forms : [];
   allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes : [];
+  if (themeRes.ok) orgEmailTheme = (await themeRes.json()).theme;
 }
 
 function stepSummary(step) {
@@ -505,7 +510,7 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
   };
 });
 function defaultConfig(type) {
-  if (type === 'send_email') return { subject: '', previewText: '', blocks: [], theme: { background: '#ffffff', maxWidth: 650 }, footerTemplateId: null };
+  if (type === 'send_email') return { subject: '', previewText: '', blocks: [], theme: { ...orgEmailTheme }, footerTemplateId: null };
   if (type === 'wait') return { amount: 1, unit: 'hours' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };

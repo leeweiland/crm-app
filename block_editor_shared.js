@@ -40,11 +40,58 @@ function renderBlock(block) {
   return "";
 }
 
+// Applied wherever a theme value is missing -- both at send time
+// (renderEmailBody below) and by the editor's own canvas (block-editor-
+// client.js keeps a matching copy), so an email with no explicit theme
+// still renders identically in both places instead of each falling back
+// to whatever its own context's ambient default happens to be.
+export const DEFAULT_THEME = {
+  background: "#ffffff",
+  maxWidth: 650,
+  fontFamily: "Arial, Helvetica, sans-serif",
+  fontSize: 15,
+  textColor: "#222222",
+  linkColor: "#009bff",
+  lineHeight: 1.5,
+  bodyPadding: 24,
+};
+
 export function renderBlocksToHtml(blocks, theme) {
-  const bg = theme?.background || "#ffffff";
-  const maxWidth = theme?.maxWidth || 650;
+  const t = { ...DEFAULT_THEME, ...(theme || {}) };
   const body = renderBlocksInner(blocks);
-  return `<div style="background:${bg};padding:24px 0;font-family:Arial,Helvetica,sans-serif"><div style="max-width:${maxWidth}px;margin:0 auto;background:#ffffff">${body}</div></div>`;
+  return `<div style="background:${t.background};padding:${t.bodyPadding}px 0;font-family:${t.fontFamily};font-size:${t.fontSize}px;line-height:${t.lineHeight};color:${t.textColor}"><div style="max-width:${t.maxWidth}px;margin:0 auto;background:#ffffff">${body}</div></div>`;
+}
+
+// The actual send-time renderer -- body and footer blocks share ONE wrapper
+// (one background/padding/max-width/font container), not two independently
+// closed ones. They used to be built and concatenated separately, which
+// left the footer with no width constraint of its own once its own inner
+// wrapper was removed (see resolveFooterHtml in email_backend.js) -- it
+// rendered full-bleed instead of matching the body's column width.
+export function renderEmailBody(bodyBlocks, footerHtml, theme) {
+  const t = { ...DEFAULT_THEME, ...(theme || {}) };
+  const body = renderBlocksInner(bodyBlocks);
+  const wrapped = `<div style="background:${t.background};padding:${t.bodyPadding}px 0;font-family:${t.fontFamily};font-size:${t.fontSize}px;line-height:${t.lineHeight};color:${t.textColor}"><div style="max-width:${t.maxWidth}px;margin:0 auto;background:#ffffff">${body}${footerHtml || ""}</div></div>`;
+  return applyDefaultLinkColor(wrapped, t.linkColor);
+}
+
+// A link gets the theme's link color unless it already carries its own
+// explicit color (something a user picked in the Link popover) -- an email
+// has no stylesheet to inherit surrounding text color from the way the
+// editor's own page CSS does, so an unstyled <a> otherwise falls back to
+// whatever blue the recipient's mail client defaults to, not what the
+// editor showed.
+function applyDefaultLinkColor(html, linkColor) {
+  return html.replace(/<a\s+([^>]*?)>/gi, (match, attrs) => {
+    if (/style\s*=\s*["'][^"']*color\s*:/i.test(attrs)) return match;
+    if (/style\s*=\s*"([^"]*)"/i.test(attrs)) {
+      return `<a ${attrs.replace(/style\s*=\s*"([^"]*)"/i, (m2, v) => `style="color:${linkColor};${v}"`)}>`;
+    }
+    if (/style\s*=\s*'([^']*)'/i.test(attrs)) {
+      return `<a ${attrs.replace(/style\s*=\s*'([^']*)'/i, (m2, v) => `style="color:${linkColor};${v}"`)}>`;
+    }
+    return `<a style="color:${linkColor}" ${attrs}>`;
+  });
 }
 
 // Just the blocks themselves, no outer canvas/background wrapper -- for

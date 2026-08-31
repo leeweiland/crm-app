@@ -289,7 +289,7 @@ function saveDebounced() {
 async function saveCampaign(opts) {
   const r = await fetch('/api/campaigns/' + campaign.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients }),
+    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (r.ok && !opts?.keepalive) updateRecipientCount();

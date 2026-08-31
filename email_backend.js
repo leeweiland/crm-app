@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { renderBlocksToHtml, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
+import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
@@ -92,12 +92,18 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   // blocks now render with exactly the alignment/spacing set in the editor,
   // not overridden by an assumption that footers are short centered text.
   const content = (footer.blocks && footer.blocks.length) ? renderBlocksInner(footer.blocks) : (footer.html || "");
+  // font-size/color used to live on the OUTER div here, so it inherited
+  // down into the footer's own blocks too -- "Blessings! / Coach Lee" etc.
+  // rendering small and gray in the actual email despite looking normal in
+  // the editor, which never had that ancestor. Scoped to just the
+  // auto-generated address/social/unsubscribe lines below, which are the
+  // only part that was ever meant to look like small print.
   return `
-    <div style="margin-top:24px;font-size:11px;color:#888">
+    <div style="margin-top:24px">
       ${content}
-      ${footer.physicalAddress ? `<div style="margin-top:8px">${footer.physicalAddress}</div>` : ""}
-      ${social ? `<div style="margin-top:8px">${social}</div>` : ""}
-      <div style="margin-top:8px"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>
+      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888">${footer.physicalAddress}</div>` : ""}
+      ${social ? `<div style="margin-top:8px;font-size:11px;color:#888">${social}</div>` : ""}
+      <div style="margin-top:8px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>
     </div>`;
 }
 
@@ -152,7 +158,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     return { ok: false, reason: "opted_out" };
   }
 
-  let html = buildPreheaderHtml(previewText) + renderBlocksToHtml(blocks, theme) + resolveFooterHtml(footerTemplateId, contactId);
+  let html = buildPreheaderHtml(previewText) + renderEmailBody(blocks, resolveFooterHtml(footerTemplateId, contactId), theme);
   html = absolutizeUploadUrls(html, getPublicBaseUrl());
   if (contact) html = applyMergeTags(html, contact);
   // %UNSUBSCRIBE% resolves the same URL the footer's own unsubscribe link

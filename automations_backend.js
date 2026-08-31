@@ -4,6 +4,7 @@ import { CONTACTS_FILE, matchesSegment } from "./segments_shared.js";
 import { sendEmail } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
+import { getEmailTheme } from "./integrations_backend.js";
 
 export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
@@ -304,6 +305,24 @@ export async function handleAutomationsRequest(req, res, url) {
     const contacts = readJson(CONTACTS_FILE, []);
     const withContacts = enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null }));
     return sendJson(res, 200, { enrollments: withContacts });
+  }
+
+  // Bulk reset (Settings > Email Theme's "reset all" button) -- re-copies
+  // the current org theme into every send_email step. A single step's own
+  // "Reset to default" (in its editor) just updates local state and goes
+  // out through the normal autosave path instead of a dedicated endpoint.
+  if (p === "/api/automations/reset-all-themes" && req.method === "POST") {
+    const automations = readJson(AUTOMATIONS_FILE, []);
+    const theme = getEmailTheme();
+    let count = 0;
+    automations.forEach(a => {
+      Object.values(a.steps || {}).forEach(step => {
+        if (step.type === "send_email") { step.config.theme = { ...theme }; count++; }
+      });
+      a.updatedAt = new Date().toISOString();
+    });
+    writeJson(AUTOMATIONS_FILE, automations);
+    return sendJson(res, 200, { ok: true, count });
   }
 
   return false;

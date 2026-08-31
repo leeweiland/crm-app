@@ -30,6 +30,7 @@
           <button class="tab-btn" data-tab="statuses">Statuses</button>
           <button class="tab-btn" data-tab="customfields">Custom Fields</button>
           <button class="tab-btn" data-tab="footers">Email Footers</button>
+          <button class="tab-btn" data-tab="emailtheme">Email Theme</button>
           <button class="tab-btn" data-tab="ses">SMTP / SES</button>
           <button class="tab-btn" data-tab="twilio">Twilio</button>
           <button class="tab-btn" data-tab="emailsettings">Email Settings</button>
@@ -90,6 +91,31 @@
         </div>
       </div>
 
+      <div class="tab-panel pra-panel" id="tab-emailtheme" style="padding:22px;max-width:480px">
+        <div class="pra-h2" style="margin-bottom:6px">Email Theme</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">The starting font, size, colors, padding, and width every new campaign and automation email is created with. Each one can still be overridden individually in its own editor (and reset back to this from there).</div>
+        <div class="field"><label class="pra-label">Background</label><input class="pra-input" type="text" id="etBackground" placeholder="#ffffff"/></div>
+        <div class="field"><label class="pra-label">Content Width (px)</label><input class="pra-input" type="number" id="etMaxWidth"/></div>
+        <div class="field"><label class="pra-label">Font</label>
+          <select class="pra-select" id="etFontFamily">
+            <option value="Arial, Helvetica, sans-serif">Arial</option>
+            <option value="'Century Gothic', 'Apple Gothic', sans-serif">Century Gothic</option>
+            <option value="'Century Gothic Bold', 'Century Gothic', sans-serif">Century Gothic Bold</option>
+            <option value="Aldrich, Arial, sans-serif">Aldrich</option>
+          </select>
+        </div>
+        <div class="field"><label class="pra-label">Font Size (px)</label><input class="pra-input" type="number" id="etFontSize"/></div>
+        <div class="field"><label class="pra-label">Text Color</label><input class="pra-input" type="text" id="etTextColor" placeholder="#222222"/></div>
+        <div class="field"><label class="pra-label">Link Color</label><input class="pra-input" type="text" id="etLinkColor" placeholder="#009bff"/></div>
+        <div class="field"><label class="pra-label">Padding (px)</label><input class="pra-input" type="number" id="etBodyPadding"/></div>
+        <button class="pra-btn" id="saveEmailThemeBtn">Save</button>
+        <div class="pra-muted" id="emailThemeSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+        <hr style="border-color:var(--pra-border);margin:20px 0"/>
+        <div class="pra-label" style="margin-bottom:8px">Reset existing emails to this theme</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Overwrites every existing campaign's and automation send-email step's theme with the settings above -- individual overrides get wiped out. Save first if you changed anything.</div>
+        <button class="pra-btn pra-btn-ghost" id="resetAllThemesBtn">Reset all campaigns &amp; automations to this theme</button>
+        <div class="pra-muted" id="resetAllThemesMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+      </div>
 
       <div class="tab-panel pra-panel" id="tab-ses" style="padding:22px;max-width:520px">
         <div class="pra-h2" style="margin-bottom:6px">Amazon SES (Bulk Email)</div>
@@ -751,10 +777,54 @@ document.getElementById('changePasswordBtn').onclick = async () => {
   document.getElementById('confirmPassword').value = '';
 };
 
+// ── Email Theme ──────────────────────────────────────────────────────────
+async function loadEmailTheme() {
+  const r = await fetch('/api/integrations/email-theme');
+  const { theme } = await r.json();
+  document.getElementById('etBackground').value = theme.background;
+  document.getElementById('etMaxWidth').value = theme.maxWidth;
+  document.getElementById('etFontFamily').value = theme.fontFamily;
+  document.getElementById('etFontSize').value = theme.fontSize;
+  document.getElementById('etTextColor').value = theme.textColor;
+  document.getElementById('etLinkColor').value = theme.linkColor;
+  document.getElementById('etBodyPadding').value = theme.bodyPadding;
+}
+document.getElementById('saveEmailThemeBtn').onclick = async () => {
+  const msg = document.getElementById('emailThemeSaveMsg');
+  const body = {
+    background: document.getElementById('etBackground').value.trim(),
+    maxWidth: Number(document.getElementById('etMaxWidth').value) || 650,
+    fontFamily: document.getElementById('etFontFamily').value,
+    fontSize: Number(document.getElementById('etFontSize').value) || 15,
+    textColor: document.getElementById('etTextColor').value.trim(),
+    linkColor: document.getElementById('etLinkColor').value.trim(),
+    bodyPadding: Number(document.getElementById('etBodyPadding').value) || 0,
+  };
+  const r = await fetch('/api/integrations/email-theme', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { msg.textContent = 'Could not save.'; return; }
+  msg.textContent = 'Saved.';
+  showToast('Email theme saved');
+};
+document.getElementById('resetAllThemesBtn').onclick = async () => {
+  if (!confirm('This overwrites every existing campaign and automation email\'s theme with the current settings above, replacing any individual overrides. This can\'t be undone. Continue?')) return;
+  const msg = document.getElementById('resetAllThemesMsg');
+  msg.textContent = 'Resetting...';
+  const [campaignsRes, automationsRes] = await Promise.all([
+    fetch('/api/campaigns/reset-all-themes', { method: 'POST' }),
+    fetch('/api/automations/reset-all-themes', { method: 'POST' }),
+  ]);
+  if (!campaignsRes.ok || !automationsRes.ok) { msg.textContent = 'Could not reset everything -- check and try again.'; return; }
+  const campaignsData = await campaignsRes.json();
+  const automationsData = await automationsRes.json();
+  msg.textContent = `Reset ${campaignsData.count} campaign(s) and ${automationsData.count} automation email step(s).`;
+  showToast('Reset complete');
+};
+
 loadStatuses();
 loadFields();
 loadUsers();
 loadFooters();
+loadEmailTheme();
 loadSesSettings();
 loadTwilioSettings();
 loadComplianceSettings();
