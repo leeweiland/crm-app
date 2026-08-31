@@ -48,7 +48,13 @@
   /* ── Live preview card — same visual language as the real book.html ── */
   :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   .ed-preview-outer { background: var(--bk-page-bg); }
-  .bk-card { width: 100%; max-width: 780px; background: var(--bk-bg); color: var(--bk-text); border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); overflow: hidden; font-family: var(--bk-font-secondary); }
+  /* container-type here (not a @media breakpoint) because this card sits in
+     a squeezable sidebar+preview column layout -- its rendered width can
+     drop below 640px on a plenty-wide desktop window well before the actual
+     browser viewport does, and a viewport media query would never catch
+     that. The real public book.html doesn't need this (there the card's
+     width always tracks the viewport 1:1, standalone page or iframe alike). */
+  .bk-card { container-type: inline-size; width: 100%; max-width: 780px; background: var(--bk-bg); color: var(--bk-text); border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); overflow: hidden; font-family: var(--bk-font-secondary); }
   #pvBrand, #pvTitle, .bk-h2, .cal-month-label, .time-slot, .cal-day { font-family: var(--bk-font-primary); }
   .bk-grid { display: grid; grid-template-columns: 260px 1fr; }
   .bk-grid.with-times { grid-template-columns: 260px 1fr 220px; }
@@ -78,7 +84,7 @@
   /* ── Mobile-only step elements, same pattern as the real book.html --
        hidden on desktop where info/calendar/times fit side by side. ── */
   .mobile-back-row, .mobile-tz-row, .mobile-duration-row, .mobile-select-time-label { display: none; }
-  @media (max-width: 640px) {
+  @container (max-width: 640px) {
     .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; }
     .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); }
     .bk-grid.with-times .bk-info, .bk-grid.with-times .bk-body { display: none; }
@@ -286,6 +292,20 @@ async function loadPreviewSlots() {
   Object.values(slotsByLocalDate).forEach(arr => arr.sort());
 }
 
+// Same logic as book.html's snapToFirstAvailableMonth() -- a "Next N slots"
+// calendar (or a slow "Next N days" one) can easily have nothing open in
+// the current month, and the real booking page always jumps ahead to the
+// first month that actually has something rather than sitting on a blank
+// one. The preview has to match that or it looks broken even when the
+// underlying availability is correct.
+function snapToFirstAvailableMonth() {
+  const dates = Object.keys(slotsByLocalDate).sort();
+  if (!dates.length) return;
+  const year = calViewMonth.getFullYear(), month = calViewMonth.getMonth();
+  const inViewMonth = dates.some(d => { const dt = new Date(d + 'T12:00:00'); return dt.getFullYear() === year && dt.getMonth() === month; });
+  if (!inViewMonth) { const first = new Date(dates[0] + 'T12:00:00'); calViewMonth = new Date(first.getFullYear(), first.getMonth(), 1); }
+}
+
 function renderCalendar() {
   const grid = document.getElementById('pvGrid');
   grid.querySelectorAll('.bk-body, .bk-times-col').forEach(el => el.remove());
@@ -477,6 +497,7 @@ async function saveNow() {
     // Duration/calendar could both have just changed -- refresh the real
     // slots so the preview stays accurate.
     await loadPreviewSlots();
+    snapToFirstAvailableMonth();
     renderCalendar();
   }
 }
@@ -631,6 +652,7 @@ async function saveCalendarNow() {
     // the next render reads the fresh one, silently dropping the click.
     // We already hold the authoritative state (it's what we just sent).
     await loadPreviewSlots();
+    snapToFirstAvailableMonth();
     renderCalendar();
   }
 }
@@ -660,6 +682,7 @@ async function init() {
   renderCalendarSettings();
   renderSidebar();
   await loadPreviewSlots();
+  snapToFirstAvailableMonth();
   renderCalendar();
   await loadStatuses();
   if (new URLSearchParams(location.search).get('embed') === '1') openEmbedModal();
