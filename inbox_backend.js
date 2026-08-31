@@ -10,6 +10,7 @@ import {
   markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
+import { queryConversationsSqlite } from "./sqlite_inbox.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -70,6 +71,18 @@ export async function handleInboxRequest(req, res, url) {
     const search = (url.searchParams.get("search") || "").trim().toLowerCase();
     const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("limit"), 10) || 40));
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
+
+    // TEST-ONLY toggle (?_sqlite=1) -- see sqlite_inbox.js's own comment for
+    // why this isn't the default yet (the prototype DB is a one-time
+    // snapshot, not kept live). Everything below this block is the existing,
+    // unchanged JSON-based path.
+    if (url.searchParams.get("_sqlite") === "1") {
+      const t0 = Date.now();
+      const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, bucket, sortDir, search, limit, offset });
+      if (result) return sendJson(res, 200, { ...result, _queryMs: Date.now() - t0, _engine: "sqlite" });
+      // Falls through to the normal path below if the prototype DB isn't present (e.g. local dev).
+    }
+    const _t0 = Date.now();
     const contacts = readJson(CONTACTS_FILE, []);
     // Reads the persisted per-contact summary index (kept incrementally up
     // to date by message_index.js on every send/receive) instead of folding
@@ -146,7 +159,7 @@ export async function handleInboxRequest(req, res, url) {
     });
 
     const page = rows.slice(offset, offset + limit);
-    return sendJson(res, 200, { conversations: page, total: rows.length, hasMore: offset + limit < rows.length });
+    return sendJson(res, 200, { conversations: page, total: rows.length, hasMore: offset + limit < rows.length, _queryMs: Date.now() - _t0, _engine: "json" });
   }
 
   // Pin/star a conversation -- purely presentational state, kept

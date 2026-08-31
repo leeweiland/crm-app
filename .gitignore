@@ -17,5 +17,9 @@ uploads/
 msg_by_contact/
 msg_by_source/
 
+# SQLite conversation-index prototype (sqlite_inbox.js) -- same runtime-data
+# discipline as crm_*.json above; lives on the Railway Volume, not in git.
+crm_prototype.db
+
 # This tool's own local session config, not app code.
 .claude/
