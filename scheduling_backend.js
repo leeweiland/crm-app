@@ -201,6 +201,21 @@ async function getCalendarAccessToken() {
   if (!d.access_token) throw new Error("Calendar token refresh failed: " + JSON.stringify(d));
   return d.access_token;
 }
+// The "connected" pill just says yes/no -- it never surfaced WHICH Google
+// account that actually is, so a blank "your connected account" email field
+// on the default calendar looked like nothing was really wired up. This
+// fetches that account's own address (Google Calendar's "primary" calendar
+// id IS the owning account's email) so the UI can show it plainly.
+async function getConnectedCalendarEmail() {
+  if (!calendarConfigured()) return null;
+  const accessToken = await getCalendarAccessToken();
+  const r = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error("Fetching connected calendar identity failed: " + JSON.stringify(d));
+  return d.id || null; // "id" on the primary calendar is the account's email
+}
 // Busy intervals for [startISO, endISO) on the given calendar -- merged into
 // slot computation so a real conflict (including events not created by this
 // scheduler, e.g. someone blocking off vacation directly in Google
@@ -619,7 +634,11 @@ export async function handleSchedulingRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
   if (p === "/api/scheduling/admin/status" && req.method === "GET") {
-    return sendJson(res, 200, { calendarConnected: calendarConfigured() });
+    let connectedEmail = null;
+    if (calendarConfigured()) {
+      try { connectedEmail = await getConnectedCalendarEmail(); } catch { /* show as connected but unknown-identity below */ }
+    }
+    return sendJson(res, 200, { calendarConnected: calendarConfigured(), connectedEmail });
   }
 
   // Calendars -- each one is a Workspace email (blank = the connected

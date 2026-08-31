@@ -117,15 +117,22 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
 });
 
+let connectedCalendarEmail = null;
 async function loadStatus() {
   const r = await fetch('/api/scheduling/admin/status');
   const d = await r.json();
+  connectedCalendarEmail = d.connectedEmail || null;
   const pill = document.getElementById('calConnPill');
   pill.textContent = d.calendarConnected ? 'Google Calendar connected' : 'Google Calendar not connected (internal-only conflict checking)';
   pill.className = 'conn-pill ' + (d.calendarConnected ? 'on' : 'off');
   document.getElementById('calStatusText').textContent = d.calendarConnected
-    ? 'Connected. New bookings create real events (and check real conflicts) on Google Calendar.'
+    ? `Connected as ${connectedCalendarEmail || '(could not read the account email — check it\'s the right Google account)'}. New bookings create real events (and check real conflicts) on Google Calendar.`
     : 'Not connected — set GOOGLE_REFRESH_TOKEN_PRA_CALENDAR in .env. Until then, availability only checks bookings made through this scheduler.';
+  // The default calendar's email field was already loaded (blank) by the
+  // time this resolves -- refresh its placeholder now that we know the
+  // real address instead of a generic "your connected account" hint.
+  const defaultEmailInput = document.querySelector('[data-cal-email="default"]');
+  if (defaultEmailInput && !defaultEmailInput.value) defaultEmailInput.placeholder = connectedCalendarEmail ? `Blank = ${connectedCalendarEmail}` : 'Blank = your connected account';
 }
 
 // ── Calendars (each with its own availability) ──────────────────────────
