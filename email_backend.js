@@ -76,6 +76,21 @@ function getContact(contactId) {
   return readJson(CONTACTS_FILE, []).find(c => c.id === contactId) || null;
 }
 
+// Gmail (and others) auto-detect a street address in the raw text and
+// silently turn it into their OWN blue "location chip" link client-side,
+// after the email arrives -- happens even when the text is already inside
+// a real <a> with an explicit color, so wrapping it in a link doesn't
+// actually stop it. Splitting the leading street number with an HTML
+// comment breaks their pattern match (a comment renders as nothing, but
+// interrupts the text node Gmail's detector scans) without changing how
+// the address looks or creating any link at all.
+function breakAddressPattern(address) {
+  // The street number is rarely at position 0 -- "Business Name, 3427
+  // Street..." -- so this finds the first run of 2+ digits anywhere (the
+  // street number) rather than anchoring to the start of the string.
+  return String(address || "").replace(/(\d)(\d+)/, (m, first, rest) => `${first}<!-- -->${rest}`);
+}
+
 function resolveFooterHtml(footerTemplateId, contactId) {
   const templates = readJson(FOOTER_TEMPLATES_FILE, []);
   const footer = templates.find(f => f.id === footerTemplateId) || templates.find(f => f.isDefault) || null;
@@ -98,12 +113,18 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   // the editor, which never had that ancestor. Scoped to just the
   // auto-generated address/social/unsubscribe lines below, which are the
   // only part that was ever meant to look like small print.
+  // Auto-appending this bottom unsubscribe line unconditionally meant a
+  // footer whose own content already has one (typed directly, usually via
+  // the %UNSUBSCRIBE% merge tag -- still literal at this point, resolved
+  // later) ended up with two. Only added as a fallback when the content
+  // doesn't already have its own.
+  const hasOwnUnsubscribe = /%unsubscribe%/i.test(content) || content.includes("/api/email/unsubscribe");
   return `
     <div style="margin-top:24px">
       ${content}
-      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888"><a href="https://maps.google.com/?q=${encodeURIComponent(footer.physicalAddress)}" style="color:inherit;text-decoration:inherit">${footer.physicalAddress}</a></div>` : ""}
+      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888">${breakAddressPattern(footer.physicalAddress)}</div>` : ""}
       ${social ? `<div style="margin-top:8px;font-size:11px;color:#888">${social}</div>` : ""}
-      <div style="margin-top:8px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>
+      ${hasOwnUnsubscribe ? "" : `<div style="margin-top:8px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>`}
     </div>`;
 }
 
