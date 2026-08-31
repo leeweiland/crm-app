@@ -101,7 +101,7 @@ function resolveFooterHtml(footerTemplateId, contactId) {
   return `
     <div style="margin-top:24px">
       ${content}
-      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888">${footer.physicalAddress}</div>` : ""}
+      ${footer.physicalAddress ? `<div style="margin-top:8px;font-size:11px;color:#888"><a href="https://maps.google.com/?q=${encodeURIComponent(footer.physicalAddress)}" style="color:inherit;text-decoration:inherit">${footer.physicalAddress}</a></div>` : ""}
       ${social ? `<div style="margin-top:8px;font-size:11px;color:#888">${social}</div>` : ""}
       <div style="margin-top:8px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">${footer.unsubscribeLinkText || "Unsubscribe"}</a></div>
     </div>`;

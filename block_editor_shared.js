@@ -71,8 +71,24 @@ export function renderBlocksToHtml(blocks, theme) {
 export function renderEmailBody(bodyBlocks, footerHtml, theme) {
   const t = { ...DEFAULT_THEME, ...(theme || {}) };
   const body = renderBlocksInner(bodyBlocks);
-  const wrapped = `<div style="background:${t.background};padding:${t.bodyPadding}px 0;font-family:${t.fontFamily};font-size:${t.fontSize}px;line-height:${t.lineHeight};color:${t.textColor}"><div style="max-width:${t.maxWidth}px;margin:0 auto;background:#ffffff">${body}${footerHtml || ""}</div></div>`;
+  let wrapped = `<div style="background:${t.background};padding:${t.bodyPadding}px 0;font-family:${t.fontFamily};font-size:${t.fontSize}px;line-height:${t.lineHeight};color:${t.textColor}"><div style="max-width:${t.maxWidth}px;margin:0 auto;background:#ffffff">${body}${footerHtml || ""}</div></div>`;
+  // Run before applyDefaultLinkColor -- a bare (unlinked) email address in
+  // plain text gets auto-detected and auto-linkified by Gmail/etc. with
+  // their OWN default blue once the email actually arrives, regardless of
+  // the surrounding text's color (this is a client-side rendering step, not
+  // something in the HTML we sent -- happened even inside the muted-gray
+  // footer disclaimer). Pre-empting it with a real link the color:inherit's
+  // from wherever it sits stops the recipient's client from re-styling it.
+  wrapped = autoLinkPlainEmails(wrapped);
   return applyDefaultLinkColor(wrapped, t.linkColor);
+}
+
+function autoLinkPlainEmails(html) {
+  const emailRe = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  return html.split(/(<a\b[^>]*>[\s\S]*?<\/a>)/gi).map(part => {
+    if (/^<a\b/i.test(part)) return part;
+    return part.replace(emailRe, (m) => `<a href="mailto:${m}" style="color:inherit;text-decoration:inherit">${m}</a>`);
+  }).join("");
 }
 
 // A link gets the theme's link color unless it already carries its own
