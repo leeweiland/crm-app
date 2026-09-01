@@ -253,6 +253,30 @@ export async function handleContactsRequest(req, res, url) {
     writeJson(LISTS_FILE, lists);
     return sendJson(res, 200, { ok: true, list });
   }
+  // Bulk delete -- ONE contacts-file pass for however many list ids are
+  // selected, not one per id. Confirmed live (2026-09-01) that selecting a
+  // large batch and deleting one-at-a-time (via Promise.all over the
+  // single-delete route below) fired that many CONCURRENT full rewrites of
+  // a 180MB+ contacts file, exhausted the disk, and froze the whole
+  // single-threaded server for everyone -- exactly the failure mode
+  // message_log.js's own comments already document from a prior incident.
+  if (p === "/api/lists/bulk-delete" && req.method === "POST") {
+    const { ids } = await readJsonBody(req);
+    if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
+    const idSet = new Set(ids);
+    const lists = readJson(LISTS_FILE, []);
+    writeJson(LISTS_FILE, lists.filter(l => !idSet.has(l.id)));
+    const contacts = readJson(CONTACTS_FILE, []);
+    let changed = false;
+    contacts.forEach(c => {
+      if (Array.isArray(c.listIds) && c.listIds.some(id => idSet.has(id))) {
+        c.listIds = c.listIds.filter(id => !idSet.has(id));
+        changed = true;
+      }
+    });
+    if (changed) writeJson(CONTACTS_FILE, contacts);
+    return sendJson(res, 200, { ok: true });
+  }
   const listMatch = p.match(/^\/api\/lists\/([^/]+)$/);
   if (listMatch && req.method === "DELETE") {
     const lists = readJson(LISTS_FILE, []);
@@ -302,6 +326,24 @@ export async function handleContactsRequest(req, res, url) {
     writeJson(TAGS_FILE, tags);
     return sendJson(res, 200, { ok: true, tag });
   }
+  // Same single-pass consolidation as the lists bulk-delete above.
+  if (p === "/api/tags/bulk-delete" && req.method === "POST") {
+    const { ids } = await readJsonBody(req);
+    if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
+    const idSet = new Set(ids);
+    const tags = readJson(TAGS_FILE, []);
+    writeJson(TAGS_FILE, tags.filter(t => !idSet.has(t.id)));
+    const contacts = readJson(CONTACTS_FILE, []);
+    let changed = false;
+    contacts.forEach(c => {
+      if (Array.isArray(c.tags) && c.tags.some(id => idSet.has(id))) {
+        c.tags = c.tags.filter(id => !idSet.has(id));
+        changed = true;
+      }
+    });
+    if (changed) writeJson(CONTACTS_FILE, contacts);
+    return sendJson(res, 200, { ok: true });
+  }
   const tagMatch = p.match(/^\/api\/tags\/([^/]+)$/);
   if (tagMatch && req.method === "DELETE") {
     const tags = readJson(TAGS_FILE, []);
@@ -343,6 +385,16 @@ export async function handleContactsRequest(req, res, url) {
     segments.push(segment);
     writeJson(SEGMENTS_FILE, segments);
     return sendJson(res, 200, { ok: true, segment });
+  }
+  // No contacts file involved (segments have no stored membership), but
+  // still one write instead of N for consistency with lists/tags.
+  if (p === "/api/segments/bulk-delete" && req.method === "POST") {
+    const { ids } = await readJsonBody(req);
+    if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
+    const idSet = new Set(ids);
+    const segments = readJson(SEGMENTS_FILE, []);
+    writeJson(SEGMENTS_FILE, segments.filter(s => !idSet.has(s.id)));
+    return sendJson(res, 200, { ok: true });
   }
   const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);
   if (segmentMatch && req.method === "DELETE") {

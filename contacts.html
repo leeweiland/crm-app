@@ -398,9 +398,9 @@ async function loadStatuses() {
 const bulkSelected = { list: new Set(), tag: new Set(), segment: new Set() };
 const lastCheckedIndex = { list: null, tag: null, segment: null };
 const KIND_CONFIG = {
-  list: { deleteUrl: id => `/api/lists/${id}`, contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
-  tag: { deleteUrl: id => `/api/tags/${id}`, contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
-  segment: { deleteUrl: id => `/api/segments/${id}`, contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false },
+  list: { deleteUrl: id => `/api/lists/${id}`, bulkDeleteUrl: '/api/lists/bulk-delete', contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
+  tag: { deleteUrl: id => `/api/tags/${id}`, bulkDeleteUrl: '/api/tags/bulk-delete', contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
+  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false },
 };
 function reloadKind(kind) {
   bulkSelected[kind].clear();
@@ -418,7 +418,19 @@ document.querySelectorAll('[data-bulk-delete]').forEach(btn => btn.onclick = asy
   const ids = [...bulkSelected[kind]];
   if (!ids.length) return;
   if (!confirm(`Delete ${ids.length} selected ${kind}${ids.length === 1 ? '' : 's'}? Contacts themselves won't be deleted.`)) return;
-  await Promise.all(ids.map(id => fetch(KIND_CONFIG[kind].deleteUrl(id), { method: 'DELETE' })));
+  btn.disabled = true; // no text swap here -- the button's own innerHTML holds the live [data-bulk-count] span, and clobbering .textContent would delete that element permanently
+  try {
+    // ONE request for however many are selected -- not one delete call per
+    // id. Firing N concurrent deletes here once froze the whole server: each
+    // one independently rewrote the entire (180MB+) contacts file for
+    // orphaned-id cleanup, N times over, at the same time.
+    const r = await fetch(KIND_CONFIG[kind].bulkDeleteUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert('Delete failed: ' + (d.error || r.status)); }
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
   reloadKind(kind);
 });
 function renderManagedList(kind, items, containerId, barId, nameHtmlFn) {
@@ -434,9 +446,16 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn) {
     </div>
   `).join('') || `<div class="pra-muted">None yet.</div>`;
   items.forEach(item => {
-    fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.json()).then(d => {
+    fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).then(d => {
       const el = container.querySelector(`[data-count="${item.id}"]`);
-      if (el) el.textContent = `${d.total} contact${d.total === 1 ? '' : 's'}`;
+      if (!el) return;
+      // A failed/error response (e.g. the server was overloaded) still
+      // resolves here as `null`/a body with no `.total` -- show a dash
+      // instead of literally rendering "undefined contacts".
+      el.textContent = typeof d?.total === 'number' ? `${d.total} contact${d.total === 1 ? '' : 's'}` : '— contacts';
+    }).catch(() => {
+      const el = container.querySelector(`[data-count="${item.id}"]`);
+      if (el) el.textContent = '— contacts';
     });
   });
   container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
@@ -490,8 +509,11 @@ async function openMembershipPanel(kind, item) {
 async function loadMembershipPage() {
   const { kind, item, page, pageSize } = membershipState;
   const cfg = KIND_CONFIG[kind];
-  const r = await fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=${pageSize}&offset=${(page - 1) * pageSize}`);
-  const { contacts, total } = await r.json();
+  let contacts = [], total = 0;
+  try {
+    const r = await fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=${pageSize}&offset=${(page - 1) * pageSize}`);
+    if (r.ok) ({ contacts = [], total = 0 } = await r.json());
+  } catch { /* leaves contacts/total at their empty defaults below */ }
   document.getElementById('membershipRows').innerHTML = contacts.map(c => `
     <tr>
       <td>${escapeHtml(`${c.first || ''} ${c.last || ''}`.trim() || '(no name)')}</td>
