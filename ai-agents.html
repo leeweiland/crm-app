@@ -127,7 +127,8 @@
 
 <div class="editor-backdrop" id="editorBackdrop" style="display:none">
   <div class="editor-panel">
-    <div class="pra-h2" id="editorTitle" style="margin-bottom:18px">New Agent</div>
+    <div class="pra-h2" id="editorTitle" style="margin-bottom:4px">New Agent</div>
+    <div class="pra-muted" id="autosaveStatus" style="font-size:.76rem;margin-bottom:14px;height:1em"></div>
 
     <div class="editor-grid">
       <div class="editor-settings">
@@ -227,8 +228,7 @@
     </div>
 
     <div class="editor-actions">
-      <button class="pra-btn pra-btn-ghost" id="editorCancelBtn" type="button">Cancel</button>
-      <button class="pra-btn" id="editorSaveBtn" type="button">Save</button>
+      <button class="pra-btn" id="editorSaveBtn" type="button">Done</button>
     </div>
   </div>
 </div>
@@ -305,8 +305,8 @@ function renderUserCheckboxes(selected) {
 function setToggle(btnId, on) { document.getElementById(btnId).classList.toggle('on', !!on); }
 function getToggle(btnId) { return document.getElementById(btnId).classList.contains('on'); }
 function updateActiveSectionVisibility() { document.getElementById('activeSection').style.display = getToggle('fActiveToggle') ? 'block' : 'none'; }
-document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); });
-document.getElementById('fAiAssistToggle').addEventListener('click', () => setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')));
+document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); scheduleAutosave(); });
+document.getElementById('fAiAssistToggle').addEventListener('click', () => { setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')); scheduleAutosave(); });
 document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
 document.getElementById('fAiAssistLabel').addEventListener('click', () => document.getElementById('fAiAssistToggle').click());
 
@@ -393,10 +393,14 @@ async function openEditor(agentId) {
   resetTestChat();
   document.getElementById('editorBackdrop').style.display = 'flex';
 }
-function closeEditor() {
+async function closeEditor() {
+  await flushAutosave(); // any pending debounced edit is written before the panel actually closes
   document.getElementById('editorBackdrop').style.display = 'none';
   editingAgentId = null;
 }
+window.addEventListener('beforeunload', (e) => {
+  if (editingAgentId && autosaveTimer) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // ── Test Conversation -- same streaming-bubble pattern as the standalone
 // role-play chat prototype, but talking to this agent's real /chat endpoint
@@ -512,23 +516,18 @@ document.getElementById('tcInput').addEventListener('input', (e) => {
   e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
 });
 
-async function saveAgent() {
+// ── Autosave -- every field persists as you type/click, debounced, so
+// closing the panel, navigating away, or a reload never loses an edit.
+// There is no longer a blocking "required field" check here: lead
+// type/status are a real, meaningful filter but an EMPTY selection just
+// means "no restriction," which is a legitimate saved state -- Start
+// Batch (a separate, deliberate action) is where real safety checks
+// belong, not agent-record autosave.
+function buildAgentPayload() {
   const programTypes = Array.from(document.querySelectorAll('#msProgramTypes input:checked')).map(cb => cb.value);
   const statuses = Array.from(document.querySelectorAll('#fStatuses input:checked')).map(cb => cb.value);
   const coverForUserIds = Array.from(document.querySelectorAll('#fCoverUsers input:checked')).map(cb => cb.value);
-  // Lead type/status live inside the AI Active section now and are only
-  // reachable (or meaningful) when AI Active is toggled on -- requiring
-  // them while that section is hidden made it impossible to ever save an
-  // AI-Assist-only agent. Only enforce the requirement when the fields are
-  // actually visible and in play.
-  let invalid = false;
-  const activeOn = getToggle('fActiveToggle');
-  document.getElementById('msProgramTypes').classList.toggle('invalid', activeOn && !programTypes.length);
-  document.getElementById('msStatuses').classList.toggle('invalid', activeOn && !statuses.length);
-  if (activeOn && (!programTypes.length || !statuses.length)) invalid = true;
-  if (invalid) { showToast('Select at least one lead type and status for AI Active', true); return; }
-
-  const payload = {
+  return {
     name: document.getElementById('fName').value.trim() || 'Untitled Agent',
     description: document.getElementById('fDescription').value.trim(),
     active: getToggle('fActiveToggle'),
@@ -544,9 +543,30 @@ async function saveAgent() {
       },
     },
   };
-  await fetch(`/api/ai-agents/${editingAgentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  closeEditor();
-  loadAgents();
+}
+let autosaveTimer = null;
+function setAutosaveStatus(text) { const el = document.getElementById('autosaveStatus'); if (el) el.textContent = text; }
+async function flushAutosave() {
+  if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
+  if (!editingAgentId) return;
+  setAutosaveStatus('Saving…');
+  try {
+    await fetch(`/api/ai-agents/${editingAgentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildAgentPayload()) });
+    setAutosaveStatus('Saved ✓');
+  } catch {
+    setAutosaveStatus('Save failed -- check connection');
+  }
+}
+function scheduleAutosave() {
+  setAutosaveStatus('Editing…');
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(flushAutosave, 800);
+}
+function wireAutosave() {
+  ['fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', scheduleAutosave);
+  });
+  document.querySelectorAll('.multiselect-panel').forEach((panel) => panel.addEventListener('change', scheduleAutosave));
 }
 
 // ── AI Active: preview / start / monitor batches ─────────────────────────
@@ -648,9 +668,9 @@ async function toggleBatchReview(batchId) {
 document.getElementById('previewBatchBtn').addEventListener('click', previewBatch);
 
 document.getElementById('newAgentBtn').addEventListener('click', () => openEditor(null));
-document.getElementById('editorCancelBtn').addEventListener('click', closeEditor);
-document.getElementById('editorSaveBtn').addEventListener('click', saveAgent);
-document.getElementById('editorBackdrop').addEventListener('click', (e) => { if (e.target.id === 'editorBackdrop') closeEditor(); });
+document.getElementById('editorSaveBtn').addEventListener('click', async () => { await closeEditor(); loadAgents(); });
+document.getElementById('editorBackdrop').addEventListener('click', (e) => { if (e.target.id === 'editorBackdrop') closeEditor().then(loadAgents); });
+wireAutosave();
 
 (async function init() {
   await Promise.all([loadStatuses(), loadUsers(), loadSegments()]);
