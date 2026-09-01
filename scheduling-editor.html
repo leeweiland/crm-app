@@ -45,6 +45,16 @@
   .cal-inline-row { display: flex; gap: 8px; }
   .cal-inline-row .field { flex: 1; margin-bottom: 12px; min-width: 0; }
 
+  /* ── Custom questions editor -- one card per question. ── */
+  .q-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .q-card .field { margin-bottom: 8px; }
+  .q-card .field:last-child { margin-bottom: 0; }
+  .q-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .q-card-row .toggle-switch { flex-shrink: 0; }
+  .q-card-row label { font-size: .74rem; color: var(--pra-dim); flex: 1; }
+  .q-card-del { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
+  .q-card-del:hover { color: var(--pra-red); }
+
   /* ── Live preview card — same visual language as the real book.html ── */
   :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   .ed-preview-outer { background: var(--bk-page-bg); }
@@ -191,6 +201,13 @@
             <div class="field"><label class="pra-label">Booking link</label>
               <div class="link-row" style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--pra-dim)"><code id="fSlug" style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px"></code></div>
             </div>
+          </div>
+
+          <div class="fb-side-section">
+            <div class="fb-side-title">Questions</div>
+            <div class="pra-muted" style="font-size:.72rem;margin-bottom:10px;line-height:1.4">Extra questions asked on the booking form, beyond Name/Email/Phone. Map one to a contact field to save the answer there automatically.</div>
+            <div id="questionsList"></div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addQuestionBtn">+ Add Question</button>
           </div>
         </div>
 
@@ -475,6 +492,73 @@ function setColorField(colorId, hexId, value) {
   document.getElementById(hexId).textContent = value;
 }
 
+// ── Custom questions -- same field-mapping concept as form-builder.html's
+// fields (mapToCustomFieldId into the /api/custom-fields registry), scoped
+// down to the three types that make sense on a booking form: no email/phone/
+// name (already fixed fields above) and no choice-with-branching-logic.
+let customFieldsState = [];
+const QUESTION_TYPE_LABELS = { short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown' };
+
+function questionCardHtml(q, i) {
+  return `
+    <div class="q-card" data-q-idx="${i}">
+      <div class="field"><input class="pra-input" data-q-label="${i}" value="${escapeHtml(q.label)}" placeholder="Question text"/></div>
+      <div class="field"><select class="pra-select" data-q-type="${i}">
+        ${Object.entries(QUESTION_TYPE_LABELS).map(([v, l]) => `<option value="${v}" ${q.type === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></div>
+      ${q.type === 'dropdown' ? `<div class="field"><textarea class="pra-input" data-q-options="${i}" rows="3" placeholder="One option per line">${escapeHtml((q.options || []).join('\n'))}</textarea></div>` : ''}
+      <div class="q-card-row">
+        <div class="toggle-switch ${q.required ? 'on' : ''}" data-q-required="${i}"></div>
+        <label>Required</label>
+      </div>
+      <div class="field">
+        <label class="pra-label" style="font-size:.7rem">Maps to contact field</label>
+        <select class="pra-select" data-q-map="${i}">
+          <option value="">Auto (new field from question text)</option>
+          <option value="__new__">+ Create new field…</option>
+          ${customFieldsState.map(cf => `<option value="${cf.id}" ${q.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="text-align:right;margin-top:4px"><button class="q-card-del" data-q-del="${i}" title="Delete question">&times; Delete</button></div>
+    </div>
+  `;
+}
+
+function renderQuestions() {
+  document.getElementById('questionsList').innerHTML = draft.questions.map(questionCardHtml).join('') || '<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom questions yet.</div>';
+  wireQuestions();
+}
+
+function wireQuestions() {
+  document.querySelectorAll('[data-q-label]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qLabel].label = el.value; saveDebounced(); });
+  document.querySelectorAll('[data-q-type]').forEach(el => el.onchange = () => { draft.questions[+el.dataset.qType].type = el.value; renderQuestions(); saveDebounced(); });
+  document.querySelectorAll('[data-q-options]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qOptions].options = el.value.split('\n').map(s => s.trim()).filter(Boolean); saveDebounced(); });
+  document.querySelectorAll('[data-q-required]').forEach(el => el.onclick = () => { const idx = +el.dataset.qRequired; draft.questions[idx].required = el.classList.toggle('on'); saveDebounced(); });
+  document.querySelectorAll('[data-q-del]').forEach(el => el.onclick = () => { draft.questions.splice(+el.dataset.qDel, 1); renderQuestions(); saveDebounced(); });
+  document.querySelectorAll('[data-q-map]').forEach(el => el.onchange = async () => {
+    const idx = +el.dataset.qMap;
+    if (el.value === '__new__') {
+      const label = prompt('Name for the new custom field:');
+      if (!label || !label.trim()) { el.value = draft.questions[idx].mapToCustomFieldId || ''; return; }
+      const r = await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entityType: 'contact', label: label.trim() }) });
+      if (!r.ok) { showToast('Failed to create field', true); el.value = draft.questions[idx].mapToCustomFieldId || ''; return; }
+      const { field } = await r.json();
+      customFieldsState.push(field);
+      draft.questions[idx].mapToCustomFieldId = field.id;
+      renderQuestions();
+      saveDebounced();
+      return;
+    }
+    draft.questions[idx].mapToCustomFieldId = el.value;
+    saveDebounced();
+  });
+}
+document.getElementById('addQuestionBtn').onclick = () => {
+  draft.questions.push({ id: crypto.randomUUID(), label: '', type: 'short_text', required: false, placeholder: '', options: [], mapToCustomFieldId: '' });
+  renderQuestions();
+  saveDebounced();
+};
+
 function saveDebounced() {
   document.getElementById('edSaveMsg').textContent = 'Saving…';
   clearTimeout(saveTimer);
@@ -486,7 +570,7 @@ async function saveNow() {
     body: JSON.stringify({
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
-      calendarId: draft.calendarId, branding: draft.branding,
+      calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -668,7 +752,11 @@ async function init() {
     fontPrimary: 'default', fontSecondary: 'aldrich', redirectUrl: '',
     ...(draft.branding || {}),
   };
+  draft.questions = draft.questions || [];
   renderPreview();
+  const cfRes = await fetch('/api/custom-fields?entityType=contact');
+  customFieldsState = cfRes.ok ? (await cfRes.json()).fields : [];
+  renderQuestions();
   const calendars = await loadCalendars();
   // Event types saved before calendars existed only have the old
   // calendarEmail field -- resolve it to a real calendarId here (matching

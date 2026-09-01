@@ -350,11 +350,33 @@ function newEventType({ name, description, durationMinutes, location, branding, 
     // availability (hours, buffers, rolling window) governs this event
     // type's slots. Defaults to the connected account's own calendar.
     calendarId: calendarId || "default",
+    // Custom questions asked on the booking form, beyond the fixed
+    // Name/Email/Phone/Notes fields -- same shape as forms_backend.js's
+    // field objects (id/label/type/required/placeholder/options/
+    // mapToCustomFieldId) so the same "maps to contact field" mapping
+    // concept and /api/custom-fields registry apply here too.
+    questions: [],
     active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 }
 function publicEventType(et) {
-  return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) } };
+  return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) }, questions: et.questions || [] };
+}
+const QUESTION_TYPES = ["short_text", "long_text", "dropdown"];
+function slugQuestion(q) {
+  const base = String(q.label || q.type || q.id).toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return base || q.id;
+}
+// Same rule as forms_backend.js's validateAnswers -- a required question
+// with no answer blocks the booking, checked server-side since the public
+// booking form is unauthenticated and easy to hit directly.
+function validateQuestionAnswers(questions, answers) {
+  for (const q of questions || []) {
+    if (!q.required) continue;
+    const val = (answers || {})[q.id];
+    if (val === undefined || val === null || String(val).trim() === "") return `"${q.label || "Question"}" is required`;
+  }
+  return null;
 }
 function uniqueSlug(base, existing, excludeId) {
   let slug = base, n = 2;
@@ -425,7 +447,7 @@ async function computeAvailableSlots(eventType, opts = {}) {
   return { byDate, timezone: avail.timezone, calendar };
 }
 
-function upsertContactFromBooking({ name, email, phone, statusId }) {
+function upsertContactFromBooking({ name, email, phone, statusId, questions, answers }) {
   const contacts = readJson(CONTACTS_FILE, []);
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
@@ -433,18 +455,30 @@ function upsertContactFromBooking({ name, email, phone, statusId }) {
   const [first, ...rest] = String(name || "").trim().split(/\s+/);
   const last = rest.join(" ");
 
+  // Same mapping rule as forms_backend.js's upsertContactFromSubmission --
+  // a question explicitly mapped (mapToCustomFieldId, set in the Design
+  // panel's Questions section) lands in that real custom field definition;
+  // an unmapped one falls back to a key auto-slugged from its label.
+  const customFields = {};
+  for (const q of questions || []) {
+    const val = (answers || {})[q.id];
+    if (val === undefined || val === null || val === "") continue;
+    customFields[q.mapToCustomFieldId || slugQuestion(q)] = val;
+  }
+
   if (contact) {
     if (first) contact.first = first;
     if (last) contact.last = last;
     if (normalizedEmail) contact.email = normalizedEmail;
     if (normalizedPhone) contact.phone = normalizedPhone;
     if (statusId) contact.status = statusId;
+    contact.customFields = { ...contact.customFields, ...customFields };
     contact.updatedAt = new Date().toISOString();
   } else {
     contact = {
       id: randomUUID(), type: "lead", accountName: "",
       first: first || "", last: last || "", email: normalizedEmail, phone: normalizedPhone,
-      status: statusId || "", tags: [], listIds: [], customFields: {},
+      status: statusId || "", tags: [], listIds: [], customFields,
       source: "scheduling", ownerId: null, emailOptOut: false, smsOptOut: false,
       externalIds: { acContactId: null, closeLeadId: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -540,11 +574,13 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
-    const { slug, startAt, name, email, phone, notes, timezone } = await readJsonBody(req);
+    const { slug, startAt, name, email, phone, notes, timezone, answers } = await readJsonBody(req);
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (!startAt || !name || !email) return sendJson(res, 400, { error: "startAt, name, and email are required" });
+    const questionError = validateQuestionAnswers(et.questions, answers);
+    if (questionError) return sendJson(res, 400, { error: questionError });
 
     // Race-safe recheck: confirm this exact slot is still open before booking it.
     const dateStr = ymd(new Date(startAt));
@@ -555,7 +591,7 @@ export async function handleSchedulingRequest(req, res, url) {
       return sendJson(res, 409, { error: "That time was just booked — please pick another slot." });
     }
 
-    const contact = upsertContactFromBooking({ name, email, phone, statusId: et.statusId });
+    const contact = upsertContactFromBooking({ name, email, phone, statusId: et.statusId, questions: et.questions, answers });
     const start = new Date(startAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
     const calendarId = calendar.email || getCalendarId();
@@ -577,6 +613,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const booking = {
       id: randomUUID(), eventTypeId: et.id, contactId: contact.id,
       name, email: String(email).trim().toLowerCase(), phone: phone || "", notes: notes || "",
+      answers: answers || {},
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || calendar.availability.timezone,
       status: "confirmed", calendarEventId, calendarId,
@@ -589,13 +626,18 @@ export async function handleSchedulingRequest(req, res, url) {
 
     // Log the booking itself as an inbound Inbox activity, same as a form
     // submission -- "they booked a call" should be visible in the
-    // conversation thread, not just as a row in the Scheduling tab.
+    // conversation thread, not just as a row in the Scheduling tab. Custom
+    // question answers ride along here too, same as notes.
     const when = start.toLocaleString("en-US", { timeZone: booking.timezone, dateStyle: "full", timeStyle: "short" });
+    const answersText = (et.questions || [])
+      .filter(q => answers && answers[q.id] !== undefined && answers[q.id] !== "")
+      .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n");
+    const extra = [notes, answersText].filter(Boolean).join("\n\n");
     logMessage({
       channel: "booking", direction: "inbound", contactId: contact.id,
       sourceType: "booking", sourceId: booking.id,
-      subject: `Booked: ${et.name}`, body: `${when}${notes ? `\n\n${notes}` : ""}`,
-      bodyPreview: `${when}${notes ? ` — ${notes}` : ""}`.slice(0, 200),
+      subject: `Booked: ${et.name}`, body: `${when}${extra ? `\n\n${extra}` : ""}`,
+      bodyPreview: `${when}${extra ? ` — ${extra}` : ""}`.slice(0, 200),
       status: "received",
     });
 
@@ -742,7 +784,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

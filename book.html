@@ -299,8 +299,24 @@ function renderPicker() {
   if (mobileBackBtn) mobileBackBtn.onclick = () => { selectedDate = null; renderPicker(); };
 }
 
+// Renders one of the event type's own custom questions (set in the Design
+// panel's Questions section, each optionally mapped to a real contact
+// custom field) -- separate from the fixed Name/Email/Phone/Notes fields,
+// which every event type always asks.
+function questionFieldHtml(q) {
+  const suffix = q.required ? '' : ' (optional)';
+  const label = `<label class="bk-label">${escapeHtml(q.label || 'Question')}${suffix}</label>`;
+  if (q.type === 'long_text') return `<div class="bk-field">${label}<textarea class="bk-textarea" data-q="${q.id}" rows="2" placeholder="${escapeHtml(q.placeholder || '')}"></textarea></div>`;
+  if (q.type === 'dropdown') {
+    const opts = (q.options || []).map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+    return `<div class="bk-field">${label}<select class="bk-input" data-q="${q.id}"><option value="">Select…</option>${opts}</select></div>`;
+  }
+  return `<div class="bk-field">${label}<input class="bk-input" data-q="${q.id}" placeholder="${escapeHtml(q.placeholder || '')}"/></div>`;
+}
+
 function renderForm() {
   const when = new Date(selectedSlot).toLocaleString('en-US', { timeZone: selectedTz, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const questionsHtml = (eventType.questions || []).map(questionFieldHtml).join('');
   card().innerHTML = `
     <div class="bk-grid">
       <div class="bk-info">${infoPanelHtml()}<div class="bk-meta-row" style="margin-top:14px">🕐 ${when}</div></div>
@@ -309,6 +325,7 @@ function renderForm() {
         <div class="bk-field" ${prefillName ? 'style="display:none"' : ''}><label class="bk-label">Name</label><input class="bk-input" id="bkName" value="${escapeHtml(prefillName)}"/></div>
         <div class="bk-field" ${prefillEmail ? 'style="display:none"' : ''}><label class="bk-label">Email</label><input class="bk-input" type="email" id="bkEmail" value="${escapeHtml(prefillEmail)}"/></div>
         <div class="bk-field" ${prefillPhone ? 'style="display:none"' : ''}><label class="bk-label">Phone (optional)</label><input class="bk-input" id="bkPhone" value="${escapeHtml(prefillPhone)}"/></div>
+        ${questionsHtml}
         <div class="bk-field"><label class="bk-label">Anything we should know? (optional)</label><textarea class="bk-textarea" id="bkNotes" rows="2"></textarea></div>
         <button class="bk-btn" id="bkSubmit" ${formEmbed ? 'style="display:none"' : ''}>Confirm Booking</button>
         <div class="bk-error" id="bkError"></div>
@@ -335,9 +352,15 @@ async function submitBooking() {
   // both end up in the booking record and, from there, the actual Google
   // Calendar event description.
   const notes = [prefillFormAnswers, document.getElementById('bkNotes').value.trim()].filter(Boolean).join('\n\n');
+  const answers = {};
+  (eventType.questions || []).forEach(q => {
+    const el = document.querySelector(`[data-q="${q.id}"]`);
+    if (el) answers[q.id] = el.value.trim();
+  });
   const errEl = document.getElementById('bkError');
-  if (!name || !email) {
-    errEl.textContent = 'Name and email are required.';
+  const missingQuestion = (eventType.questions || []).find(q => q.required && !answers[q.id]);
+  if (!name || !email || missingQuestion) {
+    errEl.textContent = missingQuestion ? `"${missingQuestion.label || 'Question'}" is required.` : 'Name and email are required.';
     if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
     return;
   }
@@ -345,7 +368,7 @@ async function submitBooking() {
   btn.disabled = true; btn.textContent = 'Booking…';
   const r = await fetch('/api/scheduling/bookings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, startAt: selectedSlot, name, email, phone, notes, timezone: selectedTz }),
+    body: JSON.stringify({ slug, startAt: selectedSlot, name, email, phone, notes, timezone: selectedTz, answers }),
   });
   const d = await r.json();
   if (!r.ok) {
