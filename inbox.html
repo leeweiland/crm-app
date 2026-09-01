@@ -56,27 +56,44 @@
   .convo-avatar { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s; }
   .convo-avatar.has-unread { background: #39ff14; color: #0a0a0d; }
   #chatStatusSelect, .convo-status-select { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s; }
-  .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; }
-  .convo-meta { flex: 1; min-width: 0; }
-  .convo-top { display: flex; align-items: center; gap: 6px; }
-  .convo-pinned-mark { flex-shrink: 0; color: var(--pra-blue); display: inline-flex; margin-right: 4px; }
+  /* No flex-shrink:0 here (unlike the type badge/date below) and a real
+     max-width -- statusSelectWidthRule's inline width can run past 300px
+     for the longest status label ("FOLLOW UP (They have a Task / Date
+     set)" alone is 48ch), which on a resized-narrow sidebar was eating the
+     ENTIRE row and squeezing the name to a computed 0px width. Letting it
+     shrink (like .owner-field-select already does via its own max-width in
+     crm-design-system.css) means status/assigned give ground before the
+     name does, not after. */
+  .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; max-width: 100px; }
+  /* Two rows, both plain single-line flex rows (never wrap) -- row 1 is
+     identity + metadata (name, status, assigned, type, time), row 2 is the
+     message preview + pin/star. Name and preview are the only two elements
+     that actually FLEX (min-width:0 + ellipsis); everything else here is
+     flex-shrink:0 with a small fixed/capped size, so they never eat into
+     the name or preview's space no matter how narrow the row gets. */
+  .convo-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .convo-top { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+  .convo-pinned-mark { flex-shrink: 0; color: var(--pra-blue); display: inline-flex; }
   .convo-pinned-mark svg { width: 11px; height: 11px; }
-  .convo-name { font-weight: 700; font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-  .convo-preview { font-size: .78rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; display: flex; align-items: center; gap: 4px; }
-  .convo-preview .bubble-ticks { display: inline-flex; flex-shrink: 0; }
-  .convo-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-  .convo-time-row { display: flex; align-items: center; gap: 5px; }
-  .convo-time { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
+  /* min-width isn't 0 here on purpose -- the name is the one thing in this
+     row with no other way to identify who it is (status has its glow
+     color, the rest are secondary metadata), so it gets a guaranteed floor
+     instead of being the only element that shrinks all the way to nothing
+     when the row is tight. */
+  .convo-name { font-weight: 700; font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 44px; }
+  .convo-time { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; flex-shrink: 0; }
   .convo-time.has-unread { color: #39ff14; font-weight: 700; }
-  .convo-actions-row { display: flex; align-items: center; gap: 1px; }
+  .convo-bottom { display: flex; align-items: center; gap: 4px; }
+  .convo-preview { font-size: .78rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+  .convo-preview .bubble-ticks { display: inline-flex; flex-shrink: 0; }
   .convo-icon-btn { width: 22px; height: 22px; border-radius: 5px; border: none; background: transparent; color: var(--pra-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: .5; flex-shrink: 0; }
   .convo-icon-btn:hover { opacity: 1; }
   .convo-icon-btn.on { opacity: 1; }
   .convo-icon-btn.pin-btn.on { color: var(--pra-blue); }
   .convo-icon-btn.star-btn.on { color: #ffd54a; }
   .convo-icon-btn svg { width: 14px; height: 14px; }
-  .convo-unread-badge { background: #39ff14; color: #0a0a0d; font-family: var(--font-secondary); font-size: .68rem; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; padding: 0 5px; }
-  .convo-add-btn { margin-top: 4px; }
+  .convo-unread-badge { background: #39ff14; color: #0a0a0d; font-family: var(--font-secondary); font-size: .68rem; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
+  .convo-add-btn { flex-shrink: 0; }
 
   /* ── Mobile: single-pane, same pattern as chat-app's chat.html ── */
   @media (max-width: 900px) {
@@ -90,17 +107,22 @@
     #chatView:not(.thread-open) .chat-panel { display: none; }
     .chat-back-btn { display: inline-flex !important; }
 
-    /* The status/owner selects sat on the SAME line as the name, competing
-       for a much narrower row than desktop has -- status alone could run to
-       48ch+ for the longest status label ("FOLLOW UP (They have a Task /
-       Date set)"), which crushed the name down to 3-4 visible characters.
-       Wrapping them onto their own line under the name (rather than
-       fighting for space beside it) gives both the name AND the preview
-       line below it their full width back; the badges just take a bit more
-       vertical space instead. */
-    .convo-top { flex-wrap: wrap; row-gap: 4px; }
-    .convo-name { flex: 1 1 100%; }
-    .convo-status-select, .convo-owner-field { max-width: 130px; }
+    /* Status/assigned shrink hard on mobile -- a native select can't be
+       squeezed by flex alone (intrinsic content width), so this caps the
+       mobile-select-enhancer's replacement button instead (crm-nav.js
+       snapshots this max-width when it builds that button). Their own
+       label already ellipsizes inside that width (.mobile-select-trigger-
+       label), so "FOLLOW UP (They have a Task / Date set)" still reads as
+       "F..." rather than pushing the row wider -- the status GLOW color is
+       what actually communicates status at a glance on mobile; the select
+       is there to change it, not to be read as text. Genuinely tight (46px)
+       on purpose: on a 375px phone, six items competing for one line means
+       every pixel these don't take is a pixel the name gets back, and the
+       name is the one thing here that has no other way to be identified. */
+    .convo-top { gap: 4px; }
+    .convo-status-select, .convo-owner-field { max-width: 46px; font-size: .64rem; padding: 2px 14px 2px 4px; }
+    .convo-row [data-type-badge] { max-width: 30px; overflow: hidden; text-overflow: ellipsis; padding: 2px 5px !important; }
+    .convo-time { font-size: .64rem; }
   }
   .chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
 
@@ -581,10 +603,6 @@ async function loadMoreConversations() {
 // `conversations` is always exactly the rows that belong on screen, in
 // order. This just turns that array into HTML; it never re-filters or
 // re-sorts it client-side.
-// Same select + glow treatment as the chat panel's #chatStatusSelect
-// (avatarStyle/statusSelectWidthRule), just compact enough to sit in the
-// sidebar row next to the name -- lets a status get changed without
-// opening the conversation.
 // Same badge markup as the contact overlay's renderOverlayOptOutBadges /
 // contact-detail.html's equivalent -- the chat panel didn't have this at
 // all before, unlike those other two contact views.
@@ -593,6 +611,10 @@ function optOutBadgesHtml(contact) {
   const badge = (label) => `<span class="pra-badge" style="background:#3a1414;color:#ff6b6b;border:1px solid #ff6b6b55">${label}</span>`;
   return (contact.emailOptOut ? badge('EMAIL OPT-OUT') : '') + (contact.smsOptOut ? badge('SMS OPT-OUT') : '');
 }
+// Same select + glow treatment as the chat panel's #chatStatusSelect
+// (avatarStyle/statusSelectWidthRule), just compact enough to sit in the
+// sidebar row next to the name -- lets a status get changed without
+// opening the conversation.
 function convoStatusFieldHtml(c) {
   const status = c.contact?.status || '';
   return `<select class="pra-select convo-status-select" data-status-contact="${c.contactId}" style="${avatarStyle(status)};${statusSelectWidthRule(status)}" title="Change status">
@@ -620,16 +642,12 @@ function convoRowHtml(c) {
           <span class="convo-name">${escapeHtml(c.displayName)}</span>
           ${c.contactId ? convoStatusFieldHtml(c) : ''}
           ${c.contactId ? ownerFieldHtml(c.contact, 'convo-owner-field') : ''}
-        </div>
-        <div class="convo-preview">${c.lastDirection === 'outbound' ? previewTicks + ' You: ' : ''}${previewText}</div>
-        ${!c.contactId ? '<button class="pra-btn pra-btn-ghost pra-btn-sm convo-add-btn" data-add-contact type="button">+ Add Contact</button>' : ''}
-      </div>
-      <div class="convo-side">
-        <div class="convo-time-row">
           ${c.contactId ? `<span class="pra-badge pra-badge-${c.contact?.programType || ''}" data-type-badge style="font-size:.56rem;padding:2px 7px">${c.contact?.programType ? escapeHtml(c.contact.programType) : 'SET TYPE'}</span>` : ''}
           <div class="convo-time${hasUnread ? ' has-unread' : ''}">${fmtShort(c.lastAt)}</div>
         </div>
-        <div class="convo-actions-row">
+        <div class="convo-bottom">
+          <div class="convo-preview">${c.lastDirection === 'outbound' ? previewTicks + ' You: ' : ''}${previewText}</div>
+          ${!c.contactId ? '<button class="pra-btn pra-btn-ghost pra-btn-sm convo-add-btn" data-add-contact type="button">+ Add Contact</button>' : ''}
           ${c.contactId ? `<button class="convo-icon-btn pin-btn${c.pinned ? ' on' : ''}" data-pin="${c.contactId}" data-pin-on="${c.pinned ? '0' : '1'}" title="${c.pinned ? 'Unpin' : 'Pin to top'}">${PIN_ICON}</button>` : ''}
           ${c.contactId ? `<button class="convo-icon-btn star-btn${c.starred ? ' on' : ''}" data-star="${c.contactId}" data-star-on="${c.starred ? '0' : '1'}" title="${c.starred ? 'Unstar' : 'Star'}">${STAR_ICON}</button>` : ''}
           ${hasUnread ? `<div class="convo-unread-badge">${c.unreadCount > 99 ? '99+' : c.unreadCount}</div>` : ''}
