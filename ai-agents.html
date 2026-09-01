@@ -23,6 +23,11 @@
   .editor-row label { display: block; font-size: .8rem; color: var(--pra-dim); margin-bottom: 6px; }
   .editor-row input[type=text], .editor-row input[type=number], .editor-row textarea, .editor-row select { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); padding: 9px 11px; font-size: .88rem; font-family: inherit; color-scheme: dark; }
   .editor-row input[type=text]:focus, .editor-row input[type=number]:focus, .editor-row textarea:focus, .editor-row select:focus { outline: none; border-color: var(--pra-blue); box-shadow: 0 0 0 3px var(--pra-blue-dim); }
+  /* color-scheme:dark on <select> above doesn't reliably darken its native
+     popup list in every browser -- styling the <option> elements directly
+     is the actual fix (background-color/color are the only properties
+     browsers honor on <option>, but that's all this needs). */
+  .editor-row select option { background: var(--pra-panel-2); color: var(--pra-white); }
   .editor-row textarea { min-height: 220px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8rem; line-height: 1.5; resize: vertical; }
   /* Active / AI Assist toggles -- same track+thumb switch as flow-builder.html's
      .active-toggle, so a boolean setting looks and behaves the same way
