@@ -42,6 +42,7 @@ db.exec(`
   DROP TABLE IF EXISTS conversations;
   CREATE TABLE conversations (
     key TEXT PRIMARY KEY, contact_id TEXT, display_name TEXT, first TEXT, last TEXT, email TEXT,
+    phone TEXT, first_seen_at TEXT,
     status TEXT, program_type TEXT, owner_id TEXT,
     last_at_ms INTEGER, last_inbound_at_ms INTEGER, unread_count INTEGER,
     pinned INTEGER DEFAULT 0, starred INTEGER DEFAULT 0, archived INTEGER DEFAULT 0, done INTEGER DEFAULT 0,
@@ -52,10 +53,10 @@ db.exec(`
 
 const insert = db.prepare(`
   INSERT INTO conversations
-    (key, contact_id, display_name, first, last, email, status, program_type, owner_id,
+    (key, contact_id, display_name, first, last, email, phone, first_seen_at, status, program_type, owner_id,
      last_at_ms, last_inbound_at_ms, unread_count, pinned, starred, archived, done,
      last_channel, last_direction, last_preview, last_status, last_opened, last_message_id, last_by_channel_json)
-  VALUES (:key, :contactId, :displayName, :first, :last, :email, :status, :programType, :ownerId,
+  VALUES (:key, :contactId, :displayName, :first, :last, :email, :phone, :firstSeenAt, :status, :programType, :ownerId,
           :lastAtMs, :lastInboundAtMs, :unreadCount, :pinned, :starred, :archived, :done,
           :lastChannel, :lastDirection, :lastPreview, :lastStatus, :lastOpened, :lastMessageId, :lastByChannelJson)
 `);
@@ -72,6 +73,7 @@ for (const g of convoIndex) {
   insert.run({
     key: g.key, contactId: g.contactId || null, displayName: displayName || "Unknown",
     first: contact?.first || null, last: contact?.last || null, email: contact?.email || null,
+    phone: contact?.phone || null, firstSeenAt: contact?.firstSeenAt || null,
     status: contact?.status || null, programType: contact?.programType || null, ownerId: contact?.ownerId || null,
     lastAtMs: toMs(g.last?.createdAt), lastInboundAtMs: toMs(g.lastInboundAt), unreadCount: g.unreadCount || 0,
     pinned: m?.pinned ? 1 : 0, starred: m?.starred ? 1 : 0, archived: m?.archived ? 1 : 0, done: m?.done ? 1 : 0,

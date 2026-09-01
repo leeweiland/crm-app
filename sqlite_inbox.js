@@ -50,10 +50,18 @@ export function sqliteInboxAvailable() {
   `);
   // CREATE TABLE IF NOT EXISTS is a no-op against an already-existing table
   // from an earlier schema version (e.g. production's original build, made
-  // before owner_id existed) -- ALTER TABLE ADD COLUMN is what actually
-  // evolves it without losing the already-populated rows.
+  // before these columns existed) -- ALTER TABLE ADD COLUMN is what actually
+  // evolves it without losing the already-populated rows. phone/first_seen_at
+  // were a real regression, not just a later addition like owner_id: the
+  // Inbox's chat panel silently lost the contact's phone (and "Since" date)
+  // the moment this became the default read path, since neither ever made
+  // it into this table's columns or the row-mapping code -- confirmed live
+  // against a real contact with a phone on file that the panel showed no
+  // phone for at all.
   const existingCols = new Set(db.prepare("PRAGMA table_info(conversations)").all().map(c => c.name));
-  if (!existingCols.has("owner_id")) db.exec("ALTER TABLE conversations ADD COLUMN owner_id TEXT");
+  for (const col of ["owner_id", "phone", "first_seen_at"]) {
+    if (!existingCols.has(col)) db.exec(`ALTER TABLE conversations ADD COLUMN ${col} TEXT`);
+  }
   return true;
 }
 
@@ -77,10 +85,10 @@ export function syncMessageFields(g) {
   const displayName = contact ? `${contact.first || ""} ${contact.last || ""}`.trim() || displayNameFallback : (exists ? undefined : displayNameFallback);
   db.prepare(`
     INSERT INTO conversations
-      (key, contact_id, display_name, first, last, email, status, program_type, owner_id,
+      (key, contact_id, display_name, first, last, email, phone, first_seen_at, status, program_type, owner_id,
        last_at_ms, last_inbound_at_ms, unread_count,
        last_channel, last_direction, last_preview, last_status, last_opened, last_message_id, last_by_channel_json)
-    VALUES (:key, :contactId, :displayName, :first, :last, :email, :status, :programType, :ownerId,
+    VALUES (:key, :contactId, :displayName, :first, :last, :email, :phone, :firstSeenAt, :status, :programType, :ownerId,
             :lastAtMs, :lastInboundAtMs, :unreadCount,
             :lastChannel, :lastDirection, :lastPreview, :lastStatus, :lastOpened, :lastMessageId, :lastByChannelJson)
     ON CONFLICT(key) DO UPDATE SET
@@ -92,6 +100,7 @@ export function syncMessageFields(g) {
     key: g.key, contactId: g.contactId || null,
     displayName: displayName ?? displayNameFallback,
     first: contact?.first || null, last: contact?.last || null, email: contact?.email || null,
+    phone: contact?.phone || null, firstSeenAt: contact?.firstSeenAt || null,
     status: contact?.status || null, programType: contact?.programType || null, ownerId: contact?.ownerId || null,
     lastAtMs: toMs(g.last?.createdAt), lastInboundAtMs: toMs(g.lastInboundAt), unreadCount: g.unreadCount || 0,
     lastChannel: g.last?.channel || null, lastDirection: g.last?.direction || null,
@@ -132,11 +141,13 @@ export function syncContactFields(contactId, contact) {
   const displayName = `${contact.first || ""} ${contact.last || ""}`.trim() || "Unknown";
   db.prepare(`
     UPDATE conversations SET display_name = :displayName, first = :first, last = :last, email = :email,
+      phone = :phone, first_seen_at = :firstSeenAt,
       status = :status, program_type = :programType, owner_id = :ownerId
     WHERE contact_id = :contactId
   `).run({
     contactId, displayName,
     first: contact.first || null, last: contact.last || null, email: contact.email || null,
+    phone: contact.phone || null, firstSeenAt: contact.firstSeenAt || null,
     status: contact.status || null, programType: contact.programType || null, ownerId: contact.ownerId || null,
   });
 }
@@ -195,7 +206,7 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bu
     }
     return {
       key: r.key, contactId: r.contact_id,
-      contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, first: r.first, last: r.last, ownerId: r.owner_id } : null,
+      contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id } : null,
       displayName: r.display_name,
       lastChannel: last?.channel || r.last_channel, lastDirection: last?.direction || r.last_direction,
       lastPreview: last?.subject || last?.bodyPreview || r.last_preview,
