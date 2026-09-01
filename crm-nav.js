@@ -234,9 +234,18 @@ function enhanceSelectForMobile(sel) {
   // by the page populating them) -- the closed trigger box itself glows
   // that color when selected, same "status at a glance" idea as the
   // colored avatar rings elsewhere in the app (no per-option dots).
+  // The Inbox sidebar's status/assigned selects are deliberately this tiny
+  // even before the mobile enhancer touches them (see inbox.html's own
+  // max-width on .convo-status-select/.owner-field-select) -- an ellipsis
+  // there just wastes width restating "there's more text" for a label
+  // nobody's meant to read in full at that size (status's glow color and
+  // the OPEN dropdown's full untruncated list already carry the real
+  // information). First letter only, no dots, saves the space instead.
+  const isCompactTrigger = sel.classList.contains("convo-status-select") || sel.classList.contains("owner-field-select");
   function renderTrigger() {
     const opt = sel.options[sel.selectedIndex];
-    label.textContent = opt ? opt.textContent : "";
+    const fullText = opt ? opt.textContent : "";
+    label.textContent = isCompactTrigger ? (fullText.trim().charAt(0).toUpperCase() || "") : fullText;
     trigger.disabled = sel.disabled;
     const color = opt && opt.dataset.color;
     anchor.classList.toggle("has-color-glow", !!color);

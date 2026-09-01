@@ -94,6 +94,7 @@
   .convo-icon-btn svg { width: 14px; height: 14px; }
   .convo-unread-badge { background: #39ff14; color: #0a0a0d; font-family: var(--font-secondary); font-size: .68rem; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
   .convo-add-btn { flex-shrink: 0; }
+  .type-badge-short { display: none; }
 
   /* ── Mobile: single-pane, same pattern as chat-app's chat.html ── */
   @media (max-width: 900px) {
@@ -131,7 +132,9 @@
     .convo-status-select .mobile-select-trigger, .convo-owner-field .mobile-select-trigger { padding: 3px 16px 3px 6px; }
     .convo-status-select .mobile-select-trigger-label, .convo-owner-field .mobile-select-trigger-label { font-size: .64rem; }
     .convo-status-select .mobile-select-trigger-caret, .convo-owner-field .mobile-select-trigger-caret { font-size: .6em; }
-    .convo-row [data-type-badge] { max-width: 30px; overflow: hidden; text-overflow: ellipsis; padding: 2px 5px !important; }
+    .convo-row [data-type-badge] { padding: 2px 5px !important; }
+    .convo-row .type-badge-full { display: none; }
+    .convo-row .type-badge-short { display: inline; }
     .convo-time { font-size: .64rem; }
   }
   .chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
@@ -625,6 +628,18 @@ function optOutBadgesHtml(contact) {
 // (avatarStyle/statusSelectWidthRule), just compact enough to sit in the
 // sidebar row next to the name -- lets a status get changed without
 // opening the conversation.
+// Two spans, CSS toggles which one shows -- unlike the status/assigned
+// selects (JS-rendered trigger label, easy to just slice to one char),
+// this badge's text is plain HTML with no equivalent render function to
+// hook, and text-overflow:ellipsis can't drop the dots while keeping only
+// the first letter. Scoped to the existing <=900px breakpoint (not
+// unconditional like the selects) since the full "online"/"gym" text
+// already fits comfortably on desktop and was never the complaint.
+function typeBadgeInnerHtml(programType) {
+  const full = programType ? escapeHtml(programType) : 'SET TYPE';
+  const short = programType ? escapeHtml(programType.charAt(0).toUpperCase()) : '?';
+  return `<span class="type-badge-full">${full}</span><span class="type-badge-short">${short}</span>`;
+}
 function convoStatusFieldHtml(c) {
   const status = c.contact?.status || '';
   return `<select class="pra-select convo-status-select" data-status-contact="${c.contactId}" style="${avatarStyle(status)};${statusSelectWidthRule(status)}" title="Change status">
@@ -652,7 +667,7 @@ function convoRowHtml(c) {
           <span class="convo-name">${escapeHtml(c.displayName)}</span>
           ${c.contactId ? convoStatusFieldHtml(c) : ''}
           ${c.contactId ? ownerFieldHtml(c.contact, 'convo-owner-field') : ''}
-          ${c.contactId ? `<span class="pra-badge pra-badge-${c.contact?.programType || ''}" data-type-badge style="font-size:.56rem;padding:2px 7px">${c.contact?.programType ? escapeHtml(c.contact.programType) : 'SET TYPE'}</span>` : ''}
+          ${c.contactId ? `<span class="pra-badge pra-badge-${c.contact?.programType || ''}" data-type-badge style="font-size:.56rem;padding:2px 7px">${typeBadgeInnerHtml(c.contact?.programType)}</span>` : ''}
           <div class="convo-time${hasUnread ? ' has-unread' : ''}">${fmtShort(c.lastAt)}</div>
         </div>
         <div class="convo-bottom">
@@ -692,7 +707,7 @@ function wireConvoRow(row) {
         onSaved: (value) => {
           if (convo.contact) convo.contact.programType = value;
           typeBadge.className = `pra-badge pra-badge-${value || ''}`;
-          typeBadge.textContent = value ? value : 'SET TYPE';
+          typeBadge.innerHTML = typeBadgeInnerHtml(value);
           typeBadge.style.fontSize = '.56rem';
           typeBadge.style.padding = '2px 7px';
         },
