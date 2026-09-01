@@ -108,6 +108,13 @@ const prefillName = qs.get('prefillName') || '';
 const prefillEmail = qs.get('prefillEmail') || '';
 const prefillPhone = qs.get('prefillPhone') || '';
 const prefillFormAnswers = qs.get('formAnswers') || '';
+// Set alongside the prefill params above -- the outer form already has its
+// own Next/Submit button at the bottom of the page, so a second "Confirm
+// Booking" button inside this iframe is a redundant, confusing second
+// button. The form's own button drives booking instead via postMessage
+// (see the listener below and public-form.html's calendar-step handling).
+const formEmbed = qs.get('formEmbed') === '1';
+if (formEmbed) window.addEventListener('message', e => { if (e.origin === location.origin && e.data?.type === 'pf-book-now') submitBooking(); });
 
 const TZ_OPTIONS = [
   { id: 'America/Anchorage', label: 'Alaska Time' },
@@ -303,7 +310,7 @@ function renderForm() {
         <div class="bk-field" ${prefillEmail ? 'style="display:none"' : ''}><label class="bk-label">Email</label><input class="bk-input" type="email" id="bkEmail" value="${escapeHtml(prefillEmail)}"/></div>
         <div class="bk-field" ${prefillPhone ? 'style="display:none"' : ''}><label class="bk-label">Phone (optional)</label><input class="bk-input" id="bkPhone" value="${escapeHtml(prefillPhone)}"/></div>
         <div class="bk-field"><label class="bk-label">Anything we should know? (optional)</label><textarea class="bk-textarea" id="bkNotes" rows="2"></textarea></div>
-        <button class="bk-btn" id="bkSubmit">Confirm Booking</button>
+        <button class="bk-btn" id="bkSubmit" ${formEmbed ? 'style="display:none"' : ''}>Confirm Booking</button>
         <div class="bk-error" id="bkError"></div>
       </div>
     </div>
@@ -313,6 +320,13 @@ function renderForm() {
 }
 
 async function submitBooking() {
+  // Guard first, before touching any bk*/ DOM elements below -- those only
+  // exist once renderForm() has rendered the details screen, i.e. only
+  // after a slot is actually picked. A parent-triggered pf-book-now
+  // arriving before that (visitor clicked the form's Submit while still on
+  // the picker) would otherwise throw here and never reply, leaving the
+  // parent's postMessage promise hanging forever.
+  if (!selectedSlot) { if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: 'Please pick a time first.' }, location.origin); return; }
   const name = document.getElementById('bkName').value.trim();
   const email = document.getElementById('bkEmail').value.trim();
   const phone = document.getElementById('bkPhone').value.trim();
@@ -322,7 +336,11 @@ async function submitBooking() {
   // Calendar event description.
   const notes = [prefillFormAnswers, document.getElementById('bkNotes').value.trim()].filter(Boolean).join('\n\n');
   const errEl = document.getElementById('bkError');
-  if (!name || !email) { errEl.textContent = 'Name and email are required.'; return; }
+  if (!name || !email) {
+    errEl.textContent = 'Name and email are required.';
+    if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
+    return;
+  }
   const btn = document.getElementById('bkSubmit');
   btn.disabled = true; btn.textContent = 'Booking…';
   const r = await fetch('/api/scheduling/bookings', {
@@ -334,6 +352,17 @@ async function submitBooking() {
     errEl.textContent = d.error || 'Something went wrong.';
     btn.disabled = false; btn.textContent = 'Confirm Booking';
     if (r.status === 409) { await loadSlots(); selectedDate = null; selectedSlot = null; renderPicker(); }
+    if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
+    return;
+  }
+  if (formEmbed) {
+    // The form's own redirect setting (form.settings.redirectUrl, applied
+    // by public-form.html after ITS OWN submission) is what should fire
+    // here, not this event type's own -- that would navigate just this
+    // iframe via location.href, stranding the visitor inside a redirected
+    // iframe nested in the still-showing outer form.
+    parent.postMessage({ type: 'pf-booked', success: true, booking: d.booking }, location.origin);
+    renderConfirmed(d);
     return;
   }
   const redirectUrl = eventType.branding?.redirectUrl;

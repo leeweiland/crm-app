@@ -138,6 +138,10 @@ const NON_ANSWERABLE_TYPES = ['statement', 'headline', 'image', 'video', 'calend
 // event, not just this form's own submission record).
 function bookingWidgetUrl(f) {
   const url = new URL(`${location.origin}/book/${encodeURIComponent(f.eventTypeSlug)}`);
+  // Tells book.html to hide its own "Confirm Booking" button -- this
+  // form's own Next/Submit button drives booking instead (see
+  // bookCalendarStep/the message listener below).
+  url.searchParams.set('formEmbed', '1');
   const emailField = form.fields.find(ff => ff.type === 'email');
   const phoneField = form.fields.find(ff => ff.type === 'phone');
   const firstField = form.fields.find(ff => ff.type === 'first_name');
@@ -328,6 +332,29 @@ function activateRawEmbeds(root) {
   });
 }
 
+// ── Calendar step: the outer Next/Submit button drives the actual booking
+// (book.html hides its own "Confirm Booking" button when embedded here --
+// see bookingWidgetUrl's formEmbed param) via postMessage, since a form
+// answer's already-collected data needs to reach the booking before it's
+// made, and the whole point is one button instead of two. Only one
+// calendar field is ever on-screen at a time (it's always its own step in
+// practice), so a single pending resolver is enough -- no per-field id
+// correlation needed. ──────────────────────────────────────────────────
+let pendingBookResolve = null;
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || e.data?.type !== 'pf-booked' || !pendingBookResolve) return;
+  const resolve = pendingBookResolve; pendingBookResolve = null;
+  resolve(e.data);
+});
+function bookCalendarStep() {
+  return new Promise(resolve => {
+    const iframe = document.querySelector('.scheduling-inline-widget iframe');
+    if (!iframe) { resolve({ success: false, error: 'Calendar failed to load — please refresh and try again.' }); return; }
+    pendingBookResolve = resolve;
+    iframe.contentWindow.postMessage({ type: 'pf-book-now' }, location.origin);
+  });
+}
+
 function renderStep() {
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
@@ -337,6 +364,7 @@ function renderStep() {
     ${renderProgress()}
     ${fields.map(renderField).join('')}
     <div class="pf-hidden-msg pra-muted" id="pfHiddenMsg" style="display:none;font-size:.82rem;margin-bottom:8px">Complete this step to continue.</div>
+    <div class="pf-error" id="pfBookError" style="display:none;margin-bottom:8px"></div>
     <div class="pf-nav">
       ${stepIndex > 0 ? `<button class="pra-btn pra-btn-ghost" id="pfBack">Back</button>` : ''}
       <button class="pra-btn" id="pfNext" style="flex:1">${isLast ? (form.settings.submitButtonText || 'Submit') : 'Next'}</button>
@@ -352,6 +380,16 @@ function renderStep() {
     if (redirect) { location.href = redirect.redirectUrl; return; }
     if (matchingRule(fields, 'hide_next')) return; // safety net -- button should already be hidden
     if (!validateStep(fields)) return;
+    const calendarField = fields.find(f => f.type === 'calendar' && f.eventTypeSlug);
+    if (calendarField) {
+      const btn = document.getElementById('pfNext');
+      const errEl = document.getElementById('pfBookError');
+      btn.disabled = true; btn.textContent = 'Booking…';
+      const result = await bookCalendarStep();
+      btn.disabled = false; btn.textContent = isLast ? (form.settings.submitButtonText || 'Submit') : 'Next';
+      if (!result.success) { errEl.textContent = result.error || 'Could not book that time — please try again.'; errEl.style.display = 'block'; return; }
+      errEl.style.display = 'none';
+    }
     if (!isLast) { stepIndex++; renderStep(); return; }
     await submit();
   };
