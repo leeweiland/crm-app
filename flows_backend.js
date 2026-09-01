@@ -80,16 +80,41 @@ async function getSheetsAccessToken() {
   if (!d.access_token) throw new Error("Sheets token refresh failed: " + JSON.stringify(d));
   return d.access_token;
 }
+function columnLetter(n) {
+  let s = "";
+  while (n > 0) { const rem = (n - 1) % 26; s = String.fromCharCode(65 + rem) + s; n = Math.floor((n - 1) / 26); }
+  return s || "A";
+}
+
+// Deliberately NOT the Sheets API's own values.append endpoint -- append
+// finds "the table" by scanning from the given range until it hits the
+// first blank row, so on any real-world sheet with a stray blank row
+// somewhere in the middle (routine after years of manual edits/deletes on a
+// large sheet) it silently writes there instead of at the true bottom,
+// invisible unless someone happens to scroll to that exact row. Reading the
+// full column range first and writing to an EXPLICIT row number instead
+// sidesteps that entirely -- values.length reflects the true last row with
+// data (Google preserves gap rows as [] within the array), regardless of
+// any gaps earlier in the sheet.
 async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
   const accessToken = await getSheetsAccessToken();
-  const range = encodeURIComponent(`'${sheetName}'!A1`);
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, {
-    method: "POST",
+  const endCol = columnLetter(rowValues.length);
+  const colRange = encodeURIComponent(`'${sheetName}'!A:${endCol}`);
+  const colRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${colRange}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const colData = await colRes.json();
+  if (!colRes.ok) throw new Error("Sheets read failed: " + JSON.stringify(colData));
+  const nextRow = (colData.values?.length || 0) + 1;
+
+  const writeRange = encodeURIComponent(`'${sheetName}'!A${nextRow}:${endCol}${nextRow}`);
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    method: "PUT",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ values: [rowValues] }),
   });
   const d = await r.json();
-  if (!r.ok) throw new Error("Sheets append failed: " + JSON.stringify(d));
+  if (!r.ok) throw new Error("Sheets write failed: " + JSON.stringify(d));
   return d;
 }
 
@@ -372,12 +397,15 @@ export async function handleFlowsRequest(req, res, url) {
   if (sheetTabsMatch && req.method === "GET") {
     try {
       const accessToken = await getSheetsAccessToken();
-      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetTabsMatch[1]}?fields=sheets.properties.title`, {
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetTabsMatch[1]}?fields=sheets.properties.title,sheets.properties.hidden`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const d = await r.json();
       if (!r.ok) return sendJson(res, 400, { error: d.error?.message || "Could not read that spreadsheet" });
-      return sendJson(res, 200, { tabs: (d.sheets || []).map(s => s.properties.title) });
+      // Excludes tabs hidden in the sheet itself -- someone browsing a
+      // spreadsheet full of scratch/archive tabs shouldn't have to pick
+      // through ones nobody's meant to see.
+      return sendJson(res, 200, { tabs: (d.sheets || []).filter(s => !s.properties.hidden).map(s => s.properties.title) });
     } catch (e) {
       return sendJson(res, 400, { error: e.message });
     }

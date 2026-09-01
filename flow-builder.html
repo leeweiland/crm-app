@@ -122,6 +122,7 @@
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Close</button>
     </div>
   </div>
 </div>
@@ -748,9 +749,26 @@ function applyTransform() {
   document.getElementById('zoomLayer').style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
   document.getElementById('zoomPct').textContent = Math.round(zoom * 100) + '%';
 }
+// .ab-canvas has big left/right padding (room to pan either direction from
+// an "infinite canvas" center) so the trigger card never naturally lands at
+// panX=0 -- measures the LIVE rendered position instead of a fixed offset,
+// so this centers correctly at whatever width canvasWrap actually is (phone
+// through desktop) rather than one hardcoded guess.
+function centerCanvasOnTrigger() {
+  const wrap = document.getElementById('canvasWrap');
+  const triggerCard = document.getElementById('triggerCardBtn');
+  zoom = 1; panX = 0; panY = 0;
+  applyTransform();
+  if (!wrap || !triggerCard) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const triggerRect = triggerCard.getBoundingClientRect();
+  panX = (wrapRect.width / 2) - (triggerRect.left - wrapRect.left) - (triggerRect.width / 2);
+  panY = 24 - (triggerRect.top - wrapRect.top);
+  applyTransform();
+}
 document.getElementById('zoomInBtn').onclick = () => { zoom = Math.min(1.5, +(zoom + 0.1).toFixed(2)); applyTransform(); };
 document.getElementById('zoomOutBtn').onclick = () => { zoom = Math.max(0.4, +(zoom - 0.1).toFixed(2)); applyTransform(); };
-document.getElementById('zoomResetBtn').onclick = () => { zoom = 1; panX = 0; panY = 0; applyTransform(); };
+document.getElementById('zoomResetBtn').onclick = centerCanvasOnTrigger;
 
 const canvasWrap = document.getElementById('canvasWrap');
 let panning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
@@ -836,7 +854,7 @@ canvasWrap.addEventListener('touchend', (e) => {
   const d = await r.json();
   flow = d.flow;
   render();
-  applyTransform();
+  centerCanvasOnTrigger();
 })();
 </script>
 </body>
