@@ -86,6 +86,11 @@ export function fireTrigger(type, { contactId, listId, tagId, path, formId, even
 }
 
 export function enrollContact(automation, contactId) {
+  // An inactive automation must never start (or resume) sending -- the
+  // trigger-fired path already filtered on `.active` before calling here,
+  // but manual/API enrollment and jump_to_automation didn't, so a toggled-
+  // off automation could still email a contact.
+  if (!automation.active) return;
   const enrollments = readJson(ENROLLMENTS_FILE, []);
   if (enrollments.some(e => e.automationId === automation.id && e.contactId === contactId && e.status === "active")) return;
   const enrollment = {
@@ -106,7 +111,7 @@ export function enrollContact(automation, contactId) {
 // mis-wired loop (step A -> step B -> step A) can't hang the request/tick.
 async function advanceEnrollment(enrollment, automation) {
   automation = automation || readJson(AUTOMATIONS_FILE, []).find(a => a.id === enrollment.automationId);
-  if (!automation) return;
+  if (!automation || !automation.active) return; // paused mid-flight -- resumes once reactivated
   let guard = 0;
   while (enrollment.status === "active" && enrollment.currentStepId && guard++ < 200) {
     const step = automation.steps[enrollment.currentStepId];
@@ -177,6 +182,7 @@ export async function advanceDueEnrollments() {
   for (const enrollment of due) {
     const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === enrollment.automationId);
     if (!automation) continue;
+    if (!automation.active) continue; // leave waitUntil as-is -- fires as soon as reactivated, not lost
     const waitStep = automation.steps[enrollment.currentStepId];
     enrollment.waitUntil = null;
     enrollment.currentStepId = waitStep?.nextStepId || null;
@@ -311,6 +317,7 @@ export async function handleAutomationsRequest(req, res, url) {
     const automations = readJson(AUTOMATIONS_FILE, []);
     const automation = automations.find(a => a.id === bulkEnrollMatch[1]);
     if (!automation) return sendJson(res, 404, { error: "Not found" });
+    if (!automation.active) return sendJson(res, 400, { error: "This automation is inactive -- turn it on before enrolling anyone." });
     const body = await readJsonBody(req);
     const contactIds = resolveBulkContactIds(body);
     if (!contactIds.length) return sendJson(res, 400, { error: "No matching contacts to enroll" });

@@ -449,7 +449,9 @@ document.getElementById('saveTriggerBtn').onclick = () => {
 };
 document.getElementById('manualEnrollBtn').onclick = async () => {
   if (!manualEnrollContactId) return;
-  await fetch(`/api/workflows/${workflow.id}/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId: manualEnrollContactId }) });
+  const r = await fetch(`/api/workflows/${workflow.id}/enroll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId: manualEnrollContactId }) });
+  const d = await r.json();
+  if (!r.ok) { showToast(d.error || 'Could not enroll', true); return; }
   showToast('Enrolled');
   manualEnrollContactId = null;
   manualEnrollSearchInput.value = '';

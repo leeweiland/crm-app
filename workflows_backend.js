@@ -91,6 +91,11 @@ function saveWfEnrollment(enrollment) {
 }
 
 export function enrollContactInWorkflow(workflow, contactId) {
+  // An inactive sequence must never start sending -- the trigger-fired path
+  // already filtered on `.active` before calling here, but manual/API
+  // enrollment (the "Manually Enroll a Contact" box) didn't, so a toggled-
+  // off sequence could still text a contact.
+  if (!workflow.active) return;
   const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
   if (workflow.recipientSettings?.runMode !== "multiple") {
     if (enrollments.some(e => e.workflowId === workflow.id && e.contactId === contactId && e.status === "active")) return;
@@ -145,6 +150,7 @@ export async function advanceDueWorkflowEnrollments() {
   for (const enrollment of due) {
     const workflow = workflows.find(w => w.id === enrollment.workflowId);
     if (!workflow) continue;
+    if (!workflow.active) continue; // leave nextStepDueAt as-is -- fires as soon as reactivated, not lost
     const step = workflow.steps[enrollment.currentStepIndex];
     if (!step) { enrollment.status = "completed"; enrollment.completedAt = new Date().toISOString(); saveWfEnrollment(enrollment); continue; }
 
@@ -273,6 +279,7 @@ export async function handleWorkflowsRequest(req, res, url) {
     const body = await readJsonBody(req);
     const workflow = readJson(WORKFLOWS_FILE, []).find(w => w.id === enrollMatch[1]);
     if (!workflow) return sendJson(res, 404, { error: "Not found" });
+    if (!workflow.active) return sendJson(res, 400, { error: "This sequence is inactive -- turn it on before enrolling anyone." });
     const contactIds = resolveBulkContactIds(body);
     if (!contactIds.length) return sendJson(res, 400, { error: "No matching contacts to enroll" });
     contactIds.forEach(id => enrollContactInWorkflow(workflow, id));
