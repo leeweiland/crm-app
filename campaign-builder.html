@@ -122,13 +122,6 @@
   <div class="pra-panel modal-box">
     <div class="pra-h2" style="margin-bottom:16px">New Segment</div>
     <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="newSegmentName"/></div>
-    <div class="field">
-      <label class="pra-label">Channel</label>
-      <div style="display:flex;gap:20px;margin-top:6px">
-        <label class="pra-label" style="cursor:pointer;font-weight:400"><input type="radio" name="newSegmentChannel" value="email" checked/> Email</label>
-        <label class="pra-label" style="cursor:pointer;font-weight:400"><input type="radio" name="newSegmentChannel" value="sms"/> SMS</label>
-      </div>
-    </div>
     <div class="match-toggle" style="margin:16px 0 12px">
       Match
       <select class="pra-select" id="newSegmentMatchMode" style="width:auto"><option value="all">ALL</option><option value="any">ANY</option></select>
@@ -214,8 +207,7 @@ document.getElementById('saveNewSegmentBtn').onclick = async () => {
   if (!name) { showToast('Segment name is required', true); return; }
   const filter = window.ConditionRowBuilder.buildFilter(document.getElementById('newSegmentCondRows'), document.getElementById('newSegmentMatchMode').value);
   if (!filter) { showToast('Add at least one condition first', true); return; }
-  const channel = document.querySelector('input[name="newSegmentChannel"]:checked').value;
-  const r = await fetch('/api/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter, channel }) });
+  const r = await fetch('/api/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter }) });
   if (!r.ok) { showToast('Could not save segment', true); return; }
   const { segment } = await r.json();
   allSegments.push(segment);
