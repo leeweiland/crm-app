@@ -9,6 +9,11 @@
   body { background: var(--pra-black-soft); }
   .pf-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .pf-card { width: 100%; max-width: 560px; padding: 36px 32px; border-radius: var(--pf-radius, 12px); }
+  /* A step with a calendar field embeds the real booking widget, which
+     wants room for its 3-column desktop layout (see book.html's own
+     780px-wide card) -- the normal 560px text-form width would force it
+     into its cramped mobile layout on every device, desktop included. */
+  .pf-card.pf-card-wide { max-width: 900px; }
   .pf-card .pra-input, .pf-card .pra-select, .pf-card .pra-textarea, .pf-card .pra-btn, .pf-choice-row { border-radius: calc(var(--pf-radius, 12px) * .65); }
   .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }
   .pf-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--pra-border); }
@@ -150,7 +155,10 @@ function renderField(f) {
     // plain relative origin is always right -- no public-URL setting to
     // resolve, unlike book.html's own embed snippet (meant for other sites).
     const url = `${location.origin}/book/${encodeURIComponent(f.eventTypeSlug)}`;
-    return `<div class="pf-field"><div class="scheduling-inline-widget" data-url="${escapeHtml(url)}" style="min-width:280px;height:650px"></div></div>`;
+    // Fixed 650px forced an inner scrollbar on any screen where the real
+    // card (rendered inside this iframe) needed more room -- clamp to the
+    // viewport instead so it actually fits the device, desktop or mobile.
+    return `<div class="pf-field"><div class="scheduling-inline-widget" data-url="${escapeHtml(url)}" style="min-width:280px;height:clamp(560px, 78vh, 820px)"></div></div>`;
   }
   const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
   const val = answers[f.id];
@@ -258,7 +266,9 @@ function loadCalendarWidgetsForStep(fields) {
 function renderStep() {
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
-  document.getElementById('pfCard').innerHTML = `
+  const card = document.getElementById('pfCard');
+  card.classList.toggle('pf-card-wide', fields.some(f => f.type === 'calendar' && f.eventTypeSlug));
+  card.innerHTML = `
     ${renderProgress()}
     ${fields.map(renderField).join('')}
     <div class="pf-hidden-msg pra-muted" id="pfHiddenMsg" style="display:none;font-size:.82rem;margin-bottom:8px">Complete this step to continue.</div>
