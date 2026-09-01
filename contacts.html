@@ -419,6 +419,14 @@ function getSortMode(kind) {
   return valid.includes(saved) ? saved : (kind === 'tag' ? 'alpha' : 'manual');
 }
 function setSortMode(kind, mode) { localStorage.setItem(kind + 'SortMode', mode); }
+// Runs fn over items with at most `limit` in flight at once, instead of
+// firing them all simultaneously -- see the count-fetch callers below for
+// why (thousands of tags == thousands of concurrent fetches otherwise).
+async function runWithConcurrency(items, limit, fn) {
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const item = items[next++]; await fn(item); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 async function fetchCount(kind, item) {
   try {
     const r = await fetch(`/api/contacts?${KIND_CONFIG[kind].contactsQuery(item)}&limit=1`);
@@ -441,7 +449,8 @@ async function loadAndRenderKind(kind, rawItems, containerId, barId, sortSelectI
   } else if (mode === 'alpha') {
     items = [...rawItems].sort((a, b) => a.name.localeCompare(b.name));
   } else if (mode === 'count') {
-    const counts = await Promise.all(rawItems.map(item => fetchCount(kind, item)));
+    const counts = new Array(rawItems.length);
+    await runWithConcurrency(rawItems.map((item, i) => ({ item, i })), 6, async ({ item, i }) => { counts[i] = await fetchCount(kind, item); });
     prefetchedCounts = new Map(rawItems.map((item, i) => [item.id, counts[i]]));
     items = [...rawItems].sort((a, b) => (prefetchedCounts.get(b.id) ?? -1) - (prefetchedCounts.get(a.id) ?? -1));
   }
@@ -502,7 +511,13 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       el.textContent = typeof c === 'number' ? `${c} contact${c === 1 ? '' : 's'}` : '— contacts';
     });
   } else {
-    items.forEach(item => {
+    // Concurrency-capped, not one fetch per row fired all at once: Tags
+    // alone has 3500+ rows in production, and firing that many simultaneous
+    // fetches exhausted the browser's connection pool outright
+    // (net::ERR_INSUFFICIENT_RESOURCES), which also starved the unrelated
+    // main contacts-table fetch running at the same time and made the whole
+    // page look frozen on load, not just this tab.
+    runWithConcurrency(items, 6, item =>
       fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).then(d => {
         const el = container.querySelector(`[data-count="${item.id}"]`);
         if (!el) return;
@@ -513,8 +528,8 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       }).catch(() => {
         const el = container.querySelector(`[data-count="${item.id}"]`);
         if (el) el.textContent = '— contacts';
-      });
-    });
+      })
+    );
   }
   container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
   container.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
