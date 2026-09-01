@@ -47,6 +47,7 @@ export function sqliteInboxAvailable() {
     CREATE INDEX IF NOT EXISTS idx_starred ON conversations(archived, starred);
     CREATE INDEX IF NOT EXISTS idx_unread ON conversations(archived, unread_count);
     CREATE INDEX IF NOT EXISTS idx_display_name ON conversations(display_name);
+    CREATE INDEX IF NOT EXISTS idx_email ON conversations(email);
   `);
   // CREATE TABLE IF NOT EXISTS is a no-op against an already-existing table
   // from an earlier schema version (e.g. production's original build, made
@@ -108,6 +109,26 @@ export function syncMessageFields(g) {
     lastStatus: g.lastMine?.status || null, lastOpened: g.lastMine?.opened ? 1 : 0,
     lastMessageId: g.last?.id || null, lastByChannelJson: JSON.stringify(g.lastByChannel || {}),
   });
+}
+
+// Fast contact-by-email lookup for gmail_backend.js's inbound poller --
+// same reasoning as everything else in this file: avoids a full
+// ~190MB CONTACTS_FILE read for the common case (a known lead, already
+// with a conversation row, replying by email). Only ever a fallback
+// source for existing conversations, not a full contacts index -- a
+// contact with no messages yet has no row here and needs the real
+// contacts-file lookup, same as the caller already accounts for.
+export function findContactIdByEmail(email) {
+  if (!sqliteInboxAvailable() || !email) return null;
+  // Plain equality, not LOWER(email) = ? -- contact.email is already
+  // lowercased at the source (newContactRecord's .toLowerCase()), so the
+  // stored column is too. A LOWER()-wrapped column can't use idx_email
+  // below (SQLite can't index a computed expression against a plain
+  // column index -- exactly the mistake queryConversationsSqlite's ORDER
+  // BY made, see that fix's comment); matching the already-normalized
+  // form on both sides keeps this a real indexed lookup instead.
+  const row = db.prepare("SELECT contact_id FROM conversations WHERE email = ? AND contact_id IS NOT NULL LIMIT 1").get(email.toLowerCase());
+  return row?.contact_id || null;
 }
 
 export function deleteConversationRow(key) {

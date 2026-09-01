@@ -280,6 +280,13 @@
       </div>
 
       <div class="tab-panel pra-panel" id="tab-account" style="padding:22px;max-width:420px">
+        <div class="pra-h2" style="margin-bottom:6px">Gmail</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Connect your own Gmail so replies to your emails show up in the Inbox automatically -- same idea as adding yourself as a user in Close, nothing about your real inbox changes.</div>
+        <div id="gmailStatus" class="pra-muted" style="font-size:.85rem;margin-bottom:10px">Loading…</div>
+        <button class="pra-btn pra-btn-sm" id="gmailConnectBtn" style="display:none">Connect Gmail</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="gmailDisconnectBtn" style="display:none">Disconnect</button>
+
+        <hr style="border-color:var(--pra-border);margin:22px 0 18px"/>
         <div class="pra-h2" style="margin-bottom:14px">Change Password</div>
         <div class="field"><label class="pra-label">Current password</label><input class="pra-input" type="password" id="curPassword"/></div>
         <div class="field"><label class="pra-label">New password (8+ characters)</label><input class="pra-input" type="password" id="newPassword"/></div>
@@ -894,6 +901,23 @@ document.getElementById('setDefaultFooterBtn').onclick = async () => {
 
 
 // ── My Account ───────────────────────────────────────────────────────────
+async function loadGmailStatus() {
+  const r = await fetch('/api/auth/gmail/status');
+  const status = document.getElementById('gmailStatus');
+  if (!r.ok) { status.textContent = 'Could not load status.'; return; }
+  const d = await r.json();
+  status.textContent = d.connected ? `Connected: ${d.email}` : 'Not connected.';
+  document.getElementById('gmailConnectBtn').style.display = d.connected ? 'none' : 'inline-block';
+  document.getElementById('gmailDisconnectBtn').style.display = d.connected ? 'inline-block' : 'none';
+}
+document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
+document.getElementById('gmailDisconnectBtn').onclick = async () => {
+  if (!confirm('Disconnect Gmail? Replies will stop showing up in the Inbox automatically.')) return;
+  await fetch('/api/auth/gmail/disconnect', { method: 'POST' });
+  loadGmailStatus();
+};
+loadGmailStatus();
+
 document.getElementById('changePasswordBtn').onclick = async () => {
   const currentPassword = document.getElementById('curPassword').value;
   const newPassword = document.getElementById('newPassword').value;
