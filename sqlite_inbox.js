@@ -183,8 +183,27 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bu
   // Same tie-break intent as the JS comparator this replaces: pinned always
   // first; among the rest, conversations with a real inbound reply sort by
   // that reply's time, newest/oldest per sortDir.
+  //
+  // Plain columns, NOT a computed expression (this used to be `ORDER BY
+  // pinned DESC, (last_inbound_at_ms IS NULL) ASC, COALESCE(last_inbound_at_ms,
+  // last_at_ms) DESC`) -- confirmed live via EXPLAIN QUERY PLAN that SQLite
+  // can't use idx_sort_default/idx_sort_fallback to satisfy an ORDER BY
+  // built from IS NULL/COALESCE, so it fell back to "USE TEMP B-TREE FOR
+  // ORDER BY": sorting the ENTIRE ~170k-row matching set from scratch on
+  // every single request regardless of LIMIT, measured live at 3-5.6s+
+  // (this is what made the Inbox sidebar "take 30 seconds to load" --
+  // exactly the JSON-fold cost this table exists to avoid, paid again
+  // anyway). last_inbound_at_ms DESC already puts NULLs (no reply yet)
+  // last on its own -- SQLite's default NULL ordering does the "never-
+  // replied sorts after every real reply" job the IS NULL term used to do,
+  // for free, in whichever direction dir is. last_at_ms as the tie-break
+  // sub-sorts within a shared last_inbound_at_ms value (including the
+  // NULL group) instead of leaving same-value rows in arbitrary order --
+  // confirmed via EXPLAIN QUERY PLAN this uses idx_sort_default for the
+  // pinned+last_inbound_at_ms part and only needs a (cheap, small-group)
+  // temp sort for that last tie-break column, not a full-table one.
   const dir = sortDir === "oldest" ? "ASC" : "DESC";
-  const orderSql = `ORDER BY pinned DESC, (last_inbound_at_ms IS NULL) ASC, COALESCE(last_inbound_at_ms, last_at_ms) ${dir}`;
+  const orderSql = `ORDER BY pinned DESC, last_inbound_at_ms ${dir}, last_at_ms ${dir}`;
 
   const total = db.prepare(`SELECT COUNT(*) as n FROM conversations ${whereSql}`).get(params).n;
   // LIMIT/OFFSET as bound params (rather than literal ints) defeats SQLite's
