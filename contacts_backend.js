@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -167,6 +167,13 @@ export async function handleContactsRequest(req, res, url) {
   if (p === "/api/contacts" && req.method === "POST") {
     const body = await readJsonBody(req);
     if (!body.first || !body.last) return sendJson(res, 400, { error: "first and last are required" });
+    // Still a full read -- dedup-by-email/phone genuinely needs to check
+    // every existing contact, no way around that without a dedicated
+    // index. The WRITE side is what used to cost the same ~190MB
+    // stringify+rewrite as PATCH did before that got fixed (see PATCH's
+    // own comment below) -- creating one new contact doesn't need the
+    // other 176k rewritten just to append/patch one, so this now uses the
+    // same streaming append/in-place-patch primitives PATCH already does.
     const contacts = readJson(CONTACTS_FILE, []);
     // Same "email or phone already means the same person" rule every other
     // creation path in this app follows (forms, bookings, imports) --
@@ -175,16 +182,19 @@ export async function handleContactsRequest(req, res, url) {
     // second record instead of updating the one that already exists.
     let record = findContactMatch(contacts, body.email, body.phone);
     if (record) {
-      for (const k of ["first", "last", "accountName", "status"]) if (body[k]) record[k] = body[k];
-      if (body.email) record.email = String(body.email).toLowerCase();
-      if (body.phone) record.phone = body.phone;
-      record.customFields = { ...record.customFields, ...(body.customFields || {}) };
-      record.updatedAt = new Date().toISOString();
-      writeJson(CONTACTS_FILE, contacts);
+      const contactId = record.id;
+      record = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, (contact) => {
+        for (const k of ["first", "last", "accountName", "status"]) if (body[k]) contact[k] = body[k];
+        if (body.email) contact.email = String(body.email).toLowerCase();
+        if (body.phone) contact.phone = body.phone;
+        contact.customFields = { ...contact.customFields, ...(body.customFields || {}) };
+        contact.updatedAt = new Date().toISOString();
+        return contact;
+      });
+      try { syncContactFields(record.id, record); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
     } else {
       record = newContactRecord(body);
-      contacts.push(record);
-      writeJson(CONTACTS_FILE, contacts);
+      appendJsonRecordFast(CONTACTS_FILE, record);
     }
     record.listIds.forEach(listId => { fireTrigger("list_subscribe", { contactId: record.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: record.id, listId }); });
     record.tags.forEach(tagId => { fireTrigger("tag_added", { contactId: record.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: record.id, tagId }); });
@@ -260,21 +270,20 @@ export async function handleContactsRequest(req, res, url) {
   // a 180MB+ contacts file, exhausted the disk, and froze the whole
   // single-threaded server for everyone -- exactly the failure mode
   // message_log.js's own comments already document from a prior incident.
+  // removeValuesFromArrayField also fixes a second, subtler cost the fix
+  // above didn't: even one combined pass via readJson+forEach+writeJson
+  // still fully parsed AND re-stringified all 176k+ contacts just to touch
+  // the handful that actually referenced the deleted id(s) -- confirmed
+  // live to still take long enough to visibly block the server. This
+  // byte-scans instead, only parsing/rewriting records that could actually
+  // match; everything else is copied byte-for-byte, never parsed.
   if (p === "/api/lists/bulk-delete" && req.method === "POST") {
     const { ids } = await readJsonBody(req);
     if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
     const idSet = new Set(ids);
     const lists = readJson(LISTS_FILE, []);
     writeJson(LISTS_FILE, lists.filter(l => !idSet.has(l.id)));
-    const contacts = readJson(CONTACTS_FILE, []);
-    let changed = false;
-    contacts.forEach(c => {
-      if (Array.isArray(c.listIds) && c.listIds.some(id => idSet.has(id))) {
-        c.listIds = c.listIds.filter(id => !idSet.has(id));
-        changed = true;
-      }
-    });
-    if (changed) writeJson(CONTACTS_FILE, contacts);
+    removeValuesFromArrayField(CONTACTS_FILE, "listIds", ids);
     return sendJson(res, 200, { ok: true });
   }
   const listMatch = p.match(/^\/api\/lists\/([^/]+)$/);
@@ -283,19 +292,8 @@ export async function handleContactsRequest(req, res, url) {
     writeJson(LISTS_FILE, lists.filter(l => l.id !== listMatch[1]));
     // Deleting the list record alone left every contact that had it holding
     // a dead id in listIds forever (nothing else in the app ever reads a
-    // list's own record to know it's gone). A full contacts-file rewrite is
-    // fine here -- list deletion is a rare, deliberate admin action, not a
-    // per-request hot path like the message-log writes this app had to
-    // stop doing this way.
-    const contacts = readJson(CONTACTS_FILE, []);
-    let changed = false;
-    contacts.forEach(c => {
-      if (Array.isArray(c.listIds) && c.listIds.includes(listMatch[1])) {
-        c.listIds = c.listIds.filter(id => id !== listMatch[1]);
-        changed = true;
-      }
-    });
-    if (changed) writeJson(CONTACTS_FILE, contacts);
+    // list's own record to know it's gone).
+    removeValuesFromArrayField(CONTACTS_FILE, "listIds", [listMatch[1]]);
     return sendJson(res, 200, { ok: true });
   }
   // Removes just this one contact's membership (not the whole list) --
