@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin, streamJsonArrayFiltered } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -127,29 +127,26 @@ export async function handleContactsRequest(req, res, url) {
       try { advancedFilter = JSON.parse(filterParam); }
       catch { return sendJson(res, 400, { error: "filter must be valid JSON" }); }
     }
-    // One combined predicate, applied while STREAMING the file (see
-    // streamJsonArrayFiltered) instead of readJson(CONTACTS_FILE) + several
-    // sequential .filter() passes -- crm_contacts.json is ~190MB/176k+
-    // records, read (and often written) from 40+ places across the app, so
-    // its mtime rarely holds still long enough for readJson's own cache to
-    // help; a plain full materialize on every Contacts page load/search/
-    // sort was the real cost behind "the whole app freezes for a few
-    // seconds," not just this page -- Node blocks on that parse for
-    // everyone, not just this request.
-    function matchesAll(c) {
-      if (q && !(
-        `${c.first} ${c.last}`.toLowerCase().includes(q) ||
-        (c.email || "").toLowerCase().includes(q) ||
-        (c.accountName || "").toLowerCase().includes(q)
-      )) return false;
-      if (status && c.status !== status) return false;
-      if (tag && !c.tags.includes(tag)) return false;
-      if (listId && !c.listIds.includes(listId)) return false;
-      if (type && c.type !== type) return false;
-      if (advancedFilter && !matchesSegment(c, advancedFilter)) return false;
-      return true;
-    }
-    let filtered = streamJsonArrayFiltered(CONTACTS_FILE, matchesAll);
+    // REVERTED to plain readJson+filter (2026-09-01): the streamJsonArrayFiltered
+    // version made the app hang in production (whole server unresponsive) --
+    // likely a real bug in the byte-scan against crm_contacts.json's actual
+    // production data, not reproduced against the small local dataset this
+    // was tested against before shipping. Back to the known-safe (if slower)
+    // approach until that's root-caused properly, not under live-incident
+    // pressure. See git history around this date for the attempted fix and
+    // its revert.
+    const contacts = readJson(CONTACTS_FILE, []);
+    let filtered = contacts;
+    if (q) filtered = filtered.filter(c =>
+      `${c.first} ${c.last}`.toLowerCase().includes(q) ||
+      (c.email || "").toLowerCase().includes(q) ||
+      (c.accountName || "").toLowerCase().includes(q)
+    );
+    if (status) filtered = filtered.filter(c => c.status === status);
+    if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
+    if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
+    if (type) filtered = filtered.filter(c => c.type === type);
+    if (advancedFilter) filtered = filtered.filter(c => matchesSegment(c, advancedFilter));
     const total = filtered.length;
     // Sort/paginate are both opt-in via query params -- other callers
     // (inbox.html, workflow-detail.html, reporting.html) fetch this same
