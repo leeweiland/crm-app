@@ -86,11 +86,28 @@
     </div>
   </div>
 <script>
+// Embedded (widget.js iframe, or a form's calendar step) means whatever
+// page this sits in already has its own background -- the page-level gray
+// (or custom branding.pageBackgroundColor) box around the card is only
+// right for the standalone /book/:slug page. An inline style wins over the
+// `background: var(--bk-page-bg)` rule regardless of what applyBranding()
+// later sets that variable to, so this stays transparent no matter what.
+if (window.self !== window.top) document.body.style.background = 'transparent';
+
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 const pathParts = location.pathname.split('/').filter(Boolean); // ["book", ":slug", "manage"?]
 const slug = pathParts[1];
 const isManage = pathParts[2] === 'manage';
 const qs = new URLSearchParams(location.search);
+// Set when this is embedded as a form's calendar step and the form already
+// collected these answers on an earlier step (see public-form.html's
+// renderField calendar branch) -- avoids asking the same question twice,
+// Calendly-style, and carries every other answer through onto the actual
+// calendar event via the notes field (see submitBooking below).
+const prefillName = qs.get('prefillName') || '';
+const prefillEmail = qs.get('prefillEmail') || '';
+const prefillPhone = qs.get('prefillPhone') || '';
+const prefillFormAnswers = qs.get('formAnswers') || '';
 
 const TZ_OPTIONS = [
   { id: 'America/Anchorage', label: 'Alaska Time' },
@@ -282,9 +299,9 @@ function renderForm() {
       <div class="bk-info">${infoPanelHtml()}<div class="bk-meta-row" style="margin-top:14px">🕐 ${when}</div></div>
       <div class="bk-body">
         <a class="back-link" id="backToPicker">&larr; Back</a>
-        <div class="bk-field"><label class="bk-label">Name</label><input class="bk-input" id="bkName"/></div>
-        <div class="bk-field"><label class="bk-label">Email</label><input class="bk-input" type="email" id="bkEmail"/></div>
-        <div class="bk-field"><label class="bk-label">Phone (optional)</label><input class="bk-input" id="bkPhone"/></div>
+        <div class="bk-field" ${prefillName ? 'style="display:none"' : ''}><label class="bk-label">Name</label><input class="bk-input" id="bkName" value="${escapeHtml(prefillName)}"/></div>
+        <div class="bk-field" ${prefillEmail ? 'style="display:none"' : ''}><label class="bk-label">Email</label><input class="bk-input" type="email" id="bkEmail" value="${escapeHtml(prefillEmail)}"/></div>
+        <div class="bk-field" ${prefillPhone ? 'style="display:none"' : ''}><label class="bk-label">Phone (optional)</label><input class="bk-input" id="bkPhone" value="${escapeHtml(prefillPhone)}"/></div>
         <div class="bk-field"><label class="bk-label">Anything we should know? (optional)</label><textarea class="bk-textarea" id="bkNotes" rows="2"></textarea></div>
         <button class="bk-btn" id="bkSubmit">Confirm Booking</button>
         <div class="bk-error" id="bkError"></div>
@@ -299,7 +316,11 @@ async function submitBooking() {
   const name = document.getElementById('bkName').value.trim();
   const email = document.getElementById('bkEmail').value.trim();
   const phone = document.getElementById('bkPhone').value.trim();
-  const notes = document.getElementById('bkNotes').value.trim();
+  // The form's other answers ride along silently here (not shown in the
+  // visible textarea, which stays free for the visitor's own notes) --
+  // both end up in the booking record and, from there, the actual Google
+  // Calendar event description.
+  const notes = [prefillFormAnswers, document.getElementById('bkNotes').value.trim()].filter(Boolean).join('\n\n');
   const errEl = document.getElementById('bkError');
   if (!name || !email) { errEl.textContent = 'Name and email are required.'; return; }
   const btn = document.getElementById('bkSubmit');

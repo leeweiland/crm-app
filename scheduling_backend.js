@@ -190,7 +190,15 @@ export function calendarConfigured() {
   return !!(process.env.GOOGLE_REFRESH_TOKEN_PRA_CALENDAR && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 function getCalendarId() { return process.env.GOOGLE_CALENDAR_ID || "primary"; }
+// A booking does a freeBusy recheck AND creates the actual event -- two
+// separate Google API calls, each of which used to do its OWN full OAuth
+// token exchange first, doubling the round trips a visitor sat waiting
+// through on every single booking. Cached in-memory (this is a single
+// long-running server process, not serverless) with a 60s safety margin
+// before Google's real expiry so a near-expiry token is never handed out.
+let cachedAccessToken = null, cachedAccessTokenExpiresAt = 0;
 async function getCalendarAccessToken() {
+  if (cachedAccessToken && Date.now() < cachedAccessTokenExpiresAt) return cachedAccessToken;
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -201,7 +209,9 @@ async function getCalendarAccessToken() {
   });
   const d = await r.json();
   if (!d.access_token) throw new Error("Calendar token refresh failed: " + JSON.stringify(d));
-  return d.access_token;
+  cachedAccessToken = d.access_token;
+  cachedAccessTokenExpiresAt = Date.now() + ((d.expires_in || 3600) - 60) * 1000;
+  return cachedAccessToken;
 }
 // The "connected" pill just says yes/no -- it never surfaced WHICH Google
 // account that actually is, so a blank "your connected account" email field
@@ -462,17 +472,20 @@ async function sendBookingConfirmation(booking, eventType, contact) {
     <p><b>When:</b> ${when}<br/><b>Where:</b> ${locationText(eventType.location)}</p>
     ${booking.notes ? `<p><b>Notes:</b> ${booking.notes}</p>` : ""}
     <p>Need to cancel? <a href="${cancelUrl}">${cancelUrl}</a></p>`;
-  await sendEmail({
-    to: contact.email, subject: `Confirmed: ${eventType.name}`,
-    blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
-    contactId: contact.id, sourceType: "booking", sourceId: booking.id,
-  }).catch(() => {});
-  if (contact.phone) {
-    await sendSms({
+  // Independent sends -- no reason the SMS should wait on the email
+  // finishing first (or vice versa) now that this whole function already
+  // runs unawaited by its caller.
+  await Promise.all([
+    sendEmail({
+      to: contact.email, subject: `Confirmed: ${eventType.name}`,
+      blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
+      contactId: contact.id, sourceType: "booking", sourceId: booking.id,
+    }).catch(() => {}),
+    contact.phone ? sendSms({
       to: contact.phone, body: `You're booked for ${eventType.name} on ${when}. Cancel: ${cancelUrl}`,
       contactId: contact.id, sourceType: "booking", sourceId: booking.id,
-    }).catch(() => {});
-  }
+    }).catch(() => {}) : Promise.resolve(),
+  ]);
 }
 
 export async function handleSchedulingRequest(req, res, url) {
@@ -594,7 +607,13 @@ export async function handleSchedulingRequest(req, res, url) {
     });
     checkConversionGoal("meeting_booked", contact.id);
 
-    await sendBookingConfirmation(booking, et, contact);
+    // Not awaited -- sendBookingConfirmation already swallows its own
+    // failures (both sendEmail and sendSms are .catch(() => {})'d inside
+    // it), so it was never able to fail this response either way. Awaiting
+    // it just meant sitting through an email send and, if a phone was
+    // given, a second sequential SMS send before the visitor ever saw
+    // "You're booked" -- confirmation delivery doesn't need to block that.
+    sendBookingConfirmation(booking, et, contact).catch(() => {});
 
     const startDate = new Date(booking.startAt), endDate = new Date(booking.endAt);
     return sendJson(res, 200, {

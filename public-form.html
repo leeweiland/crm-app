@@ -128,6 +128,33 @@ function applyTheme(theme) {
 const formId = location.pathname.split('/').filter(Boolean).pop();
 let form = null, steps = [], stepIndex = 0, answers = {};
 
+// Same split as form-builder.html/forms_backend.js's ANSWERABLE_TYPES.
+const NON_ANSWERABLE_TYPES = ['statement', 'headline', 'image', 'video', 'calendar', 'page_break'];
+
+// Calendly-style handoff into the embedded booking widget: anything the
+// form already collected on an earlier step -- name/email/phone via
+// book.html's own prefill params (so it isn't asked a second time) and
+// every other answer via formAnswers (so it ends up on the actual calendar
+// event, not just this form's own submission record).
+function bookingWidgetUrl(f) {
+  const url = new URL(`${location.origin}/book/${encodeURIComponent(f.eventTypeSlug)}`);
+  const emailField = form.fields.find(ff => ff.type === 'email');
+  const phoneField = form.fields.find(ff => ff.type === 'phone');
+  const firstField = form.fields.find(ff => ff.type === 'first_name');
+  const lastField = form.fields.find(ff => ff.type === 'last_name');
+  const name = [firstField, lastField].map(ff => ff && answers[ff.id]).filter(Boolean).join(' ');
+  if (name) url.searchParams.set('prefillName', name);
+  if (emailField && answers[emailField.id]) url.searchParams.set('prefillEmail', answers[emailField.id]);
+  if (phoneField && answers[phoneField.id]) url.searchParams.set('prefillPhone', answers[phoneField.id]);
+  const carriedIds = new Set([emailField?.id, phoneField?.id, firstField?.id, lastField?.id, f.id]);
+  const extraQA = form.fields
+    .filter(ff => !NON_ANSWERABLE_TYPES.includes(ff.type) && !carriedIds.has(ff.id))
+    .map(ff => { const v = answers[ff.id]; return v === undefined || v === '' ? null : `${ff.label}: ${Array.isArray(v) ? v.join(', ') : v}`; })
+    .filter(Boolean);
+  if (extraQA.length) url.searchParams.set('formAnswers', extraQA.join('\n'));
+  return url.toString();
+}
+
 function buildSteps(fields) {
   const out = [[]];
   for (const f of fields) {
@@ -163,14 +190,10 @@ function renderField(f) {
   }
   if (f.type === 'calendar') {
     if (!f.eventTypeSlug) return '';
-    // Same crm-app instance serves both this form and /book/:slug, so a
-    // plain relative origin is always right -- no public-URL setting to
-    // resolve, unlike book.html's own embed snippet (meant for other sites).
-    const url = `${location.origin}/book/${encodeURIComponent(f.eventTypeSlug)}`;
     // Fixed 650px forced an inner scrollbar on any screen where the real
     // card (rendered inside this iframe) needed more room -- clamp to the
     // viewport instead so it actually fits the device, desktop or mobile.
-    return `<div class="pf-field"><div class="scheduling-inline-widget" data-url="${escapeHtml(url)}" style="min-width:280px;height:clamp(560px, 78vh, 820px)"></div></div>`;
+    return `<div class="pf-field"><div class="scheduling-inline-widget" data-url="${escapeHtml(bookingWidgetUrl(f))}" style="min-width:280px;height:clamp(560px, 78vh, 820px)"></div></div>`;
   }
   const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
   const val = answers[f.id];
