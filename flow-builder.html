@@ -719,7 +719,13 @@ async function renderSheetFieldChips() {
     { label: 'Date/Time Captured', token: '{{timestamp}}' },
   ];
   const samples = await fetchSamples(false);
-  const payloadKeys = sampleKeys(samples);
+  // A webhook field already mapped onto the contact (e.g. "First Name" ->
+  // first) resolves to the exact same value either way -- showing it again
+  // here as "raw webhook data" isn't a second option, it's the same chip
+  // twice under a different name. Only the leftover, unmapped fields (e.g.
+  // "SMS Consent") are genuinely something the contact-fields group can't give you.
+  const mappedSourceKeys = new Set(flow.trigger?.type === 'webhook' ? Object.keys(flow.trigger.config?.fieldMap || {}) : []);
+  const payloadKeys = sampleKeys(samples).filter(k => !mappedSourceKeys.has(k));
   if (!chipsEl.isConnected) return; // modal may have been closed/reopened while this was in flight
   const payloadChips = payloadKeys.map(k => ({ label: k, token: `{{payload.${k}}}` }));
 
