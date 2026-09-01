@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -324,22 +324,14 @@ export async function handleContactsRequest(req, res, url) {
     writeJson(TAGS_FILE, tags);
     return sendJson(res, 200, { ok: true, tag });
   }
-  // Same single-pass consolidation as the lists bulk-delete above.
+  // Same single-pass, byte-scanned consolidation as the lists bulk-delete above.
   if (p === "/api/tags/bulk-delete" && req.method === "POST") {
     const { ids } = await readJsonBody(req);
     if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
     const idSet = new Set(ids);
     const tags = readJson(TAGS_FILE, []);
     writeJson(TAGS_FILE, tags.filter(t => !idSet.has(t.id)));
-    const contacts = readJson(CONTACTS_FILE, []);
-    let changed = false;
-    contacts.forEach(c => {
-      if (Array.isArray(c.tags) && c.tags.some(id => idSet.has(id))) {
-        c.tags = c.tags.filter(id => !idSet.has(id));
-        changed = true;
-      }
-    });
-    if (changed) writeJson(CONTACTS_FILE, contacts);
+    removeValuesFromArrayField(CONTACTS_FILE, "tags", ids);
     return sendJson(res, 200, { ok: true });
   }
   const tagMatch = p.match(/^\/api\/tags\/([^/]+)$/);
@@ -347,15 +339,7 @@ export async function handleContactsRequest(req, res, url) {
     const tags = readJson(TAGS_FILE, []);
     writeJson(TAGS_FILE, tags.filter(t => t.id !== tagMatch[1]));
     // Same orphaned-id cleanup as list deletion above.
-    const contacts = readJson(CONTACTS_FILE, []);
-    let changed = false;
-    contacts.forEach(c => {
-      if (Array.isArray(c.tags) && c.tags.includes(tagMatch[1])) {
-        c.tags = c.tags.filter(id => id !== tagMatch[1]);
-        changed = true;
-      }
-    });
-    if (changed) writeJson(CONTACTS_FILE, contacts);
+    removeValuesFromArrayField(CONTACTS_FILE, "tags", [tagMatch[1]]);
     return sendJson(res, 200, { ok: true });
   }
   const tagContactMatch = p.match(/^\/api\/tags\/([^/]+)\/contacts\/([^/]+)$/);

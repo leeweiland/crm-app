@@ -649,6 +649,60 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
 // replaces it. Returns the array of updated (non-deleted) records so
 // callers can tell which ones actually matched, e.g. to know which
 // contacts to also patch in a per-contact index.
+// Bulk-removes a set of values from one array-valued field (e.g. contact
+// .listIds/.tags) across every record in a large file, without fully
+// parsing or re-stringifying records that don't reference any of them --
+// same byte-copy philosophy as updateJsonArrayRecordsByIds above, but for
+// "does this record's array FIELD contain one of these values" instead of
+// "does this record's own id equal one of these values" (that function
+// can't be reused here for exactly that reason). Confirmed live
+// (2026-09-01): deleting a handful of lists/tags via readJson+forEach+
+// writeJson against 176k+ contacts (~190MB) fully parsed and
+// re-stringified every single contact just to touch the few that actually
+// referenced the deleted id, and blocked the single-threaded server for
+// the whole multi-second duration. Here, a record whose raw bytes don't
+// even contain the target value as a substring is copied byte-for-byte,
+// never parsed at all -- a false-positive substring match just costs one
+// extra (harmless) JSON.parse, a false negative would silently miss a
+// real match, so the byte pre-check only needs to be a superset, never a
+// subset, of the real matches.
+export function removeValuesFromArrayField(file, fieldName, valuesToRemove) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p) || !valuesToRemove || !valuesToRemove.length) return 0;
+  const valueSet = new Set(valuesToRemove);
+  const needles = valuesToRemove.map(v => Buffer.from(v));
+  let changedCount = 0;
+  const tmp = `${p}.tmp${process.pid}`;
+  const dstFd = openSync(tmp, "w");
+  let wroteAny = false;
+  try {
+    writeSync(dstFd, "[");
+    forEachJsonArrayElement(p, (buf, start, end) => {
+      const view = buf.subarray(start, end);
+      let candidate = false;
+      for (const needle of needles) { if (view.indexOf(needle) !== -1) { candidate = true; break; } }
+      let toWrite = null;
+      if (candidate) {
+        let obj;
+        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+        if (obj && Array.isArray(obj[fieldName]) && obj[fieldName].some(v => valueSet.has(v))) {
+          obj[fieldName] = obj[fieldName].filter(v => !valueSet.has(v));
+          toWrite = obj;
+          changedCount++;
+        }
+      }
+      if (wroteAny) writeSync(dstFd, ",");
+      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+      else writeSync(dstFd, buf, start, end - start);
+      wroteAny = true;
+    });
+    writeSync(dstFd, "]");
+  } finally { closeSync(dstFd); }
+  if (changedCount > 0) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+  else { try { unlinkSync(tmp); } catch {} }
+  return changedCount;
+}
+
 export function updateJsonArrayRecordsByIds(file, ids, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !ids || !ids.length) return [];
