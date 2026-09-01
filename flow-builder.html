@@ -719,13 +719,17 @@ async function renderSheetFieldChips() {
     { label: 'Date/Time Captured', token: '{{timestamp}}' },
   ];
   const samples = await fetchSamples(false);
-  // A webhook field already mapped onto the contact (e.g. "First Name" ->
-  // first) resolves to the exact same value either way -- showing it again
-  // here as "raw webhook data" isn't a second option, it's the same chip
-  // twice under a different name. Only the leftover, unmapped fields (e.g.
-  // "SMS Consent") are genuinely something the contact-fields group can't give you.
-  const mappedSourceKeys = new Set(flow.trigger?.type === 'webhook' ? Object.keys(flow.trigger.config?.fieldMap || {}) : []);
-  const payloadKeys = sampleKeys(samples).filter(k => !mappedSourceKeys.has(k));
+  // A raw webhook field that's really just first/last/email/phone under a
+  // different spelling ("First Name", "first_name", "Email Address"...)
+  // resolves to the exact same value as its contact-fields chip -- showing
+  // it again as "raw webhook data" isn't a second option, it's the same
+  // chip twice. Matching by normalized name (not the exact fieldMap key)
+  // so this holds regardless of casing/spacing quirks between the field
+  // map and whatever the latest pulled sample happens to be named. Only
+  // genuinely extra fields (e.g. "SMS Consent") are left in that group.
+  const STANDARD_NAMES = new Set(['email', 'emailaddress', 'firstname', 'fname', 'lastname', 'lname', 'phone', 'phonenumber', 'mobile', 'mobilenumber']);
+  const normalize = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
+  const payloadKeys = sampleKeys(samples).filter(k => !STANDARD_NAMES.has(normalize(k)));
   if (!chipsEl.isConnected) return; // modal may have been closed/reopened while this was in flight
   const payloadChips = payloadKeys.map(k => ({ label: k, token: `{{payload.${k}}}` }));
 
