@@ -239,7 +239,7 @@
         <div class="pra-h2" style="margin-bottom:14px">Team Users</div>
         <div style="overflow-x:auto">
           <table class="data-table" id="usersTable">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Footer</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Footer</th><th>Zoom Link</th><th>Calendar Email</th><th></th></tr></thead>
             <tbody id="usersBody"></tbody>
           </table>
         </div>
@@ -403,7 +403,7 @@ document.getElementById('addFieldBtn').onclick = async () => {
 async function loadUsers() {
   const r = await fetch('/api/auth/users');
   const body = document.getElementById('usersBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Admins only.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">Admins only.</td></tr>'; return; }
   const { users } = await r.json();
   // Each user's own footer for their Inbox 1:1 replies -- independent of
   // the org-wide default used by campaigns/automations (email_backend.js's
@@ -417,6 +417,8 @@ async function loadUsers() {
       <td class="pra-muted">${escapeHtml(u.email)}</td>
       <td><span class="pra-badge pra-badge-${u.role}">${u.role}</span></td>
       <td><select class="pra-select" data-user-footer="${u.id}" style="font-size:.8rem;padding:4px 8px">${footerOptions(u.footerTemplateId)}</select></td>
+      <td><input class="pra-input" data-user-zoom="${u.id}" value="${escapeHtml(u.zoomLink || '')}" placeholder="https://zoom.us/j/..." style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
+      <td><input class="pra-input" data-user-cal="${u.id}" value="${escapeHtml(u.calendarEmail || '')}" placeholder="${escapeHtml(u.email)}" style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
       <td>${u.archived ? '<span class="pra-muted">Archived</span>' : ''}</td>
     </tr>
   `).join('');
@@ -425,6 +427,31 @@ async function loadUsers() {
       const r = await fetch(`/api/auth/users/${sel.dataset.userFooter}/footer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ footerTemplateId: sel.value || null }),
+      });
+      if (!r.ok) { showToast('Could not save', true); return; }
+      showToast('Saved');
+    });
+  });
+  // Zoom link / calendar email: save on blur (not every keystroke) --
+  // matches a plain text field, not an instant-select-change like footer.
+  body.querySelectorAll('[data-user-zoom]').forEach(inp => {
+    inp.addEventListener('blur', async () => {
+      const r = await fetch(`/api/auth/users/${inp.dataset.userZoom}/zoom-link`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zoomLink: inp.value }),
+      });
+      if (!r.ok) { showToast('Could not save', true); return; }
+      showToast('Saved');
+    });
+  });
+  // Blank means "use their login email" -- calendarEmail only needs setting
+  // when a coach's Google Calendar lives at a different address than they
+  // log into the CRM with.
+  body.querySelectorAll('[data-user-cal]').forEach(inp => {
+    inp.addEventListener('blur', async () => {
+      const r = await fetch(`/api/auth/users/${inp.dataset.userCal}/calendar-email`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calendarEmail: inp.value }),
       });
       if (!r.ok) { showToast('Could not save', true); return; }
       showToast('Saved');

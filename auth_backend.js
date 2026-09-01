@@ -909,6 +909,38 @@ export async function handleAuthRequest(req, res, url) {
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
+  // zoomLink: shown next to the contact's phone in the Inbox chat panel
+  // (always the logged-in user's own, not the assigned coach's -- whoever's
+  // actually in the conversation is who'd be running the call). calendarEmail:
+  // which Google Calendar a scheduled meeting from the Inbox goes on for this
+  // user -- same shared-OAuth-token pattern scheduling_backend.js already
+  // uses for the booking page (see its getCalendarAccessToken/
+  // createCalendarEvent), just targeting this user's calendar instead of a
+  // gym/shared one. Both admin-only to edit, same as footer/role above.
+  const zoomLinkMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/zoom-link$/);
+  if (zoomLinkMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { zoomLink } = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === zoomLinkMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    target.zoomLink = String(zoomLink || "").trim();
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
+  const calendarEmailMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/calendar-email$/);
+  if (calendarEmailMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { calendarEmail } = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === calendarEmailMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    target.calendarEmail = String(calendarEmail || "").trim();
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
 
   // Per-user UI preferences (e.g. which contacts-table columns are visible
   // and what order they're in) -- merge-patch semantics, only the keys
