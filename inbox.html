@@ -146,6 +146,10 @@
   .chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
   .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
   .chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
+  .chat-zoom-link { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
+  .zoom-copy-btn { width: 18px; height: 18px; border-radius: 4px; border: none; background: transparent; color: var(--pra-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; opacity: .6; flex-shrink: 0; }
+  .zoom-copy-btn:hover { opacity: 1; color: var(--pra-blue); }
+  .zoom-copy-btn svg { width: 13px; height: 13px; }
   .chat-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--pra-dim); font-size: .88rem; }
 
   .chat-thread { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
@@ -511,6 +515,19 @@ const STAR_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5
 // the AI draft banner so it reads as part of this app's own icon set
 // rather than a generic OS emoji.
 const SPARKLE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c.6 5.4 2.2 7 7.6 7.6-5.4.6-7 2.2-7.6 7.6-.6-5.4-2.2-7-7.6-7.6C9.8 9 11.4 7.4 12 2Z"/><path d="M19 17c.25 1.9.85 2.5 2.75 2.75C19.85 20 19.25 20.6 19 22.5c-.25-1.9-.85-2.5-2.75-2.75C18.15 19.5 18.75 18.9 19 17Z"/></svg>';
+const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/></svg>';
+// Always the LOGGED-IN user's own Zoom link, never the assigned coach's or
+// the contact's -- whoever's actually in the conversation is who'd be
+// running the call, so they need their own room link handy to paste in,
+// not someone else's (confirmed with Lee, not just a guess).
+// Link text is just "Zoom" (not the raw URL) -- these often carry long
+// ?pwd= query strings that would blow out the sub-line's width for no
+// benefit, since the point is a click-to-join/copy-to-share action, not
+// a number someone reads off and dials like the phone link next to it.
+function zoomLinkHtml() {
+  if (!currentUser?.zoomLink) return '';
+  return `<span class="chat-zoom-link"><a class="pra-tel-link" href="${escapeHtml(currentUser.zoomLink)}" target="_blank" rel="noopener noreferrer">Zoom</a><button type="button" class="zoom-copy-btn" id="chatZoomCopyBtn" title="Copy Zoom link" data-zoom-link="${escapeHtml(currentUser.zoomLink)}">${COPY_ICON}</button></span>`;
+}
 // WhatsApp-style read receipts, same as chat-app's: one grey check (sent),
 // two grey checks (delivered), two blue checks (read -- an email "opened"
 // event stands in for read, since SMS has no carrier-level read receipt).
@@ -1112,7 +1129,12 @@ function renderThread() {
           <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(c.displayName)}</a>
           ${c.contactId ? ownerFieldHtml(c.contact) : ''}
         </span>
-        <div class="chat-panel-sub">${escapeHtml(c.contact?.email || '')}${c.contact?.email && c.contact?.phone ? ' · ' : ''}${c.contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(c.contact.phone)}</a>` : ''}${c.contact?.firstSeenAt ? ` · <span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : ''}</div>
+        <div class="chat-panel-sub">${[
+          c.contact?.email ? escapeHtml(c.contact.email) : '',
+          c.contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(c.contact.phone)}</a>` : '',
+          zoomLinkHtml(),
+          c.contact?.firstSeenAt ? `<span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : '',
+        ].filter(Boolean).join(' · ')}</div>
       </div>
     </div>
     <div class="chat-panel-actions">
@@ -1211,6 +1233,13 @@ function renderThread() {
   if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
   else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;
+  const zoomCopyBtn = document.getElementById('chatZoomCopyBtn');
+  if (zoomCopyBtn) zoomCopyBtn.onclick = (e) => {
+    e.preventDefault();
+    navigator.clipboard.writeText(zoomCopyBtn.dataset.zoomLink)
+      .then(() => showToast('Zoom link copied'))
+      .catch(() => showToast('Could not copy', true));
+  };
   document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
   document.getElementById('chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); toggleNotePanel(c.contactId); };
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
