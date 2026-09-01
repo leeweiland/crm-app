@@ -27,6 +27,10 @@
   .pf-image img { max-width: 100%; border-radius: calc(var(--pf-radius, 12px) * .5); display: block; }
   .pf-video-embed { position: relative; width: 100%; padding-top: 56.25%; border-radius: calc(var(--pf-radius, 12px) * .5); overflow: hidden; background: #000; }
   .pf-video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  /* Wistia's own embed code manages its own sizing (the newer
+     <wistia-player> is responsive via its own aspect attribute), so it's
+     not wrapped in the 56.25%-padding iframe trick above. */
+  .pf-raw-embed { border-radius: calc(var(--pf-radius, 12px) * .5); overflow: hidden; }
   .pf-choice-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--pra-border); border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
   .pf-choice-row:hover { border-color: var(--pra-blue); }
   .pf-choice-row input { accent-color: var(--pra-blue); }
@@ -95,6 +99,13 @@ function wistiaIdFromInput(v) {
   if (/^[a-z0-9]{6,15}$/i.test(s)) return s;
   return null;
 }
+// The plain iframe URL doesn't work for every Wistia video (channels,
+// password/domain-restricted ones, the newer <wistia-player> embed) --
+// pasting Wistia's own "HTML Embed" code sidesteps that. Same helper as
+// form-builder.html's Design canvas.
+function isHtmlEmbed(v) {
+  return /<[a-z][\s\S]*>/i.test(String(v || '').trim());
+}
 
 function applyTheme(theme) {
   const t = { ...THEME_DEFAULTS, ...(theme || {}) };
@@ -145,6 +156,7 @@ function renderField(f) {
     return `<div class="pf-field pf-image">${f.link ? `<a href="${escapeHtml(f.link)}" target="_blank" rel="noopener">${img}</a>` : img}</div>`;
   }
   if (f.type === 'video') {
+    if (isHtmlEmbed(f.videoUrl)) return `<div class="pf-field"><div class="pf-raw-embed">${f.videoUrl}</div></div>`;
     const wistiaId = wistiaIdFromInput(f.videoUrl);
     if (!wistiaId) return '';
     return `<div class="pf-field"><div class="pf-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div>`;
@@ -263,6 +275,19 @@ function loadCalendarWidgetsForStep(fields) {
   document.body.appendChild(s);
 }
 
+// <script> tags inserted via .innerHTML never execute -- browsers ignore
+// them for exactly that reason. Wistia's HTML embed code needs its script
+// to actually run to initialize the player, so every one inside a raw
+// embed gets swapped for a freshly-created (and therefore live) copy.
+function activateRawEmbeds(root) {
+  root.querySelectorAll('.pf-raw-embed script').forEach(old => {
+    const s = document.createElement('script');
+    for (const a of old.attributes) s.setAttribute(a.name, a.value);
+    s.textContent = old.textContent;
+    old.replaceWith(s);
+  });
+}
+
 function renderStep() {
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
@@ -279,6 +304,7 @@ function renderStep() {
   `;
   bindStepInputs();
   updateNextVisibility();
+  activateRawEmbeds(card);
   loadCalendarWidgetsForStep(fields);
   if (stepIndex > 0) document.getElementById('pfBack').onclick = () => { stepIndex--; renderStep(); };
   document.getElementById('pfNext').onclick = async () => {

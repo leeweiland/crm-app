@@ -42,6 +42,7 @@
   /* ── Visual canvas — mirrors public-form.html's pf-* rendering exactly,
      so the editor IS a live preview of the published form, Tally-style. ── */
   .fb-canvas-shell { flex: 1; min-width: 0; max-width: 620px; }
+  .fb-canvas-shell.fb-canvas-wide { max-width: 960px; }
   @media (max-width: 900px) {
     .fb-layout { flex-direction: column; }
     .fb-sidebar { width: 100%; position: static; max-height: none; }
@@ -56,6 +57,10 @@
   .fb-block { position: relative; padding: 14px 78px 14px 44px; }
   .fb-block:hover, .fb-block.panel-open { background: rgba(255,255,255,0.025); }
   .fb-block.dragging { opacity: .35; }
+  /* Dashed drop-position indicator, shown in the gap the dragged block
+     would land in -- reuses the same gaps the "+ add field" buttons live
+     in, since those already sit between every pair of blocks. */
+  .fb-gap.drag-target::before { content: ''; position: absolute; left: 44px; right: 44px; top: 50%; border-top: 2px dashed var(--pra-blue); }
   .fb-drag-handle { position: absolute; left: 10px; top: 18px; cursor: grab; color: var(--pra-dim); }
   .fb-drag-handle svg { width: 15px; height: 18px; overflow: visible; }
   .fb-toolbar { position: absolute; right: 10px; top: 12px; display: flex; gap: 4px; }
@@ -91,6 +96,12 @@
   .fb-image-actions { display: flex; gap: 8px; }
   .fb-video-embed { position: relative; width: 100%; padding-top: 56.25%; border-radius: 8px; overflow: hidden; background: #000; }
   .fb-video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; pointer-events: none; }
+  /* Wistia's own embed code manages its own sizing (the newer
+     <wistia-player> is responsive via its own aspect attribute), so this
+     isn't wrapped in the 56.25%-padding iframe trick above -- just kept
+     inert like every other preview-only field in the builder. */
+  .fb-raw-embed { border-radius: 8px; overflow: hidden; }
+  .fb-raw-embed, .fb-raw-embed * { pointer-events: none; }
 
   .fb-option-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
   .fb-option-marker { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
@@ -113,7 +124,7 @@
   /* One of these renders in every gap -- before the first block, between
      each pair, and after the last -- not just at the end, so a question can
      be inserted anywhere instead of always appended and dragged into place. */
-  .fb-gap { padding: 14px 44px 0; display: flex; justify-content: center; }
+  .fb-gap { position: relative; padding: 14px 44px 0; display: flex; justify-content: center; }
   .fb-add-gap-btn { width: 34px; height: 34px; background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: border-color .12s, color .12s; }
   .fb-add-gap-btn:hover, .fb-add-gap-btn.on { border-color: var(--pra-blue); color: var(--pra-blue); }
   .fb-add-gap-btn svg { width: 16px; height: 16px; overflow: visible; }
@@ -382,10 +393,17 @@ function wistiaIdFromInput(v) {
   if (/^[a-z0-9]{6,15}$/i.test(s)) return s;
   return null;
 }
+// The plain iframe URL the simple ID/link path builds doesn't work for
+// every Wistia video (channels, password/domain-restricted ones, the newer
+// <wistia-player> embed) -- pasting Wistia's own "HTML Embed" code sidesteps
+// all of that. Same field, just detected by whether it looks like markup.
+function isHtmlEmbed(v) {
+  return /<[a-z][\s\S]*>/i.test(String(v || '').trim());
+}
 
 const formId = new URLSearchParams(location.search).get('id');
 let form = null, allStatuses = [], allTags = [], allLists = [], allEventTypes = [];
-let saveTimer, dragFromIdx = null;
+let saveTimer, dragFromIdx = null, dragToIdx = null;
 let openPanel = null; // { idx, kind: 'gear'|'logic' } | null
 let paletteOpenAt = null; // index into form.fields where a new field would be inserted, or null if no gap's palette is open
 
@@ -509,19 +527,27 @@ function renderBlockBody(f, i) {
     `;
   }
   if (f.type === 'video') {
-    const wistiaId = wistiaIdFromInput(f.videoUrl);
+    const raw = isHtmlEmbed(f.videoUrl);
+    const wistiaId = raw ? null : wistiaIdFromInput(f.videoUrl);
     return `
       <div class="fb-video-block">
-        ${wistiaId ? `<div class="fb-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div>` : `<div class="fb-image-placeholder">${ICONS.video}<span>Paste a Wistia link or media ID below</span></div>`}
-        <input class="pra-input" style="margin-top:8px" data-video-url-idx="${i}" value="${escapeHtml(f.videoUrl || '')}" placeholder="Wistia link or media ID"/>
+        ${raw ? `<div class="fb-raw-embed">${f.videoUrl}</div>`
+          : wistiaId ? `<div class="fb-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div>`
+          : `<div class="fb-image-placeholder">${ICONS.video}<span>Paste a Wistia link, media ID, or embed code below</span></div>`}
+        <textarea class="pra-input" style="margin-top:8px;resize:vertical" rows="2" data-video-url-idx="${i}" placeholder="Wistia link, media ID, or paste Wistia's HTML embed code">${escapeHtml(f.videoUrl || '')}</textarea>
       </div>
     `;
   }
   if (f.type === 'calendar') {
     const picked = allEventTypes.find(e => e.slug === f.eventTypeSlug);
+    // Real embedded booking widget (same as the published form actually
+    // shows), not just a placeholder box -- widget.js re-scans for
+    // uninitialized .scheduling-inline-widget divs after every render (see
+    // loadCalendarWidgetsForStep below), same trick public-form.html uses.
+    const url = picked ? `${location.origin}/book/${encodeURIComponent(picked.slug)}` : '';
     return `
       <div class="fb-image-block">
-        ${picked ? `<div class="fb-image-placeholder">${ICONS.date}<span>Booking step: ${escapeHtml(picked.name)} (${picked.durationMinutes} min)</span></div>` : `<div class="fb-image-placeholder">${ICONS.date}<span>Pick which booking page to embed</span></div>`}
+        ${picked ? `<div class="scheduling-inline-widget" data-url="${escapeHtml(url)}" style="min-width:280px;height:clamp(560px, 70vh, 820px)"></div>` : `<div class="fb-image-placeholder">${ICONS.date}<span>Pick which booking page to embed</span></div>`}
         <select class="pra-select" style="margin-top:8px" data-calendar-idx="${i}">
           <option value="">Choose an event type…</option>
           ${allEventTypes.map(e => `<option value="${escapeHtml(e.slug)}" ${f.eventTypeSlug === e.slug ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
@@ -564,8 +590,14 @@ function renderBlockBody(f, i) {
 // form.fields (0 = before the first block, form.fields.length = the
 // trailing gap after the last one) -- renders in every gap, not just the end.
 function renderGapAdd(idx) {
+  // The wrapper's data-gap (distinct from the button's data-gap-idx, which
+  // bindCanvas's [data-gap-idx] click wiring targets) is only for locating
+  // the right gap to show the drag-and-drop indicator in -- reusing the
+  // same attribute name would make the click handler double-fire (once on
+  // the button, once bubbling to this wrapper), toggling the palette open
+  // then immediately shut.
   return `
-    <div class="fb-gap">
+    <div class="fb-gap" data-gap="${idx}">
       <button class="fb-add-gap-btn ${paletteOpenAt === idx ? 'on' : ''}" data-gap-idx="${idx}" title="Add a question">${ICONS.plusOutline}</button>
     </div>
     ${paletteOpenAt === idx ? renderPalette() : ''}
@@ -599,8 +631,42 @@ function renderCanvas() {
   html += `<div class="fb-submit-row"><span class="fb-submit-preview" contenteditable="true" id="submitPreview">${escapeHtml(form.settings.submitButtonText || 'Submit')}</span></div>`;
   canvas.innerHTML = html;
 
+  // A calendar field embeds the real booking widget, which needs the room
+  // public-form.html's own pf-card-wide gives it on the real page -- same
+  // widening here so the builder preview isn't lying about how it'll look.
+  const hasCalendar = form.fields.some(f => f.type === 'calendar' && f.eventTypeSlug);
+  document.querySelector('.fb-canvas-shell')?.classList.toggle('fb-canvas-wide', hasCalendar);
+
   applyTheme(form.theme, canvas);
   bindCanvas(canvas);
+  loadCalendarWidgetsForCanvas();
+  activateRawEmbeds(canvas);
+}
+
+// Same trick public-form.html's loadCalendarWidgetsForStep uses: widget.js
+// only auto-scans .scheduling-inline-widget divs once, on its own load, so
+// a fresh <script> tag re-appended after every re-render makes it re-scan
+// and pick up any new/changed calendar block. The data-scheduling-initialized
+// guard on the widget side keeps an already-embedded one from doubling up.
+function loadCalendarWidgetsForCanvas() {
+  if (!form.fields.some(f => f.type === 'calendar' && f.eventTypeSlug)) return;
+  const s = document.createElement('script');
+  s.src = '/widget.js';
+  s.async = true;
+  document.body.appendChild(s);
+}
+
+// <script> tags inserted via .innerHTML never execute -- browsers ignore
+// them for exactly this reason. Wistia's HTML embed code needs its script
+// to actually run to initialize the player, so every one inside a raw
+// embed gets swapped for a freshly-created (and therefore live) copy.
+function activateRawEmbeds(root) {
+  root.querySelectorAll('.fb-raw-embed script').forEach(old => {
+    const s = document.createElement('script');
+    for (const a of old.attributes) s.setAttribute(a.name, a.value);
+    s.textContent = old.textContent;
+    old.replaceWith(s);
+  });
 }
 
 function bindCanvas(canvas) {
@@ -739,20 +805,52 @@ function bindCanvas(canvas) {
     saveDebounced(); renderCanvas();
   });
 
-  // ── Native HTML5 drag-and-drop reordering. ──
+  // ── Native HTML5 drag-and-drop reordering, with a dashed line in the
+  // gap the block would actually land in -- dragging over a block's top
+  // vs bottom half targets the gap before vs after it, same as the +
+  // insert points above, so hovering near either edge of any block (or
+  // directly over a gap) always shows exactly where a drop will land. ──
+  function showDragIndicator(idx) {
+    canvas.querySelectorAll('.fb-gap').forEach(g => g.classList.toggle('drag-target', +g.dataset.gap === idx));
+  }
+  function clearDragIndicator() {
+    canvas.querySelectorAll('.fb-gap').forEach(g => g.classList.remove('drag-target'));
+  }
+  function performDrop() {
+    if (dragFromIdx !== null && dragToIdx !== null) {
+      const insertAt = dragToIdx > dragFromIdx ? dragToIdx - 1 : dragToIdx;
+      if (insertAt !== dragFromIdx) {
+        const [moved] = form.fields.splice(dragFromIdx, 1);
+        form.fields.splice(insertAt, 0, moved);
+        openPanel = null;
+        saveDebounced();
+      }
+    }
+    dragFromIdx = null; dragToIdx = null;
+    clearDragIndicator();
+    renderCanvas();
+  }
   canvas.querySelectorAll('.fb-block').forEach(block => {
     block.addEventListener('dragstart', () => { dragFromIdx = +block.dataset.idx; block.classList.add('dragging'); });
-    block.addEventListener('dragend', () => block.classList.remove('dragging'));
-    block.addEventListener('dragover', e => e.preventDefault());
-    block.addEventListener('drop', e => {
+    block.addEventListener('dragend', () => { block.classList.remove('dragging'); clearDragIndicator(); dragFromIdx = null; dragToIdx = null; });
+    block.addEventListener('dragover', e => {
       e.preventDefault();
-      const toIdx = +block.dataset.idx;
-      if (dragFromIdx === null || dragFromIdx === toIdx) return;
-      const [moved] = form.fields.splice(dragFromIdx, 1);
-      form.fields.splice(toIdx, 0, moved);
-      dragFromIdx = null; openPanel = null;
-      saveDebounced(); renderCanvas();
+      if (dragFromIdx === null) return;
+      const idx = +block.dataset.idx;
+      const before = e.clientY < block.getBoundingClientRect().top + block.getBoundingClientRect().height / 2;
+      dragToIdx = before ? idx : idx + 1;
+      showDragIndicator(dragToIdx);
     });
+    block.addEventListener('drop', e => { e.preventDefault(); performDrop(); });
+  });
+  canvas.querySelectorAll('.fb-gap').forEach(gap => {
+    gap.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (dragFromIdx === null) return;
+      dragToIdx = +gap.dataset.gap;
+      showDragIndicator(dragToIdx);
+    });
+    gap.addEventListener('drop', e => { e.preventDefault(); performDrop(); });
   });
 }
 
