@@ -109,12 +109,23 @@ const RESPONSE_FORMAT_INSTRUCTIONS = `WHEN NOT TO DRAFT A NORMAL REPLY -- respon
 
 BUYING SIGNALS -- if the lead is asking how to pay, asking to start, confirming a tier, asking about kickoff, or otherwise signaling they're ready to enroll, still draft the reply normally but end your entire response with \`[[BUYING_SIGNAL]]\` on its own line after the message -- that's the moment a human closer should take over, not a moment to keep running the AI.`;
 
+// The seed prompt for brand-new agents is itself editable from the AI
+// Agents panel (a "Default Prompt" button, not tied to any one agent) --
+// stored here so a wording change doesn't require a code deploy. Falls
+// back to the hardcoded DEFAULT_SYSTEM_PROMPT above until an admin has
+// ever saved a custom one.
+export const AI_SETTINGS_FILE = "crm_ai_settings.json";
+function getDefaultSystemPrompt() {
+  const settings = readJson(AI_SETTINGS_FILE, {});
+  return settings.defaultSystemPrompt || DEFAULT_SYSTEM_PROMPT;
+}
+
 function newAgent({ name, description }) {
   return {
     id: randomUUID(),
     name: name || "Kai",
     description: description || "",
-    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    systemPrompt: getDefaultSystemPrompt(),
     // AI Assist ("helps the human work conversations") and AI Active
     // ("works the selected lead batch independently") are two distinct
     // capabilities on the same agent record. Both start OFF -- an admin
@@ -329,7 +340,21 @@ export async function handleAiAgentsRequest(req, res, url) {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const contactId = url.searchParams.get("contactId");
-    const contact = readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+    // contactMatchesTargeting only ever looks at status/programType --
+    // callers that already have those two fields (the Inbox does, off the
+    // conversation list's own SQLite-backed snapshot) can pass them
+    // directly and skip a full CONTACTS_FILE read+find entirely. This ran
+    // on every single conversation open (in parallel with the thread
+    // fetch) and, at ~190MB/176k contacts, cost 1-1.5s+ on its own --
+    // confirmed live as a real contributor to "opening a conversation
+    // takes 3+ seconds" even after the sidebar's own query got fixed.
+    // Falls back to the file read when the params aren't given, so any
+    // other/future caller keeps working unchanged.
+    const statusParam = url.searchParams.get("status");
+    const programTypeParam = url.searchParams.get("programType");
+    const contact = (statusParam !== null && programTypeParam !== null)
+      ? { status: statusParam, programType: programTypeParam }
+      : readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
     if (!contact) return sendJson(res, 200, { match: false });
     const agents = readJson(AI_AGENTS_FILE, []);
     const match = agents.some((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
@@ -521,6 +546,19 @@ async function handleAiAgentsCrud(req, res, url) {
   if (p === "/api/ai-agents" && req.method === "GET") {
     const agents = readJson(AI_AGENTS_FILE, []);
     return sendJson(res, 200, { agents });
+  }
+  // The seed prompt new agents are created with -- editable independent of
+  // any single agent record. Does not affect already-created agents.
+  if (p === "/api/ai-agents/default-prompt" && req.method === "GET") {
+    return sendJson(res, 200, { defaultSystemPrompt: getDefaultSystemPrompt() });
+  }
+  if (p === "/api/ai-agents/default-prompt" && req.method === "PATCH") {
+    const { defaultSystemPrompt } = await readJsonBody(req);
+    if (typeof defaultSystemPrompt !== "string" || !defaultSystemPrompt.trim()) {
+      return sendJson(res, 400, { error: "defaultSystemPrompt is required" });
+    }
+    writeJson(AI_SETTINGS_FILE, { ...readJson(AI_SETTINGS_FILE, {}), defaultSystemPrompt });
+    return sendJson(res, 200, { ok: true, defaultSystemPrompt });
   }
   if (p === "/api/ai-agents" && req.method === "POST") {
     const { name, description } = await readJsonBody(req);

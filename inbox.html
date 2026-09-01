@@ -1449,9 +1449,12 @@ async function selectConversation(c, skipFetch) {
   // contact edit going forward, so the extra request bought correctness
   // this app already has for a real, felt performance cost that wasn't
   // worth it.
+  // status/programType passed straight from the sidebar's own snapshot --
+  // lets the matches endpoint skip its own full-contacts-file lookup (see
+  // that endpoint's comment).
   const [threadRes, matchRes] = await Promise.all([
     fetch('/api/inbox/contact/' + c.contactId),
-    fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId)),
+    fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId) + '&status=' + encodeURIComponent(c.contact?.status || '') + '&programType=' + encodeURIComponent(c.contact?.programType || '')),
   ]);
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
