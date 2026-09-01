@@ -105,15 +105,19 @@ function evalCondition(contact, cond) {
       default: return false;
     }
   }
+  // any_of/not_any_of also work against a SCALAR actual (e.g. status) --
+  // "is any of [A, B, C]" then just means "equals one of these", same
+  // idea as a SQL `IN (...)`. all_of/not_all_of stay array-only: a scalar
+  // can never simultaneously equal more than one selected value.
   switch (op) {
     case "eq": return actual === value;
     case "neq": return actual !== value;
     case "includes": return Array.isArray(actual) && actual.includes(value);
     case "excludes": return Array.isArray(actual) && !actual.includes(value);
     case "exists": return actual !== undefined && actual !== null && actual !== "";
-    case "any_of": return Array.isArray(actual) && Array.isArray(value) && value.some(v => actual.includes(v));
+    case "any_of": return Array.isArray(value) && (Array.isArray(actual) ? value.some(v => actual.includes(v)) : value.includes(actual));
     case "all_of": return Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v));
-    case "not_any_of": return !(Array.isArray(actual) && Array.isArray(value) && value.some(v => actual.includes(v)));
+    case "not_any_of": return !(Array.isArray(value) && (Array.isArray(actual) ? value.some(v => actual.includes(v)) : value.includes(actual)));
     case "not_all_of": return !(Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v)));
     default: return false;
   }

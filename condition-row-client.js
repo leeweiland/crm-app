@@ -18,6 +18,13 @@ window.ConditionRowBuilder = (function () {
 
   const ARRAY_FIELDS = ["tags", "listIds"];
   const BOOL_FIELDS = ["smsOptOut", "emailOptOut", "emailOpened", "emailClicked"];
+  // Single-valued fields that can still usefully be matched against a SET
+  // of options ("status is any of Potential/Application/Booked" -- a
+  // cohort filter). No "all of" here (unlike ARRAY_FIELDS) -- a contact
+  // only ever has one status, so "is all of X, Y" could never match more
+  // than a single selected value and would silently return nothing for
+  // any real multi-value selection.
+  const SCALAR_MULTI_FIELDS = ["status"];
 
   function fieldOptionsHtml() {
     return `
@@ -42,6 +49,9 @@ window.ConditionRowBuilder = (function () {
     if (ARRAY_FIELDS.includes(field)) {
       const legacy = (legacyOp === "includes") ? `<option value="includes">Includes (legacy)</option>` : (legacyOp === "excludes") ? `<option value="excludes">Excludes (legacy)</option>` : "";
       return `<option value="any_of">Is any of</option><option value="all_of">Is all of</option><option value="not_any_of">Is not any of</option><option value="not_all_of">Is not all of</option>${legacy}`;
+    }
+    if (SCALAR_MULTI_FIELDS.includes(field)) {
+      return `<option value="eq">Is</option><option value="neq">Is not</option><option value="any_of">Is any of</option><option value="not_any_of">Is not any of</option>`;
     }
     if (field.startsWith("customFields.")) return `<option value="eq">Is</option><option value="neq">Is not</option><option value="exists">Is set</option>`;
     return `<option value="eq">Is</option><option value="neq">Is not</option>`;
@@ -88,12 +98,16 @@ window.ConditionRowBuilder = (function () {
 
   function valueInputHtml(field, op) {
     if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
+    // Checked before the plain single-value <select> branches below, so
+    // "is any of"/"is not any of" on a SCALAR_MULTI_FIELDS field (status)
+    // gets the same chip multi-picker as an ARRAY_FIELDS field, instead of
+    // falling through to the single-value <select>.
+    if (MULTI_VALUE_OPS.includes(op) && (ARRAY_FIELDS.includes(field) || SCALAR_MULTI_FIELDS.includes(field))) return `<span data-cond-value-multi></span>`; // filled in by refreshValue() below
     if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`; // legacy field, kept only so a pre-existing saved segment still renders correctly
     if (field === 'programType') return `<select class="pra-select" data-cond-value><option value="online">Online</option><option value="gym">Gym</option></select>`;
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
     if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
-    if (ARRAY_FIELDS.includes(field) && MULTI_VALUE_OPS.includes(op)) return `<span data-cond-value-multi></span>`; // filled in by refreshValue() below
     if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
     if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
     return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
@@ -118,7 +132,10 @@ window.ConditionRowBuilder = (function () {
       valueWrap.innerHTML = valueInputHtml(fieldSel.value, opSel.value);
       const multiHost = valueWrap.querySelector('[data-cond-value-multi]');
       if (multiHost) {
-        const items = fieldSel.value === 'tags' ? allTags : allLists;
+        const items = fieldSel.value === 'tags' ? allTags
+          : fieldSel.value === 'listIds' ? allLists
+          : fieldSel.value === 'status' ? allStatuses.map(s => ({ id: s.label, name: s.label })) // status has no separate id -- its label IS the stored value
+          : [];
         if (!row._msSelected.length && initial && initial.field === fieldSel.value && Array.isArray(initial.value)) row._msSelected = [...initial.value];
         renderMultiSelectInto(multiHost, items, row._msSelected, (sel) => { row._msSelected = sel; });
       }
