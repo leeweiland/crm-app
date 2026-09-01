@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, streamJsonArrayFiltered } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
@@ -157,8 +157,13 @@ export async function handleDuplicatesRequest(req, res, url) {
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
 
   if (p === "/api/duplicates" && req.method === "GET") {
-    const contacts = readJson(CONTACTS_FILE, []);
     const pairs = readJson(POSSIBLE_DUPLICATES_FILE, []).filter(d => d.status === "pending");
+    // Called on every Contacts page load -- only needs the handful of
+    // specific contacts referenced by pending pairs, not a full
+    // materialize of crm_contacts.json (~190MB/176k+ records) just to
+    // .find() a few ids out of it. Same fix pattern as GET /api/contacts.
+    const neededIds = new Set(pairs.flatMap(d => [d.contactAId, d.contactBId]));
+    const contacts = neededIds.size ? streamJsonArrayFiltered(CONTACTS_FILE, c => neededIds.has(c.id)) : [];
     const withContacts = pairs
       .map(d => ({ ...d, contactA: contacts.find(c => c.id === d.contactAId) || null, contactB: contacts.find(c => c.id === d.contactBId) || null }))
       .filter(d => d.contactA && d.contactB); // one side may have been deleted/merged elsewhere since flagging
