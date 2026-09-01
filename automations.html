@@ -128,6 +128,13 @@ async function openEnrolledPanel(automationId, name) {
   openModal('enrolledPanelModal');
   await refreshEnrolledPanel(automationId);
 }
+function enrolledContactLabel(e) {
+  if (!e.contact) return '<span class="pra-muted">(contact deleted)</span>';
+  const name = `${e.contact.first || ''} ${e.contact.last || ''}`.trim();
+  if (name) return escapeHtml(name);
+  const fallback = e.contact.email || e.contact.phone;
+  return fallback ? escapeHtml(fallback) : '<span class="pra-muted">(no name on file)</span>';
+}
 async function refreshEnrolledPanel(automationId) {
   const r = await fetch(`/api/automations/${automationId}/enrollments`);
   const { enrollments } = await r.json();
@@ -135,7 +142,7 @@ async function refreshEnrolledPanel(automationId) {
   const list = document.getElementById('enrolledPanelList');
   list.innerHTML = active.length ? active.map(e => `
     <div class="row-item">
-      <span style="flex:1">${escapeHtml(e.contact?.first || '')} ${escapeHtml(e.contact?.last || '')}${!e.contact ? '<span class="pra-muted"> (contact deleted)</span>' : ''}</span>
+      <span style="flex:1">${enrolledContactLabel(e)}</span>
       <button data-remove="${e.id}" title="Remove from automation">&times;</button>
     </div>
   `).join('') : '<div class="pra-muted">No one currently enrolled.</div>';
