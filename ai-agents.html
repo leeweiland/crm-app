@@ -516,14 +516,17 @@ async function saveAgent() {
   const programTypes = Array.from(document.querySelectorAll('#msProgramTypes input:checked')).map(cb => cb.value);
   const statuses = Array.from(document.querySelectorAll('#fStatuses input:checked')).map(cb => cb.value);
   const coverForUserIds = Array.from(document.querySelectorAll('#fCoverUsers input:checked')).map(cb => cb.value);
-  // Lead type and status used to default to "all" when left unchecked --
-  // now a deliberate choice is required for both, same as any other
-  // required field.
+  // Lead type/status live inside the AI Active section now and are only
+  // reachable (or meaningful) when AI Active is toggled on -- requiring
+  // them while that section is hidden made it impossible to ever save an
+  // AI-Assist-only agent. Only enforce the requirement when the fields are
+  // actually visible and in play.
   let invalid = false;
-  document.getElementById('msProgramTypes').classList.toggle('invalid', !programTypes.length);
-  document.getElementById('msStatuses').classList.toggle('invalid', !statuses.length);
-  if (!programTypes.length || !statuses.length) invalid = true;
-  if (invalid) { showToast('Select at least one lead type and status', true); return; }
+  const activeOn = getToggle('fActiveToggle');
+  document.getElementById('msProgramTypes').classList.toggle('invalid', activeOn && !programTypes.length);
+  document.getElementById('msStatuses').classList.toggle('invalid', activeOn && !statuses.length);
+  if (activeOn && (!programTypes.length || !statuses.length)) invalid = true;
+  if (invalid) { showToast('Select at least one lead type and status for AI Active', true); return; }
 
   const payload = {
     name: document.getElementById('fName').value.trim() || 'Untitled Agent',
