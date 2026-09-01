@@ -242,6 +242,10 @@ function enhanceSelectForMobile(sel) {
   // the OPEN dropdown's full untruncated list already carry the real
   // information). First letter only, no dots, saves the space instead.
   const isCompactTrigger = sel.classList.contains("convo-status-select") || sel.classList.contains("owner-field-select");
+  // The label text shrank to one letter, but the anchor was still stuck at
+  // whatever max-width the full-text select had (e.g. owner-field-select's
+  // 110px) -- shrink the box itself to match, not just what's inside it.
+  if (isCompactTrigger) anchor.style.setProperty("max-width", "34px", "important");
   function renderTrigger() {
     const opt = sel.options[sel.selectedIndex];
     const fullText = opt ? opt.textContent : "";
