@@ -44,14 +44,16 @@ function _escapeInlineEdit(s) {
 }
 
 let _inlineEditMenuEl = null;
+let _inlineEditMenuOwner = null; // the trigger element the open menu belongs to, so a second click on the SAME trigger can toggle it closed instead of just rebuilding it open
 function closeInlineEditMenu() {
   if (_inlineEditMenuEl) { _inlineEditMenuEl.remove(); _inlineEditMenuEl = null; }
+  _inlineEditMenuOwner = null;
   document.removeEventListener('click', closeInlineEditMenu);
   document.removeEventListener('keydown', _onInlineEditEsc);
 }
 function _onInlineEditEsc(e) { if (e.key === 'Escape') closeInlineEditMenu(); }
 
-async function openInlineEditMenu({ x, y, field, contactId, onSaved }) {
+async function openInlineEditMenu({ x, y, field, contactId, onSaved, owner }) {
   closeInlineEditMenu();
   const cfg = INLINE_EDIT_FIELDS[field];
   if (!cfg) return;
@@ -60,6 +62,7 @@ async function openInlineEditMenu({ x, y, field, contactId, onSaved }) {
 
   const menu = document.createElement('div');
   menu.className = 'inline-edit-menu';
+  _inlineEditMenuOwner = owner || null;
   const vw = window.innerWidth, vh = window.innerHeight;
   // Same panel treatment as crm-nav.js's .mobile-select-menu (CSS variables,
   // not one-off hex values) so this reads as the same app, not a bolted-on
@@ -122,7 +125,12 @@ function wireInlineEditClick(el, { field, contactId, onSaved }) {
   el.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // Clicking the SAME trigger that's already open closes it, same toggle
+    // behavior the status/assigned selects already have -- previously this
+    // always reopened (closeInlineEditMenu() then a fresh menu), so a
+    // second click looked like nothing happened rather than closing it.
+    if (_inlineEditMenuOwner === el) { closeInlineEditMenu(); return; }
     const rect = el.getBoundingClientRect();
-    openInlineEditMenu({ x: rect.left, y: rect.bottom + 4, field, contactId, onSaved });
+    openInlineEditMenu({ x: rect.left, y: rect.bottom + 4, field, contactId, onSaved, owner: el });
   });
 }

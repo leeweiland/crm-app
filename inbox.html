@@ -121,6 +121,16 @@
        name is the one thing here that has no other way to be identified. */
     .convo-top { gap: 4px; }
     .convo-status-select, .convo-owner-field { max-width: 46px; font-size: .64rem; padding: 2px 14px 2px 4px; }
+    /* The compact width above only shrinks the underlying <select>/anchor --
+       .mobile-select-trigger (the actual visible button once the mobile
+       enhancer swaps in, see crm-nav.js) has its own much bigger padding
+       (10px 12px, sized for a normal full-width form field) that doesn't
+       inherit from either, so the closed box stayed tall/bulky even after
+       the width shrank. Matches the compact feel of the type badge (.pra-
+       badge) it sits next to. */
+    .convo-status-select .mobile-select-trigger, .convo-owner-field .mobile-select-trigger { padding: 3px 16px 3px 6px; }
+    .convo-status-select .mobile-select-trigger-label, .convo-owner-field .mobile-select-trigger-label { font-size: .64rem; }
+    .convo-status-select .mobile-select-trigger-caret, .convo-owner-field .mobile-select-trigger-caret { font-size: .6em; }
     .convo-row [data-type-badge] { max-width: 30px; overflow: hidden; text-overflow: ellipsis; padding: 2px 5px !important; }
     .convo-time { font-size: .64rem; }
   }

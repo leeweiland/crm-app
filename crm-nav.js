@@ -259,7 +259,15 @@ function enhanceSelectForMobile(sel) {
     const rect = anchor.getBoundingClientRect();
     menu.style.top = (rect.bottom + 4) + "px";
     menu.style.left = rect.left + "px";
-    menu.style.width = rect.width + "px";
+    // min-width (not width) -- forcing the menu to the trigger's own width
+    // meant a deliberately-shrunk trigger (e.g. the Inbox sidebar's compact
+    // status/assigned selects) truncated every OPTION down to that same
+    // narrow width too, not just the closed button. No fixed width lets it
+    // size to its longest option's content instead; capped against the
+    // viewport edge so it can't run off-screen to the right.
+    menu.style.minWidth = rect.width + "px";
+    menu.style.width = "max-content";
+    menu.style.maxWidth = (window.innerWidth - rect.left - 12) + "px";
     menu.classList.add("open");
     document.addEventListener("mousedown", onOutsideClick, true);
   }
