@@ -40,12 +40,15 @@ function isExcludable(contact) {
   return null;
 }
 
-// Applies a segment's filter, then the exclusions above, then caps to
-// batchSize -- the exact same logic /preview shows and /start freezes,
-// so what you approved in preview is what actually gets contacted.
-function buildCandidateList(segment, batchSize) {
+// Applies a segment's filter AND the agent's own lead-type/status targeting
+// (the same targeting AI Assist uses to decide which contacts get icons --
+// it's not AI-Assist-only, it narrows AI Active's batch too), then the
+// exclusions above, then caps to batchSize -- the exact same logic /preview
+// shows and /start freezes, so what you approved in preview is what
+// actually gets contacted.
+function buildCandidateList(segment, batchSize, targeting) {
   const contacts = readJson(CONTACTS_FILE, []);
-  const matching = contacts.filter((c) => matchesSegment(c, segment.filter));
+  const matching = contacts.filter((c) => matchesSegment(c, segment.filter) && contactMatchesTargeting(c, targeting));
   const excluded = [];
   const candidates = [];
   for (const c of matching) {
@@ -99,11 +102,12 @@ export async function handleAiActiveRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
   if (p === "/api/ai-active/preview" && req.method === "POST") {
-    const { segmentId, batchSize } = await readJsonBody(req);
+    const { agentId, segmentId, batchSize } = await readJsonBody(req);
+    const agent = readJson(AI_AGENTS_FILE, []).find((a) => a.id === agentId);
     const segment = readJson(SEGMENTS_FILE, []).find((s) => s.id === segmentId);
     if (!segment) return sendJson(res, 404, { error: "Segment not found" });
     const size = Math.max(1, Math.min(1000, Number(batchSize) || 25));
-    const result = buildCandidateList(segment, size);
+    const result = buildCandidateList(segment, size, agent?.targeting);
     return sendJson(res, 200, {
       totalMatchingSegment: result.totalMatching,
       willContact: result.candidates.map((c) => ({ id: c.id, name: `${c.first} ${c.last}`.trim(), email: c.email, phone: c.phone, status: c.status })),
@@ -120,7 +124,7 @@ export async function handleAiActiveRequest(req, res, url) {
     const segment = readJson(SEGMENTS_FILE, []).find((s) => s.id === segmentId);
     if (!segment) return sendJson(res, 404, { error: "Segment not found" });
     const size = Math.max(1, Math.min(1000, Number(batchSize) || 25));
-    const result = buildCandidateList(segment, size);
+    const result = buildCandidateList(segment, size, agent.targeting);
     if (!result.candidates.length) return sendJson(res, 400, { error: "No contacts left to message after exclusions" });
     if (result.candidates.length > 100 && !confirmOver100) {
       return sendJson(res, 200, { needsConfirmation: true, count: result.candidates.length });
