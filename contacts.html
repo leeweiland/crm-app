@@ -29,6 +29,9 @@
   .tab-panel.active { display: block; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
   .row-item:last-child { border-bottom: none; }
+  .row-item input[type="checkbox"] { accent-color: var(--pra-blue); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
+  .row-item .count-link { font-size: .78rem; cursor: pointer; white-space: nowrap; }
+  .bulk-delete-bar { margin-bottom: 10px; }
   .add-row { display: flex; gap: 10px; margin-top: 14px; }
   .add-row input { flex: 1; }
   .filter-toggle { font-size: .8rem; }
@@ -146,9 +149,10 @@
       </div>
 
       <div class="tab-panel" id="tab-lists">
-        <div class="pra-panel" style="padding:22px;max-width:520px">
+        <div class="pra-panel" style="padding:22px;max-width:560px">
           <div class="pra-h2" style="margin-bottom:6px">Email Lists</div>
           <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Used to target campaigns and automations, same as ActiveCampaign lists.</div>
+          <div class="bulk-delete-bar" id="listsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="list">Delete Selected (<span data-bulk-count>0</span>)</button></div>
           <div id="listsList"></div>
           <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
         </div>
@@ -158,6 +162,7 @@
         <div class="pra-panel" style="padding:22px">
           <div class="pra-h2" style="margin-bottom:6px">Segments</div>
           <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters used to target campaigns, automations, and SMS sequences. Build one from the Contacts tab's filter panel.</div>
+          <div class="bulk-delete-bar" id="segmentsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="segment">Delete Selected (<span data-bulk-count>0</span>)</button></div>
           <div id="segmentsList"></div>
         </div>
       </div>
@@ -165,6 +170,7 @@
       <div class="tab-panel" id="tab-tags">
         <div class="pra-panel" style="padding:22px;max-width:640px">
           <div class="pra-h2" style="margin-bottom:14px">Tags</div>
+          <div class="bulk-delete-bar" id="tagsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="tag">Delete Selected (<span data-bulk-count>0</span>)</button></div>
           <div id="tagsList"></div>
           <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
         </div>
@@ -289,8 +295,33 @@
     </div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="confirmAddToBtn" style="flex:1">Add</button>
-      <button class="pra-btn pra-btn-ghost" onclick="closeModal('addToModal')">Cancel</button>
+      <button class="pra-btn pra-btn-ghost" onclick="document.getElementById('addToModal').classList.remove('show')">Cancel</button>
     </div>
+  </div>
+</div>
+
+<!-- Shared "N contacts" panel for Lists/Tags/Segments -- Lists/Tags show a
+     working X (removes just that membership, see KIND_CONFIG.removeUrl);
+     Segments show the same paginated list read-only, since segment
+     membership is a live-evaluated filter, not something a contact can be
+     individually removed from. -->
+<div class="modal-backdrop" id="membershipModal">
+  <div class="pra-panel modal-box eb-fullscreen">
+    <div class="pra-h2" style="margin-bottom:4px" id="membershipModalTitle">Contacts</div>
+    <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px" id="membershipModalSubtitle"></div>
+    <div style="overflow-x:auto">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Email</th><th style="width:40px"></th></tr></thead>
+        <tbody id="membershipRows"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem">
+      <span class="pra-muted" id="membershipPageInfo"></span>
+      <span style="flex:1"></span>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" id="membershipPrevBtn" type="button">‹ Prev</button>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" id="membershipNextBtn" type="button">Next ›</button>
+    </div>
+    <div style="text-align:right;margin-top:16px"><button class="pra-btn pra-btn-ghost" id="membershipCloseBtn">Close</button></div>
   </div>
 </div>
 
@@ -355,25 +386,127 @@ async function loadStatuses() {
     newSel.innerHTML += `<option value="${s.label}">${escapeHtml(s.label)}</option>`;
   });
 }
+// ── Shared Lists/Tags/Segments management: sort, count, membership panel,
+// bulk delete. Lists/Tags have real stored membership (contact.listIds/
+// .tags) so removing one contact from the panel is a real action; Segments
+// are a saved filter evaluated live (segments_shared.js's matchesSegment)
+// with no stored membership at all, so their panel is read-only -- there's
+// nothing to remove a contact FROM. GET /api/contacts already supports
+// listId=/tag=/filter= with the same limit/offset/total shape the main
+// table uses, so counts and the paginated panel reuse that one endpoint
+// instead of a bespoke read path per kind.
+const bulkSelected = { list: new Set(), tag: new Set(), segment: new Set() };
+const KIND_CONFIG = {
+  list: { deleteUrl: id => `/api/lists/${id}`, contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
+  tag: { deleteUrl: id => `/api/tags/${id}`, contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
+  segment: { deleteUrl: id => `/api/segments/${id}`, contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false },
+};
+function reloadKind(kind) {
+  bulkSelected[kind].clear();
+  if (kind === 'list') loadLists(); else if (kind === 'tag') loadTags(); else loadSegments();
+}
+function updateBulkBar(kind, barId) {
+  const bar = document.getElementById(barId);
+  const n = bulkSelected[kind].size;
+  bar.style.display = n ? 'block' : 'none';
+  const countEl = bar.querySelector('[data-bulk-count]');
+  if (countEl) countEl.textContent = n;
+}
+document.querySelectorAll('[data-bulk-delete]').forEach(btn => btn.onclick = async () => {
+  const kind = btn.dataset.bulkDelete;
+  const ids = [...bulkSelected[kind]];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} selected ${kind}${ids.length === 1 ? '' : 's'}? Contacts themselves won't be deleted.`)) return;
+  await Promise.all(ids.map(id => fetch(KIND_CONFIG[kind].deleteUrl(id), { method: 'DELETE' })));
+  reloadKind(kind);
+});
+function renderManagedList(kind, items, containerId, barId, nameHtmlFn) {
+  const cfg = KIND_CONFIG[kind];
+  const container = document.getElementById(containerId);
+  container.innerHTML = items.map(item => `
+    <div class="row-item">
+      <input type="checkbox" data-bulk="${item.id}"/>
+      <div style="flex:1">${nameHtmlFn(item)}</div>
+      <a class="pra-link count-link" data-count="${item.id}">…</a>
+      ${cfg.hasAddTo ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto="${item.id}">Add to...</button>` : ''}
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
+    </div>
+  `).join('') || `<div class="pra-muted">None yet.</div>`;
+  items.forEach(item => {
+    fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.json()).then(d => {
+      const el = container.querySelector(`[data-count="${item.id}"]`);
+      if (el) el.textContent = `${d.total} contact${d.total === 1 ? '' : 's'}`;
+    });
+  });
+  container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
+  container.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
+  container.querySelectorAll('[data-bulk]').forEach(cb => {
+    cb.checked = bulkSelected[kind].has(cb.dataset.bulk);
+    cb.onchange = () => {
+      if (cb.checked) bulkSelected[kind].add(cb.dataset.bulk); else bulkSelected[kind].delete(cb.dataset.bulk);
+      updateBulkBar(kind, barId);
+    };
+  });
+  if (cfg.hasAddTo) {
+    container.querySelectorAll('[data-addto]').forEach(btn => btn.onclick = () => {
+      const item = items.find(i => i.id === btn.dataset.addto);
+      openAddToModal(kind === 'tag' ? { tagId: item.id } : { segmentId: item.id }, `${kind === 'tag' ? 'Tag' : 'Segment'}: ${item?.name || ''}`);
+    });
+  }
+  updateBulkBar(kind, barId);
+}
+
+// ── Membership panel (paginated GET /api/contacts, same shape the main
+// table already uses) ───────────────────────────────────────────────────
+let membershipState = null;
+async function openMembershipPanel(kind, item) {
+  if (!item) return;
+  membershipState = { kind, item, page: 1, pageSize: 20 };
+  document.getElementById('membershipModalTitle').textContent = `Contacts in "${item.name}"`;
+  document.getElementById('membershipModalSubtitle').textContent = kind === 'segment'
+    ? 'Segment membership is a live-evaluated filter, not a stored list -- contacts can\'t be individually removed here.' : '';
+  document.getElementById('membershipModal').classList.add('show');
+  await loadMembershipPage();
+}
+async function loadMembershipPage() {
+  const { kind, item, page, pageSize } = membershipState;
+  const cfg = KIND_CONFIG[kind];
+  const r = await fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=${pageSize}&offset=${(page - 1) * pageSize}`);
+  const { contacts, total } = await r.json();
+  document.getElementById('membershipRows').innerHTML = contacts.map(c => `
+    <tr>
+      <td>${escapeHtml(`${c.first || ''} ${c.last || ''}`.trim() || '(no name)')}</td>
+      <td>${escapeHtml(c.email || '')}</td>
+      <td>${cfg.hasRemove ? `<button class="pra-btn pra-btn-sm pra-btn-danger" data-remove-member="${c.id}" title="Remove from ${kind}">&times;</button>` : ''}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="3" class="pra-muted">No contacts.</td></tr>`;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  document.getElementById('membershipPageInfo').textContent = `Page ${page} of ${totalPages} — ${total} contact${total === 1 ? '' : 's'}`;
+  document.getElementById('membershipPrevBtn').disabled = page <= 1;
+  document.getElementById('membershipNextBtn').disabled = page >= totalPages;
+  if (cfg.hasRemove) {
+    document.querySelectorAll('[data-remove-member]').forEach(btn => btn.onclick = async () => {
+      await fetch(cfg.removeUrl(item, btn.dataset.removeMember), { method: 'DELETE' });
+      await loadMembershipPage();
+      // Refreshes the row's background count too -- NOT reloadKind(), which
+      // would also clear any in-progress bulk-select checkboxes on the tab.
+      if (kind === 'list') loadLists(); else if (kind === 'tag') loadTags();
+    });
+  }
+}
+document.getElementById('membershipPrevBtn').onclick = () => { if (membershipState.page > 1) { membershipState.page--; loadMembershipPage(); } };
+document.getElementById('membershipNextBtn').onclick = () => { membershipState.page++; loadMembershipPage(); };
+document.getElementById('membershipCloseBtn').onclick = () => document.getElementById('membershipModal').classList.remove('show');
+
 async function loadTags() {
   const r = await fetch('/api/tags');
-  allTags = (await r.json()).tags;
-  document.getElementById('tagsList').innerHTML = allTags.map(t => `
-    <div class="row-item"><span style="flex:1">${escapeHtml(t.name)}</span><button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto-tag="${t.id}">Add to...</button><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-tag="${t.id}">Delete</button></div>
-  `).join('') || '<div class="pra-muted">No tags yet.</div>';
-  document.querySelectorAll('[data-del-tag]').forEach(btn => btn.onclick = async () => { await fetch('/api/tags/' + btn.dataset.delTag, { method: 'DELETE' }); loadTags(); });
-  document.querySelectorAll('[data-addto-tag]').forEach(btn => btn.onclick = () => {
-    const tag = allTags.find(t => t.id === btn.dataset.addtoTag);
-    openAddToModal({ tagId: btn.dataset.addtoTag }, `Tag: ${tag?.name || ''}`);
-  });
+  allTags = (await r.json()).tags.sort((a, b) => a.name.localeCompare(b.name));
+  renderManagedList('tag', allTags, 'tagsList', 'tagsBulkBar', item => escapeHtml(item.name));
 }
 async function loadLists() {
   const r = await fetch('/api/lists');
   allLists = (await r.json()).lists.sort((a, b) => a.name.localeCompare(b.name));
-  document.getElementById('listsList').innerHTML = allLists.map(l => `
-    <div class="row-item"><span style="flex:1">${escapeHtml(l.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-list="${l.id}">Delete</button></div>
-  `).join('') || '<div class="pra-muted">No lists yet.</div>';
-  document.querySelectorAll('[data-del-list]').forEach(btn => btn.onclick = async () => { await fetch('/api/lists/' + btn.dataset.delList, { method: 'DELETE' }); loadLists(); });
+  renderManagedList('list', allLists, 'listsList', 'listsBulkBar', item => escapeHtml(item.name));
 }
 async function loadCustomFields() {
   const r = await fetch('/api/custom-fields?entityType=contact');
@@ -398,34 +531,8 @@ document.getElementById('addListBtn').onclick = async () => {
 const describeFilter = (filter) => window.ConditionRowBuilder.describeFilter(filter);
 async function loadSegments() {
   const r = await fetch('/api/segments');
-  allSegments = (await r.json()).segments;
-  renderSegmentList();
-}
-function renderSegmentList() {
-  const segs = allSegments;
-  document.getElementById('segmentsList').innerHTML = segs.map(s => `
-    <div class="row-item">
-      <div style="flex:1">
-        <div>${escapeHtml(s.name)}</div>
-        <div class="pra-muted" style="font-size:.76rem">${describeFilter(s.filter)}</div>
-      </div>
-      <span class="pra-muted" style="font-size:.78rem" id="segcount-${s.id}">…</span>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto-segment="${s.id}">Add to...</button>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-segment="${s.id}">Delete</button>
-    </div>
-  `).join('') || '<div class="pra-muted">No segments yet.</div>';
-  segs.forEach(s => fetch('/api/segments/' + s.id + '/contacts').then(r => r.json()).then(d => {
-    const el = document.getElementById('segcount-' + s.id);
-    if (el) el.textContent = d.total + ' contacts';
-  }));
-  document.querySelectorAll('[data-del-segment]').forEach(btn => btn.onclick = async () => {
-    await fetch('/api/segments/' + btn.dataset.delSegment, { method: 'DELETE' });
-    loadSegments();
-  });
-  document.querySelectorAll('[data-addto-segment]').forEach(btn => btn.onclick = () => {
-    const seg = segs.find(s => s.id === btn.dataset.addtoSegment);
-    openAddToModal({ segmentId: btn.dataset.addtoSegment }, `Segment: ${seg?.name || ''}`);
-  });
+  allSegments = (await r.json()).segments.sort((a, b) => a.name.localeCompare(b.name));
+  renderManagedList('segment', allSegments, 'segmentsList', 'segmentsBulkBar', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
 }
 
 // ── "Add to Automation/Sequence" -- shared by the Contacts table's bulk-

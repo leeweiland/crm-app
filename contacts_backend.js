@@ -257,6 +257,35 @@ export async function handleContactsRequest(req, res, url) {
   if (listMatch && req.method === "DELETE") {
     const lists = readJson(LISTS_FILE, []);
     writeJson(LISTS_FILE, lists.filter(l => l.id !== listMatch[1]));
+    // Deleting the list record alone left every contact that had it holding
+    // a dead id in listIds forever (nothing else in the app ever reads a
+    // list's own record to know it's gone). A full contacts-file rewrite is
+    // fine here -- list deletion is a rare, deliberate admin action, not a
+    // per-request hot path like the message-log writes this app had to
+    // stop doing this way.
+    const contacts = readJson(CONTACTS_FILE, []);
+    let changed = false;
+    contacts.forEach(c => {
+      if (Array.isArray(c.listIds) && c.listIds.includes(listMatch[1])) {
+        c.listIds = c.listIds.filter(id => id !== listMatch[1]);
+        changed = true;
+      }
+    });
+    if (changed) writeJson(CONTACTS_FILE, contacts);
+    return sendJson(res, 200, { ok: true });
+  }
+  // Removes just this one contact's membership (not the whole list) --
+  // single-record update via updateJsonArrayRecordByField, not a full-table
+  // rewrite, since this fires from a per-row "x" in the membership panel.
+  const listContactMatch = p.match(/^\/api\/lists\/([^/]+)\/contacts\/([^/]+)$/);
+  if (listContactMatch && req.method === "DELETE") {
+    const [, listId, contactId] = listContactMatch;
+    const found = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+      c.listIds = (c.listIds || []).filter(id => id !== listId);
+      c.updatedAt = new Date().toISOString();
+      return c;
+    });
+    if (!found) return sendJson(res, 404, { error: "Contact not found" });
     return sendJson(res, 200, { ok: true });
   }
 
@@ -277,6 +306,27 @@ export async function handleContactsRequest(req, res, url) {
   if (tagMatch && req.method === "DELETE") {
     const tags = readJson(TAGS_FILE, []);
     writeJson(TAGS_FILE, tags.filter(t => t.id !== tagMatch[1]));
+    // Same orphaned-id cleanup as list deletion above.
+    const contacts = readJson(CONTACTS_FILE, []);
+    let changed = false;
+    contacts.forEach(c => {
+      if (Array.isArray(c.tags) && c.tags.includes(tagMatch[1])) {
+        c.tags = c.tags.filter(id => id !== tagMatch[1]);
+        changed = true;
+      }
+    });
+    if (changed) writeJson(CONTACTS_FILE, contacts);
+    return sendJson(res, 200, { ok: true });
+  }
+  const tagContactMatch = p.match(/^\/api\/tags\/([^/]+)\/contacts\/([^/]+)$/);
+  if (tagContactMatch && req.method === "DELETE") {
+    const [, tagId, contactId] = tagContactMatch;
+    const found = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+      c.tags = (c.tags || []).filter(id => id !== tagId);
+      c.updatedAt = new Date().toISOString();
+      return c;
+    });
+    if (!found) return sendJson(res, 404, { error: "Contact not found" });
     return sendJson(res, 200, { ok: true });
   }
 
