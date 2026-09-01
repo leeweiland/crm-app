@@ -317,6 +317,15 @@ const FIELD_META = {
   calendar: { label: 'Calendar', icon: ICONS.date },
   page_break: { label: 'Page Break', icon: ICONS.page_break },
 };
+// Same split as forms_backend.js's ANSWERABLE_TYPES, minus the four types
+// that are auto-detected by TYPE and go straight to contact.email/phone/
+// first/last -- everything else is eligible to be explicitly mapped to an
+// existing custom field (e.g. one imported from Close) instead of the
+// default behavior of auto-slugging a brand new field from the question text.
+const NON_ANSWERABLE_TYPES = ['statement', 'headline', 'image', 'video', 'calendar', 'page_break'];
+const AUTO_MAPPED_TYPES = ['email', 'phone', 'first_name', 'last_name'];
+function canMapToCustomField(f) { return !NON_ANSWERABLE_TYPES.includes(f.type) && !AUTO_MAPPED_TYPES.includes(f.type); }
+
 const NO_REQUIRE = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar'];
 const NO_GEAR = ['page_break', 'headline', 'video', 'calendar'];
 const LOGIC_OPS = [
@@ -402,17 +411,20 @@ function isHtmlEmbed(v) {
 }
 
 const formId = new URLSearchParams(location.search).get('id');
-let form = null, allStatuses = [], allTags = [], allLists = [], allEventTypes = [];
+let form = null, allStatuses = [], allTags = [], allLists = [], allEventTypes = [], allCustomFields = [];
 let saveTimer, dragFromIdx = null, dragToIdx = null;
 let openPanel = null; // { idx, kind: 'gear'|'logic' } | null
 let paletteOpenAt = null; // index into form.fields where a new field would be inserted, or null if no gap's palette is open
 
 async function loadRefs() {
-  const [statusesRes, tagsRes, listsRes, eventTypesRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/tags'), fetch('/api/lists'), fetch('/api/scheduling/admin/event-types')]);
+  const [statusesRes, tagsRes, listsRes, eventTypesRes, customFieldsRes] = await Promise.all([
+    fetch('/api/statuses'), fetch('/api/tags'), fetch('/api/lists'), fetch('/api/scheduling/admin/event-types'), fetch('/api/custom-fields?entityType=contact'),
+  ]);
   allStatuses = (await statusesRes.json()).statuses;
   allTags = (await tagsRes.json()).tags;
   allLists = (await listsRes.json()).lists;
   allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes.filter(e => e.active) : [];
+  allCustomFields = customFieldsRes.ok ? (await customFieldsRes.json()).fields : [];
 }
 
 async function loadForm() {
@@ -481,7 +493,17 @@ function renderPanel(f, i) {
     const showPlaceholder = f.type !== 'statement';
     return `<div class="fb-panel">
       ${showPlaceholder ? `<div class="field"><label class="pra-label">Placeholder</label><input class="pra-input" data-placeholder-idx="${i}" value="${escapeHtml(f.placeholder || '')}"/></div>` : ''}
-      <div class="field" style="margin-bottom:0"><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
+      <div class="field" ${canMapToCustomField(f) ? '' : 'style="margin-bottom:0"'}><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
+      ${canMapToCustomField(f) ? `
+        <div class="field" style="margin-bottom:0">
+          <label class="pra-label">Maps to contact field</label>
+          <select class="pra-select" data-mapfield-idx="${i}">
+            <option value="">Auto (new field from question text)</option>
+            ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
+          </select>
+          ${!allCustomFields.length ? `<div class="pra-muted" style="font-size:.72rem;margin-top:6px">No custom fields yet — add one in <a class="pra-link" href="/settings.html" target="_blank">Settings</a> first.</div>` : ''}
+        </div>
+      ` : ''}
     </div>`;
   }
   if (openPanel.kind === 'logic') {
@@ -688,6 +710,7 @@ function bindCanvas(canvas) {
   });
   canvas.querySelectorAll('[data-placeholder-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.placeholderIdx].placeholder = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-help-input-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.helpInputIdx].helpText = e.target.value; saveDebounced(); }));
+  canvas.querySelectorAll('[data-mapfield-idx]').forEach(el => el.addEventListener('change', e => { form.fields[+e.target.dataset.mapfieldIdx].mapToCustomFieldId = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-alt-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.altIdx].alt = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-imglink-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.imglinkIdx].link = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-opt-idx]').forEach(el => el.addEventListener('input', e => {

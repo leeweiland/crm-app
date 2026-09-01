@@ -156,11 +156,18 @@ function upsertContactFromSubmission(form, answers) {
   const prevListIds = contact ? [...contact.listIds] : [];
   const isNew = !contact;
 
+  // A field can be explicitly mapped (mapToCustomFieldId, set in the
+  // builder's field settings) to an EXISTING custom field definition from
+  // crm_custom_fields.json -- e.g. one imported from Close -- so the answer
+  // lands in the same field contact-detail.html/segments/etc. already know
+  // about, keyed by that definition's real id. Unmapped fields fall back to
+  // the old auto-slugged-from-the-question-label key, unchanged.
   const customFields = {};
   for (const f of form.fields) {
     if (!ANSWERABLE_TYPES.includes(f.type)) continue;
     if ([emailField?.id, phoneField?.id, firstField?.id, lastField?.id].includes(f.id)) continue;
-    if (answers[f.id] !== undefined && answers[f.id] !== "") customFields[slugField(f)] = answers[f.id];
+    if (answers[f.id] === undefined || answers[f.id] === "") continue;
+    customFields[f.mapToCustomFieldId || slugField(f)] = answers[f.id];
   }
 
   if (contact) {
