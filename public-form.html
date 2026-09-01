@@ -199,7 +199,13 @@ function renderField(f) {
 }
 
 function bindStepInputs() {
-  document.querySelectorAll('[data-field]').forEach(el => {
+  const dataFieldEls = document.querySelectorAll('[data-field]');
+  // A single multiple-choice question's options all share the SAME
+  // data-field (the question's id, not one per option), so this correctly
+  // collapses to 1 for the common Typeform-style one-question-per-step
+  // layout even though there are multiple <input> elements.
+  const singleQuestionStep = new Set(Array.from(dataFieldEls).map(el => el.dataset.field)).size === 1;
+  dataFieldEls.forEach(el => {
     const id = el.dataset.field;
     const handler = () => {
       if (el.type === 'checkbox') {
@@ -211,6 +217,17 @@ function bindStepInputs() {
         answers[id] = el.value;
       }
       updateNextVisibility();
+      // A single-choice answer (radio or dropdown) on a step with nothing
+      // else to answer advances right away instead of making the visitor
+      // find and click Next themselves -- checkboxes (multi-pick) and
+      // text-ish inputs (still typing) never auto-advance. The short delay
+      // is just so the selected state is visible for a moment first. Reuses
+      // pfNext's own click handler (not a separate path), so every existing
+      // check -- redirect rules, hide_next, validation, submit-on-last-step
+      // -- still applies exactly as a manual click would.
+      if (singleQuestionStep && (el.type === 'radio' || el.tagName === 'SELECT')) {
+        setTimeout(() => document.getElementById('pfNext')?.click(), 300);
+      }
     };
     el.addEventListener('input', handler);
     el.addEventListener('change', handler);
