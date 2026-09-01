@@ -60,16 +60,23 @@ function buildCandidateList(segment, batchSize, targeting) {
   return { totalMatching: matching.length, excluded, candidates: capped, excludedCount: excluded.length, remainingAfterCap: Math.max(0, candidates.length - capped.length) };
 }
 
-function randomDelayMs(minHours, maxHours) {
-  const lo = Number(minHours) || 4, hi = Math.max(lo, Number(maxHours) || 24);
-  return (lo + Math.random() * (hi - lo)) * 60 * 60 * 1000;
+// unit is "seconds"|"minutes"|"hours"|"days" -- defaults to "hours" for
+// records saved before the unit picker existed (those only ever stored
+// minHours/maxHours, always meaning hours).
+const WAIT_UNIT_MS = { seconds: 1000, minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+function randomDelayMs(waitTimeRange) {
+  const range = waitTimeRange || {};
+  const mult = WAIT_UNIT_MS[range.unit] || WAIT_UNIT_MS.hours;
+  const lo = Number(range.min ?? range.minHours) || 4;
+  const hi = Math.max(lo, Number(range.max ?? range.maxHours) || 24);
+  return (lo + Math.random() * (hi - lo)) * mult;
 }
 
-async function sendViaChannel(contact, channel, text, agentId) {
+async function sendViaChannel(contact, channel, text, agentId, subject) {
   if (channel === "email" && contact.email) {
     const { sendEmail } = await import("./email_backend.js");
     return sendEmail({
-      to: contact.email, subject: "PacificRimAthletics.com",
+      to: contact.email, subject: subject || "PacificRimAthletics.com",
       blocks: [{ id: "b1", type: "text", html: text.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: null,
       contactId: contact.id, sourceType: "ai_active", sourceId: agentId,
     });
@@ -213,7 +220,6 @@ export async function processAiActiveBatches() {
     // same as pausing each one individually.
     if (!agent || !agent.active) continue;
     const cfg = agent.activeConfig || {};
-    const minH = cfg.waitTimeRange?.minHours ?? 4, maxH = cfg.waitTimeRange?.maxHours ?? 24;
 
     const due = states.filter((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state) && (!s.nextActionAt || new Date(s.nextActionAt).getTime() <= now));
     for (const st of due) {
@@ -237,13 +243,34 @@ export async function processAiActiveBatches() {
 
       try {
         if (st.state === "queued") {
-          const result = await generateAgentReply(agent, contact.id, "(This is a cold outreach opener to a new lead. Reference something specific from their real info/application if available. Keep it short and get them talking.)", { autoSend: true });
+          // Cold-open channel is opt-in per channel (the "Re-engagement
+          // SMS"/"Re-engagement Email" toggles) -- a batch with neither
+          // enabled has nothing to open with and just sits done, rather
+          // than silently defaulting to whichever contact method exists.
+          const reengage = cfg.reengagement || {};
+          const smsOk = reengage.sms?.enabled && !!contact.phone;
+          const emailOk = reengage.email?.enabled && !!contact.email;
+          if (!smsOk && !emailOk) {
+            st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue;
+          }
+          const channel = emailOk ? "email" : "sms"; // prefer email when both are enabled and available
+          const customPrompt = reengage[channel]?.prompt?.trim();
+          const defaultPrompt = channel === "email"
+            ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
+            : "This is a cold re-engagement opener to a lead via SMS -- keep it very short and text-native, reference something specific from their real info/application if available, and ask one specific question to get them talking.";
+          let promptText = `(${customPrompt || defaultPrompt})`;
+          if (channel === "email") promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
+          const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true });
           if (!result.skip && !result.escalate && result.text) {
-            const channel = contact.email ? "email" : "sms";
-            await sendViaChannel(contact, channel, result.text, agent.id);
+            let subject = null, body = result.text;
+            if (channel === "email") {
+              const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
+              if (m) { subject = m[1].trim(); body = m[2].trim(); }
+            }
+            await sendViaChannel(contact, channel, body, agent.id, subject);
             st.state = "waiting_reply";
             st.lastActionAt = new Date().toISOString();
-            st.nextActionAt = new Date(now + randomDelayMs(minH, maxH)).toISOString();
+            st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
           } else {
             st.state = "done"; // nothing sendable (e.g. model judged no-go)
           }
@@ -254,14 +281,14 @@ export async function processAiActiveBatches() {
             const result = await generateAgentReply(agent, contact.id, lastMsg.body || lastMsg.bodyPreview || "", { autoSend: true });
             const channel = lastMsg.channel === "sms" ? "sms" : "email";
             if (result.skip) {
-              st.nextActionAt = new Date(now + randomDelayMs(minH, maxH)).toISOString();
+              st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
             } else if (result.escalate) {
               st.state = "escalated";
             } else if (result.text) {
               await sendViaChannel(contact, channel, result.text, agent.id);
               st.lastActionAt = new Date().toISOString();
               if (result.buyingSignal) st.state = "hot_handoff";
-              else st.nextActionAt = new Date(now + randomDelayMs(minH, maxH)).toISOString();
+              else st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
             }
           } else {
             // No reply yet -- a varied-timing follow-up, capped so this
@@ -274,7 +301,7 @@ export async function processAiActiveBatches() {
                 await sendViaChannel(contact, channel, result.text, agent.id);
                 st.followUpCount = (st.followUpCount || 0) + 1;
                 st.lastActionAt = new Date().toISOString();
-                st.nextActionAt = new Date(now + randomDelayMs(minH, maxH)).toISOString();
+                st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
               } else {
                 st.state = "done";
               }

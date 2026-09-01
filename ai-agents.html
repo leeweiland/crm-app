@@ -185,14 +185,50 @@
           </div>
           <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
             <div style="flex:1">
-              <label>Min wait between messages (hours)</label>
-              <input type="text" id="fWaitMin" value="4"/>
+              <label>Min wait between messages</label>
+              <input type="number" id="fWaitMin" min="0" step="1" value="4"/>
             </div>
             <div style="flex:1">
-              <label>Max wait between messages (hours)</label>
-              <input type="text" id="fWaitMax" value="24"/>
+              <label>Max wait between messages</label>
+              <input type="number" id="fWaitMax" min="0" step="1" value="24"/>
+            </div>
+            <div style="flex:1">
+              <label>Unit</label>
+              <select id="fWaitUnit">
+                <option value="seconds">Seconds</option>
+                <option value="minutes">Minutes</option>
+                <option value="hours" selected>Hours</option>
+                <option value="days">Days</option>
+              </select>
             </div>
           </div>
+
+          <div class="editor-row toggle-row" style="margin-bottom:10px">
+            <div class="toggle-item">
+              <button type="button" class="active-toggle" id="fReengageSmsToggle"></button>
+              <span class="toggle-label" id="fReengageSmsLabel">Re-engagement SMS (Kai starts the conversation by text)</span>
+            </div>
+          </div>
+          <div class="editor-row">
+            <label>Re-engagement SMS opener prompt</label>
+            <textarea id="fReengageSmsPrompt" style="min-height:70px" placeholder="e.g. Keep it very short and text-native, reference their real goal from their application, ask one specific question to get them talking."></textarea>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="testSmsBtn" type="button" style="margin-top:6px">Test SMS</button>
+            <div class="preview-result" id="testSmsResult" style="display:none;margin-top:8px"></div>
+          </div>
+
+          <div class="editor-row toggle-row" style="margin-bottom:10px">
+            <div class="toggle-item">
+              <button type="button" class="active-toggle" id="fReengageEmailToggle"></button>
+              <span class="toggle-label" id="fReengageEmailLabel">Re-engagement Email (Kai starts the conversation by email)</span>
+            </div>
+          </div>
+          <div class="editor-row">
+            <label>Re-engagement email opener prompt</label>
+            <textarea id="fReengageEmailPrompt" style="min-height:70px" placeholder="e.g. Warm, personal-sounding subject line, reference something specific from their application, short and inviting a reply."></textarea>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="testEmailBtn" type="button" style="margin-top:6px">Test Email</button>
+            <div class="preview-result" id="testEmailResult" style="display:none;margin-top:8px"></div>
+          </div>
+
           <button class="pra-btn pra-btn-ghost" id="previewBatchBtn" type="button">Preview Batch</button>
           <div class="preview-result" id="previewResult" style="display:none"></div>
 
@@ -384,8 +420,17 @@ async function openEditor(agentId) {
   const cfg = agent.activeConfig || {};
   document.getElementById('fSegment').value = cfg.segmentId || '';
   document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
-  document.getElementById('fWaitMin').value = cfg.waitTimeRange?.minHours ?? 4;
-  document.getElementById('fWaitMax').value = cfg.waitTimeRange?.maxHours ?? 24;
+  const wait = cfg.waitTimeRange || {};
+  document.getElementById('fWaitMin').value = wait.min ?? wait.minHours ?? 4;
+  document.getElementById('fWaitMax').value = wait.max ?? wait.maxHours ?? 24;
+  document.getElementById('fWaitUnit').value = wait.unit || 'hours';
+  const reengage = cfg.reengagement || {};
+  setToggle('fReengageSmsToggle', reengage.sms?.enabled);
+  document.getElementById('fReengageSmsPrompt').value = reengage.sms?.prompt || '';
+  setToggle('fReengageEmailToggle', reengage.email?.enabled);
+  document.getElementById('fReengageEmailPrompt').value = reengage.email?.prompt || '';
+  document.getElementById('testSmsResult').style.display = 'none';
+  document.getElementById('testEmailResult').style.display = 'none';
   document.getElementById('previewResult').style.display = 'none';
   updateActiveSectionVisibility();
   if (agentId) loadBatchList(agentId); else document.getElementById('batchList').textContent = 'Save this agent before starting a batch.';
@@ -543,8 +588,13 @@ function buildAgentPayload() {
       segmentId: document.getElementById('fSegment').value || null,
       batchSize: Number(document.getElementById('fBatchSize').value) || 25,
       waitTimeRange: {
-        minHours: Number(document.getElementById('fWaitMin').value) || 4,
-        maxHours: Number(document.getElementById('fWaitMax').value) || 24,
+        min: Number(document.getElementById('fWaitMin').value) || 4,
+        max: Number(document.getElementById('fWaitMax').value) || 24,
+        unit: document.getElementById('fWaitUnit').value || 'hours',
+      },
+      reengagement: {
+        sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value },
+        email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value },
       },
     },
   };
@@ -568,10 +618,12 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(flushAutosave, 800);
 }
 function wireAutosave() {
-  ['fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax'].forEach((id) => {
+  ['fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitUnit', 'fReengageSmsPrompt', 'fReengageEmailPrompt'].forEach((id) => {
     document.getElementById(id).addEventListener('input', scheduleAutosave);
   });
   document.querySelectorAll('.multiselect-panel').forEach((panel) => panel.addEventListener('change', scheduleAutosave));
+  document.getElementById('fReengageSmsToggle').addEventListener('click', () => { setToggle('fReengageSmsToggle', !getToggle('fReengageSmsToggle')); scheduleAutosave(); });
+  document.getElementById('fReengageEmailToggle').addEventListener('click', () => { setToggle('fReengageEmailToggle', !getToggle('fReengageEmailToggle')); scheduleAutosave(); });
 }
 
 // ── AI Active: preview / start / monitor batches ─────────────────────────
@@ -671,6 +723,34 @@ async function toggleBatchReview(batchId) {
   }
 }
 document.getElementById('previewBatchBtn').addEventListener('click', previewBatch);
+
+async function testReengageOpen(channel, btn, resultElId) {
+  if (!editingAgentId) return;
+  const resultEl = document.getElementById(resultElId);
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Generating…';
+  resultEl.style.display = 'block';
+  resultEl.textContent = 'Generating…';
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/test-open`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel, agentDraft: buildAgentPayload() }),
+    });
+    const data = await r.json();
+    if (!r.ok) { resultEl.textContent = data.error || 'Generation failed.'; return; }
+    if (data.status === 'skip') { resultEl.textContent = 'Model chose not to send anything: ' + data.reason; return; }
+    if (data.status === 'escalate') { resultEl.textContent = 'Model flagged this for a human instead: ' + data.reason; return; }
+    resultEl.innerHTML = channel === 'email'
+      ? `<div><b>Subject:</b> ${escapeHtml(data.subject || '(no subject)')}</div><div style="margin-top:6px;white-space:pre-wrap">${escapeHtml(data.body || '')}</div>`
+      : `<div style="white-space:pre-wrap">${escapeHtml(data.body || '')}</div>`;
+  } catch (err) {
+    resultEl.textContent = 'Generation failed: ' + err.message;
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+document.getElementById('testSmsBtn').addEventListener('click', (e) => testReengageOpen('sms', e.target, 'testSmsResult'));
+document.getElementById('testEmailBtn').addEventListener('click', (e) => testReengageOpen('email', e.target, 'testEmailResult'));
 
 document.getElementById('newAgentBtn').addEventListener('click', () => openEditor(null));
 document.getElementById('editorSaveBtn').addEventListener('click', async () => { await closeEditor(); loadAgents(); });

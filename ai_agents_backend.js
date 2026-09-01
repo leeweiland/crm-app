@@ -449,6 +449,45 @@ TAKEOVER: <yes or no> - <short reason>`;
     }
   }
 
+  // Lets an admin preview what AI Active's cold re-engagement opener would
+  // actually say for a given channel, using whatever's in the form right
+  // now (agentDraft) -- same idea as the chat endpoint's unsaved-draft
+  // support, but for the one-shot opener message rather than a back-and-forth.
+  const testOpenMatch = url.pathname.match(/^\/api\/ai-agents\/([^/]+)\/test-open$/);
+  if (testOpenMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    const agents = readJson(AI_AGENTS_FILE, []);
+    const savedAgent = agents.find((a) => a.id === testOpenMatch[1]);
+    if (!savedAgent) return sendJson(res, 404, { error: "Agent not found" });
+    try {
+      const { channel, contactId, agentDraft } = await readJsonBody(req);
+      if (!["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "channel ('email'|'sms') is required" });
+      const agent = agentDraft && typeof agentDraft === "object" ? { ...savedAgent, ...agentDraft } : savedAgent;
+      const reengage = agent.activeConfig?.reengagement?.[channel];
+      const customPrompt = reengage?.prompt?.trim();
+      const defaultPrompt = channel === "email"
+        ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
+        : "This is a cold re-engagement opener to a lead via SMS -- keep it very short and text-native, reference something specific from their real info/application if available, and ask one specific question to get them talking.";
+      let promptText = `(${customPrompt || defaultPrompt})`;
+      if (channel === "email") {
+        promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
+      }
+      const result = await generateAgentReply(agent, contactId || null, promptText, { autoSend: true });
+      if (result.skip) return sendJson(res, 200, { status: "skip", reason: result.reason });
+      if (result.escalate) return sendJson(res, 200, { status: "escalate", reason: result.escalate });
+      let subject = null, body = result.text;
+      if (channel === "email") {
+        const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
+        if (m) { subject = m[1].trim(); body = m[2].trim(); }
+      }
+      return sendJson(res, 200, { status: "ok", subject, body });
+    } catch (err) {
+      console.error(`[ai-active-test-open] agent ${testOpenMatch[1]} failed:`, err.message);
+      return sendJson(res, 500, { error: "Generation failed" });
+    }
+  }
+
   const chatMatch = url.pathname.match(/^\/api\/ai-agents\/([^/]+)\/chat$/);
   if (chatMatch && req.method === "POST") {
     const me = getSessionUser(req);
