@@ -74,9 +74,17 @@ PRIORITY — applying / scheduling a call comes first:
 - No payment plans, no discounts, no negotiating the total. The only accommodation, and only if truly needed: half down, half in 30 days, on the same total.
 - Answer the lead's actual question directly. Never re-explain value after a "no" -- accept it and move on.
 
-REUSE REAL LANGUAGE, DON'T INVENT NEW LINES: when retrieved material or example transcripts contain a real sentence that fits the moment, use that actual sentence instead of writing your own version "in the spirit of" it. Never repeat something already said earlier in this same conversation -- check the customer journey below before drafting.
+REUSE REAL LANGUAGE, DON'T INVENT NEW LINES: when retrieved material or example transcripts contain a real sentence that fits the moment, use that actual sentence instead of writing your own version "in the spirit of" it. Never repeat something already said earlier in this same conversation -- check the customer journey below before drafting.`;
 
-WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
+// Structured-output instructions -- ALWAYS injected by buildAgentSystemPrompt
+// below, regardless of what's saved in an individual agent's editable
+// systemPrompt box. This is mechanical framework (parseAgentOutput() below
+// depends on the model actually using these exact markers), not a stylistic
+// choice an admin should be able to accidentally delete by editing the
+// prompt -- an agent whose systemPrompt was customized before this existed
+// (or edited later without knowing about it) must still get these, or
+// AI Active's escalate/hot-handoff/skip transitions silently never fire.
+const RESPONSE_FORMAT_INSTRUCTIONS = `WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
 - \`[[NO_RESPONSE_NEEDED: <short reason>]]\` -- the lead's last message doesn't need a reply (e.g. just "thanks", an automated/system notification, or the conversation has already reached a clear conclusion).
 - \`[[ESCALATE: <short reason>]]\` -- this needs a human, not a suggested reply: a complaint, a refund request, a medical question, or anything else outside a normal sales conversation.
 
@@ -88,17 +96,18 @@ function newAgent({ name, description }) {
     name: name || "Kai",
     description: description || "",
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
-    active: false, // agents start OFF -- an admin must deliberately activate one, never on-by-default
-    aiAssist: false, // when true (and active, and the lead matches targeting), a real inbound message from
-                      // a matching lead auto-generates a reply and surfaces it in the Inbox for review (or
-                      // sends it directly if sendMode is 'auto'). When false, the agent only responds when
-                      // manually chatted with from the AI Agents page -- never touches real conversations.
+    // AI Assist ("helps the human work conversations") and AI Active
+    // ("works the selected lead batch independently") are two distinct
+    // capabilities on the same agent record. Both start OFF -- an admin
+    // must deliberately turn each one on.
+    active: false, // AI Active master switch -- also the kill-switch processAiActiveBatches() checks every tick
+    aiAssist: false, // AI Assist -- icon-triggered draft generation in the Inbox, always human-reviewed
     targeting: {
       programTypes: [], // [] = all types (online/gym); non-empty = only these
       statuses: [],     // [] = all statuses; non-empty = only these
       coverForUserIds: [], // human users this agent "steps in for" when they're away
     },
-    sendMode: "draft", // 'draft' (reply saved for human review) | 'auto' (sends immediately) -- defaults to the safe option
+    activeConfig: { segmentId: null, batchSize: 25, waitTimeRange: { minHours: 4, maxHours: 24 } },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -109,7 +118,7 @@ function newAgent({ name, description }) {
 // -- into a readable timeline. Backed by getContactMessages(contactId),
 // which reads the per-contact shard (msg_by_contact/<id>.json), NOT the
 // main message log -- safe regardless of how large that log grows.
-function formatCustomerJourney(contact, journey) {
+export function formatCustomerJourney(contact, journey) {
   if (!contact) return "";
   const lines = journey
     .slice(-60) // most recent 60 events is plenty of context; keeps the prompt bounded
@@ -140,15 +149,23 @@ async function retrieveBoth(query) {
   return block;
 }
 
-function buildAgentSystemPrompt(agent, journeyBlock) {
-  const sendModeNote = agent.sendMode === "draft"
-    ? "Your replies are DRAFTS only -- a human reviews and approves before anything is sent to the real lead. Write as if sending directly; the review step is invisible to you."
-    : "Your replies are sent directly to the real lead with no human review. Be certain before committing to a claim, price, or promise.";
+// autoSend is which FEATURE is calling, not a stored agent setting -- AI
+// Assist (icon-generate/summarize/test-chat) always lands in front of a
+// human first; AI Active always sends immediately. A per-agent "sendMode"
+// field used to exist here but was actively misleading (it no longer
+// matched what either path actually did), so it's gone -- the truth is
+// which code path is asking, passed in explicitly.
+export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false) {
+  const sendModeNote = autoSend
+    ? "Your replies are sent directly to the real lead with no human review. Be certain before committing to a claim, price, or promise."
+    : "Your replies are DRAFTS only -- a human reviews and approves before anything is sent to the real lead. Write as if sending directly; the review step is invisible to you.";
   return `You are "${agent.name}", an AI agent for Pacific Rim Athletics. ${agent.description || ""}
 
 ${sendModeNote}
 
 ${agent.systemPrompt || ""}
+
+${RESPONSE_FORMAT_INSTRUCTIONS}
 
 Below is the real pricing/objection-handling playbook and a handful of full real closed-won conversations. Never invent pricing or numbers that aren't grounded in this material or in LIVE-RETRIEVED MATERIAL appended below -- if you're not sure of a real number, say something true and general rather than making one up.
 
@@ -164,7 +181,7 @@ export const AI_GENERATION_LOG_FILE = "crm_ai_generation_log.json";
 // Statuses where the sales conversation is already resolved one way or
 // another -- no reply is ever needed regardless of what the last message
 // looks like. Skipped before ever calling the model.
-const TERMINAL_STATUSES = new Set(["ENROLLED", "STOP", "BAD FIT / BLACKLIST", "WE CANCELLED"]);
+export const TERMINAL_STATUSES = new Set(["ENROLLED", "STOP", "BAD FIT / BLACKLIST", "WE CANCELLED"]);
 // A human personally sent the last outbound message (not the AI) within
 // this window -- they're actively on this lead, don't suggest anything.
 const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;
@@ -194,7 +211,7 @@ function parseAgentOutput(raw) {
 // result matters. Returns { text, buyingSignal } on a normal reply,
 // { skip: true, reason } when no reply is needed, or { escalate: reason }
 // when this needs a human instead of a suggestion.
-async function generateAgentReply(agent, contactId, userText) {
+export async function generateAgentReply(agent, contactId, userText, { autoSend = false } = {}) {
   let journeyBlock = "";
   if (contactId) {
     const contacts = readJson(CONTACTS_FILE, []);
@@ -203,7 +220,7 @@ async function generateAgentReply(agent, contactId, userText) {
     journeyBlock = formatCustomerJourney(contact, journey);
   }
   const grounding = await retrieveBoth(userText);
-  const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock) + grounding;
+  const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock, autoSend) + grounding;
 
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -223,7 +240,7 @@ async function generateAgentReply(agent, contactId, userText) {
 
 // Does this contact match an agent's targeting rules? Empty targeting arrays
 // mean "no restriction on this dimension" -- matches everyone.
-function contactMatchesTargeting(contact, targeting) {
+export function contactMatchesTargeting(contact, targeting) {
   if (!targeting) return true;
   if (targeting.programTypes?.length && !targeting.programTypes.includes(contact.programType)) return false;
   if (targeting.statuses?.length && !targeting.statuses.includes(contact.status)) return false;
@@ -236,7 +253,7 @@ function contactMatchesTargeting(contact, targeting) {
 // can carry direction:"inbound" as a technical artifact despite the lead
 // never having said anything) so a draft never gets generated in reply to
 // a system note instead of an actual message from them.
-const CONVERSATION_CHANNELS = ["email", "sms", "form", "booking"];
+export const CONVERSATION_CHANNELS = ["email", "sms", "form", "booking"];
 
 // Everything below the model call is a deterministic, free (no API cost)
 // gate -- checked before ever spending a token. Returns a short reason
@@ -494,10 +511,7 @@ async function handleAiAgentsCrud(req, res, url) {
     if (req.method === "PATCH") {
       if (!agent) return sendJson(res, 404, { error: "Agent not found" });
       const body = await readJsonBody(req);
-      if ("sendMode" in body && !["draft", "auto"].includes(body.sendMode)) {
-        return sendJson(res, 400, { error: "sendMode must be 'draft' or 'auto'" });
-      }
-      for (const k of ["name", "description", "systemPrompt", "active", "aiAssist", "targeting", "sendMode"]) {
+      for (const k of ["name", "description", "systemPrompt", "active", "aiAssist", "targeting", "activeConfig"]) {
         if (k in body) agent[k] = body[k];
       }
       agent.updatedAt = new Date().toISOString();

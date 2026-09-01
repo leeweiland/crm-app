@@ -10,8 +10,6 @@
   .agent-active-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .agent-on { background: rgba(57,255,20,0.15); color: var(--pra-green); }
   .agent-off { background: rgba(255,255,255,0.1); color: #fff; }
-  .send-mode-pill { font-size: .66rem; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--pra-dim); }
-  .send-mode-auto { background: rgba(255,159,10,.15); color: #ff9f0a; }
   /* .editor-backdrop is a sibling of .pra-root (not a descendant), same as
      every .modal-backdrop elsewhere in the app -- without an explicit
      color/font here it falls back to the browser default (black text),
@@ -55,6 +53,29 @@
   .multiselect-panel input[type=checkbox] { accent-color: var(--pra-blue); flex-shrink: 0; }
   .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
+  /* ── AI Active (batch settings, preview, running batches) ── */
+  .active-section { border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; margin-bottom: 16px; background: rgba(57,255,20,0.03); }
+  .active-section-title { font-weight: 700; font-size: .88rem; margin-bottom: 4px; }
+  .active-section-sub { font-size: .76rem; color: var(--pra-dim); margin-bottom: 14px; }
+  .preview-result { border: 1px solid var(--pra-border); border-radius: 8px; padding: 12px; margin-top: 10px; font-size: .82rem; }
+  .preview-list { max-height: 160px; overflow-y: auto; margin: 8px 0; border: 1px solid var(--pra-border); border-radius: 6px; }
+  .preview-list-row { padding: 6px 10px; border-bottom: 1px solid var(--pra-border); font-size: .8rem; }
+  .preview-list-row:last-child { border-bottom: none; }
+  .batch-row { border: 1px solid var(--pra-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: .82rem; }
+  .batch-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .batch-name { font-weight: 700; flex: 1; }
+  .batch-status-pill { font-size: .64rem; text-transform: uppercase; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--pra-dim); }
+  .batch-status-pill.running { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .batch-status-pill.paused { background: rgba(255,159,10,.15); color: #ff9f0a; }
+  .batch-stats { display: flex; flex-wrap: wrap; gap: 10px; font-size: .74rem; color: var(--pra-dim); margin-bottom: 8px; }
+  .batch-stats b { color: var(--pra-white); }
+  .review-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); font-size: .8rem; }
+  .review-row:last-child { border-bottom: none; }
+  .review-state-pill { font-size: .64rem; text-transform: uppercase; padding: 2px 7px; border-radius: 7px; background: rgba(255,255,255,.08); color: var(--pra-dim); flex-shrink: 0; }
+  .review-state-pill.hot_handoff, .review-state-pill.escalated { background: rgba(255,159,10,.15); color: #ff9f0a; }
+  .review-state-pill.opted_out, .review-state-pill.human_takeover { background: rgba(255,59,59,0.15); color: var(--pra-red); }
+  .review-state-pill.done { background: rgba(57,255,20,0.1); color: var(--pra-green); }
+
   /* ── Test Conversation panel -- same iMessage-bubble pattern as the
      stand-alone role-play chat prototype, embedded directly in the editor
      so a system-prompt edit can be tried immediately without saving first. ── */
@@ -90,14 +111,14 @@
           <div class="pra-h1" style="flex:1">AI Agents</div>
           <button class="pra-btn" id="newAgentBtn">+ New Agent</button>
         </div>
-        <div class="pra-muted" style="font-size:.82rem">Agents start OFF and in Draft mode (replies wait for your review) until you deliberately turn them on. Each agent has its own system prompt and targeting rules for which leads it's active for.</div>
+        <div class="pra-muted" style="font-size:.82rem">AI Assist drafts replies for you to review in the Inbox. AI Active independently works a batch of leads you choose and pick to review. Both start OFF until you deliberately turn them on.</div>
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
           <thead><tr>
-            <th>Name</th><th>Status</th><th>Send Mode</th><th>Targeting</th><th>Last Updated</th><th></th>
+            <th>Name</th><th>Status</th><th>Targeting</th><th>Last Updated</th><th></th>
           </tr></thead>
-          <tbody id="agentsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+          <tbody id="agentsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -121,19 +142,47 @@
         <div class="editor-row toggle-row">
           <div class="toggle-item">
             <button type="button" class="active-toggle" id="fActiveToggle"></button>
-            <span class="toggle-label" id="fActiveLabel">Active</span>
+            <span class="toggle-label" id="fActiveLabel">AI Active (works this batch on its own, no draft review)</span>
           </div>
           <div class="toggle-item">
             <button type="button" class="active-toggle" id="fAiAssistToggle"></button>
-            <span class="toggle-label" id="fAiAssistLabel">AI Assist</span>
+            <span class="toggle-label" id="fAiAssistLabel">AI Assist (drafts only, in the Inbox)</span>
           </div>
         </div>
-        <div class="editor-row">
-          <label>Send mode</label>
-          <select id="fSendMode">
-            <option value="draft">Draft for review (replies wait for a human to approve/send)</option>
-            <option value="auto">Auto-send (replies go out immediately, no review)</option>
-          </select>
+        <div class="active-section" id="activeSection" style="display:none">
+          <div class="active-section-title">AI Active settings</div>
+          <div class="active-section-sub">Only the leads in the segment below are ever contacted. Turning AI Active on does not start anything by itself — you still preview and start a batch explicitly.</div>
+          <div class="editor-row">
+            <label>Segment</label>
+            <select id="fSegment"><option value="">Select a saved segment…</option></select>
+          </div>
+          <div class="editor-row">
+            <label>Batch size</label>
+            <select id="fBatchSize">
+              <option value="10">10 leads</option>
+              <option value="25" selected>25 leads</option>
+              <option value="50">50 leads</option>
+              <option value="100">100 leads</option>
+              <option value="250">250 leads</option>
+            </select>
+          </div>
+          <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
+            <div style="flex:1">
+              <label>Min wait between messages (hours)</label>
+              <input type="text" id="fWaitMin" value="4"/>
+            </div>
+            <div style="flex:1">
+              <label>Max wait between messages (hours)</label>
+              <input type="text" id="fWaitMax" value="24"/>
+            </div>
+          </div>
+          <button class="pra-btn pra-btn-ghost" id="previewBatchBtn" type="button">Preview Batch</button>
+          <div class="preview-result" id="previewResult" style="display:none"></div>
+
+          <div style="margin-top:18px">
+            <div class="active-section-title" style="margin-bottom:10px">Running batches</div>
+            <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
+          </div>
         </div>
         <div class="editor-row">
           <label>Active for lead type</label>
@@ -215,9 +264,9 @@ async function loadUsers() {
 async function loadAgents() {
   const r = await fetch('/api/ai-agents');
   const body = document.getElementById('agentsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load agents.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Could not load agents.</td></tr>'; return; }
   const { agents } = await r.json();
-  if (!agents.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No agents yet — click "+ New Agent" to create one.</td></tr>'; return; }
+  if (!agents.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No agents yet — click "+ New Agent" to create one.</td></tr>'; return; }
   const sorted = [...agents].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
   body.innerHTML = sorted.map(a => {
     const targeting = [];
@@ -227,8 +276,7 @@ async function loadAgents() {
     return `
     <tr>
       <td class="clickable" style="cursor:pointer" data-edit="${a.id}">${escapeHtml(a.name)}</td>
-      <td><span class="agent-active-pill ${a.active ? 'agent-on' : 'agent-off'}">${a.active ? 'Active' : 'Off'}</span>${a.aiAssist ? '<span class="agent-active-pill agent-on" style="margin-left:4px">AI Assist</span>' : ''}</td>
-      <td><span class="send-mode-pill ${a.sendMode === 'auto' ? 'send-mode-auto' : ''}">${a.sendMode === 'auto' ? 'Auto-send' : 'Draft'}</span></td>
+      <td><span class="agent-active-pill ${a.active ? 'agent-on' : 'agent-off'}">${a.active ? 'AI Active' : 'Off'}</span>${a.aiAssist ? '<span class="agent-active-pill agent-on" style="margin-left:4px">AI Assist</span>' : ''}</td>
       <td class="pra-muted" style="font-size:.8rem">${targeting.length ? escapeHtml(targeting.join(' · ')) : 'All leads'}</td>
       <td class="pra-muted">${fmtDate(a.updatedAt)}</td>
       <td style="white-space:nowrap">
@@ -262,10 +310,22 @@ function renderUserCheckboxes(selected) {
 // ── Toggle switches (Active, AI Assist) ──────────────────────────────────
 function setToggle(btnId, on) { document.getElementById(btnId).classList.toggle('on', !!on); }
 function getToggle(btnId) { return document.getElementById(btnId).classList.contains('on'); }
-document.getElementById('fActiveToggle').addEventListener('click', () => setToggle('fActiveToggle', !getToggle('fActiveToggle')));
+function updateActiveSectionVisibility() { document.getElementById('activeSection').style.display = getToggle('fActiveToggle') ? 'block' : 'none'; }
+document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); });
 document.getElementById('fAiAssistToggle').addEventListener('click', () => setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')));
 document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
 document.getElementById('fAiAssistLabel').addEventListener('click', () => document.getElementById('fAiAssistToggle').click());
+
+let allSegments = [];
+async function loadSegments() {
+  try {
+    const r = await fetch('/api/segments');
+    const data = await r.json();
+    allSegments = data.segments || [];
+  } catch { allSegments = []; }
+  document.getElementById('fSegment').innerHTML = '<option value="">Select a saved segment…</option>' +
+    allSegments.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+}
 
 // ── Dropdown multi-selects (lead type / status / covering users) ────────
 // One listener per panel via delegation ('change' bubbles from the
@@ -304,7 +364,7 @@ initMultiselect('msCoverUsers', 'Select user(s)…');
 
 async function openEditor(agentId) {
   editingAgentId = agentId || null;
-  let agent = { name: '', description: '', systemPrompt: '', active: false, sendMode: 'draft', targeting: { programTypes: [], statuses: [], coverForUserIds: [] } };
+  let agent = { name: '', description: '', systemPrompt: '', active: false, aiAssist: false, targeting: { programTypes: [], statuses: [], coverForUserIds: [] }, activeConfig: { segmentId: null, batchSize: 25, waitTimeRange: { minHours: 4, maxHours: 24 } } };
   if (agentId) {
     const r = await fetch(`/api/ai-agents/${agentId}`);
     if (r.ok) agent = (await r.json()).agent;
@@ -321,8 +381,15 @@ async function openEditor(agentId) {
   document.getElementById('fDescription').value = agent.description || '';
   setToggle('fActiveToggle', agent.active);
   setToggle('fAiAssistToggle', agent.aiAssist);
-  document.getElementById('fSendMode').value = agent.sendMode || 'draft';
   document.getElementById('fSystemPrompt').value = agent.systemPrompt || '';
+  const cfg = agent.activeConfig || {};
+  document.getElementById('fSegment').value = cfg.segmentId || '';
+  document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
+  document.getElementById('fWaitMin').value = cfg.waitTimeRange?.minHours ?? 4;
+  document.getElementById('fWaitMax').value = cfg.waitTimeRange?.maxHours ?? 24;
+  document.getElementById('previewResult').style.display = 'none';
+  updateActiveSectionVisibility();
+  if (agentId) loadBatchList(agentId); else document.getElementById('batchList').textContent = 'Save this agent before starting a batch.';
   document.querySelectorAll('#msProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
   updateMsSummary('msProgramTypes', 'Select lead type(s)…');
   renderStatusCheckboxes(agent.targeting?.statuses || []);
@@ -380,7 +447,6 @@ function currentAgentDraft() {
     name: document.getElementById('fName').value.trim() || 'Untitled Agent',
     description: document.getElementById('fDescription').value.trim(),
     systemPrompt: document.getElementById('fSystemPrompt').value,
-    sendMode: document.getElementById('fSendMode').value,
   };
 }
 async function sendTestChatMessage() {
@@ -470,14 +536,119 @@ async function saveAgent() {
     description: document.getElementById('fDescription').value.trim(),
     active: getToggle('fActiveToggle'),
     aiAssist: getToggle('fAiAssistToggle'),
-    sendMode: document.getElementById('fSendMode').value,
     systemPrompt: document.getElementById('fSystemPrompt').value,
     targeting: { programTypes, statuses, coverForUserIds },
+    activeConfig: {
+      segmentId: document.getElementById('fSegment').value || null,
+      batchSize: Number(document.getElementById('fBatchSize').value) || 25,
+      waitTimeRange: {
+        minHours: Number(document.getElementById('fWaitMin').value) || 4,
+        maxHours: Number(document.getElementById('fWaitMax').value) || 24,
+      },
+    },
   };
   await fetch(`/api/ai-agents/${editingAgentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   closeEditor();
   loadAgents();
 }
+
+// ── AI Active: preview / start / monitor batches ─────────────────────────
+function currentActiveConfig() {
+  return {
+    segmentId: document.getElementById('fSegment').value || null,
+    batchSize: Number(document.getElementById('fBatchSize').value) || 25,
+  };
+}
+async function previewBatch() {
+  const { segmentId, batchSize } = currentActiveConfig();
+  const resultEl = document.getElementById('previewResult');
+  if (!segmentId) { showToast('Select a segment first', true); return; }
+  resultEl.style.display = 'block';
+  resultEl.textContent = 'Checking segment…';
+  try {
+    const r = await fetch('/api/ai-active/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ segmentId, batchSize }) });
+    const data = await r.json();
+    if (!r.ok) { resultEl.textContent = data.error || 'Preview failed.'; return; }
+    resultEl.innerHTML = `
+      <div><b>${data.willContact.length}</b> of <b>${data.totalMatchingSegment}</b> matching leads will be contacted${data.remainingAfterCap ? ` (${data.remainingAfterCap} more match but are past the batch size cap)` : ''}.</div>
+      <div class="pra-muted" style="margin-top:4px">${data.excludedCount} excluded (unsubscribed, no contact info, or already enrolled/terminal).</div>
+      <div class="preview-list">${data.willContact.map(c => `<div class="preview-list-row">${escapeHtml(c.name || '(no name)')} — ${escapeHtml(c.email || c.phone || 'no contact info')}</div>`).join('') || '<div class="preview-list-row pra-muted">Nobody left to contact.</div>'}</div>
+      ${data.willContact.length ? `<button class="pra-btn" id="startBatchBtn" type="button" style="margin-top:8px">Start Batch (${data.willContact.length} leads)</button>` : ''}
+    `;
+    const startBtn = document.getElementById('startBatchBtn');
+    if (startBtn) startBtn.addEventListener('click', () => startBatch(segmentId, batchSize));
+  } catch (err) {
+    resultEl.textContent = 'Preview failed: ' + err.message;
+  }
+}
+async function startBatch(segmentId, batchSize, confirmOver100) {
+  if (!editingAgentId) return;
+  const r = await fetch('/api/ai-active/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agentId: editingAgentId, segmentId, batchSize, confirmOver100: !!confirmOver100 }),
+  });
+  const data = await r.json();
+  if (!r.ok) { showToast(data.error || 'Could not start batch', true); return; }
+  if (data.needsConfirmation) {
+    if (confirm(`This will start messaging ${data.count} leads. Continue?`)) startBatch(segmentId, batchSize, true);
+    return;
+  }
+  showToast('Batch started — leads will be contacted per the wait-time settings.');
+  document.getElementById('previewResult').style.display = 'none';
+  loadBatchList(editingAgentId);
+}
+function batchStatsLine(stats) {
+  return `<b>${stats.total}</b> total · <b>${stats.sent}</b> sent · <b>${stats.waitingReply}</b> waiting on reply · <b>${stats.hotHandoff}</b> hot handoff · <b>${stats.escalated}</b> escalated · <b>${stats.humanTakeover}</b> human takeover · <b>${stats.optedOut}</b> opted out · <b>${stats.done}</b> done`;
+}
+async function loadBatchList(agentId) {
+  const el = document.getElementById('batchList');
+  try {
+    const r = await fetch('/api/ai-active');
+    const { batches } = await r.json();
+    const mine = (batches || []).filter(b => b.agentId === agentId);
+    if (!mine.length) { el.innerHTML = '<span class="pra-muted">No batches started yet.</span>'; return; }
+    el.innerHTML = mine.map(b => `
+      <div class="batch-row">
+        <div class="batch-row-head">
+          <span class="batch-name">${escapeHtml(b.segmentName || 'Batch')}</span>
+          <span class="batch-status-pill ${b.status}">${escapeHtml(b.status)}</span>
+        </div>
+        <div class="batch-stats">${batchStatsLine(b.stats)}</div>
+        <div style="display:flex;gap:8px">
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" data-review="${b.id}" type="button">Review conversations</button>
+          ${b.status === 'running' ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-pause="${b.id}" type="button">Pause</button>` : ''}
+          ${b.status === 'paused' ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-resume="${b.id}" type="button">Resume</button>` : ''}
+        </div>
+        <div class="review-panel" id="review-${b.id}" style="display:none;margin-top:10px"></div>
+      </div>
+    `).join('');
+    el.querySelectorAll('[data-pause]').forEach(btn => btn.addEventListener('click', async () => { await fetch(`/api/ai-active/${btn.dataset.pause}/pause`, { method: 'POST' }); loadBatchList(agentId); }));
+    el.querySelectorAll('[data-resume]').forEach(btn => btn.addEventListener('click', async () => { await fetch(`/api/ai-active/${btn.dataset.resume}/resume`, { method: 'POST' }); loadBatchList(agentId); }));
+    el.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', () => toggleBatchReview(btn.dataset.review)));
+  } catch {
+    el.innerHTML = '<span class="pra-muted">Could not load batches.</span>';
+  }
+}
+async function toggleBatchReview(batchId) {
+  const panel = document.getElementById(`review-${batchId}`);
+  if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  panel.innerHTML = '<span class="pra-muted">Loading…</span>';
+  try {
+    const r = await fetch(`/api/ai-active/${batchId}`);
+    const { states } = await r.json();
+    panel.innerHTML = (states || []).map(s => `
+      <div class="review-row">
+        <span class="review-state-pill ${s.state}">${escapeHtml(s.state.replace('_', ' '))}</span>
+        <span style="flex:1">${escapeHtml(s.contactName)}</span>
+        <a class="pra-muted" style="font-size:.76rem" href="/inbox.html?contactId=${s.contactId}" target="_blank">Open conversation →</a>
+      </div>
+    `).join('') || '<span class="pra-muted">No leads in this batch.</span>';
+  } catch {
+    panel.innerHTML = '<span class="pra-muted">Could not load batch detail.</span>';
+  }
+}
+document.getElementById('previewBatchBtn').addEventListener('click', previewBatch);
 
 document.getElementById('newAgentBtn').addEventListener('click', () => openEditor(null));
 document.getElementById('editorCancelBtn').addEventListener('click', closeEditor);
@@ -485,7 +656,7 @@ document.getElementById('editorSaveBtn').addEventListener('click', saveAgent);
 document.getElementById('editorBackdrop').addEventListener('click', (e) => { if (e.target.id === 'editorBackdrop') closeEditor(); });
 
 (async function init() {
-  await Promise.all([loadStatuses(), loadUsers()]);
+  await Promise.all([loadStatuses(), loadUsers(), loadSegments()]);
   loadAgents();
 })();
 </script>
