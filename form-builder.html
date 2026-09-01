@@ -499,9 +499,9 @@ function renderPanel(f, i) {
           <label class="pra-label">Maps to contact field</label>
           <select class="pra-select" data-mapfield-idx="${i}">
             <option value="">Auto (new field from question text)</option>
+            <option value="__new__">+ Create new field…</option>
             ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
           </select>
-          ${!allCustomFields.length ? `<div class="pra-muted" style="font-size:.72rem;margin-top:6px">No custom fields yet — add one in <a class="pra-link" href="/settings.html" target="_blank">Settings</a> first.</div>` : ''}
         </div>
       ` : ''}
     </div>`;
@@ -710,7 +710,23 @@ function bindCanvas(canvas) {
   });
   canvas.querySelectorAll('[data-placeholder-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.placeholderIdx].placeholder = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-help-input-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.helpInputIdx].helpText = e.target.value; saveDebounced(); }));
-  canvas.querySelectorAll('[data-mapfield-idx]').forEach(el => el.addEventListener('change', e => { form.fields[+e.target.dataset.mapfieldIdx].mapToCustomFieldId = e.target.value; saveDebounced(); }));
+  canvas.querySelectorAll('[data-mapfield-idx]').forEach(el => el.addEventListener('change', async e => {
+    const idx = +e.target.dataset.mapfieldIdx;
+    if (e.target.value === '__new__') {
+      const label = prompt('Name for the new custom field:');
+      if (!label || !label.trim()) { e.target.value = form.fields[idx].mapToCustomFieldId || ''; return; }
+      const r = await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entityType: 'contact', label: label.trim() }) });
+      if (!r.ok) { showToast('Failed to create field', true); e.target.value = form.fields[idx].mapToCustomFieldId || ''; return; }
+      const { field } = await r.json();
+      allCustomFields.push(field);
+      form.fields[idx].mapToCustomFieldId = field.id;
+      saveDebounced();
+      renderCanvas();
+      return;
+    }
+    form.fields[idx].mapToCustomFieldId = e.target.value;
+    saveDebounced();
+  }));
   canvas.querySelectorAll('[data-alt-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.altIdx].alt = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-imglink-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.imglinkIdx].link = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-opt-idx]').forEach(el => el.addEventListener('input', e => {
