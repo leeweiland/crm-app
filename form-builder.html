@@ -640,8 +640,8 @@ function renderCanvas() {
   form.fields.forEach((f, i) => {
     html += `
       <div class="fb-block-wrap">
-        <div class="fb-block ${openPanel?.idx === i ? 'panel-open' : ''}" draggable="true" data-idx="${i}">
-          <span class="fb-drag-handle">${ICONS.grip}</span>
+        <div class="fb-block ${openPanel?.idx === i ? 'panel-open' : ''}" data-idx="${i}">
+          <span class="fb-drag-handle" title="Drag to reorder">${ICONS.grip}</span>
           ${renderBlockBody(f, i)}
           ${renderToolbar(f, i)}
         </div>
@@ -854,8 +854,19 @@ function bindCanvas(canvas) {
     renderCanvas();
   }
   canvas.querySelectorAll('.fb-block').forEach(block => {
+    // draggable="true" only while the grip handle is actually held down --
+    // NOT a static attribute on the whole block. A draggable ancestor
+    // hijacks the browser's normal click-and-drag text selection inside
+    // any input/contenteditable underneath it (trying to select an
+    // option's text starts dragging the whole question instead), so
+    // dragging has to be armed just for the handle's own gesture.
+    const handle = block.querySelector('.fb-drag-handle');
+    if (handle) {
+      handle.addEventListener('mousedown', () => { block.draggable = true; });
+      handle.addEventListener('mouseup', () => { block.draggable = false; });
+    }
     block.addEventListener('dragstart', () => { dragFromIdx = +block.dataset.idx; block.classList.add('dragging'); });
-    block.addEventListener('dragend', () => { block.classList.remove('dragging'); clearDragIndicator(); dragFromIdx = null; dragToIdx = null; });
+    block.addEventListener('dragend', () => { block.classList.remove('dragging'); block.draggable = false; clearDragIndicator(); dragFromIdx = null; dragToIdx = null; });
     block.addEventListener('dragover', e => {
       e.preventDefault();
       if (dragFromIdx === null) return;
