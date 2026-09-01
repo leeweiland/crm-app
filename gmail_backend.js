@@ -18,8 +18,18 @@ import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const REDIRECT_PATH = "/api/auth/gmail/callback";
 
+// Deliberately its own OAuth client (GOOGLE_GMAIL_CLIENT_ID/_SECRET), NOT
+// scheduling_backend.js's GOOGLE_CLIENT_ID/_SECRET -- that one is a
+// "Desktop app" OAuth client (see get_calendar_token.js), which Google
+// only allows localhost-loopback redirect URIs for, by policy, with no
+// way to register a real HTTPS one at all (confirmed live: the Cloud
+// Console UI for that client type has no "Authorized redirect URIs"
+// field to add one to). A per-user web OAuth flow with a real callback
+// URL needs a "Web application" type client instead, which supports
+// arbitrary HTTPS redirect URIs -- see the Settings > My Account "Connect
+// Gmail" button's own setup instructions for creating one.
 function googleConfigured() {
-  return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  return !!(process.env.GOOGLE_GMAIL_CLIENT_ID && process.env.GOOGLE_GMAIL_CLIENT_SECRET);
 }
 function redirectUri(req) {
   // Railway terminates TLS in front of the app -- req itself sees plain
@@ -35,7 +45,7 @@ async function exchangeCodeForTokens(code, req) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      code, client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      code, client_id: process.env.GOOGLE_GMAIL_CLIENT_ID, client_secret: process.env.GOOGLE_GMAIL_CLIENT_SECRET,
       redirect_uri: redirectUri(req), grant_type: "authorization_code",
     }),
   });
@@ -48,7 +58,7 @@ async function getAccessToken(refreshToken) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID, client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      client_id: process.env.GOOGLE_GMAIL_CLIENT_ID, client_secret: process.env.GOOGLE_GMAIL_CLIENT_SECRET,
       refresh_token: refreshToken, grant_type: "refresh_token",
     }),
   });
@@ -63,14 +73,14 @@ export async function handleGmailRequest(req, res, url) {
   if (p === "/api/auth/gmail/connect" && req.method === "GET") {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
-    if (!googleConfigured()) return sendJson(res, 400, { error: "Google OAuth isn't configured (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET missing)" });
+    if (!googleConfigured()) return sendJson(res, 400, { error: "Google OAuth isn't configured (GOOGLE_GMAIL_CLIENT_ID/GOOGLE_GMAIL_CLIENT_SECRET missing)" });
     // state carries which CRM user this connection belongs to -- the
     // callback below can't rely on the session cookie (Google's redirect
     // back is a fresh top-level navigation from google.com, not guaranteed
     // to be treated as "same site" by every browser/cookie setting the
     // same way this app's own navigations are).
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-      `client_id=${encodeURIComponent(process.env.GOOGLE_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirectUri(req))}` +
+      `client_id=${encodeURIComponent(process.env.GOOGLE_GMAIL_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirectUri(req))}` +
       `&response_type=code&scope=${encodeURIComponent(GMAIL_SCOPE)}&access_type=offline&prompt=consent&state=${encodeURIComponent(me.id)}`;
     res.writeHead(302, { Location: authUrl });
     res.end();
