@@ -111,17 +111,35 @@ async function loadAutomations() {
   allAutomations = (await r.json()).automations;
   renderAutomationsTable();
 }
+// Sort choice persists per-user (server-side) so it survives navigation,
+// reload, and a fresh device -- same pattern as contacts.html's column
+// preferences.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.automationsSort;
+    if (saved?.field) automationSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automationsSort: automationSort }) });
+}
 document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
   if (automationSort.field === th.dataset.sort) automationSort.dir *= -1;
   else automationSort = { field: th.dataset.sort, dir: 1 };
   renderAutomationsTable();
+  saveSortPreference();
 }));
 document.getElementById('newAutomationBtn').onclick = async () => {
   const r = await fetch('/api/automations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Automation' }) });
   const d = await r.json();
   if (r.ok) location.href = '/automation-builder.html?id=' + d.automation.id;
 };
-loadAutomations();
+(async function init() {
+  await loadSortPreference();
+  loadAutomations();
+})();
 </script>
 </body>
 </html>

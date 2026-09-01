@@ -107,17 +107,35 @@ async function loadWorkflows() {
   allWorkflows = (await r.json()).workflows;
   renderWorkflowsTable();
 }
+// Sort choice persists per-user (server-side) so it survives navigation,
+// reload, and a fresh device -- same pattern as contacts.html's column
+// preferences.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.workflowsSort;
+    if (saved?.field) workflowSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowsSort: workflowSort }) });
+}
 document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
   if (workflowSort.field === th.dataset.sort) workflowSort.dir *= -1;
   else workflowSort = { field: th.dataset.sort, dir: 1 };
   renderWorkflowsTable();
+  saveSortPreference();
 }));
 document.getElementById('newWorkflowBtn').onclick = async () => {
   const r = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Workflow' }) });
   const d = await r.json();
   if (r.ok) location.href = '/workflow-detail.html?id=' + d.workflow.id;
 };
-loadWorkflows();
+(async function init() {
+  await loadSortPreference();
+  loadWorkflows();
+})();
 </script>
 </body>
 </html>

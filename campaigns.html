@@ -116,10 +116,25 @@ async function loadCampaigns() {
   renderCampaignsTable();
 }
 document.getElementById('campaignSearch').addEventListener('input', () => { clearTimeout(window._cst); window._cst = setTimeout(renderCampaignsTable, 200); });
+// Sort choice persists per-user (server-side) so it survives navigation,
+// reload, and a fresh device -- same pattern as contacts.html's column
+// preferences.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.campaignsSort;
+    if (saved?.field) campaignSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignsSort: campaignSort }) });
+}
 document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
   if (campaignSort.field === th.dataset.sort) campaignSort.dir *= -1;
   else campaignSort = { field: th.dataset.sort, dir: 1 };
   renderCampaignsTable();
+  saveSortPreference();
 }));
 
 document.getElementById('newCampaignBtn').onclick = async () => {
@@ -128,7 +143,10 @@ document.getElementById('newCampaignBtn').onclick = async () => {
   if (r.ok) location.href = '/campaign-builder.html?id=' + d.campaign.id;
 };
 
-loadCampaigns();
+(async function init() {
+  await loadSortPreference();
+  loadCampaigns();
+})();
 </script>
 </body>
 </html>
