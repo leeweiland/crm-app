@@ -595,7 +595,15 @@ export function appendJsonRecords(file, newRecords) {
 export function updateJsonArrayRecordByField(file, field, value, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return null;
-  const needle = Buffer.from(`"${field}":"${value}"`);
+  // Two needles, not one -- a file that's only ever been through
+  // appendJsonRecordFast/this same function stays compact ("field":"value",
+  // no space), but one written even once via writeJson's JSON.stringify(d,
+  // null, 2) is pretty-printed ("field": "value", WITH a space). Matching
+  // only the compact form meant this silently returned "not found" against
+  // any file in the latter state -- confirmed live against crm_contacts.json,
+  // which is always writeJson-formatted end to end.
+  const needleCompact = Buffer.from(`"${field}":"${value}"`);
+  const needleSpaced = Buffer.from(`"${field}": "${value}"`);
   let found = null;
   const tmp = `${p}.tmp${process.pid}`;
   const dstFd = openSync(tmp, "w");
@@ -606,7 +614,7 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
       let replaced = null;
       if (!found) {
         const view = buf.subarray(start, end);
-        const idx = view.indexOf(needle);
+        const idx = view.indexOf(needleCompact) !== -1 ? 0 : view.indexOf(needleSpaced);
         if (idx !== -1) {
           let obj;
           try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
@@ -645,7 +653,11 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !ids || !ids.length) return [];
   const idSet = new Set(ids);
-  const needles = ids.map(id => Buffer.from(`"id":"${id}"`));
+  // Same compact-vs-pretty-printed gap as updateJsonArrayRecordByField above
+  // (see its comment) -- a bulk import written via writeJson/flushJsonCache
+  // (JSON.stringify(d, null, 2)) leaves "id": "value" WITH a space, which
+  // the compact-only needle never matched.
+  const needles = ids.flatMap(id => [Buffer.from(`"id":"${id}"`), Buffer.from(`"id": "${id}"`)]);
   const updated = [];
   let changed = false;
   const tmp = `${p}.tmp${process.pid}`;

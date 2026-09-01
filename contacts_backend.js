@@ -192,35 +192,46 @@ export async function handleContactsRequest(req, res, url) {
   }
   const contactMatch = p.match(/^\/api\/contacts\/([^/]+)$/);
   if (contactMatch) {
+    // PATCH used to share the GET/DELETE branches' full readJson(CONTACTS_FILE)
+    // + writeJson(CONTACTS_FILE, contacts) -- fine when this file was small,
+    // but at production scale (176k+ contacts, ~190MB) that's a full
+    // stringify+rewrite of the ENTIRE file on every single status/type/
+    // assignment change, which is what made those feel slow to save. Same
+    // streaming byte-level patch already used elsewhere in this file
+    // (markContactEmailEngagement/markContactVisitedPage above) -- finds
+    // and rewrites just the one matching record instead of the whole array.
+    if (req.method === "PATCH") {
+      const body = await readJsonBody(req);
+      // Assigning who owns a contact is admin-only -- everything else on
+      // this shared PATCH endpoint (status changes, tags, etc.) stays open
+      // to any staff member who can already reach it.
+      if ("ownerId" in body && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
+      const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
+      let prevListIds, prevTags, prevStatus;
+      const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactMatch[1], (contact) => {
+        prevListIds = [...contact.listIds]; prevTags = [...contact.tags]; prevStatus = contact.status;
+        for (const k of allowed) if (k in body) contact[k] = body[k];
+        if (contact.status !== prevStatus) applyStatusOptOut(contact);
+        contact.updatedAt = new Date().toISOString();
+        return contact;
+      });
+      if (!updated) return sendJson(res, 404, { error: "Contact not found" });
+      // Best-effort, same reasoning as message_index.js's safeSqliteSync --
+      // a sync bug here shouldn't block the actual contact save.
+      try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+      // Only fire for genuinely NEW list/tag membership, not every patch --
+      // an automation shouldn't re-enroll someone just because their email
+      // was edited.
+      updated.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => { fireTrigger("list_subscribe", { contactId: updated.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: updated.id, listId }); });
+      updated.tags.filter(id => !prevTags.includes(id)).forEach(tagId => { fireTrigger("tag_added", { contactId: updated.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: updated.id, tagId }); });
+      if (updated.status !== prevStatus) { checkConversionGoal("lead_status_change", updated.id); checkAutomationGoal("lead_status_change", updated.id, updated.status); }
+      return sendJson(res, 200, { ok: true, contact: publicContact(updated) });
+    }
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find(c => c.id === contactMatch[1]);
     if (req.method === "GET") {
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       return sendJson(res, 200, { contact: publicContact(contact) });
-    }
-    if (req.method === "PATCH") {
-      if (!contact) return sendJson(res, 404, { error: "Contact not found" });
-      const body = await readJsonBody(req);
-      const prevListIds = [...contact.listIds], prevTags = [...contact.tags], prevStatus = contact.status;
-      const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
-      // Assigning who owns a contact is admin-only -- everything else on
-      // this shared PATCH endpoint (status changes, tags, etc.) stays open
-      // to any staff member who can already reach it.
-      if ("ownerId" in body && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
-      for (const k of allowed) if (k in body) contact[k] = body[k];
-      if (contact.status !== prevStatus) applyStatusOptOut(contact);
-      contact.updatedAt = new Date().toISOString();
-      writeJson(CONTACTS_FILE, contacts);
-      // Best-effort, same reasoning as message_index.js's safeSqliteSync --
-      // a sync bug here shouldn't block the actual contact save.
-      try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
-      // Only fire for genuinely NEW list/tag membership, not every patch --
-      // an automation shouldn't re-enroll someone just because their email
-      // was edited.
-      contact.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => { fireTrigger("list_subscribe", { contactId: contact.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: contact.id, listId }); });
-      contact.tags.filter(id => !prevTags.includes(id)).forEach(tagId => { fireTrigger("tag_added", { contactId: contact.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: contact.id, tagId }); });
-      if (contact.status !== prevStatus) { checkConversionGoal("lead_status_change", contact.id); checkAutomationGoal("lead_status_change", contact.id, contact.status); }
-      return sendJson(res, 200, { ok: true, contact: publicContact(contact) });
     }
     if (req.method === "DELETE") {
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
