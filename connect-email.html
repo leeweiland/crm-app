@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Connect Email — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="pra-h1" style="margin-bottom:20px">Connect Email</div>
+
+      <div class="pra-panel" style="padding:22px;max-width:460px">
+        <div class="pra-h2" style="margin-bottom:6px">Gmail</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Connect your own Gmail so replies to your emails show up in the Inbox automatically -- same idea as adding yourself as a user in Close, nothing about your real inbox changes.</div>
+        <div id="gmailStatus" class="pra-muted" style="font-size:.85rem;margin-bottom:10px">Loading…</div>
+        <button class="pra-btn pra-btn-sm" id="gmailConnectBtn" style="display:none">Connect Gmail</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="gmailDisconnectBtn" style="display:none">Disconnect</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+async function loadGmailStatus() {
+  const r = await fetch('/api/auth/gmail/status');
+  const status = document.getElementById('gmailStatus');
+  if (!r.ok) { status.textContent = 'Could not load status.'; return; }
+  const d = await r.json();
+  status.textContent = d.connected ? `Connected: ${d.email}` : 'Not connected.';
+  document.getElementById('gmailConnectBtn').style.display = d.connected ? 'none' : 'inline-block';
+  document.getElementById('gmailDisconnectBtn').style.display = d.connected ? 'inline-block' : 'none';
+}
+document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
+document.getElementById('gmailDisconnectBtn').onclick = async () => {
+  if (!confirm('Disconnect Gmail? Replies will stop showing up in the Inbox automatically.')) return;
+  await fetch('/api/auth/gmail/disconnect', { method: 'POST' });
+  loadGmailStatus();
+};
+loadGmailStatus();
+</script>
+</body>
+</html>

@@ -20,6 +20,7 @@ window.crmNavReady = (async function () {
     { href: "/workflows.html", label: "SMS Sequences" },
     { href: "/ai-agents.html", label: "AI Agents" },
     { href: "/reporting.html", label: "Reporting" },
+    { href: "/connect-email.html", label: "Connect Email" },
     { href: "/settings.html", label: "Settings" },
   ];
 

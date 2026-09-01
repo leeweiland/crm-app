@@ -82,9 +82,13 @@ export function getTrackingSettings() {
 // access, so an admin can't accidentally lock themselves out while editing
 // this. Defaults to Inbox + Contacts only for user/superuser until an admin
 // opens it up further from Settings > Users.
+// Connect Email defaults to ON for both non-admin roles -- unlike the rest
+// of Settings (Twilio/SES/Ads/Users, all admin-sensitive), there's nothing
+// here a regular team member shouldn't reach: connecting their own Gmail
+// is entirely self-service and only ever touches their own account.
 const DEFAULT_NAV_PERMISSIONS = {
-  user: ["/inbox.html", "/contacts.html"],
-  superuser: ["/inbox.html", "/contacts.html"],
+  user: ["/inbox.html", "/contacts.html", "/connect-email.html"],
+  superuser: ["/inbox.html", "/contacts.html", "/connect-email.html"],
 };
 export function getNavPermissions() {
   const stored = readSettings().navPermissions || {};
