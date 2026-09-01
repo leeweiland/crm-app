@@ -61,10 +61,15 @@
      for the longest status label ("FOLLOW UP (They have a Task / Date
      set)" alone is 48ch), which on a resized-narrow sidebar was eating the
      ENTIRE row and squeezing the name to a computed 0px width. Letting it
-     shrink (like .owner-field-select already does via its own max-width in
-     crm-design-system.css) means status/assigned give ground before the
-     name does, not after. */
+     shrink means status/assigned give ground before the name does, not
+     after. convo-owner-field gets the same treatment right below -- both
+     scoped to these sidebar-row-specific classes now, not the bare
+     owner-field-select every assigned-user dropdown carries (that used to
+     also cap the chat panel header's and Contacts table's copies at this
+     same tight width, truncating a name like "Lee Weiland" to "Lee We…"
+     with room to spare -- see crm-design-system.css's .owner-field-select). */
   .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; max-width: 100px; }
+  .convo-owner-field { max-width: 110px; }
   /* Two rows, both plain single-line flex rows (never wrap) -- row 1 is
      identity + metadata (name, status, assigned, type, time), row 2 is the
      message preview + pin/star. Name and preview are the only two elements
@@ -108,6 +113,20 @@
     #chatView:not(.thread-open) .chat-panel { display: none; }
     .chat-back-btn { display: inline-flex !important; }
 
+    /* An open thread breaks out of the normal page chrome entirely (fixed,
+       full viewport) and hides the hamburger/top logo bar + the Inbox/
+       Tasks/Reminders row -- same single-pane "just a back button and the
+       thread" pattern as chat-app's own mobile chat view, so the whole
+       screen goes to messages instead of ~195px of it staying reserved for
+       chrome that a back button already makes redundant here. */
+    #chatView.thread-open {
+      position: fixed; inset: 0; z-index: 260;
+      height: 100vh; height: 100dvh;
+    }
+    body:has(#chatView.thread-open) .app-sidebar-toggle-btn,
+    body:has(#chatView.thread-open) .app-mobile-logo { display: none; }
+    .app-main:has(#chatView.thread-open) .mobile-sticky-header { display: none; }
+
     /* Status/assigned shrink hard on mobile -- a native select can't be
        squeezed by flex alone (intrinsic content width), so this caps the
        mobile-select-enhancer's replacement button instead (crm-nav.js
@@ -141,7 +160,18 @@
 
   .chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--pra-black-soft); }
   .chat-panel-header { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
-  .chat-panel-name-row { display: flex; align-items: center; gap: 8px; }
+  /* wrap, not nowrap -- the owner field here shows the FULL assigned name
+     (see .owner-field-select/.convo-owner-field's own comments: the tight
+     first-letter/ellipsis treatment is deliberately sidebar-only, this
+     header has room to spare). A long name plus the type badge and contact
+     name can still outrun a narrow phone's width in one line though, so
+     this wraps to a second line instead of running the owner field off the
+     right edge of the screen. */
+  .chat-panel-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; }
+  /* .pra-select defaults to width:100% (crm-design-system.css) -- fine
+     inside a form, wrong for an inline field sitting next to a name. Same
+     fix #chatStatusSelect already needed below in .chat-panel-actions. */
+  .chat-panel-name-row .owner-field-select { flex: 0 0 auto; width: auto; }
   .chat-panel-name { font-weight: 700; font-size: .95rem; color: var(--pra-white); text-decoration: none; cursor: pointer; }
   .chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
   .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
@@ -1409,12 +1439,26 @@ async function selectConversation(c, skipFetch) {
   // AI Assist agent actually applies to this lead -- a cheap check (no LLM
   // call), separate from generateAiContent()/loadAiSummary() below, which
   // only run when a human clicks one of those icons.
-  const [threadRes, matchRes] = await Promise.all([
+  //
+  // contactRes: the sidebar's own `c.contact` is a denormalized SQLite
+  // snapshot (see sqlite_inbox.js) kept for the CONVERSATION LIST's sake --
+  // fast to page through thousands of rows, but only as fresh as its last
+  // sync. The chat panel header (phone/email/status/zoom row) needs to be
+  // right every time, not just usually right, so it re-fetches the real
+  // record here and merges it over the snapshot rather than trusting the
+  // cache -- worth the extra request given a wrong phone number is a coach
+  // calling the wrong person.
+  const [threadRes, matchRes, contactRes] = await Promise.all([
     fetch('/api/inbox/contact/' + c.contactId),
     fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId)),
+    fetch('/api/contacts/' + c.contactId),
   ]);
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
+  if (contactRes.ok) {
+    const fresh = (await contactRes.json()).contact;
+    if (fresh) c.contact = { ...c.contact, ...fresh };
+  }
   renderThread();
 }
 function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }

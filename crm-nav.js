@@ -241,7 +241,14 @@ function enhanceSelectForMobile(sel) {
   // nobody's meant to read in full at that size (status's glow color and
   // the OPEN dropdown's full untruncated list already carry the real
   // information). First letter only, no dots, saves the space instead.
-  const isCompactTrigger = sel.classList.contains("convo-status-select") || sel.classList.contains("owner-field-select");
+  // owner-field-select is the base class every assigned-user dropdown gets
+  // (chat panel header, Contacts table, sidebar rows alike) -- convo-owner-
+  // field is the EXTRA class ownerFieldHtml() only adds for the sidebar's
+  // own tight rows (see inbox.html's ownerFieldHtml(c.contact, 'convo-
+  // owner-field') call). Checking the bare base class here over-applied
+  // this to every owner select app-wide, including the chat panel header
+  // and Contacts table, where there's plenty of room for the full name.
+  const isCompactTrigger = sel.classList.contains("convo-status-select") || sel.classList.contains("convo-owner-field");
   // The label text shrank to one letter, but the anchor was still stuck at
   // whatever max-width the full-text select had (e.g. owner-field-select's
   // 110px) -- shrink the box itself to match, not just what's inside it.
