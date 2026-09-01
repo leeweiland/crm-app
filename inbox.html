@@ -245,6 +245,16 @@
 
   /* ── Chat panel header: status + tasks control ── */
   .chat-panel-task-btn { flex-shrink: 0; position: relative; }
+  #chatScheduleBtn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 9px; }
+  #chatScheduleBtn svg { width: 15px; height: 15px; }
+  .schedule-panel-hint { font-size: .7rem; color: var(--pra-dim); margin: 2px 0 8px; }
+  .schedule-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); font-size: .78rem; }
+  .schedule-panel-row:last-child { border-bottom: none; }
+  .schedule-panel-row .schedule-panel-when { flex: 1; }
+  .schedule-panel-row .schedule-panel-when a { color: var(--pra-blue); text-decoration: none; }
+  .schedule-panel-row .schedule-panel-when a:hover { text-decoration: underline; }
+  .schedule-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
+  .schedule-panel-row button:hover { color: var(--pra-red); }
   .chat-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
   /* Deliberately NOT flex:1/min-width -- that stretched this to fill the
      whole row width regardless of the status text length. Auto-width lets
@@ -516,6 +526,7 @@ const STAR_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5
 // rather than a generic OS emoji.
 const SPARKLE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c.6 5.4 2.2 7 7.6 7.6-5.4.6-7 2.2-7.6 7.6-.6-5.4-2.2-7-7.6-7.6C9.8 9 11.4 7.4 12 2Z"/><path d="M19 17c.25 1.9.85 2.5 2.75 2.75C19.85 20 19.25 20.6 19 22.5c-.25-1.9-.85-2.5-2.75-2.75C18.15 19.5 18.75 18.9 19 17Z"/></svg>';
 const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/></svg>';
+const CALENDAR_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 // Always the LOGGED-IN user's own Zoom link, never the assigned coach's or
 // the contact's -- whoever's actually in the conversation is who'd be
 // running the call, so they need their own room link handy to paste in,
@@ -1009,6 +1020,76 @@ async function submitNewNote() {
   document.getElementById('notePanelText').value = '';
   renderNotePanel();
 }
+// ── Chat panel: Schedule-a-meeting popover ──────────────────────────────
+// Same toggle-popover shell as Tasks/Notes above, but meetings live in
+// their own file/endpoint (meetings_backend.js), not the tasks/notes
+// merge inbox_backend.js already returns off /api/inbox/contact/:id -- so
+// this panel does its own fetch on open rather than filtering threadItems.
+// The "scheduled" confirmation itself still shows up as a bubble in the
+// thread for free, since creating a meeting also logs a message-log entry
+// (channel "meeting") the normal contact-activity fetch already picks up.
+function schedulePanelRowHtml(m) {
+  const when = new Date(m.startISO).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return `
+    <div class="schedule-panel-row" data-meeting-row="${m.id}">
+      <button type="button" data-meeting-cancel="${m.id}" title="Cancel meeting">&times;</button>
+      <span class="schedule-panel-when">${escapeHtml(m.title)}<br>${when} · ${m.durationMinutes} min${m.calendarEventLink ? ` · <a href="${escapeHtml(m.calendarEventLink)}" target="_blank" rel="noopener noreferrer">View</a>` : ''}</span>
+    </div>
+  `;
+}
+async function renderSchedulePanel(contactId) {
+  const list = document.getElementById('schedulePanelList');
+  if (!contactId) { list.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Match this conversation to a contact first.</div>'; return; }
+  list.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Loading…</div>';
+  const r = await fetch('/api/meetings?contactId=' + encodeURIComponent(contactId));
+  const { meetings } = r.ok ? await r.json() : { meetings: [] };
+  const upcoming = (meetings || []).filter(m => m.status === 'scheduled' && new Date(m.startISO).getTime() > Date.now());
+  list.innerHTML = upcoming.length ? upcoming.map(schedulePanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No upcoming meetings.</div>';
+  list.querySelectorAll('[data-meeting-cancel]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Cancel this meeting?')) return;
+    await fetch('/api/meetings/' + btn.dataset.meetingCancel, { method: 'DELETE' });
+    showToast('Meeting cancelled');
+    renderSchedulePanel(contactId);
+    if (selectedConvo?.contactId === contactId) selectConversation(selectedConvo);
+    loadConversations();
+  });
+}
+function toggleSchedulePanel(contactId) {
+  const panel = document.getElementById('schedulePanel');
+  const opening = !panel.classList.contains('open');
+  panel.classList.toggle('open', opening);
+  panel.dataset.contactId = contactId || '';
+  if (opening) {
+    document.getElementById('schedulePanelTitle').value = '';
+    document.getElementById('schedulePanelDate').value = '';
+    document.getElementById('schedulePanelTime').value = '';
+    document.getElementById('schedulePanelDuration').value = '30';
+    renderSchedulePanel(contactId);
+  }
+}
+async function submitNewMeeting() {
+  const contactId = document.getElementById('schedulePanel').dataset.contactId;
+  if (!contactId) { showToast('Match this conversation to a contact first', true); return; }
+  const dateVal = document.getElementById('schedulePanelDate').value;
+  const timeVal = document.getElementById('schedulePanelTime').value;
+  if (!dateVal || !timeVal) { showToast('Pick a date and time', true); return; }
+  const startISO = new Date(`${dateVal}T${timeVal}`).toISOString();
+  const durationMinutes = Number(document.getElementById('schedulePanelDuration').value);
+  const title = document.getElementById('schedulePanelTitle').value.trim();
+  const btn = document.getElementById('schedulePanelAddBtn');
+  btn.disabled = true; btn.textContent = 'Scheduling…';
+  const r = await fetch('/api/meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId, startISO, durationMinutes, title: title || undefined }) });
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = 'Schedule';
+  if (!r.ok) { showToast(d.error || 'Could not schedule meeting', true); return; }
+  showToast('Meeting scheduled');
+  document.getElementById('schedulePanelTitle').value = '';
+  document.getElementById('schedulePanelDate').value = '';
+  document.getElementById('schedulePanelTime').value = '';
+  renderSchedulePanel(contactId);
+  if (selectedConvo?.contactId === contactId) selectConversation(selectedConvo);
+  loadConversations();
+}
 // Delegated (not a direct getElementById().onclick) since both panels' DOM
 // is recreated every time renderThread() re-renders the chat panel header
 // -- a direct binding would go stale the moment a new conversation opens.
@@ -1021,10 +1102,14 @@ document.addEventListener('click', (e) => {
   if (e.target.id === 'taskPanelAddBtn') { submitNewTask(); return; }
   if (e.target.id === 'notePanelCancelBtn') { toggleNotePanel(null); return; }
   if (e.target.id === 'notePanelAddBtn') { submitNewNote(); return; }
+  if (e.target.id === 'schedulePanelCancelBtn') { toggleSchedulePanel(null); return; }
+  if (e.target.id === 'schedulePanelAddBtn') { submitNewMeeting(); return; }
   const taskPanel = document.getElementById('taskPanel');
   if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') toggleTaskPanel(null);
   const notePanel = document.getElementById('notePanel');
   if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') toggleNotePanel(null);
+  const schedulePanel = document.getElementById('schedulePanel');
+  if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) toggleSchedulePanel(null);
 });
 function openConfirmPotential(c) {
   document.getElementById('confirmPotentialFrom').textContent = `From: ${c.displayName}`;
@@ -1084,7 +1169,7 @@ function smsBubbleHtml(item) {
 // did on the site), shown as a simple system-style card rather than a
 // chat bubble, same visual family as the email card minus the expand/iframe.
 function noteBubbleHtml(item) {
-  const icon = item.channel === 'booking' ? '📅' : item.channel === 'activity' ? '📈' : '📝';
+  const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
   return `
     <div class="bubble-row ${item.direction}">
       <div class="bubble-content note-bubble">
@@ -1168,6 +1253,29 @@ function renderThread() {
           </div>
         </div>
       </div>
+      <div class="chat-panel-task-btn">
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatScheduleBtn" type="button" title="Schedule a meeting">${CALENDAR_ICON}</button>
+        <div class="task-panel" id="schedulePanel">
+          <div class="task-panel-list" id="schedulePanelList"></div>
+          <div class="task-panel-add">
+            <input class="pra-input" id="schedulePanelTitle" placeholder="Meeting title (optional)"/>
+            <div class="task-panel-add-row">
+              <input class="pra-input" type="date" id="schedulePanelDate"/>
+              <input class="pra-input" type="time" id="schedulePanelTime"/>
+              <select class="pra-select" id="schedulePanelDuration">
+                <option value="15">15 min</option>
+                <option value="30" selected>30 min</option>
+                <option value="45">45 min</option>
+                <option value="60">60 min</option>
+              </select>
+            </div>
+          </div>
+          <div class="task-panel-footer">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="schedulePanelCancelBtn" type="button">Cancel</button>
+            <button class="pra-btn pra-btn-sm" id="schedulePanelAddBtn" type="button" style="margin-left:8px">Schedule</button>
+          </div>
+        </div>
+      </div>
       <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)};${statusSelectWidthRule(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
       ${optOutBadgesHtml(c.contact)}
     </div>
@@ -1205,7 +1313,7 @@ function renderThread() {
       `}
     </div>
   `;
-  const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
+  const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
   const threadEl = document.getElementById('chatThread');
   threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
   threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {
@@ -1242,6 +1350,7 @@ function renderThread() {
   };
   document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
   document.getElementById('chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); toggleNotePanel(c.contactId); };
+  document.getElementById('chatScheduleBtn').onclick = (e) => { e.stopPropagation(); toggleSchedulePanel(c.contactId); };
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
   wireOwnerFields(panel, (contactId, ownerId) => { if (c.contact) c.contact.ownerId = ownerId; applyOwnerChangeToConvoState(contactId, ownerId); });
   if (c.contactId) {

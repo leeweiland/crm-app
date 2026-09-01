@@ -254,7 +254,7 @@ async function fetchFreeBusy(startISO, endISO, calendarId) {
   if (!r.ok) throw new Error("freeBusy failed: " + JSON.stringify(d));
   return (d.calendars?.[calendarId]?.busy || []).map(b => ({ start: new Date(b.start).getTime(), end: new Date(b.end).getTime() }));
 }
-async function createCalendarEvent({ summary, description, startISO, durationMinutes, attendees, timezone, calendarId }) {
+export async function createCalendarEvent({ summary, description, startISO, durationMinutes, attendees, timezone, calendarId }) {
   calendarId = calendarId || getCalendarId();
   const accessToken = await getCalendarAccessToken();
   const start = new Date(startISO);
@@ -275,7 +275,7 @@ async function createCalendarEvent({ summary, description, startISO, durationMin
   if (!r.ok) throw new Error("Calendar event creation failed: " + JSON.stringify(d));
   return { id: d.id, htmlLink: d.htmlLink };
 }
-async function deleteCalendarEvent(eventId, calendarId) {
+export async function deleteCalendarEvent(eventId, calendarId) {
   calendarId = calendarId || getCalendarId();
   const accessToken = await getCalendarAccessToken();
   const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}?sendUpdates=all`, {

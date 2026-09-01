@@ -192,7 +192,7 @@ export function conversationKey(m) {
 // single combined `last` can't answer both questions at once, so each
 // channel that actually shows up in the sidebar keeps its own slim ref
 // alongside the combined one.
-const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity"];
+const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", "meeting"];
 function emptyGroup(key, contactId) {
   const g = { key, contactId: contactId || null, last: null, lastMine: null, lastInboundAt: null, unreadCount: 0, lastByChannel: {} };
   SIDEBAR_CHANNELS.forEach(c => { g.lastByChannel[c] = null; });

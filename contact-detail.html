@@ -461,7 +461,7 @@ function smsBubbleHtml(item) {
   `;
 }
 function noteBubbleHtml(item) {
-  const icon = item.channel === 'booking' ? '📅' : item.channel === 'activity' ? '📈' : '📝';
+  const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
   return `
     <div class="bubble-row ${item.direction}">
       <div class="bubble-content note-bubble">
@@ -507,7 +507,7 @@ function renderConvoPanel() {
       ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
     </div>
   `;
-  const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
+  const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
   const threadEl = document.getElementById('chatThread');
   threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
   threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {

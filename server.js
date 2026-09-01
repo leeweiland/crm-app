@@ -26,6 +26,7 @@ import { handleDuplicatesRequest } from "./duplicates_backend.js";
 import { handleAiAgentsRequest } from "./ai_agents_backend.js";
 import { handleAiActiveRequest } from "./ai_active_backend.js";
 import { handleConversionsRequest } from "./conversions_backend.js";
+import { handleMeetingsRequest } from "./meetings_backend.js";
 import { startScheduler } from "./scheduler.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,7 @@ createServer(async (req, res) => {
   if (await handleAiAgentsRequest(req, res, url)) return;
   if (await handleAiActiveRequest(req, res, url)) return;
   if (await handleConversionsRequest(req, res, url)) return;
+  if (await handleMeetingsRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike
   // chat-app, which shares a domain/nav with sibling apps), so there's no
