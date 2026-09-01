@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { CONTACTS_FILE, resolveBulkContactIds } from "./segments_shared.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
 
@@ -261,14 +261,22 @@ export async function handleWorkflowsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, workflow });
   }
 
+  // Accepts a single contactId (workflow-detail.html's existing one-at-a-
+  // time "Manually Enroll" UI) or a bulk contactIds/segmentId/tagId target
+  // (Contacts table bulk-select, or a Segments/Tags row's "Add to SMS
+  // Sequence" action) -- see resolveBulkContactIds for the resolution
+  // order. A segment/tag resolves to its current members at enroll time,
+  // not a live membership, same one-time-snapshot semantics as picking
+  // contacts by hand.
   const enrollMatch = p.match(/^\/api\/workflows\/([^/]+)\/enroll$/);
   if (enrollMatch && req.method === "POST") {
-    const { contactId } = await readJsonBody(req);
+    const body = await readJsonBody(req);
     const workflow = readJson(WORKFLOWS_FILE, []).find(w => w.id === enrollMatch[1]);
     if (!workflow) return sendJson(res, 404, { error: "Not found" });
-    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
-    enrollContactInWorkflow(workflow, contactId);
-    return sendJson(res, 200, { ok: true });
+    const contactIds = resolveBulkContactIds(body);
+    if (!contactIds.length) return sendJson(res, 400, { error: "No matching contacts to enroll" });
+    contactIds.forEach(id => enrollContactInWorkflow(workflow, id));
+    return sendJson(res, 200, { ok: true, enrolled: contactIds.length });
   }
 
   const wfEnrollmentsMatch = p.match(/^\/api\/workflows\/([^/]+)\/enrollments$/);

@@ -5,6 +5,8 @@
 // "condition" step -- both sides importing straight from each other would
 // cycle. Pure data/functions only, no side effects, safe for anything to
 // import.
+import { readJson } from "./auth_backend.js";
+
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
 
@@ -127,4 +129,27 @@ export function matchesSegment(contact, filter) {
   if (filter.all) return filter.all.every(c => evalCondition(contact, c));
   if (filter.any) return filter.any.some(c => evalCondition(contact, c));
   return true;
+}
+
+// Shared by any "bulk add to automation/sequence" endpoint -- the caller
+// sends either an explicit contactIds array (already-selected contacts,
+// from the Contacts table's bulk-select) or a segmentId/tagId to resolve
+// server-side (from the Segments/Tags tab's row-level "Add to..." action),
+// so the frontend never has to already know every contact id in a segment
+// or tag just to enroll it. contactId (singular) is kept too since
+// workflow-detail.html's existing one-at-a-time "Manually Enroll" UI
+// already sends that shape.
+export function resolveBulkContactIds(body) {
+  if (Array.isArray(body.contactIds) && body.contactIds.length) return body.contactIds;
+  if (body.contactId) return [body.contactId];
+  if (body.segmentId) {
+    const segments = readJson(SEGMENTS_FILE, []);
+    const segment = segments.find(s => s.id === body.segmentId);
+    if (!segment) return [];
+    return readJson(CONTACTS_FILE, []).filter(c => matchesSegment(c, segment.filter)).map(c => c.id);
+  }
+  if (body.tagId) {
+    return readJson(CONTACTS_FILE, []).filter(c => (c.tags || []).includes(body.tagId)).map(c => c.id);
+  }
+  return [];
 }

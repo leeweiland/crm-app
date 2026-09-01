@@ -44,18 +44,21 @@
      horizontally (mobile especially) -- widths are fixed so the second
      column's sticky offset is a known constant, not something that shifts
      with content. */
-  .contacts-table .frozen-col-1, .contacts-table .frozen-col-2 {
+  .contacts-table .frozen-col-0, .contacts-table .frozen-col-1, .contacts-table .frozen-col-2 {
     position: sticky; background: var(--pra-panel); z-index: 1;
-    /* width (not just max-width) -- frozen-col-2's sticky offset below
-       assumes frozen-col-1 is exactly 110px. With only max-width, a short
-       name (e.g. "Eric") renders the cell narrower than 110px, leaving a
-       gap between the two frozen columns that the (unfrozen) column
-       behind them slides through on horizontal scroll. */
+    /* width (not just max-width) -- frozen-col-1/2's sticky offsets below
+       assume fixed 40px/110px widths for the columns before them. With
+       only max-width, a short name (e.g. "Eric") renders the cell
+       narrower than that, leaving a gap the (unfrozen) column behind it
+       slides through on horizontal scroll. */
     width: 110px; min-width: 110px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .contacts-table .frozen-col-1 { left: 0; }
-  .contacts-table .frozen-col-2 { left: 110px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
-  .contacts-table tr.clickable:hover .frozen-col-1, .contacts-table tr.clickable:hover .frozen-col-2 { background: var(--pra-panel-2); }
+  .contacts-table .frozen-col-0 { left: 0; width: 40px; min-width: 40px; max-width: 40px; text-align: center; }
+  .contacts-table .frozen-col-1 { left: 40px; }
+  .contacts-table .frozen-col-2 { left: 150px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
+  .contacts-table tr.clickable:hover .frozen-col-0, .contacts-table tr.clickable:hover .frozen-col-1, .contacts-table tr.clickable:hover .frozen-col-2 { background: var(--pra-panel-2); }
+  .bulk-actions-row { display: none; align-items: center; gap: 10px; padding: 10px 16px; margin-bottom: 10px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; }
+  .bulk-actions-row.show { display: flex; }
   .col-drag-handle { cursor: grab; opacity: .45; margin-right: 5px; font-size: .72rem; touch-action: none; user-select: none; }
   .col-drag-handle:hover { opacity: .9; }
   th.col-dragging { opacity: .35; }
@@ -113,6 +116,12 @@
           </div>
         </div>
 
+        <div class="bulk-actions-row" id="bulkActionsRow">
+          <span class="pra-muted" id="bulkSelectedCount" style="font-size:.85rem"></span>
+          <span style="flex:1"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="bulkAddToBtn" type="button">Add to...</button>
+        </div>
+
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table contacts-table">
             <thead><tr id="contactsHeadRow"></tr></thead>
@@ -154,7 +163,7 @@
       </div>
 
       <div class="tab-panel" id="tab-tags">
-        <div class="pra-panel" style="padding:22px;max-width:520px">
+        <div class="pra-panel" style="padding:22px;max-width:640px">
           <div class="pra-h2" style="margin-bottom:14px">Tags</div>
           <div id="tagsList"></div>
           <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
@@ -259,6 +268,32 @@
   </div>
 </div>
 
+<!-- Shared "Add to Automation/Sequence" trigger -- opened from the
+     Contacts table's bulk-select bar, or a Segments/Tags row, with
+     addToTarget set beforehand to whichever shape the enroll endpoint
+     expects (contactIds/segmentId/tagId). -->
+<div class="modal-backdrop" id="addToModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:6px">Add to...</div>
+    <div class="pra-muted" id="addToModalSubtitle" style="font-size:.82rem;margin-bottom:16px"></div>
+    <div class="field">
+      <label class="pra-label">Type</label>
+      <select class="pra-select" id="addToTypeSelect">
+        <option value="automation">Email Automation</option>
+        <option value="workflow">SMS Sequence</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="pra-label" id="addToItemLabel">Automation</label>
+      <select class="pra-select" id="addToItemSelect"></select>
+    </div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="confirmAddToBtn" style="flex:1">Add</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('addToModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script src="/inline-edit.js"></script>
 <script src="/condition-row-client.js"></script>
@@ -324,9 +359,13 @@ async function loadTags() {
   const r = await fetch('/api/tags');
   allTags = (await r.json()).tags;
   document.getElementById('tagsList').innerHTML = allTags.map(t => `
-    <div class="row-item"><span style="flex:1">${escapeHtml(t.name)}</span><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-tag="${t.id}">Delete</button></div>
+    <div class="row-item"><span style="flex:1">${escapeHtml(t.name)}</span><button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto-tag="${t.id}">Add to...</button><button class="pra-btn pra-btn-sm pra-btn-danger" data-del-tag="${t.id}">Delete</button></div>
   `).join('') || '<div class="pra-muted">No tags yet.</div>';
   document.querySelectorAll('[data-del-tag]').forEach(btn => btn.onclick = async () => { await fetch('/api/tags/' + btn.dataset.delTag, { method: 'DELETE' }); loadTags(); });
+  document.querySelectorAll('[data-addto-tag]').forEach(btn => btn.onclick = () => {
+    const tag = allTags.find(t => t.id === btn.dataset.addtoTag);
+    openAddToModal({ tagId: btn.dataset.addtoTag }, `Tag: ${tag?.name || ''}`);
+  });
 }
 async function loadLists() {
   const r = await fetch('/api/lists');
@@ -371,6 +410,7 @@ function renderSegmentList() {
         <div class="pra-muted" style="font-size:.76rem">${describeFilter(s.filter)}</div>
       </div>
       <span class="pra-muted" style="font-size:.78rem" id="segcount-${s.id}">…</span>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto-segment="${s.id}">Add to...</button>
       <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-segment="${s.id}">Delete</button>
     </div>
   `).join('') || '<div class="pra-muted">No segments yet.</div>';
@@ -382,7 +422,45 @@ function renderSegmentList() {
     await fetch('/api/segments/' + btn.dataset.delSegment, { method: 'DELETE' });
     loadSegments();
   });
+  document.querySelectorAll('[data-addto-segment]').forEach(btn => btn.onclick = () => {
+    const seg = segs.find(s => s.id === btn.dataset.addtoSegment);
+    openAddToModal({ segmentId: btn.dataset.addtoSegment }, `Segment: ${seg?.name || ''}`);
+  });
 }
+
+// ── "Add to Automation/Sequence" -- shared by the Contacts table's bulk-
+// select bar and the Segments/Tags row buttons above/below. addToTarget
+// is whichever shape resolveBulkContactIds (segments_shared.js) expects:
+// {contactIds:[...]} | {segmentId} | {tagId}.
+let addToTarget = null;
+async function openAddToModal(target, subtitle) {
+  addToTarget = target;
+  document.getElementById('addToModalSubtitle').textContent = subtitle || '';
+  document.getElementById('addToTypeSelect').value = 'automation';
+  await renderAddToItemOptions();
+  document.getElementById('addToModal').classList.add('show');
+}
+async function renderAddToItemOptions() {
+  const type = document.getElementById('addToTypeSelect').value;
+  document.getElementById('addToItemLabel').textContent = type === 'automation' ? 'Automation' : 'Sequence';
+  const r = await fetch(type === 'automation' ? '/api/automations' : '/api/workflows');
+  const d = r.ok ? await r.json() : {};
+  const items = type === 'automation' ? (d.automations || []) : (d.workflows || []);
+  const itemSel = document.getElementById('addToItemSelect');
+  itemSel.innerHTML = items.length ? items.map(i => `<option value="${i.id}">${escapeHtml(i.name)}</option>`).join('') : '<option value="">None yet -- create one first</option>';
+}
+document.getElementById('addToTypeSelect').addEventListener('change', renderAddToItemOptions);
+document.getElementById('confirmAddToBtn').onclick = async () => {
+  const type = document.getElementById('addToTypeSelect').value;
+  const itemId = document.getElementById('addToItemSelect').value;
+  if (!itemId || !addToTarget) { showToast('Nothing to add to yet', true); return; }
+  const endpoint = type === 'automation' ? `/api/automations/${itemId}/enroll` : `/api/workflows/${itemId}/enroll`;
+  const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(addToTarget) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { showToast(d.error || 'Could not add', true); return; }
+  document.getElementById('addToModal').classList.remove('show');
+  showToast(`Added ${d.enrolled ?? ''} contact${d.enrolled === 1 ? '' : 's'}`.trim());
+};
 
 // ── Advanced filter builder ─────────────────────────────────────────────
 // Field/op/value rendering now lives in condition-row-client.js
@@ -422,12 +500,23 @@ document.getElementById('confirmSaveSegmentBtn').onclick = async () => {
   loadSegments();
 };
 
+function updateBulkActionsBar() {
+  const bar = document.getElementById('bulkActionsRow');
+  const n = selectedContactIds.size;
+  bar.classList.toggle('show', n > 0);
+  if (n > 0) document.getElementById('bulkSelectedCount').textContent = `${n} contact${n === 1 ? '' : 's'} selected`;
+}
+document.getElementById('bulkAddToBtn').onclick = () => {
+  openAddToModal({ contactIds: [...selectedContactIds] }, `${selectedContactIds.size} selected contact${selectedContactIds.size === 1 ? '' : 's'}`);
+};
+
 // ── Contacts list ────────────────────────────────────────────────────────
 let currentContacts = []; // holds just the CURRENT PAGE -- sorting/paging both happen server-side now
 let contactsTotal = 0;
 let contactsPage = 1;
 let contactsPageSize = parseInt(localStorage.getItem('contactsPageSize'), 10) || 50;
 let contactSort = { field: 'name', dir: 1 };
+let selectedContactIds = new Set(); // survives paging/sorting -- bulk actions act on whatever's in here, not just the current page
 
 // First/Last are always shown (they're the frozen/sticky columns, and the
 // primary way to identify a row) -- everything else, including every
@@ -574,7 +663,8 @@ function renderContactsTable() {
   if (countEl) countEl.textContent = contactsTotal ? `(${contactsTotal.toLocaleString()})` : '';
   const cols = activeColumns();
   const headRow = document.getElementById('contactsHeadRow');
-  headRow.innerHTML = cols.map(col => {
+  const allOnPageSelected = currentContacts.length > 0 && currentContacts.every(c => selectedContactIds.has(c.id));
+  headRow.innerHTML = `<th class="frozen-col-0"><input type="checkbox" id="selectAllContactsCb" ${allOnPageSelected ? 'checked' : ''}/></th>` + cols.map(col => {
     const frozenClass = col.frozen === 1 ? ' frozen-col-1' : col.frozen === 2 ? ' frozen-col-2' : '';
     const sortedClass = col.sortable && contactSort.field === col.key ? ' sorted' : '';
     const arrow = col.sortable && contactSort.field === col.key ? `<span class="sort-arrow">${contactSort.dir === 1 ? '▲' : '▼'}</span>` : '';
@@ -583,6 +673,10 @@ function renderContactsTable() {
     const dragHandle = col.frozen ? '' : `<span class="col-drag-handle" title="Drag to reorder">&#8942;&#8942;</span>`;
     return `<th class="${col.sortable ? 'sortable' : ''}${sortedClass}${frozenClass}" data-col-key="${col.key}"${col.sortable ? ` data-sort="${col.key}"` : ''}>${dragHandle}${escapeHtml(col.label)}${arrow}</th>`;
   }).join('');
+  document.getElementById('selectAllContactsCb').onchange = (e) => {
+    currentContacts.forEach(c => e.target.checked ? selectedContactIds.add(c.id) : selectedContactIds.delete(c.id));
+    renderContactsTable();
+  };
   headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = (e) => {
     if (e.target.closest('.col-drag-handle')) return; // dragging, not sorting
     if (contactSort.field === th.dataset.sort) contactSort.dir *= -1;
@@ -593,10 +687,11 @@ function renderContactsTable() {
   wireColumnDrag();
 
   const body = document.getElementById('contactsBody');
-  if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length}" class="pra-muted">No contacts match.</td></tr>`; }
+  if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length + 1}" class="pra-muted">No contacts match.</td></tr>`; }
   else {
     body.innerHTML = currentContacts.map(c => `
       <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
+        <td class="frozen-col-0" onclick="event.stopPropagation()"><input type="checkbox" data-select-contact="${c.id}" ${selectedContactIds.has(c.id) ? 'checked' : ''}/></td>
         ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}"${col.editable ? ` data-inline-field="${col.key}" data-contact-id="${c.id}" title="Right-click to change"` : ''}>${col.render(c)}</td>`).join('')}
       </tr>
     `).join('');
@@ -604,7 +699,12 @@ function renderContactsTable() {
       const row = currentContacts.find(c => c.id === contactId);
       if (row) row.ownerId = ownerId;
     });
+    body.querySelectorAll('[data-select-contact]').forEach(cb => cb.onchange = () => {
+      cb.checked ? selectedContactIds.add(cb.dataset.selectContact) : selectedContactIds.delete(cb.dataset.selectContact);
+      updateBulkActionsBar();
+    });
   }
+  updateBulkActionsBar();
 
   const pageCount = Math.max(1, Math.ceil(contactsTotal / contactsPageSize));
   const start = contactsTotal ? (contactsPage - 1) * contactsPageSize + 1 : 0;

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, matchesSegment } from "./segments_shared.js";
+import { CONTACTS_FILE, matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
 import { sendEmail } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
@@ -297,6 +297,25 @@ export async function handleAutomationsRequest(req, res, url) {
     automation.active = !!active;
     writeJson(AUTOMATIONS_FILE, automations);
     return sendJson(res, 200, { ok: true, automation });
+  }
+
+  // Manual bulk enroll -- from the Contacts table's bulk-select, or a
+  // Segments/Tags row's "Add to Automation" action. Accepts contactIds/
+  // contactId/segmentId/tagId (see resolveBulkContactIds); a segment/tag
+  // is resolved to its current member contacts at enroll time, not stored
+  // as a live membership, so someone who joins the tag/segment LATER
+  // isn't automatically enrolled too -- same one-time-snapshot semantics
+  // as picking contacts by hand.
+  const bulkEnrollMatch = p.match(/^\/api\/automations\/([^/]+)\/enroll$/);
+  if (bulkEnrollMatch && req.method === "POST") {
+    const automations = readJson(AUTOMATIONS_FILE, []);
+    const automation = automations.find(a => a.id === bulkEnrollMatch[1]);
+    if (!automation) return sendJson(res, 404, { error: "Not found" });
+    const body = await readJsonBody(req);
+    const contactIds = resolveBulkContactIds(body);
+    if (!contactIds.length) return sendJson(res, 400, { error: "No matching contacts to enroll" });
+    contactIds.forEach(id => enrollContact(automation, id));
+    return sendJson(res, 200, { ok: true, enrolled: contactIds.length });
   }
 
   const enrollmentsMatch = p.match(/^\/api\/automations\/([^/]+)\/enrollments$/);
