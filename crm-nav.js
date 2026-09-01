@@ -245,7 +245,16 @@ function enhanceSelectForMobile(sel) {
   // The label text shrank to one letter, but the anchor was still stuck at
   // whatever max-width the full-text select had (e.g. owner-field-select's
   // 110px) -- shrink the box itself to match, not just what's inside it.
-  if (isCompactTrigger) anchor.style.setProperty("max-width", "34px", "important");
+  if (isCompactTrigger) {
+    anchor.style.setProperty("max-width", "34px", "important");
+    // No room left for the caret once the box is this narrow -- it was
+    // winning the space over the letter itself (flex-shrink:0 on the
+    // caret, default shrink on the label), so the letter wasn't showing
+    // at all. The letter alone is the whole point here; drop the caret
+    // and just center what's left.
+    trigger.querySelector(".mobile-select-trigger-caret").style.display = "none";
+    trigger.style.justifyContent = "center";
+  }
   function renderTrigger() {
     const opt = sel.options[sel.selectedIndex];
     const fullText = opt ? opt.textContent : "";
