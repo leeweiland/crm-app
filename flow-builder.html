@@ -180,7 +180,7 @@ const flowId = new URLSearchParams(location.search).get('id');
 let flow = null, runCounts = {};
 let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [];
 let saveTimer, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
-let cachedSamples = null, lastFocusedSheetColInput = null;
+let cachedSamples = null;
 
 async function loadRefs() {
   const [listsRes, tagsRes, statusesRes, formsRes, eventTypesRes, autosRes, wfRes, fieldsRes, sheetsRes, convRes] = await Promise.all([
@@ -507,10 +507,10 @@ function deleteStep(stepId) {
 }
 
 function sheetColRowHtml(value) {
-  return `<div class="sheet-col-row" data-sheet-col-row><input class="pra-input" placeholder="{{first}} {{last}}, {{email}}, {{payload.message}}…" value="${escapeHtml(value || '')}" data-sheet-col/><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
+  return `<div class="sheet-col-row" data-sheet-col-row><input class="pra-input" list="sheetFieldOptions" placeholder="{{first}} {{last}}, {{email}}, {{payload.message}}…" value="${escapeHtml(value || '')}" data-sheet-col/><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
 }
 function sheetColHeaderRowHtml(header, value, index) {
-  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><input class="pra-input" placeholder="{{first}}, static text, …" value="${escapeHtml(value || '')}" data-sheet-col/></div>`;
+  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><input class="pra-input" list="sheetFieldOptions" placeholder="{{first}}, static text, …" value="${escapeHtml(value || '')}" data-sheet-col/></div>`;
 }
 
 function openStepConfigModal(step, isNew) {
@@ -572,11 +572,10 @@ function openStepConfigModal(step, isNew) {
         <select class="pra-select" id="cfgSheetTab"></select>
       </div>
       <div id="sheetColumnsArea" style="display:none">
-        <div class="pra-label" style="margin:14px 0 8px">Columns</div>
+        <div class="pra-label" style="margin:14px 0 8px">Columns <span class="pra-muted" style="text-transform:none;font-weight:400">— type a value, or start typing to search available fields</span></div>
         <div id="sheetColRows"></div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSheetColBtn" style="display:none;margin-top:6px">+ Add Column</button>
-        <div class="pra-label" style="margin:14px 0 6px">Insert a field (click a column value first, then choose one)</div>
-        <div id="sheetFieldChips"><span class="pra-muted" style="font-size:.78rem">Loading…</span></div>
+        <datalist id="sheetFieldOptions"></datalist>
       </div>
     `;
 
@@ -591,7 +590,6 @@ function openStepConfigModal(step, isNew) {
         addBtn.style.display = 'inline-block';
         wrap.innerHTML = (savedColumns.length ? savedColumns : ['']).map(sheetColRowHtml).join('');
       }
-      lastFocusedSheetColInput = null;
       wrap.querySelectorAll('[data-sheet-col-row]').forEach(wireSheetColRow);
     }
     document.getElementById('addSheetColBtn').onclick = () => {
@@ -663,7 +661,7 @@ function openStepConfigModal(step, isNew) {
       // as Zapier's own spreadsheet picker.
       document.getElementById('cfgSheetSearch').dispatchEvent(new Event('input'));
     }
-    renderSheetFieldChips();
+    populateSheetFieldOptions();
   } else if (step.type === 'enroll_automation') {
     body.innerHTML = `<div class="field"><label class="pra-label">Automation</label><select class="pra-select" id="cfgAutomation">${allAutomations.map(a => `<option value="${a.id}" ${step.config.automationId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'enroll_workflow') {
@@ -705,13 +703,15 @@ function openStepConfigModal(step, isNew) {
 function wireSheetColRow(el) {
   const removeBtn = el.querySelector('[data-remove-sheet-col]');
   if (removeBtn) removeBtn.onclick = () => el.remove(); // absent in real-header rows -- columns there are fixed by the sheet itself
-  const input = el.querySelector('[data-sheet-col]');
-  if (input) input.addEventListener('focus', () => { lastFocusedSheetColInput = input; });
 }
-async function renderSheetFieldChips() {
-  const chipsEl = document.getElementById('sheetFieldChips');
-  if (!chipsEl) return;
-  const contactChips = [
+// Populates a shared <datalist> that every column input references via
+// list="sheetFieldOptions" -- native browser autocomplete right in the same
+// box as the value (type to search, pick one, it fills the box), instead
+// of a separate control elsewhere on the modal you have to look away to use.
+async function populateSheetFieldOptions() {
+  const listEl = document.getElementById('sheetFieldOptions');
+  if (!listEl) return;
+  const contactFields = [
     { label: 'First Name', token: '{{first}}' },
     { label: 'Last Name', token: '{{last}}' },
     { label: 'Email', token: '{{email}}' },
@@ -721,44 +721,18 @@ async function renderSheetFieldChips() {
   const samples = await fetchSamples(false);
   // A raw webhook field that's really just first/last/email/phone under a
   // different spelling ("First Name", "first_name", "Email Address"...)
-  // resolves to the exact same value as its contact-fields chip -- showing
-  // it again as "raw webhook data" isn't a second option, it's the same
-  // chip twice. Matching by normalized name (not the exact fieldMap key)
-  // so this holds regardless of casing/spacing quirks between the field
-  // map and whatever the latest pulled sample happens to be named. Only
-  // genuinely extra fields (e.g. "SMS Consent") are left in that group.
+  // resolves to the exact same value as its contact-fields entry -- listing
+  // it again isn't a second option, it's the same field twice. Matching by
+  // normalized name (not the exact fieldMap key) so this holds regardless
+  // of casing/spacing quirks between the field map and whatever the latest
+  // pulled sample happens to be named. Only genuinely extra fields (e.g.
+  // "SMS Consent") are worth listing separately.
   const STANDARD_NAMES = new Set(['email', 'emailaddress', 'firstname', 'fname', 'lastname', 'lname', 'phone', 'phonenumber', 'mobile', 'mobilenumber']);
   const normalize = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
   const payloadKeys = sampleKeys(samples).filter(k => !STANDARD_NAMES.has(normalize(k)));
-  if (!chipsEl.isConnected) return; // modal may have been closed/reopened while this was in flight
-  const payloadChips = payloadKeys.map(k => ({ label: k, token: `{{payload.${k}}}` }));
-
-  // One dropdown instead of a wall of chip buttons -- an optgroup per
-  // source (contact vs. raw webhook data) keeps the same "which one do I
-  // pick" clarity the chip groups had, just far more compact, especially
-  // once a flow has a dozen+ extra webhook fields.
-  const group = (label, chips) => !chips.length ? '' : `<optgroup label="${escapeHtml(label)}">${chips.map(c => `<option value="${escapeHtml(c.token)}">${escapeHtml(c.label)}</option>`).join('')}</optgroup>`;
-  if (!contactChips.length && !payloadChips.length) {
-    chipsEl.innerHTML = '<span class="pra-muted" style="font-size:.78rem">No sample data yet — pull some from the trigger first.</span>';
-    return;
-  }
-  chipsEl.innerHTML = `
-    <select class="pra-select" id="sheetFieldPicker">
-      <option value="">+ Insert a field…</option>
-      ${group('From this contact (recommended)', contactChips)}
-      ${group('From the raw webhook data', payloadChips)}
-    </select>`;
-  document.getElementById('sheetFieldPicker').onchange = (e) => {
-    const token = e.target.value;
-    if (!token) return;
-    const target = lastFocusedSheetColInput || document.querySelector('#sheetColRows [data-sheet-col]');
-    if (target) {
-      target.value = target.value ? `${target.value} ${token}` : token;
-      target.focus();
-      lastFocusedSheetColInput = target;
-    }
-    e.target.value = ''; // reset to the placeholder so the same field can be picked again / the next one is a fresh choice
-  };
+  if (!listEl.isConnected) return; // modal may have been closed/reopened while this was in flight
+  const payloadFields = payloadKeys.map(k => ({ label: `${k} (raw webhook field)`, token: `{{payload.${k}}}` }));
+  listEl.innerHTML = [...contactFields, ...payloadFields].map(f => `<option value="${escapeHtml(f.token)}">${escapeHtml(f.label)}</option>`).join('');
 }
 
 // ── Runs ──────────────────────────────────────────────────────────────────
