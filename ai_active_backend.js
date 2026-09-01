@@ -238,10 +238,22 @@ export async function processAiActiveBatches() {
       // Human takeover -- a real person (not this engine, not the AI
       // Assist icons, both of which go through the normal compose Send
       // and land here as sourceType "inbox") sent this contact something
-      // more recently than our own last autonomous action. Stop for good.
-      const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_active");
-      if (lastHumanOutbound && (!st.lastActionAt || new Date(lastHumanOutbound.createdAt).getTime() > new Date(st.lastActionAt).getTime())) {
-        st.state = "human_takeover"; st.updatedAt = new Date().toISOString(); changed = true; continue;
+      // MORE RECENTLY THAN Kai's own last action here. Only meaningful
+      // once Kai has actually made contact (st.lastActionAt is set) --
+      // for a still-"queued" lead who's never been messaged by this batch
+      // yet, `!st.lastActionAt` used to short-circuit this to true for
+      // ANY non-ai_active outbound in the contact's ENTIRE history (a
+      // years-old marketing campaign or sequence send, unrelated to
+      // anyone actively working this lead now), which falsely marked
+      // every fresh cold-open as "human_takeover" before Kai ever sent
+      // anything -- confirmed live: a batch of 9 came back 0 sent, 9
+      // human_takeover. Old campaign history has no bearing on whether
+      // AI Active should send its own first message.
+      if (st.state === "waiting_reply") {
+        const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_active");
+        if (lastHumanOutbound && st.lastActionAt && new Date(lastHumanOutbound.createdAt).getTime() > new Date(st.lastActionAt).getTime()) {
+          st.state = "human_takeover"; st.updatedAt = new Date().toISOString(); changed = true; continue;
+        }
       }
 
       try {
