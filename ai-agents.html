@@ -186,20 +186,27 @@
           <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
             <div style="flex:1">
               <label>Min wait between messages</label>
-              <input type="number" id="fWaitMin" min="0" step="1" value="4"/>
+              <div style="display:flex;gap:6px">
+                <input type="number" id="fWaitMin" min="0" step="1" value="4" style="flex:1"/>
+                <select id="fWaitMinUnit" style="flex:1">
+                  <option value="seconds">Seconds</option>
+                  <option value="minutes">Minutes</option>
+                  <option value="hours" selected>Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
             </div>
             <div style="flex:1">
               <label>Max wait between messages</label>
-              <input type="number" id="fWaitMax" min="0" step="1" value="24"/>
-            </div>
-            <div style="flex:1">
-              <label>Unit</label>
-              <select id="fWaitUnit">
-                <option value="seconds">Seconds</option>
-                <option value="minutes">Minutes</option>
-                <option value="hours" selected>Hours</option>
-                <option value="days">Days</option>
-              </select>
+              <div style="display:flex;gap:6px">
+                <input type="number" id="fWaitMax" min="0" step="1" value="24" style="flex:1"/>
+                <select id="fWaitMaxUnit" style="flex:1">
+                  <option value="seconds">Seconds</option>
+                  <option value="minutes">Minutes</option>
+                  <option value="hours" selected>Hours</option>
+                  <option value="days">Days</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -269,6 +276,7 @@
     </div>
 
     <div class="editor-actions">
+      <button class="pra-btn pra-btn-ghost" id="editorCancelBtn" type="button">Cancel</button>
       <button class="pra-btn" id="editorSaveBtn" type="button">Done</button>
     </div>
   </div>
@@ -279,7 +287,7 @@
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
-let allStatuses = [], allUsers = [], editingAgentId = null;
+let allStatuses = [], allUsers = [], editingAgentId = null, originalAgentSnapshot = null;
 
 async function loadStatuses() {
   try {
@@ -423,7 +431,8 @@ async function openEditor(agentId) {
   const wait = cfg.waitTimeRange || {};
   document.getElementById('fWaitMin').value = wait.min ?? wait.minHours ?? 4;
   document.getElementById('fWaitMax').value = wait.max ?? wait.maxHours ?? 24;
-  document.getElementById('fWaitUnit').value = wait.unit || 'hours';
+  document.getElementById('fWaitMinUnit').value = wait.minUnit || wait.unit || 'hours';
+  document.getElementById('fWaitMaxUnit').value = wait.maxUnit || wait.unit || 'hours';
   const reengage = cfg.reengagement || {};
   setToggle('fReengageSmsToggle', reengage.sms?.enabled);
   document.getElementById('fReengageSmsPrompt').value = reengage.sms?.prompt || '';
@@ -441,12 +450,30 @@ async function openEditor(agentId) {
   document.querySelectorAll('.multiselect.invalid').forEach(m => m.classList.remove('invalid'));
   closeAllMultiselects();
   resetTestChat();
+  // Snapshot of what's actually saved at the moment the editor opened --
+  // autosave writes through immediately as you type, so Cancel needs its
+  // own copy of the pre-edit state to revert to (there's no unsent draft
+  // to just discard the way a traditional Cancel button implies).
+  originalAgentSnapshot = JSON.parse(JSON.stringify(agent));
   document.getElementById('editorBackdrop').style.display = 'flex';
+}
+async function cancelEditor() {
+  if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null; }
+  if (editingAgentId && originalAgentSnapshot) {
+    setAutosaveStatus('Reverting…');
+    const { id, createdAt, updatedAt, ...revertFields } = originalAgentSnapshot;
+    await fetch(`/api/ai-agents/${editingAgentId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(revertFields) });
+  }
+  document.getElementById('editorBackdrop').style.display = 'none';
+  editingAgentId = null;
+  originalAgentSnapshot = null;
+  loadAgents();
 }
 async function closeEditor() {
   await flushAutosave(); // any pending debounced edit is written before the panel actually closes
   document.getElementById('editorBackdrop').style.display = 'none';
   editingAgentId = null;
+  originalAgentSnapshot = null;
 }
 window.addEventListener('beforeunload', (e) => {
   if (editingAgentId && autosaveTimer) { e.preventDefault(); e.returnValue = ''; }
@@ -590,7 +617,8 @@ function buildAgentPayload() {
       waitTimeRange: {
         min: Number(document.getElementById('fWaitMin').value) || 4,
         max: Number(document.getElementById('fWaitMax').value) || 24,
-        unit: document.getElementById('fWaitUnit').value || 'hours',
+        minUnit: document.getElementById('fWaitMinUnit').value || 'hours',
+        maxUnit: document.getElementById('fWaitMaxUnit').value || 'hours',
       },
       reengagement: {
         sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value },
@@ -618,7 +646,7 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(flushAutosave, 800);
 }
 function wireAutosave() {
-  ['fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitUnit', 'fReengageSmsPrompt', 'fReengageEmailPrompt'].forEach((id) => {
+  ['fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit', 'fReengageSmsPrompt', 'fReengageEmailPrompt'].forEach((id) => {
     document.getElementById(id).addEventListener('input', scheduleAutosave);
   });
   document.querySelectorAll('.multiselect-panel').forEach((panel) => panel.addEventListener('change', scheduleAutosave));
@@ -754,6 +782,7 @@ document.getElementById('testEmailBtn').addEventListener('click', (e) => testRee
 
 document.getElementById('newAgentBtn').addEventListener('click', () => openEditor(null));
 document.getElementById('editorSaveBtn').addEventListener('click', async () => { await closeEditor(); loadAgents(); });
+document.getElementById('editorCancelBtn').addEventListener('click', cancelEditor);
 document.getElementById('editorBackdrop').addEventListener('click', (e) => { if (e.target.id === 'editorBackdrop') closeEditor().then(loadAgents); });
 wireAutosave();
 

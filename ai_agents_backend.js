@@ -469,11 +469,21 @@ TAKEOVER: <yes or no> - <short reason>`;
       const defaultPrompt = channel === "email"
         ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
         : "This is a cold re-engagement opener to a lead via SMS -- keep it very short and text-native, reference something specific from their real info/application if available, and ask one specific question to get them talking.";
-      let promptText = `(${customPrompt || defaultPrompt})`;
+      // The channel-specific instruction below is deliberately treated as
+      // the LAST word on structure/mechanics (what to open with, format),
+      // never on voice -- appending the reminder makes sure a directive
+      // custom prompt (e.g. "use a problem-agitate-solve structure") can't
+      // override the agent's own voice/tone rules earlier in the prompt.
+      let promptText = `(${customPrompt || defaultPrompt} Write this fully in the voice/tone already defined above for this agent -- don't fall back to a generic marketing-copywriting structure or tone that isn't consistent with it.)`;
       if (channel === "email") {
         promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
       }
-      const result = await generateAgentReply(agent, contactId || null, promptText, { autoSend: true });
+      // AI Active sends with zero human review -- there's no logged-in
+      // person it's ghostwriting for the way AI Assist is, so it should
+      // identify as the agent itself (e.g. "Kai"), not as "Alexis" (whose
+      // real transcripts it's drawing phrasing from) and not as whoever
+      // happens to be testing it right now.
+      const result = await generateAgentReply(agent, contactId || null, promptText, { autoSend: true, senderName: agent.name });
       if (result.skip) return sendJson(res, 200, { status: "skip", reason: result.reason });
       if (result.escalate) return sendJson(res, 200, { status: "escalate", reason: result.escalate });
       let subject = null, body = result.text;

@@ -60,16 +60,19 @@ function buildCandidateList(segment, batchSize, targeting) {
   return { totalMatching: matching.length, excluded, candidates: capped, excludedCount: excluded.length, remainingAfterCap: Math.max(0, candidates.length - capped.length) };
 }
 
-// unit is "seconds"|"minutes"|"hours"|"days" -- defaults to "hours" for
-// records saved before the unit picker existed (those only ever stored
-// minHours/maxHours, always meaning hours).
+// minUnit/maxUnit are independent ("seconds"|"minutes"|"hours"|"days") --
+// min and max can be in different units (e.g. "30 seconds to 2 hours").
+// Falls back to a shared `unit`, then to "hours", for records saved
+// before per-field units existed (those only ever stored minHours/maxHours,
+// always meaning hours).
 const WAIT_UNIT_MS = { seconds: 1000, minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
 function randomDelayMs(waitTimeRange) {
   const range = waitTimeRange || {};
-  const mult = WAIT_UNIT_MS[range.unit] || WAIT_UNIT_MS.hours;
-  const lo = Number(range.min ?? range.minHours) || 4;
-  const hi = Math.max(lo, Number(range.max ?? range.maxHours) || 24);
-  return (lo + Math.random() * (hi - lo)) * mult;
+  const minMult = WAIT_UNIT_MS[range.minUnit || range.unit] || WAIT_UNIT_MS.hours;
+  const maxMult = WAIT_UNIT_MS[range.maxUnit || range.unit] || WAIT_UNIT_MS.hours;
+  const loMs = (Number(range.min ?? range.minHours) || 4) * minMult;
+  const hiMs = Math.max(loMs, (Number(range.max ?? range.maxHours) || 24) * maxMult);
+  return loMs + Math.random() * (hiMs - loMs);
 }
 
 async function sendViaChannel(contact, channel, text, agentId, subject) {
@@ -258,9 +261,13 @@ export async function processAiActiveBatches() {
           const defaultPrompt = channel === "email"
             ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
             : "This is a cold re-engagement opener to a lead via SMS -- keep it very short and text-native, reference something specific from their real info/application if available, and ask one specific question to get them talking.";
-          let promptText = `(${customPrompt || defaultPrompt})`;
+          // The channel instruction is the last word on structure/mechanics
+          // only -- appended so a directive custom prompt (e.g. "use a
+          // problem-agitate-solve structure") can't override the agent's
+          // own voice/tone rules earlier in the system prompt.
+          let promptText = `(${customPrompt || defaultPrompt} Write this fully in the voice/tone already defined above for this agent -- don't fall back to a generic marketing-copywriting structure or tone that isn't consistent with it.)`;
           if (channel === "email") promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
-          const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true });
+          const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true, senderName: agent.name });
           if (!result.skip && !result.escalate && result.text) {
             let subject = null, body = result.text;
             if (channel === "email") {
@@ -278,7 +285,7 @@ export async function processAiActiveBatches() {
           const hasNewInbound = lastMsg && lastMsg.direction === "inbound" && (!st.lastSeenInboundAt || new Date(lastMsg.createdAt).getTime() > new Date(st.lastSeenInboundAt).getTime());
           if (hasNewInbound) {
             st.lastSeenInboundAt = lastMsg.createdAt;
-            const result = await generateAgentReply(agent, contact.id, lastMsg.body || lastMsg.bodyPreview || "", { autoSend: true });
+            const result = await generateAgentReply(agent, contact.id, lastMsg.body || lastMsg.bodyPreview || "", { autoSend: true, senderName: agent.name });
             const channel = lastMsg.channel === "sms" ? "sms" : "email";
             if (result.skip) {
               st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
@@ -296,7 +303,7 @@ export async function processAiActiveBatches() {
             if ((st.followUpCount || 0) >= MAX_FOLLOWUPS) { st.state = "done"; }
             else {
               const channel = contact.email ? "email" : "sms";
-              const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)", { autoSend: true });
+              const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)", { autoSend: true, senderName: agent.name });
               if (!result.skip && !result.escalate && result.text) {
                 await sendViaChannel(contact, channel, result.text, agent.id);
                 st.followUpCount = (st.followUpCount || 0) + 1;
