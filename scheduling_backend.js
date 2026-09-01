@@ -10,7 +10,6 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
-import { getPublicBaseUrl } from "./integrations_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -527,6 +526,7 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
   // an unmapped one falls back to a key auto-slugged from its label.
   const customFields = {};
   for (const q of questions || []) {
+    if (CORE_QUESTION_TYPES.includes(q.type)) continue; // first/last/email/phone go to the core properties above, not customFields
     const val = (answers || {})[q.id];
     if (val === undefined || val === null || val === "") continue;
     customFields[q.mapToCustomFieldId || slugQuestion(q)] = val;
@@ -566,12 +566,10 @@ function locationText(location) {
 async function sendBookingConfirmation(booking, eventType, contact) {
   const start = new Date(booking.startAt);
   const when = start.toLocaleString("en-US", { timeZone: booking.timezone || "America/Anchorage", dateStyle: "full", timeStyle: "short" });
-  const cancelUrl = `${getPublicBaseUrl()}/book/${eventType.slug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
   const html = `<p>Hi ${contact.first || "there"},</p>
     <p>You're booked for <b>${eventType.name}</b>.</p>
     <p><b>When:</b> ${when}<br/><b>Where:</b> ${locationText(eventType.location)}</p>
-    ${booking.notes ? `<p><b>Notes:</b> ${booking.notes}</p>` : ""}
-    <p>Need to cancel? <a href="${cancelUrl}">${cancelUrl}</a></p>`;
+    ${booking.notes ? `<p><b>Notes:</b> ${booking.notes}</p>` : ""}`;
   // Independent sends -- no reason the SMS should wait on the email
   // finishing first (or vice versa) now that this whole function already
   // runs unawaited by its caller.
@@ -582,7 +580,7 @@ async function sendBookingConfirmation(booking, eventType, contact) {
       contactId: contact.id, sourceType: "booking", sourceId: booking.id,
     }).catch(() => {}),
     contact.phone ? sendSms({
-      to: contact.phone, body: `You're booked for ${eventType.name} on ${when}. Cancel: ${cancelUrl}`,
+      to: contact.phone, body: `You're booked for ${eventType.name} on ${when}.`,
       contactId: contact.id, sourceType: "booking", sourceId: booking.id,
     }).catch(() => {}) : Promise.resolve(),
   ]);
