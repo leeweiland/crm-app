@@ -396,6 +396,7 @@ async function loadStatuses() {
 // table uses, so counts and the paginated panel reuse that one endpoint
 // instead of a bespoke read path per kind.
 const bulkSelected = { list: new Set(), tag: new Set(), segment: new Set() };
+const lastCheckedIndex = { list: null, tag: null, segment: null };
 const KIND_CONFIG = {
   list: { deleteUrl: id => `/api/lists/${id}`, contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
   tag: { deleteUrl: id => `/api/tags/${id}`, contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
@@ -440,12 +441,30 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn) {
   });
   container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
   container.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
-  container.querySelectorAll('[data-bulk]').forEach(cb => {
+  const checkboxes = [...container.querySelectorAll('[data-bulk]')];
+  checkboxes.forEach((cb, idx) => {
     cb.checked = bulkSelected[kind].has(cb.dataset.bulk);
     cb.onchange = () => {
       if (cb.checked) bulkSelected[kind].add(cb.dataset.bulk); else bulkSelected[kind].delete(cb.dataset.bulk);
       updateBulkBar(kind, barId);
     };
+    // Shift-click range-select, same convention as Gmail/Finder: extends
+    // from whichever checkbox in this list was last clicked (plain or
+    // shift) through the one just shift-clicked, matching this one's new
+    // checked state. Only the clicked box gets a real user 'change' event,
+    // so the rest of the range is applied here directly.
+    cb.addEventListener('click', (e) => {
+      if (e.shiftKey && lastCheckedIndex[kind] !== null) {
+        const [start, end] = [lastCheckedIndex[kind], idx].sort((a, b) => a - b);
+        for (let i = start; i <= end; i++) {
+          checkboxes[i].checked = cb.checked;
+          if (checkboxes[i].checked) bulkSelected[kind].add(checkboxes[i].dataset.bulk);
+          else bulkSelected[kind].delete(checkboxes[i].dataset.bulk);
+        }
+        updateBulkBar(kind, barId);
+      }
+      lastCheckedIndex[kind] = idx;
+    });
   });
   if (cfg.hasAddTo) {
     container.querySelectorAll('[data-addto]').forEach(btn => btn.onclick = () => {
