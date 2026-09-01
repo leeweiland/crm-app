@@ -199,6 +199,29 @@ export function readJsonArrayFiltered(file, predicate) {
   if (stat.size < LARGE_FILE_STREAM_THRESHOLD) {
     return readJson(file, []).filter(predicate);
   }
+  return streamJsonArrayFiltered(file, predicate);
+}
+
+// Same streaming filter as readJsonArrayFiltered's large-file path, but
+// unconditional -- no size gate. crm_contacts.json (~190MB, 176k+ records)
+// sits under the 300MB LARGE_FILE_STREAM_THRESHOLD, so readJsonArrayFiltered
+// still takes the plain readJson(file).filter() path for it -- one giant
+// materialize-the-whole-array-then-filter, same cost whether the caller
+// only wants a name search or a single-page slice. Confirmed live: this
+// file is read (and often written) from 40+ call sites across the app --
+// every SMS in/out, every automation/workflow step, every form submit,
+// every import batch -- so its mtime rarely holds still long enough for
+// readJson's own cache to help, and every cache miss is a 1-3+ SYNCHRONOUS
+// second that blocks the entire single-threaded server, not just the one
+// request. Parsing element-by-element (small ~1-2KB slices) instead of one
+// ~190MB string measurably avoids that same wall-clock hit in the other
+// spots this pattern's already been applied. Use this directly (bypassing
+// readJsonArrayFiltered's size check) for any read against a file known to
+// be this hot, regardless of its current byte size relative to the
+// general-purpose threshold.
+export function streamJsonArrayFiltered(file, predicate) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) return [];
   const results = [];
   forEachJsonArrayElement(p, (buf, start, end) => {
     let obj;

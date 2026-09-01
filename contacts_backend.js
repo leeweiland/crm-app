@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin, streamJsonArrayFiltered } from "./auth_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -116,30 +116,40 @@ export async function handleContactsRequest(req, res, url) {
 
   // ── Contacts ─────────────────────────────────────────────────────────
   if (p === "/api/contacts" && req.method === "GET") {
-    const contacts = readJson(CONTACTS_FILE, []);
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
     const status = url.searchParams.get("status");
     const tag = url.searchParams.get("tag");
     const listId = url.searchParams.get("listId");
     const type = url.searchParams.get("type");
     const filterParam = url.searchParams.get("filter");
-    let filtered = contacts;
-    if (q) filtered = filtered.filter(c =>
-      `${c.first} ${c.last}`.toLowerCase().includes(q) ||
-      (c.email || "").toLowerCase().includes(q) ||
-      (c.accountName || "").toLowerCase().includes(q)
-    );
-    if (status) filtered = filtered.filter(c => c.status === status);
-    if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
-    if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
-    if (type) filtered = filtered.filter(c => c.type === type);
-    // Advanced multi-condition filter (same {all:[...]}/{any:[...]} shape
-    // segments save) -- lets the Contacts filter builder preview results
-    // live before a user commits to saving it as a segment.
+    let advancedFilter = null;
     if (filterParam) {
-      try { const filter = JSON.parse(filterParam); filtered = filtered.filter(c => matchesSegment(c, filter)); }
+      try { advancedFilter = JSON.parse(filterParam); }
       catch { return sendJson(res, 400, { error: "filter must be valid JSON" }); }
     }
+    // One combined predicate, applied while STREAMING the file (see
+    // streamJsonArrayFiltered) instead of readJson(CONTACTS_FILE) + several
+    // sequential .filter() passes -- crm_contacts.json is ~190MB/176k+
+    // records, read (and often written) from 40+ places across the app, so
+    // its mtime rarely holds still long enough for readJson's own cache to
+    // help; a plain full materialize on every Contacts page load/search/
+    // sort was the real cost behind "the whole app freezes for a few
+    // seconds," not just this page -- Node blocks on that parse for
+    // everyone, not just this request.
+    function matchesAll(c) {
+      if (q && !(
+        `${c.first} ${c.last}`.toLowerCase().includes(q) ||
+        (c.email || "").toLowerCase().includes(q) ||
+        (c.accountName || "").toLowerCase().includes(q)
+      )) return false;
+      if (status && c.status !== status) return false;
+      if (tag && !c.tags.includes(tag)) return false;
+      if (listId && !c.listIds.includes(listId)) return false;
+      if (type && c.type !== type) return false;
+      if (advancedFilter && !matchesSegment(c, advancedFilter)) return false;
+      return true;
+    }
+    let filtered = streamJsonArrayFiltered(CONTACTS_FILE, matchesAll);
     const total = filtered.length;
     // Sort/paginate are both opt-in via query params -- other callers
     // (inbox.html, workflow-detail.html, reporting.html) fetch this same

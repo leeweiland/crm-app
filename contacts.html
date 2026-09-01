@@ -719,11 +719,11 @@ const DEFAULT_VISIBLE_COLUMNS = ['first', 'last', 'email', 'phone', 'status', 'o
 // Alexis, and Josh each see their own layout regardless of which device
 // they're on, instead of it being tied to one browser.
 let visibleColumns = DEFAULT_VISIBLE_COLUMNS, columnOrder = null;
-async function loadColumnPreferences() {
+function loadColumnPreferences() {
+  // window.crmMe (crm-nav.js) already fetched /api/auth/me as part of
+  // crmNavReady -- reusing it here instead of a second identical fetch.
   try {
-    const r = await fetch('/api/auth/me');
-    if (!r.ok) return;
-    const prefs = (await r.json()).user?.preferences?.contactsColumns;
+    const prefs = window.crmMe?.preferences?.contactsColumns;
     if (prefs?.visible) visibleColumns = prefs.visible;
     if (prefs?.order) columnOrder = prefs.order;
   } catch {}
@@ -1094,14 +1094,17 @@ wireInlineEditTable(document.getElementById('contactsBody'), {
   // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
   // crmTeamUsers -- those are only guaranteed populated after this resolves.
   await window.crmNavReady;
-  await loadColumnPreferences();
-  await loadStatuses();
-  await loadCustomFields();
+  // These 4 don't depend on each other -- were previously 4 separate
+  // sequential round-trips (each waiting on the last) before the actual
+  // contacts table could even start loading. One parallel batch instead.
+  loadColumnPreferences();
+  await Promise.all([loadStatuses(), loadCustomFields(), loadTags(), loadLists()]);
   renderColumnsPanel();
-  await Promise.all([loadTags(), loadLists()]);
   window.ConditionRowBuilder.init({ statuses: allStatuses, tags: allTags, lists: allLists, customFields: allCustomFields });
-  await loadSegments();
-  await loadContacts();
+  // Segments' rendering describes each one's filter via ConditionRowBuilder
+  // (needs the init() call above already done) but doesn't depend on
+  // contacts loading or vice versa -- runs alongside it instead of after.
+  await Promise.all([loadSegments(), loadContacts()]);
   loadImportStatus();
   loadDuplicates();
 })();
