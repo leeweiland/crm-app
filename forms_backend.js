@@ -8,6 +8,7 @@ import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
+import { clientIp, lookupIpLocation } from "./tracking_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -116,14 +117,56 @@ function newForm(name) {
 function publicForm(form) {
   // Strips internal routing config (defaultStatus/addTagIds/addListIds) —
   // the public renderer only needs what it displays and submits against.
+  // aiScreenPrompt is replaced with a bare boolean -- the client needs to
+  // know a field is AI-screened (to call the ai-screen endpoint after it's
+  // answered) but never the actual disqualification criteria, or a visitor
+  // could read it straight out of the page source and word their answer to
+  // dodge it. blockedCountries is dropped from settings the same way, for
+  // the same reason (see the geo-check endpoint below).
   return {
-    id: form.id, name: form.name, fields: form.fields, theme: form.theme,
+    id: form.id, name: form.name, theme: form.theme,
+    fields: form.fields.map(f => {
+      if (!f.aiScreenPrompt) return f;
+      const { aiScreenPrompt, ...rest } = f;
+      return { ...rest, hasAiScreen: true };
+    }),
     settings: {
       submitButtonText: form.settings.submitButtonText,
       confirmationMessage: form.settings.confirmationMessage,
       redirectUrl: form.settings.redirectUrl,
     },
   };
+}
+
+// ── Same raw-fetch pattern ai_agents_backend.js's generateAgentReply uses
+// for Claude -- duplicated rather than imported (separate concerns, and
+// this only ever needs a single non-streaming yes/no classification, not
+// that function's full conversational-reply shape). ──────────────────────
+async function askClaudeYesNo(systemPrompt, userText) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-5", max_tokens: 10,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userText }],
+    }),
+  });
+  if (!r.ok) throw new Error(`Anthropic error ${r.status}: ${await r.text()}`);
+  const d = await r.json();
+  const textBlock = (d.content || []).find(b => b.type === "text");
+  return String(textBlock?.text || "").trim().toUpperCase().startsWith("PASS");
+}
+
+// Same country name ip-api.com returns (see tracking_backend.js's
+// lookupIpLocation) -- case-insensitive compare so "india" in the admin's
+// list still matches "India" from the lookup.
+async function isCountryBlocked(req, blockedCountries) {
+  if (!Array.isArray(blockedCountries) || !blockedCountries.length) return false;
+  const location = await lookupIpLocation(clientIp(req));
+  if (!location?.country) return false;
+  const blockedLower = blockedCountries.map(c => String(c).trim().toLowerCase()).filter(Boolean);
+  return blockedLower.includes(location.country.toLowerCase());
 }
 
 function validateAnswers(fields, answers) {
@@ -214,11 +257,55 @@ export async function handleFormsRequest(req, res, url) {
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
     return sendJson(res, 200, { form: publicForm(form) });
   }
+  // Geo-screen: checked once on load (see public-form.html's init) so a
+  // blocked visitor sees "not available" up front instead of filling out
+  // the whole form first. Never echoes back the actual detected country or
+  // the admin's blocked-countries list -- just pass/fail, same reasoning
+  // as ai-screen below not echoing the disqualification criteria.
+  const geoCheckMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/geo-check$/);
+  if (geoCheckMatch && req.method === "GET") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === geoCheckMatch[1]);
+    if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    const blocked = await isCountryBlocked(req, form.settings.blockedCountries).catch(() => false);
+    return sendJson(res, 200, { blocked });
+  }
+
+  // AI screen: re-reads the field's REAL configured prompt server-side by
+  // fieldId -- a client-supplied prompt is never trusted, or any visitor
+  // could point this at an arbitrary Anthropic call on the business's own
+  // API key/dime.
+  const aiScreenMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/ai-screen$/);
+  if (aiScreenMatch && req.method === "POST") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === aiScreenMatch[1]);
+    if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    const { fieldId, answer } = await readJsonBody(req);
+    const field = form.fields.find(f => f.id === fieldId);
+    if (!field?.aiScreenPrompt) return sendJson(res, 200, { pass: true }); // screening was turned off/removed since the page loaded -- fail open, not closed
+    if (!process.env.ANTHROPIC_API_KEY) return sendJson(res, 200, { pass: true }); // not configured -- same fail-open reasoning
+    try {
+      const pass = await askClaudeYesNo(
+        `You are screening one answer to a single form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${field.aiScreenPrompt}`,
+        `Respondent's answer to "${field.label || "this question"}": ${String(answer ?? "")}`
+      );
+      return sendJson(res, 200, { pass });
+    } catch {
+      return sendJson(res, 200, { pass: true }); // a failed/rate-limited call blocks nobody -- same fail-open reasoning as above
+    }
+  }
+
   const submitMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/submit$/);
   if (submitMatch && req.method === "POST") {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    // Defense in depth -- the client-side gate (geo-check on load) already
+    // keeps a blocked visitor from ever reaching Submit in the normal flow,
+    // but this is what actually stops a submission if that's bypassed.
+    if (await isCountryBlocked(req, form.settings.blockedCountries).catch(() => false)) {
+      return sendJson(res, 403, { error: "This form is not currently available in your region." });
+    }
     const { answers } = await readJsonBody(req);
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);

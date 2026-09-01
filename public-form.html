@@ -225,6 +225,29 @@ function renderField(f) {
   return `<div class="pf-field">${label}<input class="pra-input" type="${inputType}" data-field="${f.id}" placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(val || '')}"/><div class="pf-error" id="err-${f.id}"></div></div>`;
 }
 
+// ── AI screening -- an alternative to hand-building exact-match hide_next
+// rules for every disqualifying answer. A field with hasAiScreen gets its
+// answer checked against the admin's own (server-side-only) criteria a
+// moment after it settles; a FAIL hides Next/Submit the same way hide_next
+// does. Debounced per field so a still-typing text answer doesn't fire a
+// Claude call on every keystroke. Fails OPEN (pass:true) on any network/
+// server hiccup -- a real visitor should never get stuck over an outage.
+let aiScreenResults = {}, aiScreenTimers = {};
+async function runAiScreen(fieldId) {
+  const val = answers[fieldId];
+  if (val === undefined || val === '' || (Array.isArray(val) && !val.length)) { delete aiScreenResults[fieldId]; updateNextVisibility(); return; }
+  aiScreenResults[fieldId] = 'pending';
+  updateNextVisibility();
+  try {
+    const r = await fetch(`/api/public/forms/${formId}/ai-screen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fieldId, answer: val }) });
+    const d = await r.json();
+    aiScreenResults[fieldId] = r.ok ? !!d.pass : true;
+  } catch {
+    aiScreenResults[fieldId] = true;
+  }
+  updateNextVisibility();
+}
+
 function bindStepInputs() {
   const dataFieldEls = document.querySelectorAll('[data-field]');
   // A single multiple-choice question's options all share the SAME
@@ -234,6 +257,7 @@ function bindStepInputs() {
   const singleQuestionStep = new Set(Array.from(dataFieldEls).map(el => el.dataset.field)).size === 1;
   dataFieldEls.forEach(el => {
     const id = el.dataset.field;
+    const field = steps[stepIndex].find(f => f.id === id);
     const handler = () => {
       if (el.type === 'checkbox') {
         const checked = document.querySelectorAll(`[data-field="${id}"]:checked`);
@@ -244,6 +268,10 @@ function bindStepInputs() {
         answers[id] = el.value;
       }
       updateNextVisibility();
+      if (field?.hasAiScreen) {
+        clearTimeout(aiScreenTimers[id]);
+        aiScreenTimers[id] = setTimeout(() => runAiScreen(id), 800);
+      }
       // A single-choice answer (radio or dropdown) on a step with nothing
       // else to answer advances right away instead of making the visitor
       // find and click Next themselves -- checkboxes (multi-pick) and
@@ -252,7 +280,7 @@ function bindStepInputs() {
       // pfNext's own click handler (not a separate path), so every existing
       // check -- redirect rules, hide_next, validation, submit-on-last-step
       // -- still applies exactly as a manual click would.
-      if (singleQuestionStep && (el.type === 'radio' || el.tagName === 'SELECT')) {
+      if (singleQuestionStep && (el.type === 'radio' || el.tagName === 'SELECT') && !field?.hasAiScreen) {
         setTimeout(() => document.getElementById('pfNext')?.click(), 300);
       }
     };
@@ -285,9 +313,16 @@ function matchingRule(fields, action) {
 function updateNextVisibility() {
   const btn = document.getElementById('pfNext');
   if (!btn) return;
-  const hidden = !!matchingRule(steps[stepIndex], 'hide_next');
+  const fields = steps[stepIndex];
+  const hiddenByRule = !!matchingRule(fields, 'hide_next');
+  const aiPending = fields.some(f => f.hasAiScreen && aiScreenResults[f.id] === 'pending');
+  const aiFailed = fields.some(f => f.hasAiScreen && aiScreenResults[f.id] === false);
+  const hidden = hiddenByRule || aiFailed;
   btn.style.display = hidden ? 'none' : '';
-  document.getElementById('pfHiddenMsg').style.display = hidden ? 'block' : 'none';
+  btn.disabled = aiPending;
+  const msgEl = document.getElementById('pfHiddenMsg');
+  msgEl.textContent = aiPending ? 'Checking your answer…' : 'Complete this step to continue.';
+  msgEl.style.display = (hidden || aiPending) ? 'block' : 'none';
 }
 
 function validateStep(fields) {
@@ -419,6 +454,14 @@ async function submit() {
   form = (await r.json()).form;
   document.title = form.name;
   applyTheme(form.theme);
+  // Checked before the form ever renders -- a blocked visitor sees "not
+  // available" up front instead of filling out the whole thing first, only
+  // to be rejected at Submit (the server enforces this too, regardless).
+  const geoRes = await fetch(`/api/public/forms/${formId}/geo-check`).catch(() => null);
+  if (geoRes?.ok && (await geoRes.json()).blocked) {
+    document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form is not currently available in your region.</div>';
+    return;
+  }
   steps = buildSteps(form.fields);
   if (!steps.length) { document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form has no fields yet.</div>'; return; }
   renderStep();

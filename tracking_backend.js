@@ -36,7 +36,7 @@ const TRACK_SNIPPET = `(function(){
 // arrives via x-forwarded-for (first entry in the comma-separated chain,
 // since a proxy may append its own), not the raw socket address, which
 // would just be the proxy's own IP.
-function clientIp(req) {
+export function clientIp(req) {
   const fwd = req.headers["x-forwarded-for"];
   if (fwd) return String(fwd).split(",")[0].trim();
   return req.socket?.remoteAddress || "";
@@ -50,7 +50,7 @@ function clientIp(req) {
 // configure at all, so it either works or a lookup silently no-ops.
 // Cached per IP on disk since the same visitor's IP repeats across every
 // pageview in a session.
-async function lookupIpLocation(ip) {
+export async function lookupIpLocation(ip) {
   if (!ip || ip === "127.0.0.1" || ip === "::1") return null;
   const cache = readJson(IP_LOCATION_CACHE_FILE, {});
   if (ip in cache) return cache[ip];

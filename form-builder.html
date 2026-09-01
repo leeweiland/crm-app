@@ -230,6 +230,11 @@
               <div class="field"><label class="pra-label">Redirect URL (optional)</label><input class="pra-input" id="setRedirectUrl" placeholder="https://pacificrimathletics.com/thank-you"/></div>
               <div class="field"><label class="pra-label">Default status for new contacts</label><select class="pra-select" id="setDefaultStatus"><option value="">(none)</option></select></div>
               <div class="field">
+                <label class="pra-label">Block respondents from these countries</label>
+                <input class="pra-input" id="setBlockedCountries" placeholder="India, Pakistan, Nigeria"/>
+                <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Comma-separated country names. Checked by the visitor's IP before the form even loads -- they never see it, it's just not available.</div>
+              </div>
+              <div class="field">
                 <label class="pra-label">Add tags on submit</label>
                 <select class="pra-select picker-add-select" id="setTagAdd"></select>
                 <div class="chip-multiselect picker-chips" id="setTagsChips"></div>
@@ -656,13 +661,18 @@ function renderPanel(f, i) {
       ${showPlaceholder ? `<div class="field"><label class="pra-label">Placeholder</label><input class="pra-input" data-placeholder-idx="${i}" value="${escapeHtml(f.placeholder || '')}"/></div>` : ''}
       <div class="field" ${canMapToCustomField(f) ? '' : 'style="margin-bottom:0"'}><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
       ${canMapToCustomField(f) ? `
-        <div class="field" style="margin-bottom:0">
+        <div class="field">
           <label class="pra-label">Maps to contact field</label>
           <select class="pra-select" data-mapfield-idx="${i}">
             <option value="">Auto (new field from question text)</option>
             <option value="__new__">+ Create new field…</option>
             ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
           </select>
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label class="pra-label">AI disqualify if… (optional)</label>
+          <textarea class="pra-input" rows="2" data-aiscreen-idx="${i}" placeholder="e.g. the answer indicates unemployment, financial hardship, a disability, or contains profanity">${escapeHtml(f.aiScreenPrompt || '')}</textarea>
+          <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Claude checks the answer against this after they respond, and hides Next/Submit if it matches -- instead of building exact-match rules for every disqualifying answer.</div>
         </div>
       ` : ''}
     </div>`;
@@ -886,6 +896,10 @@ function bindCanvas(canvas) {
       return;
     }
     form.fields[idx].mapToCustomFieldId = e.target.value;
+    saveDebounced();
+  }));
+  canvas.querySelectorAll('[data-aiscreen-idx]').forEach(el => el.addEventListener('input', e => {
+    form.fields[+e.target.dataset.aiscreenIdx].aiScreenPrompt = e.target.value;
     saveDebounced();
   }));
 
@@ -1307,6 +1321,7 @@ function renderSettings() {
   document.getElementById('setSubmitText').value = form.settings.submitButtonText || '';
   document.getElementById('setConfirmMsg').value = form.settings.confirmationMessage || '';
   document.getElementById('setRedirectUrl').value = form.settings.redirectUrl || '';
+  document.getElementById('setBlockedCountries').value = (form.settings.blockedCountries || []).join(', ');
   const statusSel = document.getElementById('setDefaultStatus');
   statusSel.innerHTML = '<option value="">(none)</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
   statusSel.value = form.settings.defaultStatus || '';
@@ -1314,6 +1329,10 @@ function renderSettings() {
   renderPicker('tag', allTags, form.settings.addTagIds, 'setTagAdd', 'setTagsChips', ids => { form.settings.addTagIds = ids; saveDebounced(); renderSettings(); });
   renderPicker('list', allLists, form.settings.addListIds, 'setListAdd', 'setListsChips', ids => { form.settings.addListIds = ids; saveDebounced(); renderSettings(); });
 }
+document.getElementById('setBlockedCountries').addEventListener('input', e => {
+  form.settings.blockedCountries = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+  saveDebounced();
+});
 ['setSubmitText', 'setConfirmMsg', 'setRedirectUrl'].forEach(id => {
   document.getElementById(id).addEventListener('input', e => {
     const key = { setSubmitText: 'submitButtonText', setConfirmMsg: 'confirmationMessage', setRedirectUrl: 'redirectUrl' }[id];
