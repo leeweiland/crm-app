@@ -555,30 +555,36 @@ function calWeekRowHtml(cal, day, idx) {
   `;
 }
 
+const CAL_QUESTION_TYPE_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown' };
+const CAL_AUTO_MAPPED_TYPES = ['first_name', 'last_name', 'email', 'phone'];
+
 function questionCardHtmlFB(q, qi, idx) {
   // Reuses the same allCustomFields list the regular per-question mapping
   // dropdown (renderPanel's default branch) already loads once at init --
   // one shared registry, kept in sync from either place a field gets created.
+  const isOnlyEmail = q.type === 'email' && calFieldData[idx].eventType.questions.filter(x => x.type === 'email').length <= 1;
   return `
     <div class="q-card">
       <div class="field"><input class="pra-input" data-q-label="${idx}:${qi}" value="${escapeHtml(q.label)}" placeholder="Question text"/></div>
-      <div class="field"><select class="pra-select" data-q-type="${idx}:${qi}">
-        ${Object.entries({ short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown' }).map(([v, l]) => `<option value="${v}" ${q.type === v ? 'selected' : ''}>${l}</option>`).join('')}
+      <div class="field"><select class="pra-select" data-q-type="${idx}:${qi}" ${isOnlyEmail ? 'disabled title="An event type needs one Email question"' : ''}>
+        ${Object.entries(CAL_QUESTION_TYPE_LABELS).map(([v, l]) => `<option value="${v}" ${q.type === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></div>
       ${q.type === 'dropdown' ? `<div class="field"><textarea class="pra-input" data-q-options="${idx}:${qi}" rows="3" placeholder="One option per line">${escapeHtml((q.options || []).join('\n'))}</textarea></div>` : ''}
       <div class="q-card-row">
-        <div class="toggle-switch ${q.required ? 'on' : ''}" data-q-required="${idx}:${qi}"></div>
+        <div class="toggle-switch ${q.required || q.type === 'email' ? 'on' : ''}" data-q-required="${idx}:${qi}" ${q.type === 'email' ? 'title="Email is always required"' : ''}></div>
         <label>Required</label>
       </div>
-      <div class="field">
-        <label class="pra-label" style="font-size:.7rem">Maps to contact field</label>
-        <select class="pra-select" data-q-map="${idx}:${qi}">
-          <option value="">Auto (new field from question text)</option>
-          <option value="__new__">+ Create new field…</option>
-          ${allCustomFields.map(cf => `<option value="${cf.id}" ${q.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
-        </select>
-      </div>
-      <div style="text-align:right;margin-top:4px"><button class="q-card-del" data-q-del="${idx}:${qi}" title="Delete question">&times; Delete</button></div>
+      ${!CAL_AUTO_MAPPED_TYPES.includes(q.type) ? `
+        <div class="field">
+          <label class="pra-label" style="font-size:.7rem">Maps to contact field</label>
+          <select class="pra-select" data-q-map="${idx}:${qi}">
+            <option value="">Auto (new field from question text)</option>
+            <option value="__new__">+ Create new field…</option>
+            ${allCustomFields.map(cf => `<option value="${cf.id}" ${q.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
+          </select>
+        </div>
+      ` : ''}
+      <div style="text-align:right;margin-top:4px"><button class="q-card-del" data-q-del="${idx}:${qi}" title="${isOnlyEmail ? "An event type needs one Email question" : "Delete question"}" ${isOnlyEmail ? 'disabled' : ''}>&times; Delete</button></div>
     </div>
   `;
 }
@@ -630,8 +636,7 @@ function renderCalendarPanel(f, i) {
     <div class="field" style="margin-bottom:0"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" data-cal-redirect="${i}" value="${escapeHtml(et.branding?.redirectUrl || '')}" placeholder="Leave blank for the built-in confirmation"/></div>
 
     <div class="fb-side-title">Questions</div>
-    <div class="pra-muted" style="font-size:.72rem;margin-bottom:8px;line-height:1.4">Extra questions asked on the booking form, beyond Name/Email/Phone.</div>
-    <div data-cal-questions="${i}">${et.questions.map((q, qi) => questionCardHtmlFB(q, qi, i)).join('') || '<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom questions yet.</div>'}</div>
+    <div data-cal-questions="${i}">${et.questions.map((q, qi) => questionCardHtmlFB(q, qi, i)).join('')}</div>
     <button class="pra-btn pra-btn-ghost pra-btn-sm" data-cal-addq="${i}">+ Add Question</button>
   </div>`;
 }
@@ -1040,10 +1045,12 @@ function bindCanvas(canvas) {
   }));
   canvas.querySelectorAll('[data-q-required]').forEach(el => el.addEventListener('click', () => {
     const [idx, qi] = parseIdxPair(el.dataset.qRequired);
+    if (calFieldData[idx].eventType.questions[qi].type === 'email') return; // always required, not toggleable
     calFieldData[idx].eventType.questions[qi].required = el.classList.toggle('on');
     saveEventTypeDebounced(idx);
   }));
   canvas.querySelectorAll('[data-q-del]').forEach(el => el.addEventListener('click', () => {
+    if (el.disabled) return;
     const [idx, qi] = parseIdxPair(el.dataset.qDel);
     calFieldData[idx].eventType.questions.splice(qi, 1);
     saveEventTypeDebounced(idx);

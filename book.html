@@ -299,19 +299,45 @@ function renderPicker() {
   if (mobileBackBtn) mobileBackBtn.onclick = () => { selectedDate = null; renderPicker(); };
 }
 
-// Renders one of the event type's own custom questions (set in the Design
-// panel's Questions section, each optionally mapped to a real contact
-// custom field) -- separate from the fixed Name/Email/Phone/Notes fields,
-// which every event type always asks.
+// The booking form's own questions -- Name/Email/Phone/Notes are NOT fixed
+// fields anymore, they're just ordinary entries in eventType.questions
+// (types "first_name"/"last_name"/"email"/"phone") the same as any custom
+// one, all configured from the Design panel's Questions section. Whichever
+// ones the form step already collected (formEmbed handoff) get hidden and
+// silently prefilled here instead of asked a second time.
+const QUESTION_DEFAULT_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Question', long_text: 'Question', dropdown: 'Question' };
+function questionPrefill(q) {
+  if (q.type === 'first_name' && prefillName) return prefillName;
+  if (q.type === 'email' && prefillEmail) return prefillEmail;
+  if (q.type === 'phone' && prefillPhone) return prefillPhone;
+  return '';
+}
+function questionHidden(q) {
+  return (q.type === 'first_name' || q.type === 'last_name') && !!prefillName || (q.type === 'email' && !!prefillEmail) || (q.type === 'phone' && !!prefillPhone);
+}
 function questionFieldHtml(q) {
-  const suffix = q.required ? '' : ' (optional)';
-  const label = `<label class="bk-label">${escapeHtml(q.label || 'Question')}${suffix}</label>`;
-  if (q.type === 'long_text') return `<div class="bk-field">${label}<textarea class="bk-textarea" data-q="${q.id}" rows="2" placeholder="${escapeHtml(q.placeholder || '')}"></textarea></div>`;
+  const suffix = q.required || q.type === 'email' ? '' : ' (optional)';
+  const label = `<label class="bk-label">${escapeHtml(q.label || QUESTION_DEFAULT_LABELS[q.type] || 'Question')}${suffix}</label>`;
+  const style = questionHidden(q) ? ' style="display:none"' : '';
+  const prefill = escapeHtml(questionPrefill(q));
+  if (q.type === 'long_text') return `<div class="bk-field"${style}>${label}<textarea class="bk-textarea" data-q="${q.id}" rows="2" placeholder="${escapeHtml(q.placeholder || '')}">${prefill}</textarea></div>`;
   if (q.type === 'dropdown') {
     const opts = (q.options || []).map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
-    return `<div class="bk-field">${label}<select class="bk-input" data-q="${q.id}"><option value="">Select…</option>${opts}</select></div>`;
+    return `<div class="bk-field"${style}>${label}<select class="bk-input" data-q="${q.id}"><option value="">Select…</option>${opts}</select></div>`;
   }
-  return `<div class="bk-field">${label}<input class="bk-input" data-q="${q.id}" placeholder="${escapeHtml(q.placeholder || '')}"/></div>`;
+  const inputType = q.type === 'email' ? 'email' : 'text';
+  return `<div class="bk-field"${style}>${label}<input class="bk-input" type="${inputType}" data-q="${q.id}" value="${prefill}" placeholder="${escapeHtml(q.placeholder || '')}"/></div>`;
+}
+// Derives the identity fields from whatever's actually been answered --
+// same idea as scheduling_backend.js's extractBookingIdentity, so client
+// and server agree regardless of which questions this event type has (or
+// doesn't have -- e.g. no last_name question at all).
+function deriveIdentity(answers) {
+  const firstQ = (eventType.questions || []).find(q => q.type === 'first_name');
+  const lastQ = (eventType.questions || []).find(q => q.type === 'last_name');
+  const emailQ = (eventType.questions || []).find(q => q.type === 'email');
+  const name = [firstQ, lastQ].map(q => q && answers[q.id]).filter(Boolean).join(' ');
+  return { name, email: emailQ ? (answers[emailQ.id] || '') : '' };
 }
 
 function renderForm() {
@@ -322,11 +348,7 @@ function renderForm() {
       <div class="bk-info">${infoPanelHtml()}<div class="bk-meta-row" style="margin-top:14px">🕐 ${when}</div></div>
       <div class="bk-body">
         <a class="back-link" id="backToPicker">&larr; Back</a>
-        <div class="bk-field" ${prefillName ? 'style="display:none"' : ''}><label class="bk-label">Name</label><input class="bk-input" id="bkName" value="${escapeHtml(prefillName)}"/></div>
-        <div class="bk-field" ${prefillEmail ? 'style="display:none"' : ''}><label class="bk-label">Email</label><input class="bk-input" type="email" id="bkEmail" value="${escapeHtml(prefillEmail)}"/></div>
-        <div class="bk-field" ${prefillPhone ? 'style="display:none"' : ''}><label class="bk-label">Phone (optional)</label><input class="bk-input" id="bkPhone" value="${escapeHtml(prefillPhone)}"/></div>
         ${questionsHtml}
-        <div class="bk-field"><label class="bk-label">Anything we should know? (optional)</label><textarea class="bk-textarea" id="bkNotes" rows="2"></textarea></div>
         <button class="bk-btn" id="bkSubmit" ${formEmbed ? 'style="display:none"' : ''}>Confirm Booking</button>
         <div class="bk-error" id="bkError"></div>
       </div>
@@ -344,21 +366,22 @@ async function submitBooking() {
   // the picker) would otherwise throw here and never reply, leaving the
   // parent's postMessage promise hanging forever.
   if (!selectedSlot) { if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: 'Please pick a time first.' }, location.origin); return; }
-  const name = document.getElementById('bkName').value.trim();
-  const email = document.getElementById('bkEmail').value.trim();
-  const phone = document.getElementById('bkPhone').value.trim();
-  // The form's other answers ride along silently here (not shown in the
-  // visible textarea, which stays free for the visitor's own notes) --
-  // both end up in the booking record and, from there, the actual Google
-  // Calendar event description.
-  const notes = [prefillFormAnswers, document.getElementById('bkNotes').value.trim()].filter(Boolean).join('\n\n');
   const answers = {};
   (eventType.questions || []).forEach(q => {
     const el = document.querySelector(`[data-q="${q.id}"]`);
     if (el) answers[q.id] = el.value.trim();
   });
+  // The outer form's other answers (from an earlier step) ride along
+  // silently in whatever long-answer question exists, same as before --
+  // both end up in the booking record and, from there, the actual Google
+  // Calendar event description.
+  if (prefillFormAnswers) {
+    const notesQ = (eventType.questions || []).find(q => q.type === 'long_text');
+    if (notesQ) answers[notesQ.id] = [prefillFormAnswers, answers[notesQ.id]].filter(Boolean).join('\n\n');
+  }
+  const { name, email } = deriveIdentity(answers);
   const errEl = document.getElementById('bkError');
-  const missingQuestion = (eventType.questions || []).find(q => q.required && !answers[q.id]);
+  const missingQuestion = (eventType.questions || []).find(q => (q.required || q.type === 'email') && !answers[q.id]);
   if (!name || !email || missingQuestion) {
     errEl.textContent = missingQuestion ? `"${missingQuestion.label || 'Question'}" is required.` : 'Name and email are required.';
     if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
@@ -368,7 +391,7 @@ async function submitBooking() {
   btn.disabled = true; btn.textContent = 'Booking…';
   const r = await fetch('/api/scheduling/bookings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, startAt: selectedSlot, name, email, phone, notes, timezone: selectedTz, answers }),
+    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers }),
   });
   const d = await r.json();
   if (!r.ok) {

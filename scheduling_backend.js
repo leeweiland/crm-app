@@ -155,6 +155,19 @@ function getEventTypes() {
       delete et.bufferMinutes;
       changed = true;
     }
+    // Event types from before the booking form's fields became fully
+    // editable had Name/Email/Phone/Notes hardcoded in book.html itself --
+    // any "questions" they'd already added (from the brief window where
+    // that meant "extras beyond the fixed fields") were custom ones only.
+    // Prepending the same four core fields these always effectively had
+    // keeps their live booking page looking identical post-migration.
+    if (!(et.questions || []).some(q => q.type === "email")) {
+      const seed = defaultQuestions();
+      const core = seed.slice(0, 4); // first_name/last_name/email/phone
+      const notes = (et.questions || []).some(q => q.type === "long_text") ? [] : [seed[4]]; // "Anything we should know?"
+      et.questions = [...core, ...(et.questions || []), ...notes];
+      changed = true;
+    }
   }
   if (changed) writeJson(EVENT_TYPES_FILE, eventTypes);
   return eventTypes;
@@ -330,6 +343,35 @@ const DEFAULT_BRANDING = {
   redirectUrl: "",
 };
 
+// The booking form's whole question list -- NOT just extras beyond a fixed
+// Name/Email/Phone/Notes, those are now ordinary entries in this same list
+// (types "first_name"/"last_name"/"email"/"phone") so every one of them is
+// just as editable, reorderable, and removable as a custom question. Same
+// object shape as forms_backend.js's field objects (id/label/type/required/
+// placeholder/options/mapToCustomFieldId) and the same AUTO_MAPPED_TYPES
+// split form-builder.html uses: the four core types write straight to the
+// matching contact.first/last/email/phone property, never to customFields.
+const QUESTION_TYPES = ["first_name", "last_name", "email", "phone", "short_text", "long_text", "dropdown"];
+const CORE_QUESTION_TYPES = ["first_name", "last_name", "email", "phone"];
+const QUESTION_TYPE_LABELS = { first_name: "First name", last_name: "Last name", email: "Email", phone: "Phone", short_text: "Short answer", long_text: "Long answer", dropdown: "Dropdown" };
+function newQuestion(type, overrides) {
+  return { id: randomUUID(), type, label: QUESTION_TYPE_LABELS[type] || "", required: false, placeholder: "", options: [], mapToCustomFieldId: "", ...(overrides || {}) };
+}
+// Every event type needs exactly this shape to always have somewhere for a
+// name/email to land -- newEventType() seeds it fresh, and getEventTypes()
+// below prepends it onto any older event type that predates this (their
+// booking form used to hardcode these same four fields plus Notes, so this
+// keeps that same default layout, just now as real, editable rows).
+function defaultQuestions() {
+  return [
+    newQuestion("first_name", { required: true }),
+    newQuestion("last_name"),
+    newQuestion("email", { required: true }),
+    newQuestion("phone"),
+    newQuestion("long_text", { label: "Anything we should know?" }),
+  ];
+}
+
 function newEventType({ name, description, durationMinutes, location, branding, statusId, calendarId }) {
   const slugBase = String(name || "meeting").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting";
   // Defaults to the "BOOKED" status if one exists, same behavior as before
@@ -350,29 +392,53 @@ function newEventType({ name, description, durationMinutes, location, branding, 
     // availability (hours, buffers, rolling window) governs this event
     // type's slots. Defaults to the connected account's own calendar.
     calendarId: calendarId || "default",
-    // Custom questions asked on the booking form, beyond the fixed
-    // Name/Email/Phone/Notes fields -- same shape as forms_backend.js's
-    // field objects (id/label/type/required/placeholder/options/
-    // mapToCustomFieldId) so the same "maps to contact field" mapping
-    // concept and /api/custom-fields registry apply here too.
-    questions: [],
+    questions: defaultQuestions(),
     active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 }
 function publicEventType(et) {
   return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) }, questions: et.questions || [] };
 }
-const QUESTION_TYPES = ["short_text", "long_text", "dropdown"];
 function slugQuestion(q) {
   const base = String(q.label || q.type || q.id).toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return base || q.id;
 }
+// Pulls the booking's name/email/phone out of the dynamic question list --
+// same idea as forms_backend.js's upsertContactFromSubmission, which finds
+// `form.fields.find(f => f.type === 'email')` etc. rather than assuming
+// fixed field ids, since which questions exist (and in what order) is
+// entirely up to whoever configured this event type's Questions.
+function extractBookingIdentity(questions, answers) {
+  const firstQ = (questions || []).find(q => q.type === "first_name");
+  const lastQ = (questions || []).find(q => q.type === "last_name");
+  const emailQ = (questions || []).find(q => q.type === "email");
+  const phoneQ = (questions || []).find(q => q.type === "phone");
+  const first = firstQ ? String((answers || {})[firstQ.id] || "").trim() : "";
+  const last = lastQ ? String((answers || {})[lastQ.id] || "").trim() : "";
+  return {
+    name: [first, last].filter(Boolean).join(" "),
+    email: emailQ ? String((answers || {})[emailQ.id] || "").trim() : "",
+    phone: phoneQ ? String((answers || {})[phoneQ.id] || "").trim() : "",
+  };
+}
+// Everything that isn't the core identity fields -- custom questions plus
+// whatever long-answer "notes" field exists -- formatted as one block, used
+// for both the Google Calendar event description and the Inbox log entry,
+// and kept on the booking record as `notes` so sendBookingConfirmation's
+// existing "Notes:" block in the confirmation email needs no changes.
+function formatExtraAnswers(questions, answers) {
+  return (questions || [])
+    .filter(q => !CORE_QUESTION_TYPES.includes(q.type) && (answers || {})[q.id] !== undefined && (answers || {})[q.id] !== "")
+    .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n");
+}
 // Same rule as forms_backend.js's validateAnswers -- a required question
 // with no answer blocks the booking, checked server-side since the public
-// booking form is unauthenticated and easy to hit directly.
+// booking form is unauthenticated and easy to hit directly. Email is
+// structurally required regardless of its own `required` flag -- there's no
+// contact to create or confirmation to send without one.
 function validateQuestionAnswers(questions, answers) {
   for (const q of questions || []) {
-    if (!q.required) continue;
+    if (!q.required && q.type !== "email") continue;
     const val = (answers || {})[q.id];
     if (val === undefined || val === null || String(val).trim() === "") return `"${q.label || "Question"}" is required`;
   }
@@ -574,13 +640,16 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
-    const { slug, startAt, name, email, phone, notes, timezone, answers } = await readJsonBody(req);
+    const { slug, startAt, timezone, answers } = await readJsonBody(req);
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
-    if (!startAt || !name || !email) return sendJson(res, 400, { error: "startAt, name, and email are required" });
+    if (!startAt) return sendJson(res, 400, { error: "startAt is required" });
     const questionError = validateQuestionAnswers(et.questions, answers);
     if (questionError) return sendJson(res, 400, { error: questionError });
+    const { name, email, phone } = extractBookingIdentity(et.questions, answers);
+    const notes = formatExtraAnswers(et.questions, answers);
+    if (!name || !email) return sendJson(res, 400, { error: "Name and email are required" });
 
     // Race-safe recheck: confirm this exact slot is still open before booking it.
     const dateStr = ymd(new Date(startAt));
@@ -601,7 +670,7 @@ export async function handleSchedulingRequest(req, res, url) {
       try {
         const created = await createCalendarEvent({
           summary: `${et.name} — ${name}`,
-          description: `${notes || ""}\n\nBooked via CRM scheduling.`.trim(),
+          description: `${notes}\n\nBooked via CRM scheduling.`.trim(),
           startISO: start.toISOString(), durationMinutes: et.durationMinutes,
           attendees: [{ email, name }], timezone: timezone || calendar.availability.timezone,
           calendarId,
@@ -612,7 +681,7 @@ export async function handleSchedulingRequest(req, res, url) {
 
     const booking = {
       id: randomUUID(), eventTypeId: et.id, contactId: contact.id,
-      name, email: String(email).trim().toLowerCase(), phone: phone || "", notes: notes || "",
+      name, email: String(email).trim().toLowerCase(), phone: phone || "", notes,
       answers: answers || {},
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || calendar.availability.timezone,
@@ -626,18 +695,13 @@ export async function handleSchedulingRequest(req, res, url) {
 
     // Log the booking itself as an inbound Inbox activity, same as a form
     // submission -- "they booked a call" should be visible in the
-    // conversation thread, not just as a row in the Scheduling tab. Custom
-    // question answers ride along here too, same as notes.
+    // conversation thread, not just as a row in the Scheduling tab.
     const when = start.toLocaleString("en-US", { timeZone: booking.timezone, dateStyle: "full", timeStyle: "short" });
-    const answersText = (et.questions || [])
-      .filter(q => answers && answers[q.id] !== undefined && answers[q.id] !== "")
-      .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n");
-    const extra = [notes, answersText].filter(Boolean).join("\n\n");
     logMessage({
       channel: "booking", direction: "inbound", contactId: contact.id,
       sourceType: "booking", sourceId: booking.id,
-      subject: `Booked: ${et.name}`, body: `${when}${extra ? `\n\n${extra}` : ""}`,
-      bodyPreview: `${when}${extra ? ` — ${extra}` : ""}`.slice(0, 200),
+      subject: `Booked: ${et.name}`, body: `${when}${notes ? `\n\n${notes}` : ""}`,
+      bodyPreview: `${when}${notes ? ` — ${notes}` : ""}`.slice(0, 200),
       status: "received",
     });
 
