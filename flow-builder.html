@@ -576,7 +576,7 @@ function openStepConfigModal(step, isNew) {
         <div id="sheetColRows"></div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSheetColBtn" style="display:none;margin-top:6px">+ Add Column</button>
         <div class="pra-label" style="margin:14px 0 6px">Insert a field (click a column value first, then a chip)</div>
-        <div class="chip-multiselect" id="sheetFieldChips"><span class="pra-muted" style="font-size:.78rem">Loading…</span></div>
+        <div id="sheetFieldChips"><span class="pra-muted" style="font-size:.78rem">Loading…</span></div>
       </div>
     `;
 
@@ -711,16 +711,33 @@ function wireSheetColRow(el) {
 async function renderSheetFieldChips() {
   const chipsEl = document.getElementById('sheetFieldChips');
   if (!chipsEl) return;
-  const contactTokens = ['first', 'last', 'email', 'phone'];
+  const contactChips = [
+    { label: 'First Name', token: '{{first}}' },
+    { label: 'Last Name', token: '{{last}}' },
+    { label: 'Email', token: '{{email}}' },
+    { label: 'Phone', token: '{{phone}}' },
+    { label: 'Date/Time Captured', token: '{{timestamp}}' },
+  ];
   const samples = await fetchSamples(false);
   const payloadKeys = sampleKeys(samples);
   if (!chipsEl.isConnected) return; // modal may have been closed/reopened while this was in flight
-  const chips = [
-    { label: 'Date/Time Captured', token: '{{timestamp}}' },
-    ...contactTokens.map(t => ({ label: t, token: `{{${t}}}` })),
-    ...payloadKeys.map(k => ({ label: k, token: `{{payload.${k}}}` })),
-  ];
-  chipsEl.innerHTML = chips.map(c => `<span class="chip-option" data-token="${escapeHtml(c.token)}">${escapeHtml(c.label)}</span>`).join('') || '<span class="pra-muted" style="font-size:.78rem">No sample data yet — pull some from the trigger first.</span>';
+  const payloadChips = payloadKeys.map(k => ({ label: k, token: `{{payload.${k}}}` }));
+
+  // Two clearly separate, labeled groups instead of one flat list -- a flat
+  // list mixed "first"/"last"/"email" (matched CRM contact fields) with
+  // near-identical-looking "First Name"/"Last Name"/"Email" (raw webhook
+  // field names) and gave no way to tell which was which or why you'd pick
+  // one over the other.
+  const section = (title, hint, chips) => !chips.length ? '' : `
+    <div style="margin-bottom:10px">
+      <div class="pra-label" style="margin-bottom:4px" title="${escapeHtml(hint)}">${escapeHtml(title)}</div>
+      <div class="chip-multiselect">${chips.map(c => `<span class="chip-option" data-token="${escapeHtml(c.token)}">${escapeHtml(c.label)}</span>`).join('')}</div>
+    </div>`;
+  chipsEl.innerHTML = (
+    section('From this contact (recommended)', 'Pulled from the matched CRM contact — always reliable.', contactChips) +
+    section('From the raw webhook data', 'The exact field name as sent by the form — breaks if the sender ever renames it.', payloadChips)
+  ) || '<span class="pra-muted" style="font-size:.78rem">No sample data yet — pull some from the trigger first.</span>';
+
   chipsEl.querySelectorAll('[data-token]').forEach(chip => chip.onclick = () => {
     const target = lastFocusedSheetColInput || document.querySelector('#sheetColRows [data-sheet-col]');
     if (!target) return;

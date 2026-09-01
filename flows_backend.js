@@ -126,12 +126,23 @@ async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
 // execute", which would read differently if an earlier delay step pushed
 // this step minutes/hours/days past the real capture time.
 function resolveTemplate(str, { contact, payload, timestamp }) {
-  return String(str || "").replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path) => {
+  // [^{}]+ (not [\w.]+) -- a raw webhook field name is often a human label
+  // like "First Name" or "Work Email", spaces and all. The old \w-only
+  // pattern silently failed to match those at all, leaving the literal
+  // "{{payload.First Name}}" text sitting in the sheet cell instead of
+  // resolving (or even blanking) it.
+  return String(str || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, path) => {
+    if (path === "timestamp") return timestamp || "";
+    if (path.startsWith("payload.")) {
+      // Payload keys are always flat (the raw webhook body / form answers /
+      // booking fields) -- no further dot-splitting, so a field literally
+      // named e.g. "Company.Name" still matches as one key, not a nested lookup.
+      const val = payload?.[path.slice("payload.".length)];
+      return val === undefined || val === null ? "" : String(val);
+    }
     const parts = path.split(".");
-    if (parts[0] === "timestamp") return timestamp || "";
-    let obj;
-    if (parts[0] === "payload") { obj = payload; parts.shift(); }
-    else { obj = contact; if (parts[0] === "contact") parts.shift(); }
+    if (parts[0] === "contact") parts.shift();
+    let obj = contact;
     for (const p of parts) obj = obj == null ? undefined : obj[p];
     return obj === undefined || obj === null ? "" : String(obj);
   });
