@@ -89,6 +89,18 @@
     #chatView.thread-open .chat-sidebar { display: none; }
     #chatView:not(.thread-open) .chat-panel { display: none; }
     .chat-back-btn { display: inline-flex !important; }
+
+    /* The status/owner selects sat on the SAME line as the name, competing
+       for a much narrower row than desktop has -- status alone could run to
+       48ch+ for the longest status label ("FOLLOW UP (They have a Task /
+       Date set)"), which crushed the name down to 3-4 visible characters.
+       Wrapping them onto their own line under the name (rather than
+       fighting for space beside it) gives both the name AND the preview
+       line below it their full width back; the badges just take a bit more
+       vertical space instead. */
+    .convo-top { flex-wrap: wrap; row-gap: 4px; }
+    .convo-name { flex: 1 1 100%; }
+    .convo-status-select, .convo-owner-field { max-width: 130px; }
   }
   .chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
 
@@ -573,6 +585,14 @@ async function loadMoreConversations() {
 // (avatarStyle/statusSelectWidthRule), just compact enough to sit in the
 // sidebar row next to the name -- lets a status get changed without
 // opening the conversation.
+// Same badge markup as the contact overlay's renderOverlayOptOutBadges /
+// contact-detail.html's equivalent -- the chat panel didn't have this at
+// all before, unlike those other two contact views.
+function optOutBadgesHtml(contact) {
+  if (!contact) return '';
+  const badge = (label) => `<span class="pra-badge" style="background:#3a1414;color:#ff6b6b;border:1px solid #ff6b6b55">${label}</span>`;
+  return (contact.emailOptOut ? badge('EMAIL OPT-OUT') : '') + (contact.smsOptOut ? badge('SMS OPT-OUT') : '');
+}
 function convoStatusFieldHtml(c) {
   const status = c.contact?.status || '';
   return `<select class="pra-select convo-status-select" data-status-contact="${c.contactId}" style="${avatarStyle(status)};${statusSelectWidthRule(status)}" title="Change status">
@@ -584,7 +604,13 @@ function convoRowHtml(c) {
   const hasUnread = c.unreadCount > 0;
   const showTicks = !hasUnread && c.lastDirection === 'outbound' && c.lastStatus;
   const previewTicks = showTicks ? readReceiptTicksHtml(c.lastStatus, c.lastOpened) : '';
-  const previewText = escapeHtml((c.lastPreview || '').replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
+  // Historical Close-import sequence-subscription rows carry their raw
+  // Close status baked into the subject text itself (see import_backend.js's
+  // closeSequenceName/`SMS/Email Sequence: ${name} (${s.status})`) --
+  // stripped here rather than at the data, so it's fixed for every already-
+  // imported row immediately, not just future ones.
+  const previewRaw = (c.lastPreview || '').replace(/\s*\(active\)\s*$/i, '');
+  const previewText = escapeHtml(previewRaw.replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
   return `
     <div class="convo-row${selectedConvo?.key === c.key ? ' selected' : ''}${c.pinned ? ' pinned' : ''}" data-convo="${c.key}">
       <div class="pra-avatar convo-avatar${hasUnread ? ' has-unread' : ''}" style="${avatarStyle(c.contact?.status, c.contact?.email)}">${initials(c.displayName)}</div>
@@ -1069,6 +1095,7 @@ function renderThread() {
         </div>
       </div>
       <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)};${statusSelectWidthRule(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
+      ${optOutBadgesHtml(c.contact)}
     </div>
     ${emailStatsHtml(emailItems)}
     <div class="chat-thread" id="chatThread"></div>
