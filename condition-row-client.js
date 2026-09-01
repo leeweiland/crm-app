@@ -84,14 +84,20 @@ window.ConditionRowBuilder = (function () {
       dropdownEl.querySelectorAll('.ms-option').forEach(opt => opt.onclick = () => {
         selected.push(opt.dataset.id);
         searchEl.value = '';
-        dropdownEl.classList.remove('open');
-        renderChips(); onChange(selected);
+        // Stays open (re-filtered, this option now excluded) instead of
+        // closing -- picking multiple values needs to be one pick after
+        // another, not click-pick-reopen-pick-reopen for every one.
+        renderChips(); onChange(selected); showMatches();
       });
     }
     searchEl.addEventListener('input', showMatches);
     searchEl.addEventListener('focus', showMatches);
     searchEl.addEventListener('blur', () => setTimeout(() => dropdownEl.classList.remove('open'), 150));
     renderChips();
+    // Open immediately -- for a short, known list (statuses) this is the
+    // actual picker, not a search box you have to click into first to
+    // discover has options at all.
+    showMatches();
   }
 
   const MULTI_VALUE_OPS = ["any_of", "all_of", "not_any_of", "not_all_of"];

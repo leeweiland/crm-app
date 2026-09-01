@@ -245,8 +245,11 @@ function renderSearchableMultiSelect(containerId, items, selectedIds, onToggle) 
       dropdownEl.querySelectorAll('.ms-option').forEach(opt => opt.onclick = () => {
         onToggle(opt.dataset.id);
         searchEl.value = '';
-        dropdownEl.classList.remove('open');
         renderAll(); saveDebounced();
+        // Stays open (re-filtered, this option now excluded) instead of
+        // closing -- picking multiple values needs to be one pick after
+        // another, not click-pick-reopen-pick-reopen for every one.
+        showMatches();
       });
     };
     searchEl.addEventListener('input', showMatches);
@@ -254,6 +257,10 @@ function renderSearchableMultiSelect(containerId, items, selectedIds, onToggle) 
     // Delayed so a click on a .ms-option (which fires blur first) still
     // registers before the dropdown disappears out from under it.
     searchEl.addEventListener('blur', () => setTimeout(() => dropdownEl.classList.remove('open'), 150));
+    // Open immediately on first render -- for a short, known list this is
+    // the actual picker, not a search box you have to click into first to
+    // discover has options at all.
+    showMatches();
   }
   const chipsEl = el.querySelector('.ms-chips');
   const selected = items.filter(i => selectedIds.includes(i.id));
