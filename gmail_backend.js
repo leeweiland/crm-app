@@ -207,7 +207,15 @@ export async function checkGmailInbox() {
       const auth = { Authorization: `Bearer ${accessToken}` };
       if (!user.gmailHistoryId) continue; // shouldn't happen post-connect, but nothing to diff against
 
-      const histRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(user.gmailHistoryId)}&historyTypes=messageAdded&labelId=INBOX`, { headers: auth });
+      // No &labelId=INBOX filter -- confirmed live that a message archived
+      // shortly after arriving still surfaces fine either way (Gmail's
+      // history API reflects the label the message carried AT the add
+      // event, not its current state), but a message a Gmail FILTER
+      // auto-archives on arrival (skip-the-inbox rules) never gets the
+      // INBOX label at all and would be silently missed by that filter.
+      // Unfiltered costs nothing extra (same result set in the normal
+      // case) and closes that gap.
+      const histRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(user.gmailHistoryId)}&historyTypes=messageAdded`, { headers: auth });
       const hist = await histRes.json();
       if (!histRes.ok) {
         // historyId too old (Gmail only retains ~1 week of history) --
