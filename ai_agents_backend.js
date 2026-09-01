@@ -173,13 +173,23 @@ async function retrieveBoth(query) {
 // field used to exist here but was actively misleading (it no longer
 // matched what either path actually did), so it's gone -- the truth is
 // which code path is asking, passed in explicitly.
-export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false) {
+export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false, senderName = null) {
   const sendModeNote = autoSend
     ? "Your replies are sent directly to the real lead with no human review. Be certain before committing to a claim, price, or promise."
     : "Your replies are DRAFTS only -- a human reviews and approves before anything is sent to the real lead. Write as if sending directly; the review step is invisible to you.";
+  // The playbook/few-shot material below is full of real transcripts signed
+  // "Alexis" -- reusing that PHRASING is the point (see REUSE REAL LANGUAGE
+  // in the agent's own prompt), but the NAME is not: a draft should
+  // introduce itself as whichever real team member is actually at the
+  // keyboard, not whoever happened to send the historical example it was
+  // pulled from.
+  const senderNote = senderName
+    ? `You are drafting this on behalf of ${senderName}, a real team member who is logged in right now. If you introduce yourself or sign off by name, use "${senderName}" -- never a name from an example or past conversation below (e.g. "Alexis"), even though the phrasing/technique from those examples is exactly what you should reuse.`
+    : "";
   return `You are "${agent.name}", an AI agent for Pacific Rim Athletics. ${agent.description || ""}
 
 ${sendModeNote}
+${senderNote}
 
 ${agent.systemPrompt || ""}
 
@@ -229,7 +239,7 @@ function parseAgentOutput(raw) {
 // result matters. Returns { text, buyingSignal } on a normal reply,
 // { skip: true, reason } when no reply is needed, or { escalate: reason }
 // when this needs a human instead of a suggestion.
-export async function generateAgentReply(agent, contactId, userText, { autoSend = false } = {}) {
+export async function generateAgentReply(agent, contactId, userText, { autoSend = false, senderName = null } = {}) {
   let journeyBlock = "";
   if (contactId) {
     const contacts = readJson(CONTACTS_FILE, []);
@@ -238,7 +248,7 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
     journeyBlock = formatCustomerJourney(contact, journey);
   }
   const grounding = await retrieveBoth(userText);
-  const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock, autoSend) + grounding;
+  const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock, autoSend, senderName) + grounding;
 
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -349,7 +359,8 @@ export async function handleAiAgentsRequest(req, res, url) {
       : "\n\n(This is a text message -- keep it to just the SMS text, unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker.)";
 
     try {
-      const result = await generateAgentReply(agent, contactId, promptText + channelInstruction);
+      const senderName = `${me.first || ""} ${me.last || ""}`.trim() || me.email;
+      const result = await generateAgentReply(agent, contactId, promptText + channelInstruction, { senderName });
       if (result.skip) { logGeneration({ contactId, agentId: agent.id, channel, outcome: "skip", reason: result.reason }); return sendJson(res, 200, { status: "skip", reason: result.reason }); }
       if (result.escalate) { logGeneration({ contactId, agentId: agent.id, channel, outcome: "escalate", reason: result.escalate }); return sendJson(res, 200, { status: "escalate", reason: result.escalate }); }
       let subject = null, body = result.text;
@@ -439,7 +450,8 @@ TAKEOVER: <yes or no> - <short reason>`;
 
       const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
       const grounding = lastUserMsg ? await retrieveBoth(lastUserMsg.content) : "";
-      const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock) + grounding;
+      const senderName = `${me.first || ""} ${me.last || ""}`.trim() || me.email;
+      const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock, false, senderName) + grounding;
 
       const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
