@@ -65,20 +65,27 @@ export async function syncWritingCacheIfDue() {
 // sales-agent prototype's DEFAULT_INSTRUCTIONS, so agents created here start
 // from the same known-working baseline rather than a blank box.
 const DEFAULT_SYSTEM_PROMPT = `VOICE SWITCHING — use whichever of these two voices actually fits what's being asked:
-- LEE'S VOICE: when answering questions about the training program itself, methodology, philosophy, why it works, what's included — speak in Lee Weiland's own language, pulled from his writing archive: "Body Mastery," "Superhuman Strength, Skill, and Athletic Longevity," "bulletproofs you for life." Don't say "fully custom online coaching" — say what Lee actually says.
-- ALEXIS'S VOICE: when handling pricing, objections, negotiation, scheduling, or closing — speak the way Alexis actually texts in the real closed-won conversations: short, casual, transactional, warm. Never corporate.
+- LEE'S VOICE: for Powerbatics, methodology, program questions, and time/price/"let me think about it" objections — speak in Lee Weiland's own language, pulled from his writing archive: "Body Mastery," "Superhuman Strength, Skill, and Athletic Longevity," "bulletproofs you for life." Blunt, no-nonsense, occasional dry humor. Don't say "fully custom online coaching" — say what Lee actually says.
+- ALEXIS'S VOICE: for pricing, payments, objections, scheduling, and closing — speak the way Alexis actually texts in the real closed-won conversations: short, casual, transactional, warm. Never corporate.
 
-CLOSING BEHAVIOR — go for the sale, not the call:
-- Never offer "hop on a quick call with a Coach" as an easy alternative path when a lead asks about pricing or the program. Alexis does not hedge toward scheduling as a way to defer giving pricing.
-- Always give pricing directly and move toward closing. A call, if one ever happens, comes AFTER pricing is on the table and the lead is already leaning in — never offered as a way to avoid answering "how much."
-- Never re-explain value after a "no" — accept it and move on. Never lower the total price to overcome an objection — restructure the payment plan instead. Let the lead do their own math and talk themselves into it rather than being told what to think.
+PRIORITY — applying / scheduling a call comes first:
+- Guide the conversation toward getting the lead to apply or book a call. Don't volunteer pricing -- only give it when the lead actually asks.
+- When pricing does come up, start with the top tier and only go into a lower tier if the lead pushes back or asks what else is available (see the pricing playbook below for the exact numbers -- never use any other numbers).
+- No payment plans, no discounts, no negotiating the total. The only accommodation, and only if truly needed: half down, half in 30 days, on the same total.
+- Answer the lead's actual question directly. Never re-explain value after a "no" -- accept it and move on.
 
-REUSE REAL LANGUAGE, DON'T INVENT NEW LINES: when retrieved material or example transcripts contain a real sentence that fits the moment, use that actual sentence instead of writing your own version "in the spirit of" it.`;
+REUSE REAL LANGUAGE, DON'T INVENT NEW LINES: when retrieved material or example transcripts contain a real sentence that fits the moment, use that actual sentence instead of writing your own version "in the spirit of" it. Never repeat something already said earlier in this same conversation -- check the customer journey below before drafting.
+
+WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
+- \`[[NO_RESPONSE_NEEDED: <short reason>]]\` -- the lead's last message doesn't need a reply (e.g. just "thanks", an automated/system notification, or the conversation has already reached a clear conclusion).
+- \`[[ESCALATE: <short reason>]]\` -- this needs a human, not a suggested reply: a complaint, a refund request, a medical question, or anything else outside a normal sales conversation.
+
+BUYING SIGNALS -- if the lead is asking how to pay, asking to start, confirming a tier, asking about kickoff, or otherwise signaling they're ready to enroll, still draft the reply normally but end your entire response with \`[[BUYING_SIGNAL]]\` on its own line after the message -- that's the moment a human closer should take over, not a moment to keep running the AI.`;
 
 function newAgent({ name, description }) {
   return {
     id: randomUUID(),
-    name: name || "Untitled Agent",
+    name: name || "Kai",
     description: description || "",
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     active: false, // agents start OFF -- an admin must deliberately activate one, never on-by-default
@@ -152,10 +159,41 @@ ${journeyBlock}
 `;
 }
 
-export const AI_DRAFTS_FILE = "crm_ai_drafts.json";
+export const AI_GENERATION_LOG_FILE = "crm_ai_generation_log.json";
 
-// Non-streaming version of the chat call -- used by the AI Assist auto-trigger
-// (no one's watching a UI stream it in), where only the final text matters.
+// Statuses where the sales conversation is already resolved one way or
+// another -- no reply is ever needed regardless of what the last message
+// looks like. Skipped before ever calling the model.
+const TERMINAL_STATUSES = new Set(["ENROLLED", "STOP", "BAD FIT / BLACKLIST", "WE CANCELLED"]);
+// A human personally sent the last outbound message (not the AI) within
+// this window -- they're actively on this lead, don't suggest anything.
+const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;
+// We already sent the last message and the lead hasn't replied -- don't
+// suggest ANOTHER follow-up until this much time has passed. Only applies
+// to the "they've gone quiet" case, never to "they just replied".
+const RECENT_FOLLOWUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+// Parses the structured markers the system prompt instructs the model to
+// use in place of a normal reply (see DEFAULT_SYSTEM_PROMPT above) --
+// `[[NO_RESPONSE_NEEDED: reason]]`, `[[ESCALATE: reason]]`, and a trailing
+// `[[BUYING_SIGNAL]]` line appended to an otherwise-normal reply.
+function parseAgentOutput(raw) {
+  const text = (raw || "").trim();
+  const noResponse = text.match(/^\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]$/i);
+  if (noResponse) return { skip: true, reason: noResponse[1] || "No response needed." };
+  const escalate = text.match(/^\[\[ESCALATE:?\s*(.*?)\]\]$/i);
+  if (escalate) return { escalate: escalate[1] || "Needs a human." };
+  const buyingSignalMatch = text.match(/\n?\[\[BUYING_SIGNAL\]\]\s*$/i);
+  const buyingSignal = !!buyingSignalMatch;
+  const cleanText = buyingSignalMatch ? text.slice(0, buyingSignalMatch.index).trim() : text;
+  return { text: cleanText, buyingSignal };
+}
+
+// Non-streaming version of the chat call -- used for on-demand generation
+// (no one's watching a UI stream it in), where only the final parsed
+// result matters. Returns { text, buyingSignal } on a normal reply,
+// { skip: true, reason } when no reply is needed, or { escalate: reason }
+// when this needs a human instead of a suggestion.
 async function generateAgentReply(agent, contactId, userText) {
   let journeyBlock = "";
   if (contactId) {
@@ -180,7 +218,7 @@ async function generateAgentReply(agent, contactId, userText) {
   if (!anthropicRes.ok) throw new Error(`Anthropic error ${anthropicRes.status}: ${await anthropicRes.text()}`);
   const data = await anthropicRes.json();
   const textBlock = (data.content || []).find((b) => b.type === "text");
-  return textBlock?.text || "";
+  return parseAgentOutput(textBlock?.text || "");
 }
 
 // Does this contact match an agent's targeting rules? Empty targeting arrays
@@ -192,138 +230,151 @@ function contactMatchesTargeting(contact, targeting) {
   return true;
 }
 
-// On-demand only -- generation happens exactly when a human opens this
-// contact's conversation (the Inbox already calls GET /api/ai-drafts with
-// contactId every time a conversation is selected; see the route below),
-// never on a timer and never reacting automatically to an inbound message
-// arriving. A periodic sweep across every contact with an unanswered
-// message would burn API credits on conversations nobody's about to look
-// at yet; checking only the one contact someone actually clicked into
-// costs nothing extra for everyone else.
-//
-// AI Assist alone gates this -- "Active" isn't required. Everything this
-// function does lands as a "pending" draft a human reviews before anything
-// reaches a real lead (see below), so there's nothing for a broader
-// "Active" master switch to guard against here; that toggle is reserved
-// for whatever future capability actually needs a bigger blast-radius gate
-// (e.g. autonomous sending), not this always-human-reviewed draft flow.
-async function maybeGenerateAiAssistDraft(contactId) {
-  if (!contactId) return;
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contact = contacts.find((c) => c.id === contactId);
-  if (!contact) return;
-  const agents = readJson(AI_AGENTS_FILE, []);
-  const agent = agents.find((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
-  if (!agent) return;
+// Only the same channels the Inbox itself treats as a real conversation
+// (see inbox.html/contact-detail.html's thread filter) -- excludes
+// "activity" rows (automation bookkeeping like "sequence started", which
+// can carry direction:"inbound" as a technical artifact despite the lead
+// never having said anything) so a draft never gets generated in reply to
+// a system note instead of an actual message from them.
+const CONVERSATION_CHANNELS = ["email", "sms", "form", "booking"];
 
-  // Only the same channels the Inbox itself treats as a real conversation
-  // (see inbox.html/contact-detail.html's thread filter) -- excludes
-  // "activity" rows (automation bookkeeping like "sequence started", which
-  // can carry direction:"inbound" as a technical artifact despite the lead
-  // never having said anything) so a draft never gets generated in reply
-  // to a system note instead of an actual message from them.
-  const CONVERSATION_CHANNELS = ["email", "sms", "form", "booking"];
-  const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel));
-  const last = journey.length ? [...journey].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).at(-1) : null;
-  // No early return on direction -- a lead who's gone quiet after our last
-  // outbound (e.g. 100 sequence emails, zero replies) still deserves a
-  // suggested follow-up, not silence just because they haven't spoken.
-
-  // Dedup key: the specific message defining the conversation's current
-  // state, or -- when there's no conversation yet -- a fixed per-contact/
-  // per-agent sentinel. Either way, reopening the same still-unchanged
-  // conversation won't regenerate a new draft every time; a NEW message
-  // (either direction) changes the key and is free to draft again.
-  const sourceMessageId = last ? last.id : `no-history:${contactId}`;
-  const drafts = readJson(AI_DRAFTS_FILE, []);
-  if (drafts.some((d) => d.agentId === agent.id && d.sourceMessageId === sourceMessageId)) return;
-
-  const promptText = !last
-    ? "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)"
-    : last.direction === "inbound"
-      ? (last.body || last.bodyPreview || "")
-      : `(The lead hasn't replied since our last message to them: "${last.body || last.bodyPreview || ""}". Draft an appropriate follow-up to re-engage them.)`;
-
-  try {
-    const replyText = await generateAgentReply(agent, contactId, promptText);
-    if (!replyText) return;
-    drafts.push({
-      id: randomUUID(), agentId: agent.id, agentName: agent.name, contactId,
-      channel: last ? last.channel : (contact.phone ? "sms" : "email"),
-      draftText: replyText, sourceMessageId,
-      status: "pending", createdAt: new Date().toISOString(),
-    });
-    writeJson(AI_DRAFTS_FILE, drafts);
-  } catch (err) {
-    console.error(`[ai-assist] agent ${agent.id} contact ${contactId} failed:`, err.message);
+// Everything below the model call is a deterministic, free (no API cost)
+// gate -- checked before ever spending a token. Returns a short reason
+// string if generation should be skipped, or null if it's fine to proceed.
+function whyNotToGenerate(contact, journey) {
+  if (contact.status && TERMINAL_STATUSES.has(contact.status)) {
+    return `Status is "${contact.status}" -- conversation is already resolved.`;
   }
+  const last = journey.length ? journey.at(-1) : null;
+  const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_agent");
+  if (lastHumanOutbound) {
+    const isLatestOverall = !last || new Date(lastHumanOutbound.createdAt).getTime() >= new Date(last.createdAt).getTime();
+    if (isLatestOverall && Date.now() - new Date(lastHumanOutbound.createdAt).getTime() < RECENTLY_HUMAN_HANDLED_MS) {
+      return "A staff member just personally messaged this lead -- they're actively on it.";
+    }
+  }
+  if (last && last.direction !== "inbound" && Date.now() - new Date(last.createdAt).getTime() < RECENT_FOLLOWUP_COOLDOWN_MS) {
+    return "Already followed up recently -- give it more time before nudging again.";
+  }
+  return null;
+}
+
+function buildPromptForState(journey) {
+  const last = journey.length ? journey.at(-1) : null;
+  if (!last) return { last: null, promptText: "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)" };
+  if (last.direction === "inbound") return { last, promptText: last.body || last.bodyPreview || "" };
+  return { last, promptText: `(The lead hasn't replied since our last message to them: "${last.body || last.bodyPreview || ""}". Draft an appropriate follow-up to re-engage them.)` };
+}
+
+function logGeneration(entry) {
+  const log = readJson(AI_GENERATION_LOG_FILE, []);
+  log.push({ id: randomUUID(), createdAt: new Date().toISOString(), ...entry });
+  writeJson(AI_GENERATION_LOG_FILE, log);
 }
 
 export async function handleAiAgentsRequest(req, res, url) {
   const p0 = url.pathname;
 
-  if (p0 === "/api/ai-drafts" && req.method === "GET") {
+  // Cheap, no-LLM-call check: is there any AI Assist agent that applies to
+  // this contact at all? Powers whether the Inbox shows the AI icons next
+  // to Send Email/Send SMS in the first place -- nothing is generated
+  // until one of those icons is actually clicked.
+  if (p0 === "/api/ai-agents/matches" && req.method === "GET") {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const contactId = url.searchParams.get("contactId");
-    // The Inbox calls this exact route with contactId every time a
-    // conversation is opened -- that's the one and only trigger point for
-    // AI Assist generation (see maybeGenerateAiAssistDraft's comment).
-    if (contactId) await maybeGenerateAiAssistDraft(contactId);
-    let drafts = readJson(AI_DRAFTS_FILE, []).filter((d) => d.status === "pending");
-    if (contactId) drafts = drafts.filter((d) => d.contactId === contactId);
-    return sendJson(res, 200, { drafts });
+    const contact = readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+    if (!contact) return sendJson(res, 200, { match: false });
+    const agents = readJson(AI_AGENTS_FILE, []);
+    const match = agents.some((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
+    return sendJson(res, 200, { match });
   }
-  const draftSendMatch = p0.match(/^\/api\/ai-drafts\/([^/]+)\/send$/);
-  if (draftSendMatch && req.method === "POST") {
-    const me = getSessionUser(req);
-    if (!me) return sendJson(res, 401, { error: "Not logged in" });
-    const drafts = readJson(AI_DRAFTS_FILE, []);
-    const draft = drafts.find((d) => d.id === draftSendMatch[1]);
-    if (!draft) return sendJson(res, 404, { error: "Draft not found" });
-    const body = await readJsonBody(req);
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find((c) => c.id === draft.contactId);
-    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
-    const finalText = body.editedText ?? draft.draftText;
-    // channel: 'email' | 'sms' | 'both' -- defaults to the draft's own
-    // originating channel (an SMS-only default here would silently fail
-    // or misfire for a lead whose whole history is email, which is common).
-    const channel = ["email", "sms", "both"].includes(body.channel) ? body.channel : (draft.channel === "email" ? "email" : "sms");
-    const wantsEmail = channel === "email" || channel === "both";
-    const wantsSms = channel === "sms" || channel === "both";
-    if (wantsEmail && !contact.email) return sendJson(res, 400, { error: "Contact has no email address" });
-    if (wantsSms && !contact.phone) return sendJson(res, 400, { error: "Contact has no phone number" });
 
-    if (wantsEmail) {
-      const { sendEmail } = await import("./email_backend.js");
-      await sendEmail({
-        to: contact.email, subject: draft.emailSubject || "(no subject)",
-        blocks: [{ id: "b1", type: "text", html: finalText.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: me.footerTemplateId || null,
-        contactId: contact.id, sourceType: "ai_agent", sourceId: draft.agentId,
-        from: `${me.first} ${me.last} <${me.email}>`,
-      });
-    }
-    if (wantsSms) {
-      const { sendSms } = await import("./sms_backend.js");
-      await sendSms({ to: contact.phone, body: finalText, contactId: contact.id, sourceType: "ai_agent", sourceId: draft.agentId });
-    }
-    draft.status = "sent";
-    draft.sentText = finalText;
-    draft.sentChannel = channel;
-    writeJson(AI_DRAFTS_FILE, drafts);
-    return sendJson(res, 200, { ok: true });
-  }
-  const draftDiscardMatch = p0.match(/^\/api\/ai-drafts\/([^/]+)\/discard$/);
-  if (draftDiscardMatch && req.method === "POST") {
+  // The actual generate/regenerate call behind each AI icon. Every check
+  // in whyNotToGenerate() runs first (free); the model is only ever called
+  // once a human has explicitly clicked to ask for a draft.
+  if (p0 === "/api/ai-agents/generate" && req.method === "POST") {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
-    const drafts = readJson(AI_DRAFTS_FILE, []);
-    const draft = drafts.find((d) => d.id === draftDiscardMatch[1]);
-    if (!draft) return sendJson(res, 404, { error: "Draft not found" });
-    draft.status = "discarded";
-    writeJson(AI_DRAFTS_FILE, drafts);
-    return sendJson(res, 200, { ok: true });
+    const { contactId, channel } = await readJsonBody(req);
+    if (!contactId || !["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "contactId and channel ('email'|'sms') are required" });
+    const contact = readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+    const agents = readJson(AI_AGENTS_FILE, []);
+    const agent = agents.find((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
+    if (!agent) return sendJson(res, 404, { error: "No AI Assist agent is configured for this lead" });
+
+    const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const skipReason = whyNotToGenerate(contact, journey);
+    if (skipReason) return sendJson(res, 200, { status: "skip", reason: skipReason });
+
+    const { promptText } = buildPromptForState(journey);
+    const channelInstruction = channel === "email"
+      ? "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)"
+      : "\n\n(This is a text message -- keep it to just the SMS text, unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker.)";
+
+    try {
+      const result = await generateAgentReply(agent, contactId, promptText + channelInstruction);
+      if (result.skip) { logGeneration({ contactId, agentId: agent.id, channel, outcome: "skip", reason: result.reason }); return sendJson(res, 200, { status: "skip", reason: result.reason }); }
+      if (result.escalate) { logGeneration({ contactId, agentId: agent.id, channel, outcome: "escalate", reason: result.escalate }); return sendJson(res, 200, { status: "escalate", reason: result.escalate }); }
+      let subject = null, body = result.text;
+      if (channel === "email") {
+        const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
+        if (m) { subject = m[1].trim(); body = m[2].trim(); }
+      }
+      logGeneration({ contactId, agentId: agent.id, channel, outcome: "generated", buyingSignal: !!result.buyingSignal });
+      return sendJson(res, 200, { status: "ok", subject, body, buyingSignal: !!result.buyingSignal, agentName: agent.name });
+    } catch (err) {
+      console.error(`[ai-assist-generate] agent ${agent.id} contact ${contactId} failed:`, err.message);
+      return sendJson(res, 500, { error: "Generation failed" });
+    }
+  }
+
+  // Short structured summary for the Inbox's "Summary" tab -- goal,
+  // objections, and a recommendation, plus the same buying-signal/takeover
+  // flag as a normal draft. Read-only -- never affects TERMINAL_STATUSES
+  // or the recency gate, since a summary is useful even when a reply isn't.
+  if (p0 === "/api/ai-agents/summarize" && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    const { contactId } = await readJsonBody(req);
+    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
+    const contact = readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+    const agents = readJson(AI_AGENTS_FILE, []);
+    const agent = agents.find((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
+    if (!agent) return sendJson(res, 404, { error: "No AI Assist agent is configured for this lead" });
+
+    const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel));
+    if (!journey.length) return sendJson(res, 200, { status: "ok", goal: null, objections: null, recommendation: "No conversation history yet.", takeover: false });
+
+    const summaryInstruction = `Based on this lead's full history, respond in EXACTLY this format (plain text, no markdown, no extra commentary):
+GOAL: <their stated or apparent goal, or "unclear" if not stated>
+OBJECTIONS: <any objections raised so far, or "none raised">
+RECOMMENDATION: <one sentence on what the closer should do next>
+TAKEOVER: <yes or no> - <short reason>`;
+    try {
+      const journeyBlock = formatCustomerJourney(contact, getContactMessages(contactId));
+      const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock);
+      const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 400, system: systemPrompt, messages: [{ role: "user", content: summaryInstruction }] }),
+      });
+      if (!anthropicRes.ok) throw new Error(`Anthropic error ${anthropicRes.status}: ${await anthropicRes.text()}`);
+      const data = await anthropicRes.json();
+      const raw = (data.content || []).find((b) => b.type === "text")?.text || "";
+      const goal = raw.match(/GOAL:\s*(.*)/i)?.[1]?.trim() || null;
+      const objections = raw.match(/OBJECTIONS:\s*(.*)/i)?.[1]?.trim() || null;
+      const recommendation = raw.match(/RECOMMENDATION:\s*(.*)/i)?.[1]?.trim() || null;
+      const takeoverMatch = raw.match(/TAKEOVER:\s*(yes|no)\s*-?\s*(.*)/i);
+      const takeover = takeoverMatch ? /yes/i.test(takeoverMatch[1]) : false;
+      const takeoverReason = takeoverMatch?.[2]?.trim() || null;
+      return sendJson(res, 200, { status: "ok", goal, objections, recommendation, takeover, takeoverReason });
+    } catch (err) {
+      console.error(`[ai-assist-summarize] agent ${agent.id} contact ${contactId} failed:`, err.message);
+      return sendJson(res, 500, { error: "Summary failed" });
+    }
   }
 
   const chatMatch = url.pathname.match(/^\/api\/ai-agents\/([^/]+)\/chat$/);

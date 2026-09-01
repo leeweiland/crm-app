@@ -189,12 +189,20 @@
   .track-summary .on { color: #39ff14; }
 
   .compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; }
-  .ai-draft-card { margin: 0 16px 12px; padding: 12px; border: 1px solid rgba(0,155,255,.35); background: rgba(0,155,255,.06); border-radius: 10px; }
-  .ai-draft-label { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--pra-blue); margin-bottom: 8px; font-weight: 600; }
-  .ai-draft-label svg { width: 14px; height: 14px; flex-shrink: 0; }
-  .ai-draft-text { width: 100%; min-height: 70px; margin-bottom: 8px; }
-  .ai-draft-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .ai-draft-actions .compose-channel-toggle { margin-bottom: 0; }
+  /* AI Assist icons next to the Send Email/Send SMS tabs -- only rendered
+     when aiAssistAvailable, click generates/regenerates straight into the
+     compose fields (no separate review card anymore). */
+  .compose-tab-group { display: inline-flex; align-items: center; gap: 2px; }
+  .ai-gen-btn { background: none; border: none; color: var(--pra-blue); cursor: pointer; padding: 4px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; }
+  .ai-gen-btn svg { width: 13px; height: 13px; }
+  .ai-gen-btn:hover { background: var(--pra-blue-dim); }
+  .ai-gen-btn:disabled { opacity: .4; cursor: default; }
+  .ai-gen-btn.loading svg { animation: ai-gen-spin 1s linear infinite; }
+  @keyframes ai-gen-spin { to { transform: rotate(360deg); } }
+  .ai-summary-panel { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: .85rem; line-height: 1.6; }
+  .ai-summary-row { margin-bottom: 10px; }
+  .ai-summary-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 2px; }
+  .ai-summary-takeover { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.4); color: #ff9f0a; font-weight: 700; font-size: .82rem; }
   .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
   .compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
   .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
@@ -457,6 +465,7 @@ function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([],
 let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
+let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
 let currentUser = null, teamUsers = [];
 let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
@@ -1142,26 +1151,36 @@ function renderThread() {
     </div>
     ${emailStatsHtml(emailItems)}
     <div class="chat-thread" id="chatThread"></div>
-    <div id="aiDraftContainer"></div>
     <div class="compose-bar">
       ${currentTab === 'primary' ? `
         <div class="compose-channel-toggle">
-          <button type="button" data-ch="email" class="${composeChannel === 'email' ? 'active' : ''}">Send Email</button>
-          <button type="button" data-ch="sms" class="${composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
+          <span class="compose-tab-group">
+            <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''}">Send Email</button>
+            ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
+          </span>
+          <span class="compose-tab-group">
+            <button type="button" data-ch="sms" class="${composeView === 'compose' && composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
+            ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="sms" title="Generate text with AI">${SPARKLE_ICON}</button>` : ''}
+          </span>
+          ${aiAssistAvailable ? `<button type="button" data-ch="summary" class="${composeView === 'summary' ? 'active' : ''}">Summary</button>` : ''}
         </div>
       ` : ''}
-      ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
-        <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
-          ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</option>`).join('')}
-        </select>
-      ` : ''}
-      ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
-      <div class="compose-row">
-        <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
-        <button class="pra-btn" id="composeSendBtn">Send</button>
-      </div>
-      ${composeChannel === 'email' && !emailOk ? '<div class="compose-hint">This contact has no email on file.</div>' : ''}
-      ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
+      ${composeView === 'summary' ? `
+        <div class="ai-summary-panel" id="aiSummaryPanel"><div class="pra-muted">Loading summary…</div></div>
+      ` : `
+        ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
+          <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
+            ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</option>`).join('')}
+          </select>
+        ` : ''}
+        ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
+        <div class="compose-row">
+          <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
+          <button class="pra-btn" id="composeSendBtn">Send</button>
+        </div>
+        ${composeChannel === 'email' && !emailOk ? '<div class="compose-hint">This contact has no email on file.</div>' : ''}
+        ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
+      `}
     </div>
   `;
   const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
@@ -1182,10 +1201,15 @@ function renderThread() {
   threadEl.scrollTop = threadEl.scrollHeight;
 
   if (currentTab === 'primary') {
-    panel.querySelectorAll('.compose-channel-toggle button').forEach(btn => btn.onclick = () => { composeChannel = btn.dataset.ch; renderThread(); });
+    panel.querySelectorAll('.compose-channel-toggle [data-ch]').forEach(btn => btn.onclick = () => {
+      if (btn.dataset.ch === 'summary') composeView = 'summary';
+      else { composeChannel = btn.dataset.ch; composeView = 'compose'; }
+      renderThread();
+    });
+    panel.querySelectorAll('.ai-gen-btn').forEach(btn => btn.onclick = () => generateAiContent(btn.dataset.aiCh, btn));
   }
-  document.getElementById('composeSendBtn').onclick = sendComposeMessage;
-  if (c.contactId) loadAiDrafts(c.contactId);
+  if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
+  else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;
   document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
   document.getElementById('chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); toggleNotePanel(c.contactId); };
@@ -1241,64 +1265,64 @@ async function selectConversation(c, skipFetch) {
   selectedConvo = c;
   document.querySelectorAll('.convo-row').forEach(r => r.classList.toggle('selected', r.dataset.convo === c.key));
   document.getElementById('chatView').classList.add('thread-open'); // mobile: swap to the chat panel
-  if (!c.contactId) return;
-  const r = await fetch('/api/inbox/contact/' + c.contactId);
-  threadItems = r.ok ? (await r.json()).items : [];
+  if (!c.contactId) { aiAssistAvailable = false; return; }
+  composeView = 'compose';
+  // The AI icons next to Send Email/Send SMS only show up at all if some
+  // AI Assist agent actually applies to this lead -- a cheap check (no LLM
+  // call), separate from generateAiContent()/loadAiSummary() below, which
+  // only run when a human clicks one of those icons.
+  const [threadRes, matchRes] = await Promise.all([
+    fetch('/api/inbox/contact/' + c.contactId),
+    fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId)),
+  ]);
+  threadItems = threadRes.ok ? (await threadRes.json()).items : [];
+  aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
   renderThread();
 }
 function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }
 
-async function loadAiDrafts(contactId) {
-  const container = document.getElementById('aiDraftContainer');
-  if (!container) return;
+// Generates (or regenerates) straight into the compose fields -- no
+// separate review card. skip/escalate never touch the compose box at all,
+// they just tell the closer why via a toast.
+async function generateAiContent(channel, btn) {
+  if (!selectedConvo?.contactId) return;
+  btn.disabled = true;
+  btn.classList.add('loading');
   try {
-    const r = await fetch('/api/ai-drafts?contactId=' + encodeURIComponent(contactId));
-    if (!r.ok) { container.innerHTML = ''; return; }
-    const { drafts } = await r.json();
-    if (!drafts.length) { container.innerHTML = ''; return; }
-    // Only ever one pending draft per contact in practice (triggerAiAssist
-    // picks a single matching agent) -- showing all just in case more than
-    // one is somehow pending.
-    container.innerHTML = drafts.map(d => `
-      <div class="ai-draft-card" data-draft-id="${d.id}" data-channel="${d.channel === 'email' ? 'email' : 'sms'}">
-        <div class="ai-draft-label">${SPARKLE_ICON} AI draft from ${escapeHtml(d.agentName)} — review before sending</div>
-        <textarea class="pra-textarea ai-draft-text">${escapeHtml(d.draftText)}</textarea>
-        <div class="ai-draft-actions">
-          <div class="compose-channel-toggle ai-draft-channel-toggle">
-            <button type="button" data-ch="email" class="${d.channel === 'email' ? 'active' : ''}">Email</button>
-            <button type="button" data-ch="sms" class="${d.channel !== 'email' ? 'active' : ''}">SMS</button>
-            <button type="button" data-ch="both">Both</button>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-discard="${d.id}">Discard</button>
-            <button class="pra-btn pra-btn-sm" data-send="${d.id}">Send</button>
-          </div>
-        </div>
-      </div>
-    `).join('');
-    container.querySelectorAll('.ai-draft-channel-toggle').forEach(toggle => {
-      toggle.querySelectorAll('button').forEach(btn => btn.onclick = () => {
-        toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        toggle.closest('.ai-draft-card').dataset.channel = btn.dataset.ch;
-      });
+    const r = await fetch('/api/ai-agents/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId: selectedConvo.contactId, channel }),
     });
-    container.querySelectorAll('[data-send]').forEach(btn => btn.onclick = async () => {
-      const card = btn.closest('.ai-draft-card');
-      const editedText = card.querySelector('.ai-draft-text').value;
-      const channel = card.dataset.channel;
-      btn.disabled = true;
-      const r2 = await fetch(`/api/ai-drafts/${btn.dataset.send}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editedText, channel }) });
-      const d2 = await r2.json().catch(() => ({}));
-      if (r2.ok) { showToast('Sent'); card.remove(); if (selectedConvo?.contactId) selectConversation(selectedConvo); }
-      else { showToast(d2.error || 'Could not send', true); btn.disabled = false; }
+    const d = await r.json();
+    if (!r.ok) { showToast(d.error || 'Could not generate', true); return; }
+    if (d.status === 'skip') { showToast(d.reason || 'No response needed right now'); return; }
+    if (d.status === 'escalate') { showToast('⚠️ ' + d.reason, true); return; }
+    composeChannel = channel;
+    composeView = 'compose';
+    renderThread();
+    if (channel === 'email' && d.subject) document.getElementById('composeSubject').value = d.subject;
+    document.getElementById('composeBody').value = d.body || '';
+    if (d.buyingSignal) showToast('🔥 Buying signal detected — consider taking over');
+  } catch {
+    showToast('Could not generate', true);
+  }
+}
+async function loadAiSummary(contactId) {
+  const panel = document.getElementById('aiSummaryPanel');
+  if (!panel) return;
+  try {
+    const r = await fetch('/api/ai-agents/summarize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId }),
     });
-    container.querySelectorAll('[data-discard]').forEach(btn => btn.onclick = async () => {
-      const card = btn.closest('.ai-draft-card');
-      await fetch(`/api/ai-drafts/${btn.dataset.discard}/discard`, { method: 'POST' });
-      card.remove();
-    });
-  } catch { container.innerHTML = ''; }
+    const d = await r.json();
+    if (!r.ok) { panel.innerHTML = `<div class="pra-muted">${escapeHtml(d.error || 'Could not load summary')}</div>`; return; }
+    panel.innerHTML = `
+      <div class="ai-summary-row"><div class="ai-summary-label">Goal</div>${escapeHtml(d.goal || 'Unclear')}</div>
+      <div class="ai-summary-row"><div class="ai-summary-label">Objections</div>${escapeHtml(d.objections || 'None raised')}</div>
+      <div class="ai-summary-row"><div class="ai-summary-label">Recommendation</div>${escapeHtml(d.recommendation || '—')}</div>
+      ${d.takeover ? `<div class="ai-summary-takeover">🔥 Consider taking over — ${escapeHtml(d.takeoverReason || '')}</div>` : ''}
+    `;
+  } catch { panel.innerHTML = '<div class="pra-muted">Could not load summary.</div>'; }
 }
 async function sendComposeMessage() {
   const body = document.getElementById('composeBody').value.trim();
