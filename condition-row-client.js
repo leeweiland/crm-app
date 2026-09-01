@@ -21,8 +21,8 @@ window.ConditionRowBuilder = (function () {
 
   function fieldOptionsHtml() {
     return `
-      <option value="type">Type (Lead/Contact)</option>
       <option value="status">Status</option>
+      <option value="programType">Type (Online/Gym)</option>
       <option value="smsOptOut">SMS Opt-Out</option>
       <option value="emailOptOut">Email Opt-Out</option>
       <option value="tags">Tag</option>
@@ -88,7 +88,8 @@ window.ConditionRowBuilder = (function () {
 
   function valueInputHtml(field, op) {
     if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
-    if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`;
+    if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`; // legacy field, kept only so a pre-existing saved segment still renders correctly
+    if (field === 'programType') return `<select class="pra-select" data-cond-value><option value="online">Online</option><option value="gym">Gym</option></select>`;
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
     if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
@@ -152,7 +153,7 @@ window.ConditionRowBuilder = (function () {
   }
 
   const FIELD_LABELS = {
-    type: 'Type', status: 'Status', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
+    type: 'Type (Lead/Contact)', status: 'Status', programType: 'Type', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
     tags: 'Tag', listIds: 'List', emailOpened: 'Opened Email', emailClicked: 'Clicked Email', visitedPage: 'Visited Webpage',
   };
   const OP_LABELS = {
