@@ -794,7 +794,7 @@ document.getElementById('fCalendar').addEventListener('change', async () => {
   if (val.startsWith('google:')) {
     const email = val.slice(7);
     const g = googleCalendarsState.find(x => x.id === email);
-    const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g?.name || email, email }) });
+    const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g?.name || email, email, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
     if (!r.ok) { showToast('Failed to add calendar', true); document.getElementById('fCalendar').value = draft.calendarId; return; }
     const { calendar } = await r.json();
     calendarsState[calendar.id] = calendar;

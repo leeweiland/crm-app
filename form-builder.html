@@ -120,6 +120,31 @@
   .fb-panel { margin: 6px 44px 8px 44px; padding: 12px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; }
   .fb-panel .field { margin-bottom: 10px; }
   .fb-panel .field:last-child { margin-bottom: 0; }
+  .fb-panel .fb-side-title:not(:first-child) { margin-top: 16px; }
+
+  /* ── Calendar field's settings panel -- same controls as
+       scheduling-editor.html's Calendar/Questions sections, so a calendar's
+       hours/buffers/timezone/rolling-window and its custom questions (with
+       contact-field mapping) are editable right here, not just linked out
+       to a separate page. ── */
+  .cal-week-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--pra-border); font-size: .76rem; }
+  .cal-week-row:last-child { border-bottom: none; }
+  .cal-week-row .cal-week-day { width: 30px; flex-shrink: 0; color: var(--pra-dim); }
+  .cal-week-row input[type=time] { flex: 1; min-width: 0; padding: 4px 6px; font-size: .72rem; }
+  .toggle-switch { width: 34px; height: 20px; border-radius: 12px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); position: relative; cursor: pointer; flex-shrink: 0; }
+  .toggle-switch::after { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--pra-dim); top: 2px; left: 2px; transition: left .15s, background .15s; }
+  .toggle-switch.on { border-color: var(--pra-blue); }
+  .toggle-switch.on::after { left: 16px; background: var(--pra-blue); }
+  .cal-inline-row { display: flex; gap: 8px; }
+  .cal-inline-row .field { flex: 1; margin-bottom: 12px; min-width: 0; }
+  .q-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .q-card .field { margin-bottom: 8px; }
+  .q-card .field:last-child { margin-bottom: 0; }
+  .q-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .q-card-row .toggle-switch { flex-shrink: 0; }
+  .q-card-row label { font-size: .74rem; color: var(--pra-dim); flex: 1; }
+  .q-card-del { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
+  .q-card-del:hover { color: var(--pra-red); }
 
   /* One of these renders in every gap -- before the first block, between
      each pair, and after the last -- not just at the end, so a question can
@@ -327,7 +352,7 @@ const AUTO_MAPPED_TYPES = ['email', 'phone', 'first_name', 'last_name'];
 function canMapToCustomField(f) { return !NON_ANSWERABLE_TYPES.includes(f.type) && !AUTO_MAPPED_TYPES.includes(f.type); }
 
 const NO_REQUIRE = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar'];
-const NO_GEAR = ['page_break', 'headline', 'video', 'calendar'];
+const NO_GEAR = ['page_break', 'headline', 'video'];
 const LOGIC_OPS = [
   { value: 'equals', label: 'equals' },
   { value: 'not_equals', label: 'does not equal' },
@@ -412,6 +437,16 @@ function isHtmlEmbed(v) {
 
 const formId = new URLSearchParams(location.search).get('id');
 let form = null, allStatuses = [], allTags = [], allLists = [], allEventTypes = [], allCustomFields = [];
+// Populated per calendar-field index the first time its gear panel opens
+// (see loadCalFieldData) -- { eventType, calendarsById, googleCalendars }.
+let calFieldData = {};
+const DAY_LABELS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Full IANA list where the browser supports it, falling back to a short
+// curated list otherwise -- same as scheduling-editor.html's Calendar section.
+const TIMEZONE_OPTIONS = (() => {
+  try { const list = Intl.supportedValuesOf('timeZone'); if (list?.length) return list; } catch {}
+  return ['America/Anchorage', 'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Pacific/Honolulu', 'UTC'];
+})();
 let saveTimer, dragFromIdx = null, dragToIdx = null;
 let openPanel = null; // { idx, kind: 'gear'|'logic' } | null
 let paletteOpenAt = null; // index into form.fields where a new field would be inserted, or null if no gap's palette is open
@@ -481,9 +516,130 @@ function renderLogicRule(field, rule, fi, ri) {
   `;
 }
 
+// ── Calendar field's settings panel -- edits the SAME calendar (hours,
+// buffers, timezone, rolling window), event type (duration, status,
+// redirect), and custom questions (with contact-field mapping) that
+// scheduling-editor.html's Design page edits, through the exact same
+// backend routes, so nothing about "editing a calendar" is exclusive to
+// that separate page anymore. Scoped by field index (data-cal-*="${i}")
+// since a form could in principle have more than one calendar field open
+// at once, unlike scheduling-editor.html which only ever handles one. ──
+async function loadCalFieldData(idx) {
+  const slug = form.fields[idx].eventTypeSlug;
+  const [etRes, calRes, gcalRes] = await Promise.all([
+    fetch('/api/scheduling/admin/event-types'),
+    fetch('/api/scheduling/admin/calendars'),
+    fetch('/api/scheduling/admin/google-calendars'),
+  ]);
+  const eventTypes = etRes.ok ? (await etRes.json()).eventTypes : [];
+  const eventType = eventTypes.find(e => e.slug === slug);
+  if (eventType) eventType.questions = eventType.questions || [];
+  const calendars = calRes.ok ? (await calRes.json()).calendars : [];
+  const calendarsById = {}; calendars.forEach(c => calendarsById[c.id] = c);
+  const googleCalendarsRaw = gcalRes.ok ? (await gcalRes.json()).googleCalendars : [];
+  const existingEmails = new Set(calendars.map(c => c.email).filter(Boolean));
+  const googleCalendars = googleCalendarsRaw.filter(g => !g.primary && !existingEmails.has(g.id));
+  calFieldData[idx] = { eventType, calendarsById, googleCalendars };
+}
+
+function calWeekRowHtml(cal, day, idx) {
+  const rule = cal.availability.weekly[String(day)];
+  const on = !!rule;
+  return `
+    <div class="cal-week-row">
+      <div class="cal-week-day">${DAY_LABELS_SHORT[day]}</div>
+      <div class="toggle-switch ${on ? 'on' : ''}" data-cal-day="${idx}:${day}"></div>
+      <input class="pra-input" type="time" data-cal-start="${idx}:${day}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
+      <input class="pra-input" type="time" data-cal-end="${idx}:${day}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
+    </div>
+  `;
+}
+
+function questionCardHtmlFB(q, qi, idx) {
+  // Reuses the same allCustomFields list the regular per-question mapping
+  // dropdown (renderPanel's default branch) already loads once at init --
+  // one shared registry, kept in sync from either place a field gets created.
+  return `
+    <div class="q-card">
+      <div class="field"><input class="pra-input" data-q-label="${idx}:${qi}" value="${escapeHtml(q.label)}" placeholder="Question text"/></div>
+      <div class="field"><select class="pra-select" data-q-type="${idx}:${qi}">
+        ${Object.entries({ short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown' }).map(([v, l]) => `<option value="${v}" ${q.type === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></div>
+      ${q.type === 'dropdown' ? `<div class="field"><textarea class="pra-input" data-q-options="${idx}:${qi}" rows="3" placeholder="One option per line">${escapeHtml((q.options || []).join('\n'))}</textarea></div>` : ''}
+      <div class="q-card-row">
+        <div class="toggle-switch ${q.required ? 'on' : ''}" data-q-required="${idx}:${qi}"></div>
+        <label>Required</label>
+      </div>
+      <div class="field">
+        <label class="pra-label" style="font-size:.7rem">Maps to contact field</label>
+        <select class="pra-select" data-q-map="${idx}:${qi}">
+          <option value="">Auto (new field from question text)</option>
+          <option value="__new__">+ Create new field…</option>
+          ${allCustomFields.map(cf => `<option value="${cf.id}" ${q.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="text-align:right;margin-top:4px"><button class="q-card-del" data-q-del="${idx}:${qi}" title="Delete question">&times; Delete</button></div>
+    </div>
+  `;
+}
+
+function renderCalendarPanel(f, i) {
+  if (!f.eventTypeSlug) return `<div class="fb-panel"><div class="pra-muted" style="font-size:.8rem">Pick an event type above first.</div></div>`;
+  const data = calFieldData[i];
+  if (!data || !data.eventType) return `<div class="fb-panel"><div class="pra-muted" style="font-size:.8rem">Loading…</div></div>`;
+  const { eventType: et, calendarsById, googleCalendars } = data;
+  const cal = calendarsById[et.calendarId] || calendarsById['default'];
+  const calOptions = Object.values(calendarsById).map(c => `<option value="${c.id}" ${et.calendarId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${c.email ? ' (' + escapeHtml(c.email) + ')' : ''}</option>`).join('');
+  const googleOptions = googleCalendars.map(g => `<option value="google:${escapeHtml(g.id)}">+ Add: ${escapeHtml(g.name)} (${escapeHtml(g.id)})</option>`).join('');
+  return `<div class="fb-panel">
+    <div class="fb-side-title">Calendar</div>
+    <div class="field"><label class="pra-label">Uses calendar</label>
+      <select class="pra-select" data-cal-select="${i}">${calOptions}${googleOptions ? `<optgroup label="Subscribed on Google, not yet added">${googleOptions}</optgroup>` : ''}</select>
+    </div>
+    <div class="field"><label class="pra-label">Timezone</label>
+      <select class="pra-select" data-cal-tz="${i}">${TIMEZONE_OPTIONS.map(tz => `<option value="${tz}" ${cal.availability.timezone === tz ? 'selected' : ''}>${tz}</option>`).join('')}</select>
+    </div>
+    <div class="field" style="margin-bottom:8px">
+      <label class="pra-label">Weekly hours</label>
+      <div data-cal-week="${i}">${[0, 1, 2, 3, 4, 5, 6].map(d => calWeekRowHtml(cal, d, i)).join('')}</div>
+    </div>
+    <div class="cal-inline-row">
+      <div class="field"><label class="pra-label">Min notice (hrs)</label><input class="pra-input" type="number" min="0" step="0.5" data-cal-minnotice="${i}" value="${(cal.availability.minNoticeMinutes ?? 0) / 60}"/></div>
+      <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" data-cal-bufbefore="${i}" value="${cal.availability.bufferBeforeMinutes ?? 0}"/></div>
+      <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" data-cal-bufafter="${i}" value="${cal.availability.bufferAfterMinutes ?? 0}"/></div>
+    </div>
+    <div class="cal-inline-row" style="align-items:flex-end;margin-bottom:0">
+      <div class="field"><label class="pra-label">Rolling window</label>
+        <select class="pra-select" data-cal-rollmode="${i}">
+          <option value="days" ${cal.availability.rollingMode === 'days' ? 'selected' : ''}>Next N days</option>
+          <option value="slots" ${cal.availability.rollingMode === 'slots' ? 'selected' : ''}>Next N available slots</option>
+        </select>
+      </div>
+      <div class="field"><label class="pra-label" data-cal-roll-label="${i}">${cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead'}</label><input class="pra-input" type="number" min="1" data-cal-rollamt="${i}" value="${cal.availability.rollingAmount}"/></div>
+    </div>
+    <div class="pra-muted" style="font-size:.72rem;margin-top:6px" data-cal-savemsg="${i}"></div>
+
+    <div class="fb-side-title">Booking</div>
+    <div class="field"><label class="pra-label">Duration (minutes)</label><input class="pra-input" type="number" min="5" step="5" data-cal-duration="${i}" value="${et.durationMinutes}"/></div>
+    <div class="field"><label class="pra-label">On booking, set contact status to</label>
+      <select class="pra-select" data-cal-status="${i}">
+        <option value="">Don't change status</option>
+        ${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${et.statusId === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field" style="margin-bottom:0"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" data-cal-redirect="${i}" value="${escapeHtml(et.branding?.redirectUrl || '')}" placeholder="Leave blank for the built-in confirmation"/></div>
+
+    <div class="fb-side-title">Questions</div>
+    <div class="pra-muted" style="font-size:.72rem;margin-bottom:8px;line-height:1.4">Extra questions asked on the booking form, beyond Name/Email/Phone.</div>
+    <div data-cal-questions="${i}">${et.questions.map((q, qi) => questionCardHtmlFB(q, qi, i)).join('') || '<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom questions yet.</div>'}</div>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" data-cal-addq="${i}">+ Add Question</button>
+  </div>`;
+}
+
 function renderPanel(f, i) {
   if (!openPanel || openPanel.idx !== i) return '';
   if (openPanel.kind === 'gear') {
+    if (f.type === 'calendar') return renderCalendarPanel(f, i);
     if (f.type === 'image') {
       return `<div class="fb-panel">
         <div class="field"><label class="pra-label">Alt text</label><input class="pra-input" data-alt-idx="${i}" value="${escapeHtml(f.alt || '')}"/></div>
@@ -727,6 +883,190 @@ function bindCanvas(canvas) {
     form.fields[idx].mapToCustomFieldId = e.target.value;
     saveDebounced();
   }));
+
+  // ── Calendar field's settings panel -- two separate backends being
+  // saved from one panel: the calendar's own availability
+  // (/api/scheduling/admin/calendars/:id) and the event type's own
+  // duration/status/redirect/questions (/api/scheduling/admin/event-types/:id).
+  // "idx:n" (field index : sub-index) is how day-of-week rows and question
+  // cards address themselves, parsed back out here. ──────────────────────
+  function parseIdxPair(raw) { const [idx, n] = raw.split(':').map(Number); return [idx, n]; }
+  const calSaveTimers = {}, etSaveTimers = {};
+  function saveCalendarDebounced(idx) {
+    const msgEl = document.querySelector(`[data-cal-savemsg="${idx}"]`);
+    if (msgEl) msgEl.textContent = 'Saving…';
+    clearTimeout(calSaveTimers[idx]);
+    calSaveTimers[idx] = setTimeout(() => saveCalendarNow(idx), 500);
+  }
+  async function saveCalendarNow(idx) {
+    const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
+    const r = await fetch('/api/scheduling/admin/calendars/' + cal.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ availability: cal.availability }),
+    });
+    const msgEl = document.querySelector(`[data-cal-savemsg="${idx}"]`);
+    if (msgEl) msgEl.textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
+    // Deliberately not replacing calendarsById[cal.id] with the server's
+    // echoed object -- same reasoning as scheduling-editor.html's
+    // saveCalendarNow: the day-toggle/time-input closures below still point
+    // at this exact object, and we already hold the authoritative state.
+  }
+  function saveEventTypeDebounced(idx) {
+    clearTimeout(etSaveTimers[idx]);
+    etSaveTimers[idx] = setTimeout(() => saveEventTypeNow(idx), 500);
+  }
+  async function saveEventTypeNow(idx) {
+    const et = calFieldData[idx].eventType;
+    await fetch('/api/scheduling/admin/event-types/' + et.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ durationMinutes: et.durationMinutes, statusId: et.statusId, calendarId: et.calendarId, branding: et.branding, questions: et.questions }),
+    });
+  }
+
+  canvas.querySelectorAll('[data-cal-select]').forEach(el => el.addEventListener('change', async e => {
+    const idx = +el.dataset.calSelect;
+    const et = calFieldData[idx].eventType;
+    const val = e.target.value;
+    if (val.startsWith('google:')) {
+      const email = val.slice(7);
+      const g = calFieldData[idx].googleCalendars.find(x => x.id === email);
+      const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g?.name || email, email, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
+      if (!r.ok) { showToast('Failed to add calendar', true); renderCanvas(); return; }
+      const { calendar } = await r.json();
+      calFieldData[idx].calendarsById[calendar.id] = calendar;
+      calFieldData[idx].googleCalendars = calFieldData[idx].googleCalendars.filter(x => x.id !== email);
+      et.calendarId = calendar.id;
+    } else {
+      et.calendarId = val;
+    }
+    saveEventTypeDebounced(idx);
+    renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-cal-tz]').forEach(el => el.addEventListener('change', e => {
+    const idx = +el.dataset.calTz;
+    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.timezone = e.target.value;
+    saveCalendarDebounced(idx);
+  }));
+  // Wired (and re-wired after every toggle, since the row markup is
+  // rebuilt) by wireCalWeekRows below -- called once per calendar field
+  // at the bottom of this block for the initial render.
+  function wireCalWeekRows(idx) {
+    document.querySelectorAll(`[data-cal-day^="${idx}:"]`).forEach(sw => sw.onclick = () => {
+      const [, day] = parseIdxPair(sw.dataset.calDay);
+      const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
+      const isOn = sw.classList.toggle('on');
+      cal.availability.weekly[day] = isOn ? { start: '09:00', end: '17:00' } : null;
+      document.querySelector(`[data-cal-week="${idx}"]`).innerHTML = [0, 1, 2, 3, 4, 5, 6].map(d => calWeekRowHtml(cal, d, idx)).join('');
+      wireCalWeekRows(idx);
+      saveCalendarDebounced(idx);
+    });
+    document.querySelectorAll(`[data-cal-start^="${idx}:"]`).forEach(inp => inp.onchange = () => {
+      const [, day] = parseIdxPair(inp.dataset.calStart);
+      calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.weekly[day].start = inp.value;
+      saveCalendarDebounced(idx);
+    });
+    document.querySelectorAll(`[data-cal-end^="${idx}:"]`).forEach(inp => inp.onchange = () => {
+      const [, day] = parseIdxPair(inp.dataset.calEnd);
+      calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.weekly[day].end = inp.value;
+      saveCalendarDebounced(idx);
+    });
+  }
+  canvas.querySelectorAll('[data-cal-week]').forEach(el => wireCalWeekRows(+el.dataset.calWeek));
+  canvas.querySelectorAll('[data-cal-minnotice]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calMinnotice;
+    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.minNoticeMinutes = Math.round((Number(e.target.value) || 0) * 60);
+    saveCalendarDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-bufbefore]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calBufbefore;
+    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.bufferBeforeMinutes = Number(e.target.value) || 0;
+    saveCalendarDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-bufafter]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calBufafter;
+    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.bufferAfterMinutes = Number(e.target.value) || 0;
+    saveCalendarDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-rollmode]').forEach(el => el.addEventListener('change', e => {
+    const idx = +el.dataset.calRollmode;
+    const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
+    cal.availability.rollingMode = e.target.value;
+    const label = document.querySelector(`[data-cal-roll-label="${idx}"]`);
+    if (label) label.textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+    saveCalendarDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-rollamt]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calRollamt;
+    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.rollingAmount = Number(e.target.value) || 1;
+    saveCalendarDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-duration]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calDuration;
+    calFieldData[idx].eventType.durationMinutes = Number(e.target.value) || 30;
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-status]').forEach(el => el.addEventListener('change', e => {
+    const idx = +el.dataset.calStatus;
+    calFieldData[idx].eventType.statusId = e.target.value;
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-redirect]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calRedirect;
+    const et = calFieldData[idx].eventType;
+    et.branding = { ...(et.branding || {}), redirectUrl: e.target.value.trim() };
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-addq]').forEach(el => el.addEventListener('click', () => {
+    const idx = +el.dataset.calAddq;
+    calFieldData[idx].eventType.questions.push({ id: uid(), label: '', type: 'short_text', required: false, placeholder: '', options: [], mapToCustomFieldId: '' });
+    saveEventTypeDebounced(idx);
+    renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-q-label]').forEach(el => el.addEventListener('input', e => {
+    const [idx, qi] = parseIdxPair(el.dataset.qLabel);
+    calFieldData[idx].eventType.questions[qi].label = e.target.value;
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-q-type]').forEach(el => el.addEventListener('change', e => {
+    const [idx, qi] = parseIdxPair(el.dataset.qType);
+    calFieldData[idx].eventType.questions[qi].type = e.target.value;
+    saveEventTypeDebounced(idx);
+    renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-q-options]').forEach(el => el.addEventListener('input', e => {
+    const [idx, qi] = parseIdxPair(el.dataset.qOptions);
+    calFieldData[idx].eventType.questions[qi].options = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-q-required]').forEach(el => el.addEventListener('click', () => {
+    const [idx, qi] = parseIdxPair(el.dataset.qRequired);
+    calFieldData[idx].eventType.questions[qi].required = el.classList.toggle('on');
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-q-del]').forEach(el => el.addEventListener('click', () => {
+    const [idx, qi] = parseIdxPair(el.dataset.qDel);
+    calFieldData[idx].eventType.questions.splice(qi, 1);
+    saveEventTypeDebounced(idx);
+    renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-q-map]').forEach(el => el.addEventListener('change', async e => {
+    const [idx, qi] = parseIdxPair(el.dataset.qMap);
+    const q = calFieldData[idx].eventType.questions[qi];
+    if (e.target.value === '__new__') {
+      const label = prompt('Name for the new custom field:');
+      if (!label || !label.trim()) { e.target.value = q.mapToCustomFieldId || ''; return; }
+      const r = await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entityType: 'contact', label: label.trim() }) });
+      if (!r.ok) { showToast('Failed to create field', true); e.target.value = q.mapToCustomFieldId || ''; return; }
+      const { field } = await r.json();
+      allCustomFields.push(field);
+      q.mapToCustomFieldId = field.id;
+      saveEventTypeDebounced(idx);
+      renderCanvas();
+      return;
+    }
+    q.mapToCustomFieldId = e.target.value;
+    saveEventTypeDebounced(idx);
+  }));
   canvas.querySelectorAll('[data-alt-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.altIdx].alt = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-imglink-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.imglinkIdx].link = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-opt-idx]').forEach(el => el.addEventListener('input', e => {
@@ -772,9 +1112,17 @@ function bindCanvas(canvas) {
     f.required = !f.required;
     saveDebounced(); renderCanvas();
   });
-  canvas.querySelectorAll('[data-panel-idx]').forEach(btn => btn.onclick = () => {
+  canvas.querySelectorAll('[data-panel-idx]').forEach(btn => btn.onclick = async () => {
     const idx = +btn.dataset.panelIdx, kind = btn.dataset.panelKind;
-    openPanel = (openPanel && openPanel.idx === idx && openPanel.kind === kind) ? null : { idx, kind };
+    const willOpen = !(openPanel && openPanel.idx === idx && openPanel.kind === kind);
+    if (willOpen && kind === 'gear' && form.fields[idx].type === 'calendar' && form.fields[idx].eventTypeSlug && !calFieldData[idx]) {
+      openPanel = { idx, kind };
+      renderCanvas(); // shows the panel's own "Loading…" state while this fetches
+      await loadCalFieldData(idx);
+      renderCanvas();
+      return;
+    }
+    openPanel = willOpen ? { idx, kind } : null;
     renderCanvas();
   });
   canvas.querySelectorAll('[data-del-idx]').forEach(btn => btn.onclick = () => {

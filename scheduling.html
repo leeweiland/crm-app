@@ -244,7 +244,7 @@ function wireCalendarCard(calId) {
   };
 }
 document.getElementById('newCalendarBtn').onclick = async () => {
-  const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Calendar', email: '' }) });
+  const r = await fetch('/api/scheduling/admin/calendars', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Calendar', email: '', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
   if (!r.ok) { showToast('Failed to create', true); return; }
   loadCalendars();
 };

@@ -734,11 +734,17 @@ export async function handleSchedulingRequest(req, res, url) {
     catch (e) { return sendJson(res, 200, { googleCalendars: [], error: e.message }); }
   }
   if (p === "/api/scheduling/admin/calendars" && req.method === "POST") {
-    const { name, email } = await readJsonBody(req);
+    const { name, email, timezone } = await readJsonBody(req);
     const calendars = getCalendars();
     const entry = {
       id: randomUUID(), name: name || email || "New Calendar", email: String(email || "").trim().toLowerCase(),
-      isDefault: false, availability: { ...DEFAULT_CALENDAR_AVAILABILITY }, createdAt: new Date().toISOString(),
+      isDefault: false,
+      // A new calendar defaults to whichever timezone the admin's own
+      // browser sent (autodetected client-side) rather than always
+      // inheriting DEFAULT_CALENDAR_AVAILABILITY's Anchorage default --
+      // most new calendars belong to someone NOT in Alaska.
+      availability: { ...DEFAULT_CALENDAR_AVAILABILITY, ...(timezone ? { timezone } : {}) },
+      createdAt: new Date().toISOString(),
     };
     calendars.push(entry);
     writeJson(CALENDARS_FILE, calendars);
