@@ -22,10 +22,15 @@ export const RESPONSES_FILE = "crm_form_responses.json";
 // embeds one of scheduling_backend.js's booking pages inline (same
 // .scheduling-inline-widget + /widget.js pattern book.html's own embed
 // snippet uses) -- the booking itself still happens on that system, this
-// step is just where it's shown in the form's flow.
+// step is just where it's shown in the form's flow. "country" is answerable
+// but invisible -- public-form.html silently fills its own answer in via
+// IP geolocation (see /detect-country below) rather than asking the
+// visitor anything, so the SAME per-field logic-rule builder every other
+// field already has (equals/contains -> hide_next or redirect) works as a
+// country screen for free, no separate mechanism needed.
 export const FIELD_TYPES = [
   "short_text", "long_text", "email", "phone", "first_name", "last_name",
-  "number", "dropdown", "multiple_choice", "checkboxes", "date",
+  "number", "dropdown", "multiple_choice", "checkboxes", "date", "country",
   "statement", "headline", "image", "video", "calendar", "page_break",
 ];
 const CHOICE_TYPES = ["dropdown", "multiple_choice", "checkboxes"];
@@ -117,18 +122,16 @@ function newForm(name) {
 function publicForm(form) {
   // Strips internal routing config (defaultStatus/addTagIds/addListIds) —
   // the public renderer only needs what it displays and submits against.
-  // aiScreenPrompt is replaced with a bare boolean -- the client needs to
-  // know a field is AI-screened (to call the ai-screen endpoint after it's
-  // answered) but never the actual disqualification criteria, or a visitor
-  // could read it straight out of the page source and word their answer to
-  // dodge it. blockedCountries is dropped from settings the same way, for
-  // the same reason (see the geo-check endpoint below).
+  // An "ai_disqualify" logic rule's value (the actual disqualification
+  // criteria) is stripped -- the client needs to know the rule EXISTS (to
+  // call the ai-screen endpoint after that field's answer settles) but
+  // never the criteria text itself, or a visitor could read it straight
+  // out of the page source and word their answer to dodge it.
   return {
     id: form.id, name: form.name, theme: form.theme,
     fields: form.fields.map(f => {
-      if (!f.aiScreenPrompt) return f;
-      const { aiScreenPrompt, ...rest } = f;
-      return { ...rest, hasAiScreen: true };
+      if (!(f.logic || []).some(r => r.op === "ai_disqualify")) return f;
+      return { ...f, logic: f.logic.map(r => r.op === "ai_disqualify" ? { ...r, value: undefined } : r) };
     }),
     settings: {
       submitButtonText: form.settings.submitButtonText,
@@ -158,15 +161,58 @@ async function askClaudeYesNo(systemPrompt, userText) {
   return String(textBlock?.text || "").trim().toUpperCase().startsWith("PASS");
 }
 
-// Same country name ip-api.com returns (see tracking_backend.js's
-// lookupIpLocation) -- case-insensitive compare so "india" in the admin's
-// list still matches "India" from the lookup.
-async function isCountryBlocked(req, blockedCountries) {
-  if (!Array.isArray(blockedCountries) || !blockedCountries.length) return false;
-  const location = await lookupIpLocation(clientIp(req));
-  if (!location?.country) return false;
-  const blockedLower = blockedCountries.map(c => String(c).trim().toLowerCase()).filter(Boolean);
-  return blockedLower.includes(location.country.toLowerCase());
+// Same evalCondition op set public-form.html's client-side logic already
+// evaluates -- duplicated here (not imported, this is a fully independent
+// deployment) purely for country/ai_disqualify rules, since ONLY those two
+// need a server round-trip a client can't fake. equals/not_equals/contains/
+// is_answered/is_empty on any other field type were never enforceable
+// server-side even before this (a determined visitor could always POST
+// straight to /submit) -- not a regression this introduces.
+function evalRuleServerSide(rule, value) {
+  if (rule.op === "is_answered") return Array.isArray(value) ? value.length > 0 : !!String(value || "").trim();
+  if (rule.op === "is_empty") return Array.isArray(value) ? value.length === 0 : !String(value || "").trim();
+  const target = rule.value;
+  if (rule.op === "equals") return Array.isArray(value) ? value.includes(target) : String(value || "") === target;
+  if (rule.op === "not_equals") return Array.isArray(value) ? !value.includes(target) : String(value || "") !== target;
+  if (rule.op === "contains") return Array.isArray(value) ? value.includes(target) : String(value || "").includes(target);
+  return false;
+}
+
+// Defense in depth for the two screening mechanisms that matter enough to
+// re-verify server-side: a "country" field's own hide_next/redirect rules
+// (re-detected from the REAL request IP, not whatever the client claims
+// its answers object says) and any ai_disqualify rule (re-run against the
+// actually-submitted answer). The client-side gate already keeps a normal
+// visitor from reaching Submit in either case -- this is what actually
+// stops a submission if that's bypassed. Every other rule type was never
+// server-enforced before this either (see evalRuleServerSide above), so
+// this intentionally doesn't try to become a general server-side logic
+// engine -- just closes the two paths framed as real disqualification.
+async function checkSubmissionDisqualified(form, answers, req) {
+  const countryFields = form.fields.filter(f => f.type === "country");
+  if (countryFields.length) {
+    const location = await lookupIpLocation(clientIp(req)).catch(() => null);
+    const country = location?.country || "";
+    for (const f of countryFields) {
+      for (const rule of f.logic || []) {
+        if ((rule.action === "hide_next" || rule.action === "redirect") && evalRuleServerSide(rule, country)) return true;
+      }
+    }
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    for (const f of form.fields) {
+      for (const rule of f.logic || []) {
+        if (rule.op !== "ai_disqualify" || !rule.value) continue;
+        if (rule.action !== "hide_next" && rule.action !== "redirect") continue;
+        const fail = await askClaudeYesNo(
+          `You are screening one answer to a single form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${rule.value}`,
+          `Respondent's answer to "${f.label || "this question"}": ${String(answers[f.id] ?? "")}`
+        ).then(pass => !pass).catch(() => false); // a failed/rate-limited call blocks nobody
+        if (fail) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function validateAnswers(fields, answers) {
@@ -257,24 +303,23 @@ export async function handleFormsRequest(req, res, url) {
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
     return sendJson(res, 200, { form: publicForm(form) });
   }
-  // Geo-screen: checked once on load (see public-form.html's init) so a
-  // blocked visitor sees "not available" up front instead of filling out
-  // the whole form first. Never echoes back the actual detected country or
-  // the admin's blocked-countries list -- just pass/fail, same reasoning
-  // as ai-screen below not echoing the disqualification criteria.
-  const geoCheckMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/geo-check$/);
-  if (geoCheckMatch && req.method === "GET") {
+  // A "country" field never asks the visitor anything -- this silently
+  // resolves it from the real request IP so public-form.html can drop the
+  // answer straight into the SAME per-field logic-rule builder (equals/
+  // contains -> hide_next/redirect) every other field type already has.
+  const detectCountryMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/detect-country$/);
+  if (detectCountryMatch && req.method === "GET") {
     const forms = readJson(FORMS_FILE, []);
-    const form = forms.find(f => f.id === geoCheckMatch[1]);
+    const form = forms.find(f => f.id === detectCountryMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
-    const blocked = await isCountryBlocked(req, form.settings.blockedCountries).catch(() => false);
-    return sendJson(res, 200, { blocked });
+    const location = await lookupIpLocation(clientIp(req)).catch(() => null);
+    return sendJson(res, 200, { country: location?.country || "" });
   }
 
-  // AI screen: re-reads the field's REAL configured prompt server-side by
-  // fieldId -- a client-supplied prompt is never trusted, or any visitor
-  // could point this at an arbitrary Anthropic call on the business's own
-  // API key/dime.
+  // AI screen: re-reads the field's REAL configured criteria server-side
+  // (from its ai_disqualify logic rule, by fieldId) -- a client-supplied
+  // prompt is never trusted, or any visitor could point this at an
+  // arbitrary Anthropic call on the business's own API key/dime.
   const aiScreenMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/ai-screen$/);
   if (aiScreenMatch && req.method === "POST") {
     const forms = readJson(FORMS_FILE, []);
@@ -282,11 +327,12 @@ export async function handleFormsRequest(req, res, url) {
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
     const { fieldId, answer } = await readJsonBody(req);
     const field = form.fields.find(f => f.id === fieldId);
-    if (!field?.aiScreenPrompt) return sendJson(res, 200, { pass: true }); // screening was turned off/removed since the page loaded -- fail open, not closed
+    const rule = field?.logic?.find(r => r.op === "ai_disqualify");
+    if (!rule?.value) return sendJson(res, 200, { pass: true }); // screening was turned off/removed since the page loaded -- fail open, not closed
     if (!process.env.ANTHROPIC_API_KEY) return sendJson(res, 200, { pass: true }); // not configured -- same fail-open reasoning
     try {
       const pass = await askClaudeYesNo(
-        `You are screening one answer to a single form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${field.aiScreenPrompt}`,
+        `You are screening one answer to a single form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${rule.value}`,
         `Respondent's answer to "${field.label || "this question"}": ${String(answer ?? "")}`
       );
       return sendJson(res, 200, { pass });
@@ -300,16 +346,17 @@ export async function handleFormsRequest(req, res, url) {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
-    // Defense in depth -- the client-side gate (geo-check on load) already
-    // keeps a blocked visitor from ever reaching Submit in the normal flow,
-    // but this is what actually stops a submission if that's bypassed.
-    if (await isCountryBlocked(req, form.settings.blockedCountries).catch(() => false)) {
-      return sendJson(res, 403, { error: "This form is not currently available in your region." });
-    }
     const { answers } = await readJsonBody(req);
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);
     if (validationError) return sendJson(res, 400, { error: validationError });
+    // Defense in depth -- the client-side gate (a country/ai_disqualify
+    // logic rule hiding Next) already keeps a normal visitor from ever
+    // reaching Submit, but this is what actually stops a submission if
+    // that's bypassed.
+    if (await checkSubmissionDisqualified(form, cleanAnswers, req).catch(() => false)) {
+      return sendJson(res, 403, { error: "This submission doesn't meet the requirements to continue." });
+    }
 
     const result = upsertContactFromSubmission(form, cleanAnswers);
     const responses = readJson(RESPONSES_FILE, []);

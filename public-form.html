@@ -199,6 +199,11 @@ function renderField(f) {
     // viewport instead so it actually fits the device, desktop or mobile.
     return `<div class="pf-field"><div class="scheduling-inline-widget" data-url="${escapeHtml(bookingWidgetUrl(f))}" style="min-width:280px;height:clamp(560px, 78vh, 820px)"></div></div>`;
   }
+  // "country" never asks the visitor anything -- its answer is filled in
+  // silently (see detectCountryForStep below) from their IP, so a Logic
+  // rule on it (equals/contains -> hide_next or redirect) works as a
+  // country screen through the exact same mechanism as every other field.
+  if (f.type === 'country') return '';
   const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
   const val = answers[f.id];
   if (f.type === 'long_text') {
@@ -225,14 +230,16 @@ function renderField(f) {
   return `<div class="pf-field">${label}<input class="pra-input" type="${inputType}" data-field="${f.id}" placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(val || '')}"/><div class="pf-error" id="err-${f.id}"></div></div>`;
 }
 
-// ── AI screening -- an alternative to hand-building exact-match hide_next
-// rules for every disqualifying answer. A field with hasAiScreen gets its
-// answer checked against the admin's own (server-side-only) criteria a
-// moment after it settles; a FAIL hides Next/Submit the same way hide_next
-// does. Debounced per field so a still-typing text answer doesn't fire a
-// Claude call on every keystroke. Fails OPEN (pass:true) on any network/
-// server hiccup -- a real visitor should never get stuck over an outage.
+// ── AI screening -- an ai_disqualify logic rule (built right in the SAME
+// "If this answer ___ then ___" rule editor as every other condition, not
+// a separate mechanism) gets its field's answer checked against the
+// admin's own (server-side-only) criteria a moment after it settles; a
+// FAIL matches the rule's condition the same way equals/contains would.
+// Debounced per field so a still-typing text answer doesn't fire a Claude
+// call on every keystroke. Fails OPEN (pass:true) on any network/server
+// hiccup -- a real visitor should never get stuck over an outage.
 let aiScreenResults = {}, aiScreenTimers = {};
+function aiRuleFor(field) { return (field?.logic || []).find(r => r.op === 'ai_disqualify'); }
 async function runAiScreen(fieldId) {
   const val = answers[fieldId];
   if (val === undefined || val === '' || (Array.isArray(val) && !val.length)) { delete aiScreenResults[fieldId]; updateNextVisibility(); return; }
@@ -248,6 +255,22 @@ async function runAiScreen(fieldId) {
   updateNextVisibility();
 }
 
+// "country" never renders a visible input (see renderField above) -- its
+// answer is filled in here, silently, from the real request IP, as soon
+// as a step containing one renders. Same reasoning as the AI screen for
+// re-running per step rather than once globally: Back/Next can revisit a
+// step, and a fresh detect-country call is cheap (server-cached per IP).
+async function detectCountryForStep(fields) {
+  const countryField = fields.find(f => f.type === 'country');
+  if (!countryField) return;
+  try {
+    const r = await fetch(`/api/public/forms/${formId}/detect-country`);
+    const d = await r.json();
+    if (r.ok) answers[countryField.id] = d.country || '';
+  } catch { /* no location signal for this visit -- rules against it just won't match */ }
+  updateNextVisibility();
+}
+
 function bindStepInputs() {
   const dataFieldEls = document.querySelectorAll('[data-field]');
   // A single multiple-choice question's options all share the SAME
@@ -258,6 +281,7 @@ function bindStepInputs() {
   dataFieldEls.forEach(el => {
     const id = el.dataset.field;
     const field = steps[stepIndex].find(f => f.id === id);
+    const hasAiRule = !!aiRuleFor(field);
     const handler = () => {
       if (el.type === 'checkbox') {
         const checked = document.querySelectorAll(`[data-field="${id}"]:checked`);
@@ -268,7 +292,7 @@ function bindStepInputs() {
         answers[id] = el.value;
       }
       updateNextVisibility();
-      if (field?.hasAiScreen) {
+      if (hasAiRule) {
         clearTimeout(aiScreenTimers[id]);
         aiScreenTimers[id] = setTimeout(() => runAiScreen(id), 800);
       }
@@ -280,7 +304,7 @@ function bindStepInputs() {
       // pfNext's own click handler (not a separate path), so every existing
       // check -- redirect rules, hide_next, validation, submit-on-last-step
       // -- still applies exactly as a manual click would.
-      if (singleQuestionStep && (el.type === 'radio' || el.tagName === 'SELECT') && !field?.hasAiScreen) {
+      if (singleQuestionStep && (el.type === 'radio' || el.tagName === 'SELECT') && !hasAiRule) {
         setTimeout(() => document.getElementById('pfNext')?.click(), 300);
       }
     };
@@ -292,8 +316,11 @@ function bindStepInputs() {
 // ── Conditional logic — each field can carry rules evaluated against its
 // OWN answer (Tally-style per-question logic). "hide_next" toggles whether
 // the step's Next/Submit button is even clickable; "redirect" is checked at
-// click-time and, when matched, navigates away instead of advancing. ──────
-function evalCondition(rule, value) {
+// click-time and, when matched, navigates away instead of advancing.
+// ai_disqualify can't be evaluated synchronously (it's a server round trip)
+// -- it reads whatever runAiScreen last cached instead of the raw answer. ──
+function evalCondition(rule, value, fieldId) {
+  if (rule.op === 'ai_disqualify') return aiScreenResults[fieldId] === false;
   if (rule.op === 'is_answered') return Array.isArray(value) ? value.length > 0 : !!String(value || '').trim();
   if (rule.op === 'is_empty') return Array.isArray(value) ? value.length === 0 : !String(value || '').trim();
   const target = rule.value;
@@ -305,7 +332,7 @@ function evalCondition(rule, value) {
 function matchingRule(fields, action) {
   for (const f of fields) {
     for (const rule of f.logic || []) {
-      if (rule.action === action && evalCondition(rule, answers[f.id])) return rule;
+      if (rule.action === action && evalCondition(rule, answers[f.id], f.id)) return rule;
     }
   }
   return null;
@@ -315,14 +342,12 @@ function updateNextVisibility() {
   if (!btn) return;
   const fields = steps[stepIndex];
   const hiddenByRule = !!matchingRule(fields, 'hide_next');
-  const aiPending = fields.some(f => f.hasAiScreen && aiScreenResults[f.id] === 'pending');
-  const aiFailed = fields.some(f => f.hasAiScreen && aiScreenResults[f.id] === false);
-  const hidden = hiddenByRule || aiFailed;
-  btn.style.display = hidden ? 'none' : '';
+  const aiPending = fields.some(f => aiRuleFor(f) && aiScreenResults[f.id] === 'pending');
+  btn.style.display = hiddenByRule ? 'none' : '';
   btn.disabled = aiPending;
   const msgEl = document.getElementById('pfHiddenMsg');
   msgEl.textContent = aiPending ? 'Checking your answer…' : 'Complete this step to continue.';
-  msgEl.style.display = (hidden || aiPending) ? 'block' : 'none';
+  msgEl.style.display = (hiddenByRule || aiPending) ? 'block' : 'none';
 }
 
 function validateStep(fields) {
@@ -409,6 +434,7 @@ function renderStep() {
   updateNextVisibility();
   activateRawEmbeds(card);
   loadCalendarWidgetsForStep(fields);
+  detectCountryForStep(fields);
   if (stepIndex > 0) document.getElementById('pfBack').onclick = () => { stepIndex--; renderStep(); };
   document.getElementById('pfNext').onclick = async () => {
     const redirect = matchingRule(fields, 'redirect');
@@ -454,14 +480,6 @@ async function submit() {
   form = (await r.json()).form;
   document.title = form.name;
   applyTheme(form.theme);
-  // Checked before the form ever renders -- a blocked visitor sees "not
-  // available" up front instead of filling out the whole thing first, only
-  // to be rejected at Submit (the server enforces this too, regardless).
-  const geoRes = await fetch(`/api/public/forms/${formId}/geo-check`).catch(() => null);
-  if (geoRes?.ok && (await geoRes.json()).blocked) {
-    document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form is not currently available in your region.</div>';
-    return;
-  }
   steps = buildSteps(form.fields);
   if (!steps.length) { document.getElementById('pfCard').innerHTML = '<div class="pra-muted">This form has no fields yet.</div>'; return; }
   renderStep();
