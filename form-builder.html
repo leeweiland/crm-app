@@ -71,7 +71,13 @@
   .fb-help:hover, .fb-help:focus { border-bottom-color: var(--pra-border); }
   .fb-help:empty:before { content: attr(data-placeholder); color: #55555f; }
   .fb-preview-field { margin-top: 10px; }
-  .fb-preview-field input, .fb-preview-field textarea, .fb-preview-field select { pointer-events: none; }
+  /* Non-option preview fields (text/email/phone/etc placeholders) are
+     readonly and only meant to LOOK like the real thing here -- inert on
+     purpose. The options block (Multiple Choice/Checkboxes/Dropdown) reuses
+     this same wrapper for layout, but its option inputs are real, editable,
+     genuinely wired to save (see bindCanvas's [data-opt-idx] handler), so
+     they're excluded or this same rule silently blocks clicking into them. */
+  .fb-preview-field input:not(.fb-option-input), .fb-preview-field textarea, .fb-preview-field select { pointer-events: none; }
 
   .fb-statement-text { font-family: var(--font-secondary); font-size: .95rem; line-height: 1.5; outline: none; border-bottom: 1px dashed transparent; }
   .fb-statement-text:hover, .fb-statement-text:focus { border-bottom-color: var(--pra-border); }
