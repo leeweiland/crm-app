@@ -293,5 +293,19 @@ export async function handleWorkflowsRequest(req, res, url) {
     return sendJson(res, 200, { enrollments: enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null })) });
   }
 
+  // Unenroll one contact -- marks the enrollment cancelled rather than
+  // deleting the record, so it drops out of every "active" filter (the
+  // tick-driven sender included) while keeping history in Enrolled Contacts.
+  const wfEnrollmentDeleteMatch = p.match(/^\/api\/workflows\/([^/]+)\/enrollments\/([^/]+)$/);
+  if (wfEnrollmentDeleteMatch && req.method === "DELETE") {
+    const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
+    const enrollment = enrollments.find(e => e.id === wfEnrollmentDeleteMatch[2] && e.workflowId === wfEnrollmentDeleteMatch[1]);
+    if (!enrollment) return sendJson(res, 404, { error: "Not found" });
+    enrollment.status = "cancelled";
+    enrollment.completedAt = new Date().toISOString();
+    writeJson(WF_ENROLLMENTS_FILE, enrollments);
+    return sendJson(res, 200, { ok: true });
+  }
+
   return false;
 }

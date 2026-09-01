@@ -15,6 +15,12 @@
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
   th.sortable.sorted .sort-arrow { opacity: 1; }
+  .enrolled-count-cell { cursor: pointer; color: var(--pra-blue); }
+  .enrolled-count-cell:hover { text-decoration: underline; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .row-item:last-child { border-bottom: none; }
+  .row-item button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 4px; }
+  .row-item button:hover { color: var(--pra-red); }
 </style>
 </head>
 <body>
@@ -46,10 +52,21 @@
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop" id="enrolledPanelModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px" id="enrolledPanelTitle">Enrolled</div>
+    <div id="enrolledPanelList"></div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:16px" onclick="closeModal('enrolledPanelModal')">Close</button>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 const TRIGGER_LABELS = { list_subscribe: 'Subscribes to list', tag_added: 'Tag added', email_opened: 'Email opened', email_clicked: 'Email link clicked' };
 
 let allAutomations = [];
@@ -79,7 +96,7 @@ function renderAutomationsTable() {
       <td class="pra-muted">${TRIGGER_LABELS[a.trigger?.type] || ''}</td>
       <td><button class="active-toggle${a.active ? ' on' : ''}" data-id="${a.id}" data-active="${a.active}"></button></td>
       <td>${Object.values(a.steps || {}).filter(s => s.type === 'send_email').length}</td>
-      <td>${a.enrolledCount}</td>
+      <td class="enrolled-count-cell" data-enrolled="${a.id}" data-name="${escapeHtml(a.name)}">${a.enrolledCount}</td>
       <td>${a.totalEnrolled}</td>
       <td class="pra-muted">${fmtDate(a.updatedAt)}</td>
       <td style="white-space:nowrap">
@@ -94,6 +111,7 @@ function renderAutomationsTable() {
     await fetch(`/api/automations/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });
     loadAutomations();
   });
+  document.querySelectorAll('[data-enrolled]').forEach(td => td.onclick = () => openEnrolledPanel(td.dataset.enrolled, td.dataset.name));
   document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async () => {
     const r = await fetch(`/api/automations/${btn.dataset.dup}/duplicate`, { method: 'POST' });
     const d = await r.json();
@@ -102,6 +120,29 @@ function renderAutomationsTable() {
   document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => {
     if (!confirm('Delete this automation?')) return;
     await fetch('/api/automations/' + btn.dataset.del, { method: 'DELETE' });
+    loadAutomations();
+  });
+}
+async function openEnrolledPanel(automationId, name) {
+  document.getElementById('enrolledPanelTitle').textContent = 'Enrolled — ' + name;
+  openModal('enrolledPanelModal');
+  await refreshEnrolledPanel(automationId);
+}
+async function refreshEnrolledPanel(automationId) {
+  const r = await fetch(`/api/automations/${automationId}/enrollments`);
+  const { enrollments } = await r.json();
+  const active = enrollments.filter(e => e.status === 'active');
+  const list = document.getElementById('enrolledPanelList');
+  list.innerHTML = active.length ? active.map(e => `
+    <div class="row-item">
+      <span style="flex:1">${escapeHtml(e.contact?.first || '')} ${escapeHtml(e.contact?.last || '')}${!e.contact ? '<span class="pra-muted"> (contact deleted)</span>' : ''}</span>
+      <button data-remove="${e.id}" title="Remove from automation">&times;</button>
+    </div>
+  `).join('') : '<div class="pra-muted">No one currently enrolled.</div>';
+  list.querySelectorAll('[data-remove]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Remove this contact from the automation?')) return;
+    await fetch(`/api/automations/${automationId}/enrollments/${btn.dataset.remove}`, { method: 'DELETE' });
+    await refreshEnrolledPanel(automationId);
     loadAutomations();
   });
 }

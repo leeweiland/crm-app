@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Workflows — CRM</title>
+<title>SMS Sequences — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
@@ -15,6 +15,12 @@
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
   th.sortable.sorted .sort-arrow { opacity: 1; }
+  .enrolled-count-cell { cursor: pointer; color: var(--pra-blue); }
+  .enrolled-count-cell:hover { text-decoration: underline; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
+  .row-item:last-child { border-bottom: none; }
+  .row-item button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 4px; }
+  .row-item button:hover { color: var(--pra-red); }
 </style>
 </head>
 <body>
@@ -24,7 +30,7 @@
     <div class="app-main">
       <div class="mobile-sticky-header">
         <div class="toolbar">
-          <div class="pra-h1" style="flex:1">Workflows</div>
+          <div class="pra-h1" style="flex:1">SMS Sequences</div>
           <button class="pra-btn" id="newWorkflowBtn">+ New Workflow</button>
         </div>
       </div>
@@ -45,10 +51,21 @@
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop" id="enrolledPanelModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px" id="enrolledPanelTitle">Enrolled</div>
+    <div id="enrolledPanelList"></div>
+    <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:16px" onclick="closeModal('enrolledPanelModal')">Close</button>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
 let allWorkflows = [];
 let workflowSort = { field: 'updatedAt', dir: -1 };
@@ -76,7 +93,7 @@ function renderWorkflowsTable() {
       <td class="clickable" onclick="location.href='/workflow-detail.html?id=${w.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(w.name)}</td>
       <td class="pra-muted">${w.steps.length}</td>
       <td><button class="active-toggle${w.active ? ' on' : ''}" data-id="${w.id}" data-active="${w.active}"></button></td>
-      <td>${w.stats.active}</td>
+      <td class="enrolled-count-cell" data-enrolled="${w.id}" data-name="${escapeHtml(w.name)}">${w.stats.active}</td>
       <td>${w.stats.goalMet}</td>
       <td class="pra-muted">${fmtDate(w.updatedAt)}</td>
       <td style="white-space:nowrap">
@@ -98,6 +115,31 @@ function renderWorkflowsTable() {
   document.querySelectorAll('.active-toggle').forEach(btn => btn.onclick = async () => {
     const next = btn.dataset.active !== 'true';
     await fetch(`/api/workflows/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });
+    loadWorkflows();
+  });
+  document.querySelectorAll('[data-enrolled]').forEach(td => td.onclick = () => openEnrolledPanel(td.dataset.enrolled, td.dataset.name));
+}
+
+async function openEnrolledPanel(workflowId, name) {
+  document.getElementById('enrolledPanelTitle').textContent = 'Enrolled — ' + name;
+  openModal('enrolledPanelModal');
+  await refreshEnrolledPanel(workflowId);
+}
+async function refreshEnrolledPanel(workflowId) {
+  const r = await fetch(`/api/workflows/${workflowId}/enrollments`);
+  const { enrollments } = await r.json();
+  const active = enrollments.filter(e => e.status === 'active');
+  const list = document.getElementById('enrolledPanelList');
+  list.innerHTML = active.length ? active.map(e => `
+    <div class="row-item">
+      <span style="flex:1">${escapeHtml(e.contact?.first || '')} ${escapeHtml(e.contact?.last || '')}${!e.contact ? '<span class="pra-muted"> (contact deleted)</span>' : ''}</span>
+      <button data-remove="${e.id}" title="Remove from sequence">&times;</button>
+    </div>
+  `).join('') : '<div class="pra-muted">No one currently enrolled.</div>';
+  list.querySelectorAll('[data-remove]').forEach(btn => btn.onclick = async () => {
+    if (!confirm('Remove this contact from the sequence?')) return;
+    await fetch(`/api/workflows/${workflowId}/enrollments/${btn.dataset.remove}`, { method: 'DELETE' });
+    await refreshEnrolledPanel(workflowId);
     loadWorkflows();
   });
 }

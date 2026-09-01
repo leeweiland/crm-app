@@ -333,6 +333,20 @@ export async function handleAutomationsRequest(req, res, url) {
     return sendJson(res, 200, { enrollments: withContacts });
   }
 
+  // Unenroll one contact -- marks the enrollment cancelled rather than
+  // deleting the record, so it drops out of every "active" filter (the
+  // tick-driven resumer included) while keeping history.
+  const enrollmentDeleteMatch = p.match(/^\/api\/automations\/([^/]+)\/enrollments\/([^/]+)$/);
+  if (enrollmentDeleteMatch && req.method === "DELETE") {
+    const enrollments = readJson(ENROLLMENTS_FILE, []);
+    const enrollment = enrollments.find(e => e.id === enrollmentDeleteMatch[2] && e.automationId === enrollmentDeleteMatch[1]);
+    if (!enrollment) return sendJson(res, 404, { error: "Not found" });
+    enrollment.status = "cancelled";
+    enrollment.updatedAt = new Date().toISOString();
+    writeJson(ENROLLMENTS_FILE, enrollments);
+    return sendJson(res, 200, { ok: true });
+  }
+
   // Bulk reset (Settings > Email Theme's "reset all" button) -- re-copies
   // the current org theme into every send_email step. A single step's own
   // "Reset to default" (in its editor) just updates local state and goes
