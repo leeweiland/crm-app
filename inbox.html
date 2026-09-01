@@ -1440,6 +1440,15 @@ async function selectConversation(c, skipFetch) {
   // call), separate from generateAiContent()/loadAiSummary() below, which
   // only run when a human clicks one of those icons.
   //
+  // c.contact itself is the sidebar's own denormalized SQLite snapshot
+  // (see sqlite_inbox.js) -- deliberately NOT re-fetched from the real
+  // ~190MB contacts file here. That was tried (both blocking the first
+  // render and, after that made every click feel broken, as a background
+  // patch-in-after) and reverted both times: the live-sync hooks
+  // (syncContactFields et al) already keep this snapshot correct on every
+  // contact edit going forward, so the extra request bought correctness
+  // this app already has for a real, felt performance cost that wasn't
+  // worth it.
   const [threadRes, matchRes] = await Promise.all([
     fetch('/api/inbox/contact/' + c.contactId),
     fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId)),
@@ -1447,27 +1456,7 @@ async function selectConversation(c, skipFetch) {
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
   renderThread();
-  refreshContactFromSource(c);
 }
-// The sidebar's own `c.contact` is a denormalized SQLite snapshot (see
-// sqlite_inbox.js) kept for the CONVERSATION LIST's sake -- fast to page
-// through thousands of rows, but only as fresh as its last sync. GET /api/
-// contacts/:id has the real record but reads the full ~190MB contacts file
-// on every call (1-3+ seconds) -- awaiting that before the FIRST render
-// made every single click into a conversation feel broken, so this runs
-// after renderThread() already painted the (fast, usually-correct) cached
-// version, then quietly patches in the real one once it lands. Guards
-// against a slow response arriving after the user has already clicked into
-// a different conversation.
-async function refreshContactFromSource(c) {
-  const r = await fetch('/api/contacts/' + c.contactId).catch(() => null);
-  if (!r || !r.ok || selectedConvo !== c) return;
-  const fresh = (await r.json()).contact;
-  if (!fresh) return;
-  c.contact = { ...c.contact, ...fresh };
-  renderThread();
-}
-function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }
 function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }
 
 // Generates (or regenerates) straight into the compose fields -- no
