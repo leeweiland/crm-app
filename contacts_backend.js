@@ -82,6 +82,20 @@ export function getOrCreateList(name) {
   return list;
 }
 
+// Lazy one-time migration: older list/segment records predate the manual
+// sort-order feature and have no .order field. Stamp one in from current
+// array position (first load only -- the write is skipped once every record
+// already has an order) so manual mode has something to sort by immediately
+// instead of every existing row colliding at order 0.
+function backfillOrder(items, file) {
+  if (items.every(it => typeof it.order === "number")) return items;
+  items.forEach((it, i) => { if (typeof it.order !== "number") it.order = i; });
+  writeJson(file, items);
+  return items;
+}
+export function getOrderedLists() { return backfillOrder(readJson(LISTS_FILE, []), LISTS_FILE); }
+export function getOrderedSegments() { return backfillOrder(readJson(SEGMENTS_FILE, []), SEGMENTS_FILE); }
+
 function publicContact(c) { return c; } // no sensitive fields to strip yet — placeholder for parity with auth's publicUser
 
 export function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {
@@ -259,16 +273,28 @@ export async function handleContactsRequest(req, res, url) {
 
   // ── Lists ────────────────────────────────────────────────────────────
   if (p === "/api/lists" && req.method === "GET") {
-    return sendJson(res, 200, { lists: readJson(LISTS_FILE, []) });
+    return sendJson(res, 200, { lists: getOrderedLists() });
   }
   if (p === "/api/lists" && req.method === "POST") {
     const { name } = await readJsonBody(req);
     if (!name) return sendJson(res, 400, { error: "name is required" });
     const lists = readJson(LISTS_FILE, []);
-    const list = { id: randomUUID(), name, createdAt: new Date().toISOString() };
+    const list = { id: randomUUID(), name, order: lists.length, createdAt: new Date().toISOString() };
     lists.push(list);
     writeJson(LISTS_FILE, lists);
     return sendJson(res, 200, { ok: true, list });
+  }
+  // Manual drag-to-reorder: client sends the full ordered id list, we just
+  // stamp each record's .order to its new index. Must come before the
+  // generic /api/lists/:id routes below or "reorder" gets swallowed as an id.
+  if (p === "/api/lists/reorder" && req.method === "POST") {
+    const { orderedIds } = await readJsonBody(req);
+    if (!Array.isArray(orderedIds)) return sendJson(res, 400, { error: "orderedIds is required" });
+    const lists = readJson(LISTS_FILE, []);
+    const indexById = new Map(orderedIds.map((id, i) => [id, i]));
+    lists.forEach(l => { if (indexById.has(l.id)) l.order = indexById.get(l.id); });
+    writeJson(LISTS_FILE, lists);
+    return sendJson(res, 200, { ok: true });
   }
   // Bulk delete -- ONE contacts-file pass for however many list ids are
   // selected, not one per id. Confirmed live (2026-09-01) that selecting a
@@ -363,17 +389,27 @@ export async function handleContactsRequest(req, res, url) {
 
   // ── Segments (saved filters, evaluated live — no materialized membership) ─
   if (p === "/api/segments" && req.method === "GET") {
-    return sendJson(res, 200, { segments: readJson(SEGMENTS_FILE, []) });
+    return sendJson(res, 200, { segments: getOrderedSegments() });
   }
   if (p === "/api/segments" && req.method === "POST") {
     const { name, filter, channel } = await readJsonBody(req);
     if (!name || !filter) return sendJson(res, 400, { error: "name and filter are required" });
     if (channel && !["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
     const segments = readJson(SEGMENTS_FILE, []);
-    const segment = { id: randomUUID(), name, filter, channel: channel || "email", createdAt: new Date().toISOString() };
+    const segment = { id: randomUUID(), name, filter, channel: channel || "email", order: segments.length, createdAt: new Date().toISOString() };
     segments.push(segment);
     writeJson(SEGMENTS_FILE, segments);
     return sendJson(res, 200, { ok: true, segment });
+  }
+  // Same manual-reorder pattern as /api/lists/reorder above.
+  if (p === "/api/segments/reorder" && req.method === "POST") {
+    const { orderedIds } = await readJsonBody(req);
+    if (!Array.isArray(orderedIds)) return sendJson(res, 400, { error: "orderedIds is required" });
+    const segments = readJson(SEGMENTS_FILE, []);
+    const indexById = new Map(orderedIds.map((id, i) => [id, i]));
+    segments.forEach(s => { if (indexById.has(s.id)) s.order = indexById.get(s.id); });
+    writeJson(SEGMENTS_FILE, segments);
+    return sendJson(res, 200, { ok: true });
   }
   // No contacts file involved (segments have no stored membership), but
   // still one write instead of N for consistency with lists/tags.

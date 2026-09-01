@@ -32,6 +32,10 @@
   .row-item input[type="checkbox"] { accent-color: var(--pra-blue); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
   .row-item .count-link { font-size: .78rem; cursor: pointer; white-space: nowrap; }
   .bulk-delete-bar { margin-bottom: 10px; }
+  .sort-mode-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .sort-mode-row select { width: auto; min-width: 190px; }
+  .drag-handle { cursor: grab; color: var(--pra-dim); flex-shrink: 0; }
+  .row-item.drag-over { border-top: 2px solid var(--pra-blue); }
   .add-row { display: flex; gap: 10px; margin-top: 14px; }
   .add-row input { flex: 1; }
   .filter-toggle { font-size: .8rem; }
@@ -152,6 +156,7 @@
         <div class="pra-panel" style="padding:22px;max-width:560px">
           <div class="pra-h2" style="margin-bottom:6px">Email Lists</div>
           <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Used to target campaigns and automations, same as ActiveCampaign lists.</div>
+          <div class="sort-mode-row"><label class="pra-label">Sort</label><select class="pra-select" id="listsSortMode"><option value="manual">Manual (drag to reorder)</option><option value="alpha">Alphabetical</option><option value="count">Contact count</option></select></div>
           <div class="bulk-delete-bar" id="listsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="list">Delete Selected (<span data-bulk-count>0</span>)</button></div>
           <div id="listsList"></div>
           <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
@@ -162,6 +167,7 @@
         <div class="pra-panel" style="padding:22px">
           <div class="pra-h2" style="margin-bottom:6px">Segments</div>
           <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters used to target campaigns, automations, and SMS sequences. Build one from the Contacts tab's filter panel.</div>
+          <div class="sort-mode-row"><label class="pra-label">Sort</label><select class="pra-select" id="segmentsSortMode"><option value="manual">Manual (drag to reorder)</option><option value="alpha">Alphabetical</option><option value="count">Contact count</option></select></div>
           <div class="bulk-delete-bar" id="segmentsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="segment">Delete Selected (<span data-bulk-count>0</span>)</button></div>
           <div id="segmentsList"></div>
         </div>
@@ -170,6 +176,7 @@
       <div class="tab-panel" id="tab-tags">
         <div class="pra-panel" style="padding:22px;max-width:640px">
           <div class="pra-h2" style="margin-bottom:14px">Tags</div>
+          <div class="sort-mode-row"><label class="pra-label">Sort</label><select class="pra-select" id="tagsSortMode"><option value="alpha">Alphabetical</option><option value="count">Contact count</option></select></div>
           <div class="bulk-delete-bar" id="tagsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="tag">Delete Selected (<span data-bulk-count>0</span>)</button></div>
           <div id="tagsList"></div>
           <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
@@ -398,10 +405,48 @@ async function loadStatuses() {
 const bulkSelected = { list: new Set(), tag: new Set(), segment: new Set() };
 const lastCheckedIndex = { list: null, tag: null, segment: null };
 const KIND_CONFIG = {
-  list: { deleteUrl: id => `/api/lists/${id}`, bulkDeleteUrl: '/api/lists/bulk-delete', contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
-  tag: { deleteUrl: id => `/api/tags/${id}`, bulkDeleteUrl: '/api/tags/bulk-delete', contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
-  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false },
+  list: { deleteUrl: id => `/api/lists/${id}`, bulkDeleteUrl: '/api/lists/bulk-delete', reorderUrl: '/api/lists/reorder', contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
+  tag: { deleteUrl: id => `/api/tags/${id}`, bulkDeleteUrl: '/api/tags/bulk-delete', reorderUrl: null, contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
+  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', reorderUrl: '/api/segments/reorder', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false },
 };
+// Sort mode persists per-tab across reloads. Tags never gets "manual" (no
+// reorderUrl, no real fixed order to speak of) -- everything else defaults
+// to "manual" the first time, since that's just "whatever order the file
+// already has" (backfilled server-side) and costs nothing to compute.
+function getSortMode(kind) {
+  const saved = localStorage.getItem(kind + 'SortMode');
+  const valid = kind === 'tag' ? ['alpha', 'count'] : ['manual', 'alpha', 'count'];
+  return valid.includes(saved) ? saved : (kind === 'tag' ? 'alpha' : 'manual');
+}
+function setSortMode(kind, mode) { localStorage.setItem(kind + 'SortMode', mode); }
+async function fetchCount(kind, item) {
+  try {
+    const r = await fetch(`/api/contacts?${KIND_CONFIG[kind].contactsQuery(item)}&limit=1`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return typeof d.total === 'number' ? d.total : null;
+  } catch { return null; }
+}
+// "Contact count" mode needs every row's count BEFORE it can decide an
+// order, so (only in this mode) counts are fetched up front in parallel
+// and handed to renderManagedList to paint immediately instead of the
+// normal progressive per-row fetch-after-render.
+async function loadAndRenderKind(kind, rawItems, containerId, barId, sortSelectId, nameHtmlFn) {
+  const mode = getSortMode(kind);
+  const sel = document.getElementById(sortSelectId);
+  if (sel) sel.value = mode;
+  let items = rawItems, prefetchedCounts = null;
+  if (mode === 'manual') {
+    items = [...rawItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  } else if (mode === 'alpha') {
+    items = [...rawItems].sort((a, b) => a.name.localeCompare(b.name));
+  } else if (mode === 'count') {
+    const counts = await Promise.all(rawItems.map(item => fetchCount(kind, item)));
+    prefetchedCounts = new Map(rawItems.map((item, i) => [item.id, counts[i]]));
+    items = [...rawItems].sort((a, b) => (prefetchedCounts.get(b.id) ?? -1) - (prefetchedCounts.get(a.id) ?? -1));
+  }
+  renderManagedList(kind, items, containerId, barId, nameHtmlFn, mode, prefetchedCounts);
+}
 function reloadKind(kind) {
   bulkSelected[kind].clear();
   if (kind === 'list') loadLists(); else if (kind === 'tag') loadTags(); else loadSegments();
@@ -433,31 +478,44 @@ document.querySelectorAll('[data-bulk-delete]').forEach(btn => btn.onclick = asy
   }
   reloadKind(kind);
 });
-function renderManagedList(kind, items, containerId, barId, nameHtmlFn) {
+function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode, prefetchedCounts) {
   const cfg = KIND_CONFIG[kind];
   const container = document.getElementById(containerId);
+  const draggableOn = sortMode === 'manual' && !!cfg.reorderUrl;
   container.innerHTML = items.map(item => `
-    <div class="row-item">
+    <div class="row-item"${draggableOn ? ` draggable="true" data-id="${item.id}"` : ''}>
+      ${draggableOn ? `<span class="drag-handle">&#8942;&#8942;</span>` : ''}
       <input type="checkbox" data-bulk="${item.id}"/>
       <div style="flex:1">${nameHtmlFn(item)}</div>
-      <a class="pra-link count-link" data-count="${item.id}">…</a>
+      <a class="pra-link count-link" data-count="${item.id}">${prefetchedCounts ? '' : '…'}</a>
       ${cfg.hasAddTo ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto="${item.id}">Add to...</button>` : ''}
       <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
     </div>
   `).join('') || `<div class="pra-muted">None yet.</div>`;
-  items.forEach(item => {
-    fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).then(d => {
+  if (prefetchedCounts) {
+    // Already fetched (up front, for "contact count" sort mode) -- paint
+    // immediately instead of re-fetching the same data per row.
+    items.forEach(item => {
       const el = container.querySelector(`[data-count="${item.id}"]`);
       if (!el) return;
-      // A failed/error response (e.g. the server was overloaded) still
-      // resolves here as `null`/a body with no `.total` -- show a dash
-      // instead of literally rendering "undefined contacts".
-      el.textContent = typeof d?.total === 'number' ? `${d.total} contact${d.total === 1 ? '' : 's'}` : '— contacts';
-    }).catch(() => {
-      const el = container.querySelector(`[data-count="${item.id}"]`);
-      if (el) el.textContent = '— contacts';
+      const c = prefetchedCounts.get(item.id);
+      el.textContent = typeof c === 'number' ? `${c} contact${c === 1 ? '' : 's'}` : '— contacts';
     });
-  });
+  } else {
+    items.forEach(item => {
+      fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).then(d => {
+        const el = container.querySelector(`[data-count="${item.id}"]`);
+        if (!el) return;
+        // A failed/error response (e.g. the server was overloaded) still
+        // resolves here as `null`/a body with no `.total` -- show a dash
+        // instead of literally rendering "undefined contacts".
+        el.textContent = typeof d?.total === 'number' ? `${d.total} contact${d.total === 1 ? '' : 's'}` : '— contacts';
+      }).catch(() => {
+        const el = container.querySelector(`[data-count="${item.id}"]`);
+        if (el) el.textContent = '— contacts';
+      });
+    });
+  }
   container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
   container.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
   const checkboxes = [...container.querySelectorAll('[data-bulk]')];
@@ -491,7 +549,32 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn) {
       openAddToModal(kind === 'tag' ? { tagId: item.id } : { segmentId: item.id }, `${kind === 'tag' ? 'Tag' : 'Segment'}: ${item?.name || ''}`);
     });
   }
+  if (draggableOn) {
+    // Persists the drop as final -- no re-render/reload after, the drag
+    // already left the DOM in the right order, matching settings.html's
+    // own statuses drag-reorder.
+    wireDragReorder(container, (orderedIds) => {
+      fetch(cfg.reorderUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderedIds }) });
+    });
+  }
   updateBulkBar(kind, barId);
+}
+// Same drag-and-drop reorder pattern as settings.html's Lead Statuses list.
+function wireDragReorder(container, onReorder) {
+  let dragEl = null;
+  container.querySelectorAll('[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', () => { dragEl = el; el.style.opacity = '.4'; });
+    el.addEventListener('dragend', () => { el.style.opacity = ''; });
+    el.addEventListener('dragover', (e) => e.preventDefault());
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragEl || dragEl === el) return;
+      const items = [...container.children];
+      const dragIdx = items.indexOf(dragEl), dropIdx = items.indexOf(el);
+      if (dragIdx < dropIdx) el.after(dragEl); else el.before(dragEl);
+      onReorder([...container.children].map(c => c.dataset.id));
+    });
+  });
 }
 
 // ── Membership panel (paginated GET /api/contacts, same shape the main
@@ -541,14 +624,16 @@ document.getElementById('membershipCloseBtn').onclick = () => document.getElemen
 
 async function loadTags() {
   const r = await fetch('/api/tags');
-  allTags = (await r.json()).tags.sort((a, b) => a.name.localeCompare(b.name));
-  renderManagedList('tag', allTags, 'tagsList', 'tagsBulkBar', item => escapeHtml(item.name));
+  allTags = (await r.json()).tags;
+  await loadAndRenderKind('tag', allTags, 'tagsList', 'tagsBulkBar', 'tagsSortMode', item => escapeHtml(item.name));
 }
 async function loadLists() {
   const r = await fetch('/api/lists');
-  allLists = (await r.json()).lists.sort((a, b) => a.name.localeCompare(b.name));
-  renderManagedList('list', allLists, 'listsList', 'listsBulkBar', item => escapeHtml(item.name));
+  allLists = (await r.json()).lists;
+  await loadAndRenderKind('list', allLists, 'listsList', 'listsBulkBar', 'listsSortMode', item => escapeHtml(item.name));
 }
+document.getElementById('listsSortMode').onchange = (e) => { setSortMode('list', e.target.value); loadLists(); };
+document.getElementById('tagsSortMode').onchange = (e) => { setSortMode('tag', e.target.value); loadTags(); };
 async function loadCustomFields() {
   const r = await fetch('/api/custom-fields?entityType=contact');
   allCustomFields = (await r.json()).fields;
@@ -572,9 +657,10 @@ document.getElementById('addListBtn').onclick = async () => {
 const describeFilter = (filter) => window.ConditionRowBuilder.describeFilter(filter);
 async function loadSegments() {
   const r = await fetch('/api/segments');
-  allSegments = (await r.json()).segments.sort((a, b) => a.name.localeCompare(b.name));
-  renderManagedList('segment', allSegments, 'segmentsList', 'segmentsBulkBar', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
+  allSegments = (await r.json()).segments;
+  await loadAndRenderKind('segment', allSegments, 'segmentsList', 'segmentsBulkBar', 'segmentsSortMode', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
 }
+document.getElementById('segmentsSortMode').onchange = (e) => { setSortMode('segment', e.target.value); loadSegments(); };
 
 // ── "Add to Automation/Sequence" -- shared by the Contacts table's bulk-
 // select bar and the Segments/Tags row buttons above/below. addToTarget
