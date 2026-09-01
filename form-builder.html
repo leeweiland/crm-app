@@ -110,10 +110,13 @@
   .fb-panel .field { margin-bottom: 10px; }
   .fb-panel .field:last-child { margin-bottom: 0; }
 
-  .fb-gap-end { padding: 14px 44px 0; display: flex; justify-content: center; }
-  .fb-add-end-btn { width: 34px; height: 34px; background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: border-color .12s, color .12s; }
-  .fb-add-end-btn:hover, .fb-add-end-btn.on { border-color: var(--pra-blue); color: var(--pra-blue); }
-  .fb-add-end-btn svg { width: 16px; height: 16px; overflow: visible; }
+  /* One of these renders in every gap -- before the first block, between
+     each pair, and after the last -- not just at the end, so a question can
+     be inserted anywhere instead of always appended and dragged into place. */
+  .fb-gap { padding: 14px 44px 0; display: flex; justify-content: center; }
+  .fb-add-gap-btn { width: 34px; height: 34px; background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: border-color .12s, color .12s; }
+  .fb-add-gap-btn:hover, .fb-add-gap-btn.on { border-color: var(--pra-blue); color: var(--pra-blue); }
+  .fb-add-gap-btn svg { width: 16px; height: 16px; overflow: visible; }
 
   .fb-palette { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 44px 4px; }
   .fb-palette button { font-size: .76rem; display: inline-flex; align-items: center; gap: 5px; }
@@ -384,7 +387,7 @@ const formId = new URLSearchParams(location.search).get('id');
 let form = null, allStatuses = [], allTags = [], allLists = [], allEventTypes = [];
 let saveTimer, dragFromIdx = null;
 let openPanel = null; // { idx, kind: 'gear'|'logic' } | null
-let paletteOpen = false;
+let paletteOpenAt = null; // index into form.fields where a new field would be inserted, or null if no gap's palette is open
 
 async function loadRefs() {
   const [statusesRes, tagsRes, listsRes, eventTypesRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/tags'), fetch('/api/lists'), fetch('/api/scheduling/admin/event-types')]);
@@ -557,12 +560,15 @@ function renderBlockBody(f, i) {
   return `${labelHtml}<div class="fb-preview-field"><input class="pra-input" type="${inputType}" placeholder="${escapeHtml(f.placeholder || DEFAULT_PLACEHOLDER[f.type] || '')}" readonly/></div>`;
 }
 
-function renderTrailingAdd() {
+// idx is where a field inserted from this gap's palette would land in
+// form.fields (0 = before the first block, form.fields.length = the
+// trailing gap after the last one) -- renders in every gap, not just the end.
+function renderGapAdd(idx) {
   return `
-    <div class="fb-gap-end">
-      <button class="fb-add-end-btn ${paletteOpen ? 'on' : ''}" id="addFieldBtn" title="Add a question">${ICONS.plusOutline}</button>
+    <div class="fb-gap">
+      <button class="fb-add-gap-btn ${paletteOpenAt === idx ? 'on' : ''}" data-gap-idx="${idx}" title="Add a question">${ICONS.plusOutline}</button>
     </div>
-    ${paletteOpen ? renderPalette() : ''}
+    ${paletteOpenAt === idx ? renderPalette() : ''}
   `;
 }
 function renderPalette() {
@@ -576,6 +582,7 @@ function renderCanvas() {
   const stepCount = form.fields.filter(f => f.type === 'page_break').length + 1;
 
   let html = stepCount > 1 ? `<div class="fb-progress">${Array.from({ length: stepCount }).map((_, i) => `<span class="${i === 0 ? 'done' : ''}"></span>`).join('')}</div>` : '';
+  html += renderGapAdd(0);
   form.fields.forEach((f, i) => {
     html += `
       <div class="fb-block-wrap">
@@ -587,8 +594,8 @@ function renderCanvas() {
         ${renderPanel(f, i)}
       </div>
     `;
+    html += renderGapAdd(i + 1);
   });
-  html += renderTrailingAdd();
   html += `<div class="fb-submit-row"><span class="fb-submit-preview" contenteditable="true" id="submitPreview">${escapeHtml(form.settings.submitButtonText || 'Submit')}</span></div>`;
   canvas.innerHTML = html;
 
@@ -707,9 +714,14 @@ function bindCanvas(canvas) {
     saveDebounced(); renderCanvas();
   });
 
-  // ── Add a field — single trailing entry point, always appends. ──
-  const addBtn = document.getElementById('addFieldBtn');
-  if (addBtn) addBtn.onclick = () => { paletteOpen = !paletteOpen; renderCanvas(); };
+  // ── Add a field — one entry point per gap (before the first block,
+  // between every pair, and after the last), so a new question lands
+  // exactly where it's needed instead of always appending + dragging. ──
+  canvas.querySelectorAll('[data-gap-idx]').forEach(btn => btn.onclick = () => {
+    const idx = +btn.dataset.gapIdx;
+    paletteOpenAt = paletteOpenAt === idx ? null : idx;
+    renderCanvas();
+  });
   canvas.querySelectorAll('[data-add-type]').forEach(btn => btn.onclick = () => {
     const type = btn.dataset.addType;
     const field = { id: uid(), type };
@@ -721,8 +733,9 @@ function bindCanvas(canvas) {
       field.label = FIELD_META[type].label; field.placeholder = ''; field.required = false; field.helpText = '';
       if (FIELD_META[type].hasOptions) field.options = [{ id: uid(), label: 'Option 1' }];
     }
-    form.fields.push(field);
-    paletteOpen = false;
+    form.fields.splice(paletteOpenAt, 0, field);
+    paletteOpenAt = null;
+    openPanel = null; // insertion can shift indices out from under whatever panel was open
     saveDebounced(); renderCanvas();
   });
 
