@@ -615,7 +615,13 @@ export async function handleFlowsRequest(req, res, url) {
       const eventTypeId = flow.trigger.config?.eventTypeId;
       if (eventTypeId) bookings = bookings.filter(b => b.eventTypeId === eventTypeId);
       bookings = bookings.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
+      // Same precedence as the real trigger payload (scheduling_backend.js)
+      // -- b.formAnswers spread first so the fixed fields always win a
+      // same-named collision, and so a calendar-embedded form's OTHER
+      // questions (Career, Goals, ...) show up here as pickable tokens too,
+      // not just the fixed booking fields.
       const samples = bookings.map(b => ({
+        ...(b.formAnswers && typeof b.formAnswers === "object" ? b.formAnswers : {}),
         "Event Type": eventTypes.find(e => e.id === b.eventTypeId)?.name || "",
         "When": new Date(b.startAt).toLocaleString(),
         "Name": b.name, "Email": b.email, "Phone": b.phone, "Notes": b.notes || "",

@@ -713,6 +713,12 @@ export async function handleSchedulingRequest(req, res, url) {
       id: randomUUID(), eventTypeId: et.id, contactId: contact.id,
       name, email: String(email).trim().toLowerCase(), phone: phone || "", notes,
       answers: answers || {},
+      // Persisted (not just passed straight into the trigger payload below)
+      // so a saved booking is also where flows_backend.js's samples
+      // endpoint finds these for "Pull Sample Data" to show as pickable
+      // {{payload.X}} tokens -- otherwise they'd only ever exist for the
+      // instant a flow run actually fires, with no way to discover them.
+      formAnswers: formAnswers && typeof formAnswers === "object" ? formAnswers : {},
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || calendar.availability.timezone,
       status: "confirmed", calendarEventId, calendarId,
