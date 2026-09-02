@@ -152,6 +152,10 @@
   <div class="pra-panel modal-box">
     <div class="pra-h2" id="stepConfigTitle" style="margin-bottom:16px">Configure Step</div>
     <div id="stepConfigBody"></div>
+    <!-- Shared across every step type's free-text inputs via list="sheetFieldOptions"
+         -- type to search, pick one, it fills the box. Lives here (not inside a
+         step's own template) so it survives switching between step types. -->
+    <datalist id="sheetFieldOptions"></datalist>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="saveStepBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('stepConfigModal')">Cancel</button>
@@ -615,7 +619,6 @@ function openStepConfigModal(step, isNew) {
         <div class="pra-label" style="margin:14px 0 8px">Columns <span class="pra-muted" style="text-transform:none;font-weight:400">— type a value, or start typing to search available fields</span></div>
         <div id="sheetColRows"></div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSheetColBtn" style="display:none;margin-top:6px">+ Add Column</button>
-        <datalist id="sheetFieldOptions"></datalist>
       </div>
     `;
 
@@ -701,7 +704,6 @@ function openStepConfigModal(step, isNew) {
       // as Zapier's own spreadsheet picker.
       document.getElementById('cfgSheetSearch').dispatchEvent(new Event('input'));
     }
-    populateSheetFieldOptions();
   } else if (step.type === 'enroll_automation') {
     body.innerHTML = `<div class="field"><label class="pra-label">Automation</label><select class="pra-select" id="cfgAutomation">${allAutomations.map(a => `<option value="${a.id}" ${step.config.automationId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'enroll_workflow') {
@@ -710,15 +712,15 @@ function openStepConfigModal(step, isNew) {
     const c = step.config;
     const statusOptions = `<option value="">Don't change</option>` + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.statusId === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
     body.innerHTML = `
-      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Every field is optional -- only what you fill in gets set/updated on the contact this run is already attached to. Use <code>{{payload.Field Name}}</code> to pull a value straight from the trigger (webhook/form/booking data), same as the Google Sheet step's columns.</div>
-      <div class="field-row"><div class="field"><label class="pra-label">First name</label><input class="pra-input" id="cfgFirst" value="${escapeHtml(c.first || '')}" placeholder="{{payload.First Name}}"/></div><div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="cfgLast" value="${escapeHtml(c.last || '')}" placeholder="{{payload.Last Name}}"/></div></div>
-      <div class="field-row"><div class="field"><label class="pra-label">Email</label><input class="pra-input" id="cfgEmail" value="${escapeHtml(c.email || '')}" placeholder="{{payload.Email}}"/></div><div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="cfgPhone" value="${escapeHtml(c.phone || '')}" placeholder="{{payload.Phone}}"/></div></div>
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Every field is optional -- only what you fill in gets set/updated on the contact this run is already attached to. Type a value, or start typing to search available fields from the trigger, same as the Google Sheet step's columns.</div>
+      <div class="field-row"><div class="field"><label class="pra-label">First name</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgFirst" value="${escapeHtml(c.first || '')}" placeholder="{{payload.First Name}}"/></div><div class="field"><label class="pra-label">Last name</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgLast" value="${escapeHtml(c.last || '')}" placeholder="{{payload.Last Name}}"/></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">Email</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgEmail" value="${escapeHtml(c.email || '')}" placeholder="{{payload.Email}}"/></div><div class="field"><label class="pra-label">Phone</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgPhone" value="${escapeHtml(c.phone || '')}" placeholder="{{payload.Phone}}"/></div></div>
       <div class="field-row">
-        <div class="field"><label class="pra-label">Type</label><input class="pra-input" id="cfgProgramType" value="${escapeHtml(c.programType || '')}" placeholder="ONLINE or GYM"/></div>
+        <div class="field"><label class="pra-label">Type</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgProgramType" value="${escapeHtml(c.programType || '')}" placeholder="ONLINE or GYM"/></div>
         <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="cfgAucStatus">${statusOptions}</select></div>
       </div>
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
-      <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><input class="pra-input" id="cfgAltEmail" value="${escapeHtml(c.altEmail || '')}" placeholder="{{payload.Secondary Email}}"/></div><div class="field"><label class="pra-label">Extra phone</label><input class="pra-input" id="cfgAltPhone" value="${escapeHtml(c.altPhone || '')}" placeholder="{{payload.Secondary Phone}}"/></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgAltEmail" value="${escapeHtml(c.altEmail || '')}" placeholder="{{payload.Secondary Email}}"/></div><div class="field"><label class="pra-label">Extra phone</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgAltPhone" value="${escapeHtml(c.altPhone || '')}" placeholder="{{payload.Secondary Phone}}"/></div></div>
     `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
@@ -729,6 +731,10 @@ function openStepConfigModal(step, isNew) {
       ? `<div class="field"><label class="pra-label">Conversion Event</label><select class="pra-select" id="cfgConversionEvent">${allConversionEvents.map(e => `<option value="${escapeHtml(e.key)}" ${step.config.eventKey === e.key ? 'selected' : ''}>${escapeHtml(e.label)} (${[e.sendToMeta ? 'Meta' : null, e.sendToGoogle ? 'Google' : null].filter(Boolean).join(' + ') || 'not sent anywhere yet'})</option>`).join('')}</select></div>`
       : `<div class="pra-muted" style="font-size:.8rem">No conversion events defined yet -- add one in Settings &rarr; Tracking &rarr; Conversion Tracking first.</div>`;
   }
+  // Populates the shared field-search datalist regardless of step type --
+  // harmless (a no-op find) for step types with no list="sheetFieldOptions"
+  // input, useful for every one that has a free-text value to fill in.
+  populateSheetFieldOptions();
 
   document.getElementById('saveStepBtn').onclick = () => {
     if (step.type === 'filter' || step.type === 'if_then') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
