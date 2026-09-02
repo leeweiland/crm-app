@@ -827,14 +827,26 @@ function wireSheetColRow(el) {
 // Subject like "ONLINE LEAD " can have "{{payload.First Name}}" appended
 // onto it without erasing what's already typed.
 async function getAvailableTokens() {
-  const contactFields = [
-    { label: 'First Name', token: '{{first}}' },
-    { label: 'Last Name', token: '{{last}}' },
-    { label: 'Email', token: '{{email}}' },
-    { label: 'Phone', token: '{{phone}}' },
-    { label: 'Date/Time Captured', token: '{{timestamp}}' },
-  ];
   const samples = await fetchSamples(false);
+  const normalize = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
+  // A real example value, not just a field name with no idea if/how it's
+  // populated -- pulled from whichever recent sample actually has one for
+  // this key (samples are sorted newest-first, so this favors the latest).
+  function exampleFor(matchNames) {
+    for (const s of samples) {
+      for (const k of Object.keys(s)) {
+        if (matchNames.includes(normalize(k)) && s[k] !== undefined && s[k] !== '') return String(s[k]);
+      }
+    }
+    return null;
+  }
+  const contactFields = [
+    { label: 'First Name', token: '{{first}}', example: exampleFor(['firstname', 'fname']) },
+    { label: 'Last Name', token: '{{last}}', example: exampleFor(['lastname', 'lname']) },
+    { label: 'Email', token: '{{email}}', example: exampleFor(['email', 'emailaddress']) },
+    { label: 'Phone', token: '{{phone}}', example: exampleFor(['phone', 'phonenumber', 'mobile', 'mobilenumber']) },
+    { label: 'Date/Time Captured', token: '{{timestamp}}', example: null }, // stamped at run time, not part of any pulled sample
+  ];
   // A raw webhook field that's really just first/last/email/phone under a
   // different spelling ("First Name", "first_name", "Email Address"...)
   // resolves to the exact same value as its contact-fields entry -- listing
@@ -844,9 +856,11 @@ async function getAvailableTokens() {
   // pulled sample happens to be named. Only genuinely extra fields (e.g.
   // "SMS Consent") are worth listing separately.
   const STANDARD_NAMES = new Set(['email', 'emailaddress', 'firstname', 'fname', 'lastname', 'lname', 'phone', 'phonenumber', 'mobile', 'mobilenumber']);
-  const normalize = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
   const payloadKeys = sampleKeys(samples).filter(k => !STANDARD_NAMES.has(normalize(k)));
-  const payloadFields = payloadKeys.map(k => ({ label: `${k} (from the trigger)`, token: `{{payload.${k}}}` }));
+  const payloadFields = payloadKeys.map(k => {
+    const withValue = samples.find(s => s[k] !== undefined && s[k] !== '');
+    return { label: k, token: `{{payload.${k}}}`, example: withValue ? String(withValue[k]) : null };
+  });
   return [...contactFields, ...payloadFields];
 }
 function insertAtCursor(input, text) {
@@ -869,7 +883,7 @@ async function openTokenPopover(btn, input) {
   const pop = document.createElement('div');
   pop.className = 'token-popover';
   pop.innerHTML = options.length
-    ? options.map(o => `<button type="button" class="token-popover-item" data-token="${escapeHtml(o.token)}"><span class="token-popover-token">${escapeHtml(o.token)}</span><span class="token-popover-label">${escapeHtml(o.label)}</span></button>`).join('')
+    ? options.map(o => `<button type="button" class="token-popover-item" data-token="${escapeHtml(o.token)}"><span class="token-popover-token">${escapeHtml(o.token)}</span><span class="token-popover-label">${escapeHtml(o.label)}${o.example ? ` — e.g. "${escapeHtml(o.example.length > 40 ? o.example.slice(0, 40) + '…' : o.example)}"` : ''}</span></button>`).join('')
     : `<div class="token-popover-empty">No fields yet -- use Pull Sample Data on the trigger first, or just type a token like {{payload.Field Name}} directly.</div>`;
   document.body.appendChild(pop);
   tokenPopoverEl = pop;
