@@ -224,46 +224,76 @@ function safeSqliteSync(fn) { try { fn(); } catch (e) { console.error("[sqlite_i
 // the real path -- see inbox_backend.js; JSON is now only the `_sqlite=0`
 // fallback/comparison view). Blocking a live send or a recipient's link
 // click on a write to a file that's no longer on the read-serving path is
-// pure waste, so the JSON side of these three functions is deferred via
-// setImmediate -- runs moments later, off the critical path, in the same
-// order it was scheduled, so a burst of updates for one contact still
-// applies correctly in sequence. The SQLite sync stays synchronous (it's
-// the fast, actually-authoritative path now).
+// pure waste, so the JSON side of these two functions is deferred via
+// setImmediate. A first attempt just wrapped each call's existing body in
+// setImmediate with no coalescing -- confirmed live minutes later, a burst
+// of a handful of calls for the same contact (e.g. a few rapid clicks)
+// queued that many FULL 268MB read+write passes back to back, which
+// monopolized the event loop long enough that Railway's health check
+// seems to have decided the process was dead and restarted it. Naive
+// deferral removes the natural backpressure synchronous blocking used to
+// provide -- work can now pile up unbounded. Fixed by coalescing: multiple
+// calls for the SAME key before the pending one has run collapse into a
+// single read+write that reflects all of them, not one file operation per
+// call.
+const _pendingUpserts = new Map(); // key -> queued messages to fold in on the next tick
+const _pendingRecomputes = new Set(); // contactIds already scheduled for a recompute this tick
 export function upsertConversationSummary(m) {
   if (!SIDEBAR_CHANNELS.includes(m.channel)) return;
   const key = conversationKey(m);
-  setImmediate(() => {
-    const rows = readJson(CONVERSATION_INDEX_FILE, []);
-    let g = rows.find(r => r.key === key);
-    if (!g) { g = emptyGroup(key, m.contactId); rows.push(g); }
-    foldMessageIntoGroup(g, m);
-    writeJson(CONVERSATION_INDEX_FILE, rows);
-    safeSqliteSync(() => syncMessageFields(g));
-  });
+  if (!_pendingUpserts.has(key)) {
+    _pendingUpserts.set(key, []);
+    setImmediate(() => flushUpsert(key));
+  }
+  _pendingUpserts.get(key).push(m);
+}
+function flushUpsert(key) {
+  const messages = _pendingUpserts.get(key);
+  _pendingUpserts.delete(key);
+  if (!messages || !messages.length) return;
+  const rows = readJson(CONVERSATION_INDEX_FILE, []);
+  let g = rows.find(r => r.key === key);
+  if (!g) { g = emptyGroup(key, messages[0].contactId); rows.push(g); }
+  for (const m of messages) foldMessageIntoGroup(g, m);
+  writeJson(CONVERSATION_INDEX_FILE, rows);
+  safeSqliteSync(() => syncMessageFields(g));
 }
 // Recomputes one contact's summary row from scratch from its own (small)
 // message file -- used after a status/inboxDone mutation, where relative
 // order matters (e.g. "last" needs to still be genuinely last after an
 // update) more than the incremental fold above can cheaply express.
+// Multiple calls for the same contactId before the pending one runs
+// collapse into a single recompute -- safe because it always reads the
+// CURRENT per-contact message file at execution time (itself written
+// synchronously, so already reflects every update that triggered any of
+// the collapsed calls), not whatever was current when each call was made.
 export function recomputeConversationSummary(contactId) {
-  setImmediate(() => {
-    const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
-    const rows = readJson(CONVERSATION_INDEX_FILE, []);
-    const idx = rows.findIndex(r => r.contactId === contactId);
-    if (!messages.length) {
-      if (idx >= 0) { rows.splice(idx, 1); writeJson(CONVERSATION_INDEX_FILE, rows); }
-      safeSqliteSync(() => deleteConversationRow(contactId));
-      return;
-    }
-    const g = emptyGroup(contactId, contactId);
-    for (const m of messages) foldMessageIntoGroup(g, m);
-    if (idx >= 0) rows[idx] = g; else rows.push(g);
-    writeJson(CONVERSATION_INDEX_FILE, rows);
-    safeSqliteSync(() => syncMessageFields(g));
-  });
+  if (_pendingRecomputes.has(contactId)) return;
+  _pendingRecomputes.add(contactId);
+  setImmediate(() => flushRecompute(contactId));
 }
+function flushRecompute(contactId) {
+  _pendingRecomputes.delete(contactId);
+  const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
+  const rows = readJson(CONVERSATION_INDEX_FILE, []);
+  const idx = rows.findIndex(r => r.contactId === contactId);
+  if (!messages.length) {
+    if (idx >= 0) { rows.splice(idx, 1); writeJson(CONVERSATION_INDEX_FILE, rows); }
+    safeSqliteSync(() => deleteConversationRow(contactId));
+    return;
+  }
+  const g = emptyGroup(contactId, contactId);
+  for (const m of messages) foldMessageIntoGroup(g, m);
+  if (idx >= 0) rows[idx] = g; else rows.push(g);
+  writeJson(CONVERSATION_INDEX_FILE, rows);
+  safeSqliteSync(() => syncMessageFields(g));
+}
+const _pendingRemoves = new Set();
 export function removeConversationSummary(key) {
+  if (_pendingRemoves.has(key)) return;
+  _pendingRemoves.add(key);
   setImmediate(() => {
+    _pendingRemoves.delete(key);
     const rows = readJson(CONVERSATION_INDEX_FILE, []);
     const next = rows.filter(r => r.key !== key);
     if (next.length !== rows.length) writeJson(CONVERSATION_INDEX_FILE, next);
