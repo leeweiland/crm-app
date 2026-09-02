@@ -655,31 +655,49 @@ function renderCalendarPanel(f, i) {
   </div>`;
 }
 
+// Logic rules render whenever a field already has any -- they used to
+// collapse behind the same openPanel toggle as gear settings, so a rule you
+// just built would vanish the moment you clicked anything else, with no
+// way to see what conditions were active on a field without reopening its
+// panel one at a time. The toggle still applies for a field with none yet
+// (click the icon to add its first rule), and stacks below an open gear
+// panel on the same field rather than competing with it for the one
+// openPanel slot -- the two are independent now, not mutually exclusive.
+function renderLogicPanel(f, i) {
+  const hasRules = (f.logic || []).length > 0;
+  const toggledOpen = openPanel?.idx === i && openPanel?.kind === 'logic';
+  if (!hasRules && !toggledOpen) return '';
+  return `<div class="fb-panel">
+    <div id="logic-${i}">${(f.logic || []).map((rule, ri) => renderLogicRule(f, rule, i, ri)).join('') || '<div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">No rules — the Next button always advances normally.</div>'}</div>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" data-logic-add-idx="${i}" style="margin-top:8px">+ Add Rule</button>
+  </div>`;
+}
+
 function renderPanel(f, i) {
-  if (!openPanel || openPanel.idx !== i) return '';
-  if (openPanel.kind === 'gear') {
-    if (f.type === 'calendar') return renderCalendarPanel(f, i);
-    if (f.type === 'country') {
-      return `<div class="fb-panel">
-        <div class="field" style="margin-bottom:0">
-          <label class="pra-label">Maps to contact field</label>
-          <select class="pra-select" data-mapfield-idx="${i}">
-            <option value="">Auto (new field from question text)</option>
-            <option value="__new__">+ Create new field…</option>
-            ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
-          </select>
-          <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Optional -- saves the detected country onto the contact record.</div>
-        </div>
-      </div>`;
-    }
-    if (f.type === 'image') {
-      return `<div class="fb-panel">
-        <div class="field"><label class="pra-label">Alt text</label><input class="pra-input" data-alt-idx="${i}" value="${escapeHtml(f.alt || '')}"/></div>
-        <div class="field" style="margin-bottom:0"><label class="pra-label">Link URL (optional — makes the image clickable)</label><input class="pra-input" data-imglink-idx="${i}" value="${escapeHtml(f.link || '')}" placeholder="https://..."/></div>
-      </div>`;
-    }
+  const logicHtml = renderLogicPanel(f, i);
+  if (!openPanel || openPanel.idx !== i || openPanel.kind !== 'gear') return logicHtml;
+  let gearHtml;
+  if (f.type === 'calendar') gearHtml = renderCalendarPanel(f, i);
+  else if (f.type === 'country') {
+    gearHtml = `<div class="fb-panel">
+      <div class="field" style="margin-bottom:0">
+        <label class="pra-label">Maps to contact field</label>
+        <select class="pra-select" data-mapfield-idx="${i}">
+          <option value="">Auto (new field from question text)</option>
+          <option value="__new__">+ Create new field…</option>
+          ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
+        </select>
+        <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Optional -- saves the detected country onto the contact record.</div>
+      </div>
+    </div>`;
+  } else if (f.type === 'image') {
+    gearHtml = `<div class="fb-panel">
+      <div class="field"><label class="pra-label">Alt text</label><input class="pra-input" data-alt-idx="${i}" value="${escapeHtml(f.alt || '')}"/></div>
+      <div class="field" style="margin-bottom:0"><label class="pra-label">Link URL (optional — makes the image clickable)</label><input class="pra-input" data-imglink-idx="${i}" value="${escapeHtml(f.link || '')}" placeholder="https://..."/></div>
+    </div>`;
+  } else {
     const showPlaceholder = f.type !== 'statement';
-    return `<div class="fb-panel">
+    gearHtml = `<div class="fb-panel">
       ${showPlaceholder ? `<div class="field"><label class="pra-label">Placeholder</label><input class="pra-input" data-placeholder-idx="${i}" value="${escapeHtml(f.placeholder || '')}"/></div>` : ''}
       <div class="field" ${canMapToCustomField(f) ? '' : 'style="margin-bottom:0"'}><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
       ${canMapToCustomField(f) ? `
@@ -694,13 +712,7 @@ function renderPanel(f, i) {
       ` : ''}
     </div>`;
   }
-  if (openPanel.kind === 'logic') {
-    return `<div class="fb-panel">
-      <div id="logic-${i}">${(f.logic || []).map((rule, ri) => renderLogicRule(f, rule, i, ri)).join('') || '<div class="pra-muted" style="font-size:.8rem;margin-bottom:8px">No rules — the Next button always advances normally.</div>'}</div>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-logic-add-idx="${i}" style="margin-top:8px">+ Add Rule</button>
-    </div>`;
-  }
-  return '';
+  return gearHtml + logicHtml;
 }
 
 function renderToolbar(f, i) {
@@ -711,7 +723,7 @@ function renderToolbar(f, i) {
     <div class="fb-toolbar">
       ${requireApplicable ? `<button class="fb-required-toggle ${f.required ? 'on' : ''}" data-req-idx="${i}" title="Required"></button>` : ''}
       ${gearApplicable ? `<button class="icon-btn ${openPanel?.idx === i && openPanel?.kind === 'gear' ? 'on' : ''}" data-panel-idx="${i}" data-panel-kind="gear" title="Field options">${ICONS.gear}</button>` : ''}
-      ${logicApplicable ? `<button class="icon-btn ${openPanel?.idx === i && openPanel?.kind === 'logic' ? 'on' : ''}" data-panel-idx="${i}" data-panel-kind="logic" title="Logic">${ICONS.logic}</button>` : ''}
+      ${logicApplicable ? `<button class="icon-btn ${(openPanel?.idx === i && openPanel?.kind === 'logic') || (f.logic || []).length ? 'on' : ''}" data-panel-idx="${i}" data-panel-kind="logic" title="Logic">${ICONS.logic}</button>` : ''}
       <button class="icon-btn" data-del-idx="${i}" title="Delete">${ICONS.trash}</button>
     </div>
   `;
