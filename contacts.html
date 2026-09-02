@@ -6,6 +6,16 @@
 <title>Contacts — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
+  /* The shared .app-main caps at max-width:1400px, sized for prose/settings
+     pages -- this page is a wide data table (11 columns) that benefits from
+     using the full window instead of forcing an internal horizontal scroll
+     on perfectly ordinary desktop widths. */
+  .app-main { max-width: none; }
+  /* Belt-and-suspenders: if the table ever overflows anyway, only its own
+     panel should grow a scrollbar (it already has overflow-x:auto) -- the
+     whole page must never scroll horizontally and drag the sidebar off the
+     left edge with it. */
+  html, body { overflow-x: hidden; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
   .toolbar-row2 { display: flex; align-items: center; gap: 10px; }
