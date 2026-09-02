@@ -359,7 +359,8 @@ function canMapToCustomField(f) { return !NON_ANSWERABLE_TYPES.includes(f.type) 
 // sense) but its whole purpose is having logic rules built against it.
 const NO_REQUIRE = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar', 'country'];
 const NO_LOGIC = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar'];
-const NO_GEAR = ['page_break', 'headline', 'video'];
+const NO_GEAR = ['page_break', 'headline'];
+const VIDEO_ASPECT_PADDING = { '16:9': '56.25%', '9:16': '177.78%', '1:1': '100%', '4:3': '75%' };
 const LOGIC_OPS = [
   { value: 'equals', label: 'equals' },
   { value: 'not_equals', label: 'does not equal' },
@@ -700,6 +701,31 @@ function renderPanel(f, i) {
       <div class="field"><label class="pra-label">Alt text</label><input class="pra-input" data-alt-idx="${i}" value="${escapeHtml(f.alt || '')}"/></div>
       <div class="field" style="margin-bottom:0"><label class="pra-label">Link URL (optional — makes the image clickable)</label><input class="pra-input" data-imglink-idx="${i}" value="${escapeHtml(f.link || '')}" placeholder="https://..."/></div>
     </div>`;
+  } else if (f.type === 'video') {
+    gearHtml = `<div class="fb-panel">
+      <div class="field">
+        <label class="pra-label">Width (% of the form)</label>
+        <input class="pra-input" type="number" min="10" max="100" step="5" data-video-width-idx="${i}" value="${f.videoWidth || 100}"/>
+      </div>
+      <div class="field">
+        <label class="pra-label">Shape</label>
+        <select class="pra-select" data-video-aspect-idx="${i}">
+          <option value="16:9" ${(f.videoAspect || '16:9') === '16:9' ? 'selected' : ''}>Widescreen (16:9)</option>
+          <option value="9:16" ${f.videoAspect === '9:16' ? 'selected' : ''}>Vertical (9:16)</option>
+          <option value="1:1" ${f.videoAspect === '1:1' ? 'selected' : ''}>Square (1:1)</option>
+          <option value="4:3" ${f.videoAspect === '4:3' ? 'selected' : ''}>Standard (4:3)</option>
+        </select>
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label class="pra-label">Alignment</label>
+        <select class="pra-select" data-video-align-idx="${i}">
+          <option value="left" ${f.videoAlign === 'left' ? 'selected' : ''}>Left</option>
+          <option value="center" ${(f.videoAlign || 'center') === 'center' ? 'selected' : ''}>Center</option>
+          <option value="right" ${f.videoAlign === 'right' ? 'selected' : ''}>Right</option>
+        </select>
+        <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Only matters when width is under 100%.</div>
+      </div>
+    </div>`;
   } else {
     const showPlaceholder = f.type !== 'statement';
     gearHtml = `<div class="fb-panel">
@@ -756,11 +782,17 @@ function renderBlockBody(f, i) {
   if (f.type === 'video') {
     const raw = isHtmlEmbed(f.videoUrl);
     const wistiaId = raw ? null : wistiaIdFromInput(f.videoUrl);
+    const width = f.videoWidth || 100;
+    const align = f.videoAlign || 'center';
+    const sizeStyle = `width:${width}%;${align === 'right' ? 'margin-left:auto' : align === 'center' ? 'margin-left:auto;margin-right:auto' : ''}`;
+    const padTop = VIDEO_ASPECT_PADDING[f.videoAspect] || VIDEO_ASPECT_PADDING['16:9'];
     return `
       <div class="fb-video-block">
-        ${raw ? `<div class="fb-raw-embed">${f.videoUrl}</div>`
-          : wistiaId ? `<div class="fb-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div>`
-          : `<div class="fb-image-placeholder">${ICONS.video}<span>Paste a Wistia link, media ID, or embed code below</span></div>`}
+        <div style="${sizeStyle}">
+          ${raw ? `<div class="fb-raw-embed">${f.videoUrl}</div>`
+            : wistiaId ? `<div class="fb-video-embed" style="padding-top:${padTop}"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div>`
+            : `<div class="fb-image-placeholder">${ICONS.video}<span>Paste a Wistia link, media ID, or embed code below</span></div>`}
+        </div>
         <textarea class="pra-input" style="margin-top:8px;resize:vertical" rows="2" data-video-url-idx="${i}" placeholder="Wistia link, media ID, or paste Wistia's HTML embed code">${escapeHtml(f.videoUrl || '')}</textarea>
       </div>
     `;
@@ -1135,6 +1167,22 @@ function bindCanvas(canvas) {
     el.addEventListener('input', e => { form.fields[+e.target.dataset.videoUrlIdx].videoUrl = e.target.value; saveDebounced(); });
     el.addEventListener('change', () => renderCanvas()); // re-render on blur to refresh the embed preview
   });
+  canvas.querySelectorAll('[data-video-width-idx]').forEach(el => {
+    el.addEventListener('input', e => {
+      const v = Math.max(10, Math.min(100, Number(e.target.value) || 100));
+      form.fields[+e.target.dataset.videoWidthIdx].videoWidth = v;
+      saveDebounced();
+    });
+    el.addEventListener('change', () => renderCanvas()); // re-render on blur to refresh the preview, same as the video URL box -- not on every keystroke, so the input doesn't lose focus mid-type
+  });
+  canvas.querySelectorAll('[data-video-aspect-idx]').forEach(el => el.addEventListener('change', e => {
+    form.fields[+e.target.dataset.videoAspectIdx].videoAspect = e.target.value;
+    saveDebounced(); renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-video-align-idx]').forEach(el => el.addEventListener('change', e => {
+    form.fields[+e.target.dataset.videoAlignIdx].videoAlign = e.target.value;
+    saveDebounced(); renderCanvas();
+  }));
   canvas.querySelectorAll('[data-calendar-idx]').forEach(el => el.addEventListener('change', e => {
     form.fields[+e.target.dataset.calendarIdx].eventTypeSlug = e.target.value;
     saveDebounced(); renderCanvas();
@@ -1239,7 +1287,7 @@ function bindCanvas(canvas) {
     const field = { id: uid(), type };
     if (type === 'headline') { field.label = 'Headline'; }
     else if (type === 'image') { field.src = ''; field.alt = ''; field.link = ''; }
-    else if (type === 'video') { field.videoUrl = ''; }
+    else if (type === 'video') { field.videoUrl = ''; field.videoWidth = 100; field.videoAspect = '16:9'; field.videoAlign = 'center'; }
     else if (type === 'calendar') { field.eventTypeSlug = ''; }
     else if (type === 'country') { field.label = 'Country'; }
     else if (type !== 'page_break') {

@@ -179,6 +179,8 @@ let form = null, steps = [], stepIndex = 0, answers = {};
 
 // Same split as form-builder.html/forms_backend.js's ANSWERABLE_TYPES.
 const NON_ANSWERABLE_TYPES = ['statement', 'headline', 'image', 'video', 'calendar', 'page_break'];
+// Same map as form-builder.html's VIDEO_ASPECT_PADDING, for the same field.videoAspect value set there.
+const VIDEO_ASPECT_PADDING = { '16:9': '56.25%', '9:16': '177.78%', '1:1': '100%', '4:3': '75%' };
 
 // Calendly-style handoff into the embedded booking widget: anything the
 // form already collected on an earlier step -- name/email/phone via
@@ -236,10 +238,14 @@ function renderField(f) {
     return `<div class="pf-field pf-image">${f.link ? `<a href="${escapeHtml(f.link)}" target="_blank" rel="noopener">${img}</a>` : img}</div>`;
   }
   if (f.type === 'video') {
-    if (isHtmlEmbed(f.videoUrl)) return `<div class="pf-field"><div class="pf-raw-embed">${f.videoUrl}</div></div>`;
+    const width = f.videoWidth || 100;
+    const align = f.videoAlign || 'center';
+    const sizeStyle = `width:${width}%;${align === 'right' ? 'margin-left:auto' : align === 'center' ? 'margin-left:auto;margin-right:auto' : ''}`;
+    if (isHtmlEmbed(f.videoUrl)) return `<div class="pf-field"><div style="${sizeStyle}"><div class="pf-raw-embed">${f.videoUrl}</div></div></div>`;
     const wistiaId = wistiaIdFromInput(f.videoUrl);
     if (!wistiaId) return '';
-    return `<div class="pf-field"><div class="pf-video-embed"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div>`;
+    const padTop = VIDEO_ASPECT_PADDING[f.videoAspect] || VIDEO_ASPECT_PADDING['16:9'];
+    return `<div class="pf-field"><div style="${sizeStyle}"><div class="pf-video-embed" style="padding-top:${padTop}"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div></div>`;
   }
   if (f.type === 'calendar') {
     if (!f.eventTypeSlug) return '';
