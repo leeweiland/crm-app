@@ -128,6 +128,26 @@ export async function handleContactsRequest(req, res, url) {
   if (!owned) return false;
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
+  // One-time data-fix, meant to be triggered once (from an already-logged-
+  // in admin's own browser tab) and then deleted. The status "BAD FIT /
+  // BLACKLIST" is a stale label left over from before this status got
+  // renamed back to plain "BLACKLIST" -- the rename never cascaded to
+  // contacts that already held the old label. Runs inside this
+  // already-running server process (same as any normal PATCH) rather than
+  // a separate one-off script, since a separate script sharing this
+  // container kept crashing it. Idempotent -- safe to hit more than once,
+  // becomes a no-op once nothing matches the old label.
+  if (p === "/api/contacts/admin/fix-blacklist-status" && req.method === "GET") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const contacts = readJson(CONTACTS_FILE, []);
+    const affected = contacts.filter(c => c.status === "BAD FIT / BLACKLIST");
+    for (const c of affected) { c.status = "BLACKLIST"; c.updatedAt = new Date().toISOString(); }
+    if (affected.length) writeJson(CONTACTS_FILE, contacts);
+    let synced = 0;
+    for (const c of affected) { try { syncContactFields(c.id, c); synced++; } catch {} }
+    return sendJson(res, 200, { ok: true, updated: affected.length, synced });
+  }
+
   // ── Contacts ─────────────────────────────────────────────────────────
   if (p === "/api/contacts" && req.method === "GET") {
     const q = (url.searchParams.get("q") || "").trim().toLowerCase();
