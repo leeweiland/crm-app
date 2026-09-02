@@ -4,10 +4,29 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Form</title>
+<script>
+// Set as early as possible (before first paint) so the embedded-vs-standalone
+// CSS rules below apply from the very first frame instead of flashing the
+// wrong one. See the .pf-embedded rules in <style> and reportHeightToParent
+// further down for why embedded mode skips the forced 100vh height.
+try { if (window.self !== window.top) document.documentElement.classList.add('pf-embedded'); } catch (e) { document.documentElement.classList.add('pf-embedded'); }
+</script>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   body { background: var(--pra-black-soft); }
-  .pf-wrap { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+  .pf-wrap { display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+  /* Only force full-viewport height (for nice vertical centering) when
+     this page is opened directly, not embedded -- inside an iframe embed
+     it self-reports its real content height to the parent (see
+     reportHeightToParent below) so the embed's box can shrink-to-fit
+     instead of always being at least one viewport tall, which would
+     never let the box shrink back down between steps. */
+  html:not(.pf-embedded) .pf-wrap { min-height: 100vh; min-height: 100dvh; }
+  /* crm-design-system.css's .pra-root carries its own min-height:100vh for
+     the CRM's normal full-page screens -- this page reuses that class for
+     its shared styling but needs it to NOT force a full viewport height
+     while embedded, for the same shrink-to-fit reason as .pf-wrap above. */
+  html.pf-embedded .pra-root { min-height: 0; }
   /* No max-width cap -- the card fills whatever container it's placed in
      (a wide desktop viewport, a narrow iframe embed, anything in between)
      instead of floating as a fixed-size box with dead space around it. */
@@ -17,7 +36,8 @@
      native app screen instead of a postage stamp. */
   @media (max-width: 560px) {
     .pf-wrap { padding: 0; align-items: flex-start; }
-    .pf-card { min-height: 100vh; min-height: 100dvh; border-radius: 0; padding: 28px 20px; }
+    .pf-card { border-radius: 0; padding: 28px 20px; }
+    html:not(.pf-embedded) .pf-card { min-height: 100vh; min-height: 100dvh; }
   }
   .pf-card .pra-input, .pf-card .pra-select, .pf-card .pra-textarea, .pf-card .pra-btn, .pf-choice-row { border-radius: calc(var(--pf-radius, 12px) * .65); }
   .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }
@@ -56,6 +76,30 @@
 </div>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+
+// ── Auto-height for the inline embed ────────────────────────────────────
+// forms-widget.js's iframe starts at a fixed fallback height; without this,
+// any step taller than that fallback gets its own ugly inner scrollbar
+// instead of the embed's box just growing (and shrinking back down on a
+// shorter step). Posts the real content height any time it changes --
+// target origin is '*' since the embedding page can be on any domain and
+// there's nothing sensitive in a pixel count. ResizeObserver covers most
+// changes near-instantly, but a cheap poll is kept as a fallback -- it's
+// what actually catches the layout settling after fonts/images/the video
+// embed load in, which don't reliably fire a resize callback everywhere.
+let lastReportedHeight = 0;
+function reportHeightToParent() {
+  if (window.self === window.top) return;
+  const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+  if (h === lastReportedHeight) return;
+  lastReportedHeight = h;
+  window.parent.postMessage({ type: 'pf-resize', height: h }, '*');
+}
+if (window.self !== window.top) {
+  if ('ResizeObserver' in window) new ResizeObserver(reportHeightToParent).observe(document.body);
+  window.addEventListener('load', reportHeightToParent);
+  setInterval(reportHeightToParent, 400);
+}
 // Same two-tone (white linework + #009bff accent) icon convention as
 // chat-app/chat.html and form-builder.html.
 const CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="1.6"/><path d="M7.5 12.5l3 3 6-6.5" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';

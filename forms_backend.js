@@ -84,6 +84,18 @@ const FORMS_WIDGET_JS = `(function(){
       el.appendChild(iframe);
     }
   }
+  // The 700px fallback above is just what's shown before the form's own
+  // page (public-form.html) measures its real content and posts it here --
+  // once that arrives, the box fits the actual step instead of showing an
+  // ugly inner scrollbar (too short) or dead space (too tall). Matched by
+  // event.source since a page can have more than one inline widget.
+  window.addEventListener('message', function(e){
+    if (!e.data || e.data.type !== 'pf-resize' || !e.data.height) return;
+    var frames = document.querySelectorAll('.form-inline-widget iframe');
+    for (var i = 0; i < frames.length; i++){
+      if (frames[i].contentWindow === e.source) { frames[i].parentElement.style.height = e.data.height + 'px'; break; }
+    }
+  });
   window.FormWidget = { initPopupWidget: openPopup };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInlineWidgets);
   else initInlineWidgets();
