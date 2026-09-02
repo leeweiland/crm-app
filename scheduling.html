@@ -50,6 +50,7 @@
           <button class="tab-btn active" data-tab="eventTypes">Event Types</button>
           <button class="tab-btn" data-tab="bookings">Bookings</button>
           <button class="tab-btn" data-tab="calendar">Calendars</button>
+          <button class="tab-btn" data-tab="meetings">Meetings</button>
         </div>
       </div>
 
@@ -83,6 +84,28 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Each calendar has its own hours, buffers, and how far ahead it takes bookings. Add one per person on your Google Workspace domain, then pick which calendar each event type uses from that event type's Design page. You manage every calendar here.</div>
         <div id="calendarsList"></div>
         <button class="pra-btn" id="newCalendarBtn" style="margin-top:6px">+ New Calendar</button>
+      </div>
+
+      <!-- ── Meeting Reminders (moved here from Settings) ── -->
+      <div class="tab-panel pra-panel" id="tab-meetings" style="padding:22px;max-width:600px">
+        <div class="pra-h2" style="margin-bottom:6px">Meeting Reminders</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Reminders for meetings scheduled from the Inbox's calendar icon (each coach's own Zoom/calendar, per contact). "Minutes before" accepts a comma-separated list -- e.g. "1440, 60" sends one reminder a day before and another an hour before. Available merge tags: <code>{{firstName}}</code> <code>{{lastName}}</code> <code>{{coachName}}</code> <code>{{date}}</code> <code>{{time}}</code> <code>{{duration}}</code>.</div>
+
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="meetingEmailEnabled"/> Send email reminders</label>
+        <div class="field"><label class="pra-label">Minutes before (comma-separated)</label><input class="pra-input" id="meetingEmailMinutes" placeholder="1440, 60"/></div>
+        <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="meetingEmailSubject"/></div>
+        <div class="field"><label class="pra-label">Body (HTML)</label><textarea class="pra-input" id="meetingEmailBody" rows="4" style="resize:vertical"></textarea></div>
+
+        <hr style="border-color:var(--pra-border);margin:20px 0 18px"/>
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="meetingSmsEnabled"/> Send text reminders</label>
+        <div class="field"><label class="pra-label">Minutes before (comma-separated)</label><input class="pra-input" id="meetingSmsMinutes" placeholder="60"/></div>
+        <div class="field"><label class="pra-label">Message</label><textarea class="pra-input" id="meetingSmsBody" rows="2" style="resize:vertical"></textarea></div>
+
+        <hr style="border-color:var(--pra-border);margin:20px 0 18px"/>
+        <div class="field"><label class="pra-label">Timezone used for date/time in reminders</label><input class="pra-input" id="meetingTimezone" placeholder="America/Anchorage"/></div>
+
+        <button class="pra-btn" id="saveMeetingRemindersBtn">Save</button>
+        <div class="pra-muted" id="meetingRemindersSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
     </div>
   </div>
@@ -310,11 +333,44 @@ document.getElementById('saveEtBtn').onclick = async () => {
   location.href = '/scheduling-editor.html?id=' + d.eventType.id;
 };
 
+// ── Meeting reminders (moved here from Settings; meetings_backend.js polls
+// these on the shared scheduler tick) ────────────────────────────────────
+async function loadMeetingReminderSettings() {
+  const r = await fetch('/api/integrations/meeting-reminders');
+  if (!r.ok) return;
+  const cfg = await r.json();
+  document.getElementById('meetingEmailEnabled').checked = !!cfg.emailRemindersEnabled;
+  document.getElementById('meetingEmailMinutes').value = (cfg.emailReminderMinutesBefore || []).join(', ');
+  document.getElementById('meetingEmailSubject').value = cfg.emailReminderSubjectTemplate || '';
+  document.getElementById('meetingEmailBody').value = cfg.emailReminderBodyTemplate || '';
+  document.getElementById('meetingSmsEnabled').checked = !!cfg.smsRemindersEnabled;
+  document.getElementById('meetingSmsMinutes').value = (cfg.smsReminderMinutesBefore || []).join(', ');
+  document.getElementById('meetingSmsBody').value = cfg.smsReminderTemplate || '';
+  document.getElementById('meetingTimezone').value = cfg.timezone || '';
+}
+document.getElementById('saveMeetingRemindersBtn').onclick = async () => {
+  const parseMinutes = (val) => val.split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n >= 0);
+  const body = {
+    emailRemindersEnabled: document.getElementById('meetingEmailEnabled').checked,
+    emailReminderMinutesBefore: parseMinutes(document.getElementById('meetingEmailMinutes').value),
+    emailReminderSubjectTemplate: document.getElementById('meetingEmailSubject').value.trim(),
+    emailReminderBodyTemplate: document.getElementById('meetingEmailBody').value.trim(),
+    smsRemindersEnabled: document.getElementById('meetingSmsEnabled').checked,
+    smsReminderMinutesBefore: parseMinutes(document.getElementById('meetingSmsMinutes').value),
+    smsReminderTemplate: document.getElementById('meetingSmsBody').value.trim(),
+    timezone: document.getElementById('meetingTimezone').value.trim(),
+  };
+  const r = await fetch('/api/integrations/meeting-reminders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('meetingRemindersSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadMeetingReminderSettings();
+};
+
 (async function init() {
   loadStatus();
   loadBookings();
   await loadCalendars();
   loadEventTypes();
+  loadMeetingReminderSettings();
 })();
 </script>
 </body>
