@@ -259,6 +259,7 @@
                 <div class="field" style="margin-bottom:0">
                   <label class="pra-label">Tab</label>
                   <select class="pra-select" id="sheetTabSelect"></select>
+                  <div class="pra-muted" style="font-size:.72rem;margin-top:6px;color:var(--pra-red)" id="sheetPickError"></div>
                 </div>
               </div>
             </div>
@@ -1409,6 +1410,12 @@ function showSheetPicked() {
 function showSheetSearch() {
   document.getElementById('sheetPickedRow').style.display = 'none';
   document.getElementById('sheetSearchRow').style.display = 'block';
+  // A dropdown-like list of recent sheets shows immediately, same courtesy
+  // flow-builder.html's own picker gives (and same as any real spreadsheet
+  // picker, e.g. Zapier's) -- an empty query still returns real results
+  // (Drive orders by modifiedTime desc), so there's no reason to make
+  // someone type before seeing anything.
+  document.getElementById('sheetSearchInput').dispatchEvent(new Event('input'));
 }
 async function loadSheetTabsAndHeaders() {
   // Only skip the save when we're restoring an ALREADY-saved tab (a normal
@@ -1419,17 +1426,30 @@ async function loadSheetTabsAndHeaders() {
   const alreadyHadTab = !!sheetPicked.tab;
   const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/tabs`);
   const d = await r.json();
-  const tabs = r.ok ? (d.tabs || []) : [];
+  const errEl = document.getElementById('sheetPickError');
+  // A failed tabs fetch used to silently fall back to an empty list --
+  // right for "this spreadsheet genuinely has zero visible tabs" (rare),
+  // wrong for "the request failed" (Sheets access not connected/expired,
+  // wrong ID, etc.), which looked identical: an empty dropdown with no
+  // explanation either way.
+  if (!r.ok) { errEl.textContent = d.error || 'Could not load tabs for that spreadsheet.'; document.getElementById('sheetTabSelect').innerHTML = ''; return; }
+  errEl.textContent = '';
+  const tabs = d.tabs || [];
+  if (!tabs.length) { errEl.textContent = 'That spreadsheet has no visible tabs.'; }
   if (!sheetPicked.tab && tabs.length) sheetPicked.tab = tabs[0];
   document.getElementById('sheetTabSelect').innerHTML = tabs.map(t => `<option value="${escapeHtml(t)}" ${t === sheetPicked.tab ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
-  await onSheetTabChosen(sheetPicked.tab, !alreadyHadTab);
+  if (tabs.length) await onSheetTabChosen(sheetPicked.tab, !alreadyHadTab);
 }
 // shouldSave is false only for the initial load's own tab -- re-fetching
 // its headers shouldn't count as an edit needing a save.
 async function onSheetTabChosen(tab, shouldSave) {
   sheetPicked.tab = tab;
+  const errEl = document.getElementById('sheetPickError');
   const hr = await fetch(`/api/flows/sheets/${sheetPicked.id}/headers?tab=${encodeURIComponent(tab)}`);
   const hd = await hr.json();
+  if (!hr.ok) errEl.textContent = hd.error || 'Could not load that tab\'s columns.';
+  else if (!hd.headers?.length) errEl.textContent = 'That tab has no header row (row 1 is empty) -- add column headers there first.';
+  else errEl.textContent = '';
   sheetPicked.headers = (hr.ok && hd.headers) || [];
   if (shouldSave) { form.settings.sheetsTabName = tab; saveDebounced(); }
   renderCanvas(); // field panels' column dropdowns need the fresh headers/selection
