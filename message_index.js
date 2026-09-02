@@ -216,38 +216,57 @@ function foldMessageIntoGroup(g, m) {
 // surface.)
 function safeSqliteSync(fn) { try { fn(); } catch (e) { console.error("[sqlite_inbox] sync failed:", e.message); } }
 
+// crm_conversation_index.json has grown to 270MB+ (one row per distinct
+// contact/conversation) -- confirmed live (2026-09-02) that a full
+// readJson+Array.find+writeJson of it, on EVERY single message sent or
+// status update, was taking 10+ seconds each, and /api/inbox/conversations
+// no longer even reads this file by default (queryConversationsSqlite is
+// the real path -- see inbox_backend.js; JSON is now only the `_sqlite=0`
+// fallback/comparison view). Blocking a live send or a recipient's link
+// click on a write to a file that's no longer on the read-serving path is
+// pure waste, so the JSON side of these three functions is deferred via
+// setImmediate -- runs moments later, off the critical path, in the same
+// order it was scheduled, so a burst of updates for one contact still
+// applies correctly in sequence. The SQLite sync stays synchronous (it's
+// the fast, actually-authoritative path now).
 export function upsertConversationSummary(m) {
   if (!SIDEBAR_CHANNELS.includes(m.channel)) return;
   const key = conversationKey(m);
-  const rows = readJson(CONVERSATION_INDEX_FILE, []);
-  let g = rows.find(r => r.key === key);
-  if (!g) { g = emptyGroup(key, m.contactId); rows.push(g); }
-  foldMessageIntoGroup(g, m);
-  writeJson(CONVERSATION_INDEX_FILE, rows);
-  safeSqliteSync(() => syncMessageFields(g));
+  setImmediate(() => {
+    const rows = readJson(CONVERSATION_INDEX_FILE, []);
+    let g = rows.find(r => r.key === key);
+    if (!g) { g = emptyGroup(key, m.contactId); rows.push(g); }
+    foldMessageIntoGroup(g, m);
+    writeJson(CONVERSATION_INDEX_FILE, rows);
+    safeSqliteSync(() => syncMessageFields(g));
+  });
 }
 // Recomputes one contact's summary row from scratch from its own (small)
 // message file -- used after a status/inboxDone mutation, where relative
 // order matters (e.g. "last" needs to still be genuinely last after an
 // update) more than the incremental fold above can cheaply express.
 export function recomputeConversationSummary(contactId) {
-  const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
-  const rows = readJson(CONVERSATION_INDEX_FILE, []);
-  const idx = rows.findIndex(r => r.contactId === contactId);
-  if (!messages.length) {
-    if (idx >= 0) { rows.splice(idx, 1); writeJson(CONVERSATION_INDEX_FILE, rows); }
-    safeSqliteSync(() => deleteConversationRow(contactId));
-    return;
-  }
-  const g = emptyGroup(contactId, contactId);
-  for (const m of messages) foldMessageIntoGroup(g, m);
-  if (idx >= 0) rows[idx] = g; else rows.push(g);
-  writeJson(CONVERSATION_INDEX_FILE, rows);
-  safeSqliteSync(() => syncMessageFields(g));
+  setImmediate(() => {
+    const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
+    const rows = readJson(CONVERSATION_INDEX_FILE, []);
+    const idx = rows.findIndex(r => r.contactId === contactId);
+    if (!messages.length) {
+      if (idx >= 0) { rows.splice(idx, 1); writeJson(CONVERSATION_INDEX_FILE, rows); }
+      safeSqliteSync(() => deleteConversationRow(contactId));
+      return;
+    }
+    const g = emptyGroup(contactId, contactId);
+    for (const m of messages) foldMessageIntoGroup(g, m);
+    if (idx >= 0) rows[idx] = g; else rows.push(g);
+    writeJson(CONVERSATION_INDEX_FILE, rows);
+    safeSqliteSync(() => syncMessageFields(g));
+  });
 }
 export function removeConversationSummary(key) {
-  const rows = readJson(CONVERSATION_INDEX_FILE, []);
-  const next = rows.filter(r => r.key !== key);
-  if (next.length !== rows.length) writeJson(CONVERSATION_INDEX_FILE, next);
-  safeSqliteSync(() => deleteConversationRow(key));
+  setImmediate(() => {
+    const rows = readJson(CONVERSATION_INDEX_FILE, []);
+    const next = rows.filter(r => r.key !== key);
+    if (next.length !== rows.length) writeJson(CONVERSATION_INDEX_FILE, next);
+    safeSqliteSync(() => deleteConversationRow(key));
+  });
 }
