@@ -176,6 +176,13 @@ function applyTheme(theme) {
 
 const formId = location.pathname.split('/').filter(Boolean).pop();
 let form = null, steps = [], stepIndex = 0, answers = {};
+// Single-choice auto-advance (see bindStepInputs) schedules a delayed click
+// on #pfNext -- if the visitor manually clicks Next themselves before that
+// timer fires, the stale timer still goes off later and clicks whatever
+// #pfNext now refers to on the step they've since moved to, silently
+// triggering that step's validation before they've touched it. Tracked
+// here so every fresh renderStep() can cancel any leftover timer first.
+let autoAdvanceTimer = null;
 
 // Same split as form-builder.html/forms_backend.js's ANSWERABLE_TYPES.
 const NON_ANSWERABLE_TYPES = ['statement', 'headline', 'image', 'video', 'calendar', 'page_break'];
@@ -397,7 +404,7 @@ function bindStepInputs() {
       // check -- redirect rules, hide_next, validation, submit-on-last-step
       // -- still applies exactly as a manual click would.
       if (singleQuestionStep && (el.type === 'radio' || el.tagName === 'SELECT') && !hasAiRule) {
-        setTimeout(() => document.getElementById('pfNext')?.click(), 300);
+        autoAdvanceTimer = setTimeout(() => document.getElementById('pfNext')?.click(), 300);
       }
     };
     el.addEventListener('input', handler);
@@ -524,6 +531,7 @@ function bookCalendarStep() {
 }
 
 function renderStep() {
+  clearTimeout(autoAdvanceTimer);
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
   const card = document.getElementById('pfCard');
