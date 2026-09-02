@@ -212,7 +212,7 @@ function stepSummary(step) {
   if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
   if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
-  if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length || 'no'} field(s)`;
+  if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} field(s)`;
   if (step.type === 'send_email') return `Email ${escapeHtml(c.to || '—')}${c.subject ? `: "${escapeHtml(c.subject)}"` : ''}`;
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
@@ -532,7 +532,7 @@ function defaultConfig(type) {
   if (type === 'google_sheet') return { spreadsheetId: '', spreadsheetName: '', sheetName: '', columns: [], headers: [] };
   if (type === 'enroll_automation') return { automationId: '' };
   if (type === 'enroll_workflow') return { workflowId: '' };
-  if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '' };
+  if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '', customFields: {} };
   if (type === 'send_email') return { to: '', from: '', subject: '', body: '' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_list') return { listId: '' };
@@ -559,6 +559,16 @@ function sheetColRowHtml(value) {
 function sheetColHeaderRowHtml(header, value, index) {
   return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><input class="pra-input" list="sheetFieldOptions" placeholder="{{first}}, static text, …" value="${escapeHtml(value || '')}" data-sheet-col/></div>`;
 }
+function customFieldRowHtml(fieldId, value) {
+  return `
+    <div class="field-row" style="margin-bottom:8px" data-cf-row>
+      <select class="pra-select" data-cf-field>${allCustomFields.map(f => `<option value="${f.id}" ${f.id === fieldId ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}</select>
+      <input class="pra-input" list="sheetFieldOptions" autocomplete="off" data-cf-value placeholder="{{payload.Field Name}}" value="${escapeHtml(value || '')}"/>
+      <button class="pra-btn pra-btn-sm pra-btn-danger" data-remove-cf-row type="button">&times;</button>
+    </div>
+  `;
+}
+function wireCustomFieldRow(el) { el.querySelector('[data-remove-cf-row]').onclick = () => el.remove(); }
 
 function openStepConfigModal(step, isNew) {
   editingStepId = step.id;
@@ -724,7 +734,21 @@ function openStepConfigModal(step, isNew) {
       </div>
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
       <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgAltEmail" value="${escapeHtml(c.altEmail || '')}" placeholder="{{payload.Secondary Email}}"/></div><div class="field"><label class="pra-label">Extra phone</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgAltPhone" value="${escapeHtml(c.altPhone || '')}" placeholder="{{payload.Secondary Phone}}"/></div></div>
+      <div class="pra-label" style="margin:12px 0 6px">Custom fields (optional)</div>
+      ${allCustomFields.length ? '' : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields defined yet -- add one in Contacts &rarr; manage columns first.</div>`}
+      <div id="cfgCustomFieldRows"></div>
+      ${allCustomFields.length ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addCfgCustomFieldRowBtn" style="margin-top:4px">+ Add Custom Field</button>` : ''}
     `;
+    const cfRowsWrap = document.getElementById('cfgCustomFieldRows');
+    Object.entries(c.customFields || {}).forEach(([fieldId, value]) => {
+      cfRowsWrap.insertAdjacentHTML('beforeend', customFieldRowHtml(fieldId, value));
+      wireCustomFieldRow(cfRowsWrap.lastElementChild);
+    });
+    const addCfBtn = document.getElementById('addCfgCustomFieldRowBtn');
+    if (addCfBtn) addCfBtn.onclick = () => {
+      cfRowsWrap.insertAdjacentHTML('beforeend', customFieldRowHtml(allCustomFields[0]?.id, ''));
+      wireCustomFieldRow(cfRowsWrap.lastElementChild);
+    };
   } else if (step.type === 'send_email') {
     const c = step.config;
     body.innerHTML = `
@@ -769,6 +793,13 @@ function openStepConfigModal(step, isNew) {
       step.config.statusId = document.getElementById('cfgAucStatus').value;
       step.config.altEmail = document.getElementById('cfgAltEmail').value.trim();
       step.config.altPhone = document.getElementById('cfgAltPhone').value.trim();
+      const customFields = {};
+      document.querySelectorAll('#cfgCustomFieldRows [data-cf-row]').forEach(row => {
+        const fieldId = row.querySelector('[data-cf-field]').value;
+        const val = row.querySelector('[data-cf-value]').value.trim();
+        if (fieldId && val) customFields[fieldId] = val;
+      });
+      step.config.customFields = customFields;
     }
     else if (step.type === 'send_email') {
       step.config.to = document.getElementById('cfgEmailTo').value.trim();

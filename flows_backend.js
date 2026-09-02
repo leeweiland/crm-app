@@ -280,6 +280,13 @@ async function advanceFlowRun(run, flow) {
           workingContact.altPhones = [...(workingContact.altPhones || []), resolved];
         }
       }
+      if (cfg.customFields && typeof cfg.customFields === "object") {
+        workingContact.customFields = workingContact.customFields || {};
+        for (const [fieldId, tpl] of Object.entries(cfg.customFields)) {
+          const resolved = resolveTemplate(tpl, ctx);
+          if (resolved) workingContact.customFields[fieldId] = resolved;
+        }
+      }
       saveContact(workingContact);
       if (workingContact.status !== prevStatus) {
         checkConversionGoal("lead_status_change", workingContact.id);
