@@ -313,6 +313,11 @@ export async function deleteCalendarEvent(eventId, calendarId) {
 // ── Add-to-calendar links + universal .ics, same shapes as chat-app's ──────
 function icsDate(d) { return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z"); }
 function icsEscape(s) { return String(s || "").replace(/[\\,;]/g, m => "\\" + m).replace(/\n/g, "\\n"); }
+// Same simple regex-replace escaping email_backend.js's own (unexported)
+// escapeHtml uses -- needed here for the internal booking notification,
+// which embeds visitor-submitted values (name, notes, etc.) into an HTML
+// email body.
+function escapeHtml(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function buildGoogleCalendarLink({ summary, description, start, end, timezone }) {
   const params = new URLSearchParams({ action: "TEMPLATE", text: summary, details: description || "", dates: `${icsDate(start)}/${icsDate(end)}`, ctz: timezone });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
@@ -586,6 +591,33 @@ async function sendBookingConfirmation(booking, eventType, contact) {
   ]);
 }
 
+// One email, to whoever's listed in the event type's own "Notify these
+// emails on booking" setting, with EVERYTHING in it -- booking.notes
+// already carries both the calendar's own custom questions AND (folded in
+// via book.html's prefillFormAnswers handoff) the rest of the form's
+// answers when this calendar sits inside one, so there's nothing left to
+// pull from a second source. Deliberately not routed through Flows' two
+// separate trigger events (form_submitted/booking_created each only ever
+// see their own half) -- this is the one moment both halves are already
+// sitting in the same place, so it's simpler and more reliable to just
+// send it directly here than to try to recombine two independent Flow
+// runs into one email. No contactId passed -- this goes to internal
+// staff, not the contact, so it shouldn't be gated by their email opt-out.
+async function sendInternalBookingNotification(booking, eventType, contact) {
+  const recipients = (eventType.notifyEmails || []).filter(Boolean);
+  if (!recipients.length) return;
+  const start = new Date(booking.startAt);
+  const when = start.toLocaleString("en-US", { timeZone: booking.timezone || "America/Anchorage", dateStyle: "full", timeStyle: "short" });
+  const html = `<p><b>${escapeHtml(booking.name)}</b> just booked <b>${escapeHtml(eventType.name)}</b>.</p>
+    <p><b>When:</b> ${when}<br/><b>Email:</b> ${escapeHtml(booking.email)}${booking.phone ? `<br/><b>Phone:</b> ${escapeHtml(booking.phone)}` : ""}</p>
+    ${booking.notes ? `<p><b>Application &amp; booking answers:</b><br/>${escapeHtml(booking.notes).replace(/\n/g, "<br/>")}</p>` : ""}`;
+  await Promise.all(recipients.map(to => sendEmail({
+    to, subject: `New booking: ${booking.name} — ${eventType.name}`,
+    blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
+    sourceType: "booking", sourceId: booking.id,
+  }).catch(() => {})));
+}
+
 export async function handleSchedulingRequest(req, res, url) {
   const p = url.pathname;
 
@@ -718,6 +750,7 @@ export async function handleSchedulingRequest(req, res, url) {
     // given, a second sequential SMS send before the visitor ever saw
     // "You're booked" -- confirmation delivery doesn't need to block that.
     sendBookingConfirmation(booking, et, contact).catch(() => {});
+    sendInternalBookingNotification(booking, et, contact).catch(() => {});
 
     const startDate = new Date(booking.startAt), endDate = new Date(booking.endAt);
     return sendJson(res, 200, {
@@ -852,7 +885,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

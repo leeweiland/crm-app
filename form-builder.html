@@ -648,6 +648,11 @@ function renderCalendarPanel(f, i) {
       </select>
     </div>
     <div class="field" style="margin-bottom:0"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" data-cal-redirect="${i}" value="${escapeHtml(et.branding?.redirectUrl || '')}" placeholder="Leave blank for the built-in confirmation"/></div>
+    <div class="field" style="margin-bottom:0">
+      <label class="pra-label">Notify these emails on booking</label>
+      <input class="pra-input" data-cal-notify="${i}" value="${escapeHtml((et.notifyEmails || []).join(', '))}" placeholder="you@pacificrimathletics.com, alexis@..."/>
+      <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">One email, with everything -- the application's other answers, the booked time, and every question here.</div>
+    </div>
 
     <div class="fb-side-title">Questions</div>
     <div data-cal-questions="${i}">${et.questions.map((q, qi) => questionCardHtmlFB(q, qi, i)).join('')}</div>
@@ -966,7 +971,7 @@ function bindCanvas(canvas) {
     const et = calFieldData[idx].eventType;
     await fetch('/api/scheduling/admin/event-types/' + et.id, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ durationMinutes: et.durationMinutes, statusId: et.statusId, calendarId: et.calendarId, branding: et.branding, questions: et.questions }),
+      body: JSON.stringify({ durationMinutes: et.durationMinutes, statusId: et.statusId, calendarId: et.calendarId, branding: et.branding, questions: et.questions, notifyEmails: et.notifyEmails }),
     });
   }
 
@@ -1061,6 +1066,11 @@ function bindCanvas(canvas) {
     const idx = +el.dataset.calRedirect;
     const et = calFieldData[idx].eventType;
     et.branding = { ...(et.branding || {}), redirectUrl: e.target.value.trim() };
+    saveEventTypeDebounced(idx);
+  }));
+  canvas.querySelectorAll('[data-cal-notify]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calNotify;
+    calFieldData[idx].eventType.notifyEmails = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
     saveEventTypeDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-addq]').forEach(el => el.addEventListener('click', () => {

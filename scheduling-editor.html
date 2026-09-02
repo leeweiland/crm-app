@@ -198,6 +198,11 @@
               <select class="pra-select" id="fStatus"><option value="">Don't change status</option></select>
             </div>
             <div class="field"><label class="pra-label">Redirect URL after booking</label><input class="pra-input" id="fRedirectUrl" placeholder="Leave blank for the built-in confirmation"/></div>
+            <div class="field">
+              <label class="pra-label">Notify these emails on booking</label>
+              <input class="pra-input" id="fNotifyEmails" placeholder="you@pacificrimathletics.com, alexis@..."/>
+              <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">One email, with everything -- the application's other answers, the booked time, and every question here.</div>
+            </div>
             <div class="field"><label class="pra-label">Booking link</label>
               <div class="link-row" style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--pra-dim)"><code id="fSlug" style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px"></code></div>
             </div>
@@ -475,6 +480,7 @@ function renderSidebar() {
   document.getElementById('fDuration').value = draft.durationMinutes;
   document.getElementById('fStatus').value = draft.statusId || '';
   document.getElementById('fRedirectUrl').value = draft.branding.redirectUrl || '';
+  document.getElementById('fNotifyEmails').value = (draft.notifyEmails || []).join(', ');
 
   const b = draft.branding;
   const fontPrimarySel = document.getElementById('fFontPrimary');
@@ -583,6 +589,7 @@ async function saveNow() {
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
+      notifyEmails: draft.notifyEmails,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -796,6 +803,10 @@ async function init() {
     renderPreview();
     saveDebounced();
   });
+});
+document.getElementById('fNotifyEmails').addEventListener('input', () => {
+  draft.notifyEmails = document.getElementById('fNotifyEmails').value.split(',').map(s => s.trim()).filter(Boolean);
+  saveDebounced();
 });
 document.getElementById('fStatus').addEventListener('change', () => {
   draft.statusId = document.getElementById('fStatus').value;
