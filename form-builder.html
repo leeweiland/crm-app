@@ -102,6 +102,10 @@
      inert like every other preview-only field in the builder. */
   .fb-raw-embed { border-radius: 8px; overflow: hidden; }
   .fb-raw-embed, .fb-raw-embed * { pointer-events: none; }
+  .fb-video-sizer { position: relative; }
+  .fb-video-resize-handle { position: absolute; top: 0; right: -3px; bottom: 0; width: 14px; cursor: ew-resize; display: flex; align-items: center; justify-content: center; z-index: 5; }
+  .fb-video-resize-handle::after { content: ''; width: 4px; height: 36px; border-radius: 3px; background: var(--pra-border); transition: background .12s; }
+  .fb-video-resize-handle:hover::after, .fb-video-resize-handle.resizing::after { background: var(--pra-blue); }
 
   .fb-option-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
   .fb-option-marker { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
@@ -788,10 +792,11 @@ function renderBlockBody(f, i) {
     const padTop = VIDEO_ASPECT_PADDING[f.videoAspect] || VIDEO_ASPECT_PADDING['16:9'];
     return `
       <div class="fb-video-block">
-        <div style="${sizeStyle}">
+        <div class="fb-video-sizer" style="${sizeStyle}" data-video-sizer-idx="${i}">
           ${raw ? `<div class="fb-raw-embed">${f.videoUrl}</div>`
             : wistiaId ? `<div class="fb-video-embed" style="padding-top:${padTop}"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div>`
             : `<div class="fb-image-placeholder">${ICONS.video}<span>Paste a Wistia link, media ID, or embed code below</span></div>`}
+          <div class="fb-video-resize-handle" data-video-resize-idx="${i}" title="Drag to resize"></div>
         </div>
         <textarea class="pra-input" style="margin-top:8px;resize:vertical" rows="2" data-video-url-idx="${i}" placeholder="Wistia link, media ID, or paste Wistia's HTML embed code">${escapeHtml(f.videoUrl || '')}</textarea>
       </div>
@@ -1174,6 +1179,40 @@ function bindCanvas(canvas) {
       saveDebounced();
     });
     el.addEventListener('change', () => renderCanvas()); // re-render on blur to refresh the preview, same as the video URL box -- not on every keystroke, so the input doesn't lose focus mid-type
+  });
+  // Drag-to-resize handle on the video block's right edge -- same
+  // form.fields[idx].videoWidth the number input above sets, just a more
+  // direct way to get there. Percentage is relative to the sizer's own
+  // parent (.fb-video-block), matching the width:N% inline style that
+  // already sizes it, so the math holds regardless of canvas zoom/width.
+  canvas.querySelectorAll('[data-video-resize-idx]').forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const idx = +handle.dataset.videoResizeIdx;
+      const sizer = canvas.querySelector(`[data-video-sizer-idx="${idx}"]`);
+      const widthInput = canvas.querySelector(`[data-video-width-idx="${idx}"]`);
+      const containerWidth = sizer.parentElement.getBoundingClientRect().width;
+      const startWidthPx = sizer.getBoundingClientRect().width;
+      const startX = e.clientX;
+      handle.classList.add('resizing');
+      document.body.style.userSelect = 'none';
+      const onMove = (moveEvt) => {
+        const deltaPx = moveEvt.clientX - startX;
+        const pct = Math.max(10, Math.min(100, Math.round(((startWidthPx + deltaPx) / containerWidth) * 100)));
+        sizer.style.width = pct + '%';
+        if (widthInput) widthInput.value = pct;
+        form.fields[idx].videoWidth = pct;
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        handle.classList.remove('resizing');
+        document.body.style.userSelect = '';
+        saveDebounced();
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
   });
   canvas.querySelectorAll('[data-video-aspect-idx]').forEach(el => el.addEventListener('change', e => {
     form.fields[+e.target.dataset.videoAspectIdx].videoAspect = e.target.value;
