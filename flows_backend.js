@@ -88,6 +88,20 @@ async function getSheetsAccessToken() {
   if (!d.access_token) throw new Error("Sheets token refresh failed: " + JSON.stringify(d));
   return d.access_token;
 }
+// Exported for forms_backend.js's field->column mapping (see its
+// appendFormSubmissionToSheet) -- reads live rather than trusting a cached
+// header list, so a column the admin renamed/reordered on the actual sheet
+// since the form was last edited still maps correctly.
+export async function getSheetHeaders(spreadsheetId, tabName) {
+  const accessToken = await getSheetsAccessToken();
+  const range = encodeURIComponent(`'${tabName || "Sheet1"}'!1:1`);
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message || "Could not read that tab");
+  return (d.values && d.values[0]) || [];
+}
 function columnLetter(n) {
   let s = "";
   while (n > 0) { const rem = (n - 1) % 26; s = String.fromCharCode(65 + rem) + s; n = Math.floor((n - 1) / 26); }
@@ -104,7 +118,7 @@ function columnLetter(n) {
 // sidesteps that entirely -- values.length reflects the true last row with
 // data (Google preserves gap rows as [] within the array), regardless of
 // any gaps earlier in the sheet.
-async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
+export async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
   const accessToken = await getSheetsAccessToken();
   const endCol = columnLetter(rowValues.length);
   const colRange = encodeURIComponent(`'${sheetName}'!A:${endCol}`);
@@ -479,15 +493,8 @@ export async function handleFlowsRequest(req, res, url) {
   const sheetHeadersMatch = p.match(/^\/api\/flows\/sheets\/([^/]+)\/headers$/);
   if (sheetHeadersMatch && req.method === "GET") {
     try {
-      const accessToken = await getSheetsAccessToken();
-      const tab = url.searchParams.get("tab") || "Sheet1";
-      const range = encodeURIComponent(`'${tab}'!1:1`);
-      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetHeadersMatch[1]}/values/${range}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const d = await r.json();
-      if (!r.ok) return sendJson(res, 400, { error: d.error?.message || "Could not read that tab" });
-      return sendJson(res, 200, { headers: (d.values && d.values[0]) || [] });
+      const headers = await getSheetHeaders(sheetHeadersMatch[1], url.searchParams.get("tab") || "Sheet1");
+      return sendJson(res, 200, { headers });
     } catch (e) {
       return sendJson(res, 400, { error: e.message });
     }
