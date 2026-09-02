@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Book a time</title>
 <style>
-  :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-divider: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: var(--bk-font-secondary); background: var(--bk-page-bg); color: var(--bk-text); }
   .bk-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .bk-card { width: 100%; max-width: 900px; background: var(--bk-bg); color: var(--bk-text); border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); overflow: hidden; }
   .bk-grid { display: grid; grid-template-columns: 260px 1fr; }
   .bk-grid.with-times { grid-template-columns: 260px 1fr 220px; }
-  .bk-info { padding: 32px 28px; border-right: 1px solid var(--bk-border); }
+  .bk-info { padding: 32px 28px; border-right: 1px solid var(--bk-divider); }
   .bk-logo { max-width: 150px; max-height: 150px; object-fit: contain; margin-bottom: 14px; display: block; }
   .bk-brand { font-family: var(--bk-font-primary); font-size: .8rem; font-weight: 600; color: var(--bk-accent); margin-bottom: 4px; }
   .bk-title { font-family: var(--bk-font-primary); font-size: 1.25rem; font-weight: 700; margin-bottom: 14px; line-height: 1.3; }
@@ -20,7 +20,7 @@
   .bk-meta-row { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--bk-dim); margin-bottom: 10px; }
   .bk-desc { font-size: .84rem; color: var(--bk-dim); margin-top: 14px; line-height: 1.5; white-space: pre-wrap; }
   .bk-body { padding: 28px 26px; min-width: 0; }
-  .bk-times-col { padding: 28px 16px 28px 0; border-left: 1px solid var(--bk-border); min-width: 0; }
+  .bk-times-col { padding: 28px 16px 28px 0; border-left: 1px solid var(--bk-divider); min-width: 0; }
   .bk-h2 { font-size: 1rem; font-weight: 700; margin-bottom: 16px; }
   .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .cal-month-label { font-weight: 700; font-size: .92rem; }
@@ -67,7 +67,7 @@
        instead of cramming three columns into one narrow scrolling page. ── */
   @media (max-width: 640px) {
     .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; }
-    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); }
+    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-divider); }
     .bk-grid.with-times .bk-info, .bk-grid.with-times .bk-body { display: none; }
     .bk-times-col { border-left: none; border-top: none; padding: 24px 20px; }
     .mobile-back-row { display: block; margin-bottom: 14px; }
@@ -162,6 +162,14 @@ function applyBranding(branding) {
   root.setProperty('--bk-page-bg', branding.pageBackgroundColor || '#f2f2f5');
   root.setProperty('--bk-text', branding.textColor || '#0a0a0a');
   root.setProperty('--bk-accent', branding.accentColor || '#009bff');
+  // The info/times-column divider lines are meant to fade into the card,
+  // not stand out as their own element -- matching them to the card's own
+  // background does that regardless of theme (a fixed light gray divider
+  // was invisible-ish on white but read as a stark bright line on a dark
+  // custom background). Left as a separate variable from --bk-border, which
+  // stays a real fixed color -- input/button borders still need contrast
+  // against that same background to stay visible.
+  root.setProperty('--bk-divider', branding.backgroundColor || '#ffffff');
   const primary = FONT_OPTIONS[branding.fontPrimary] || FONT_OPTIONS.default;
   root.setProperty('--bk-font-primary', primary.stack);
   loadGoogleFont(primary.googleFont, 'primary');

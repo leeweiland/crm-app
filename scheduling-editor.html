@@ -56,7 +56,7 @@
   .q-card-del:hover { color: var(--pra-red); }
 
   /* ── Live preview card — same visual language as the real book.html ── */
-  :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-divider: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   .ed-preview-outer { background: var(--bk-page-bg); }
   /* container-type here (not a @media breakpoint) because this card sits in
      a squeezable sidebar+preview column layout -- its rendered width can
@@ -68,9 +68,9 @@
   #pvBrand, #pvTitle, .bk-h2, .cal-month-label, .time-slot, .cal-day { font-family: var(--bk-font-primary); }
   .bk-grid { display: grid; grid-template-columns: 260px 1fr; }
   .bk-grid.with-times { grid-template-columns: 260px 1fr 220px; }
-  .bk-info { padding: 32px 28px; border-right: 1px solid var(--bk-border); position: relative; }
+  .bk-info { padding: 32px 28px; border-right: 1px solid var(--bk-divider); position: relative; }
   .bk-body { padding: 28px 26px; min-width: 0; }
-  .bk-times-col { padding: 28px 16px 28px 0; border-left: 1px solid var(--bk-border); min-width: 0; }
+  .bk-times-col { padding: 28px 16px 28px 0; border-left: 1px solid var(--bk-divider); min-width: 0; }
   .bk-meta-row { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--bk-dim); margin-bottom: 10px; }
   .cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .cal-month-label { font-weight: 700; font-size: .92rem; }
@@ -96,7 +96,7 @@
   .mobile-back-row, .mobile-tz-row, .mobile-duration-row, .mobile-select-time-label { display: none; }
   @container (max-width: 640px) {
     .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; }
-    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-border); }
+    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-divider); }
     .bk-grid.with-times .bk-info, .bk-grid.with-times .bk-body { display: none; }
     .bk-times-col { border-left: none; border-top: none; padding: 24px 20px; }
     .mobile-back-row { display: block; margin-bottom: 14px; }
@@ -428,6 +428,11 @@ function applyBrandingToPreview() {
   document.documentElement.style.setProperty('--bk-page-bg', b.pageBackgroundColor);
   document.documentElement.style.setProperty('--bk-text', b.textColor);
   document.documentElement.style.setProperty('--bk-accent', b.accentColor);
+  // Same reasoning as book.html's applyBranding() -- the info/times-column
+  // divider lines fade into the card by matching its own background,
+  // instead of a fixed light-gray that reads as a stark line on a dark
+  // custom background. --bk-border (input/button borders) stays untouched.
+  document.documentElement.style.setProperty('--bk-divider', b.backgroundColor);
   const primary = FONT_OPTIONS[b.fontPrimary] || FONT_OPTIONS.default;
   document.documentElement.style.setProperty('--bk-font-primary', primary.stack);
   loadGoogleFont(primary.googleFont, 'primary');
