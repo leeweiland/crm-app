@@ -154,6 +154,102 @@ export async function fetchCloseLeadById(leadId) {
   const r = await closeFetch(`${CLOSE_BASE}/lead/${leadId}/`, { headers: { Authorization: auth } });
   return r.ok ? await r.json() : null;
 }
+
+// ── Close alt-email/phone backfill ────────────────────────────────────────
+// upsertFromCloseLead below only ever kept emails[0]/phones[0] from each
+// Close lead's nested contact -- any additional emails/phones Close had on
+// file were never copied in (157,061 of 176,017 contacts have a linked
+// Close lead, and Close's own data model allows several per person).
+// Nothing was deleted; it's still sitting in Close, recoverable via their
+// API -- this re-fetches each one and folds extras into altEmails/
+// altPhones (segments_shared.js's findContactMatch, and every inbound
+// SMS/email matcher, already check both).
+//
+// Originally shipped as a standalone script (backfill_close_alt_contacts.mjs)
+// run over SSH -- confirmed live that doesn't survive this environment's
+// deploy frequency: a `nohup`'d background process gets killed by the NEXT
+// deploy (any session's, not just this one), often within minutes, with no
+// automatic resume. Moved into the app's own scheduler tick instead (same
+// "one shared 30s ticker" pattern as checkGmailInbox/checkMeetingReminders)
+// so it picks back up automatically after every restart -- slower per
+// elapsed hour (bounded to a time budget per tick, not running flat-out),
+// but it actually finishes unattended instead of needing a human to notice
+// it died and re-launch it via SSH every few minutes.
+export const CLOSE_ALT_BACKFILL_STATE_FILE = "crm_close_alt_backfill_state.json";
+const CLOSE_ALT_BACKFILL_BATCH_MS = 20000; // leaves headroom inside the 30s tick
+const CLOSE_ALT_BACKFILL_DELAY_MS = 60; // stays well clear of Close's rate limit
+
+function digitsOnlyLast10(p) { return String(p || "").replace(/\D/g, "").slice(-10); }
+
+// One contact's worth of work -- fetch its Close lead, fold in any extra
+// emails/phones. Returns true if the contact object was actually changed
+// (caller decides whether/when to persist the array it came from).
+async function backfillOneContactAltFields(contact) {
+  const lead = await fetchCloseLeadById(contact.externalIds.closeLeadId);
+  if (!lead) return false;
+  const nested = lead.contacts?.length ? lead.contacts : [];
+  // Match the SAME nested-contact-to-CRM-contact identity the original
+  // import used (email match), not just "the first nested contact" -- a
+  // Close lead with multiple people (spouse/partner) already became
+  // separate CRM contacts at import time, so this only ever pulls extra
+  // emails/phones belonging to the SAME person, not a household-mate's.
+  const nc = nested.find(n => (n.emails || []).some(e => e.email?.toLowerCase() === contact.email?.toLowerCase()))
+    || nested.find(n => (n.phones || []).some(p => digitsOnlyLast10(p.phone) === digitsOnlyLast10(contact.phone)))
+    || nested[0];
+  if (!nc) return false;
+  const primaryPhoneDigits = digitsOnlyLast10(contact.phone);
+  const extraEmails = (nc.emails || []).map(e => e.email).filter(Boolean).filter(e => e.toLowerCase() !== contact.email?.toLowerCase());
+  // Compare by normalized last-10-digits, not raw string equality -- Close
+  // itself sometimes lists the SAME number twice in different formats
+  // ("+14088326290" vs "4088326290"), which a naive string compare
+  // mistook for a second, genuinely different phone number.
+  const extraPhones = (nc.phones || []).map(p => p.phone).filter(Boolean).filter(p => digitsOnlyLast10(p) !== primaryPhoneDigits);
+  if (!extraEmails.length && !extraPhones.length) return false;
+  contact.altEmails = [...new Set([...(contact.altEmails || []), ...extraEmails.map(e => e.toLowerCase())])];
+  contact.altPhones = [...new Set([...(contact.altPhones || []), ...extraPhones])]
+    .filter((p, i, arr) => arr.findIndex(p2 => digitsOnlyLast10(p2) === digitsOnlyLast10(p)) === i); // dedup WITHIN altPhones itself too
+  return true;
+}
+
+// Called from scheduler.js every tick -- processes contacts for up to
+// CLOSE_ALT_BACKFILL_BATCH_MS, persists progress, and picks up next tick
+// exactly where it left off. State (nextIndex into the closeLeadId-having
+// contact list, plus running totals) lives in its own small file, not
+// mixed into IMPORT_JOBS_FILE -- this isn't a user-visible import job,
+// just a background data-recovery task.
+export async function processCloseAltBackfillBatch() {
+  if (!closeConfigured()) return;
+  const state = readJson(CLOSE_ALT_BACKFILL_STATE_FILE, { nextIndex: 0, processed: 0, updated: 0, errors: 0, done: false });
+  if (state.done) return;
+
+  const contacts = readJson(CONTACTS_FILE, []);
+  const targets = contacts.filter(c => c.externalIds?.closeLeadId);
+  if (state.nextIndex >= targets.length) {
+    state.done = true;
+    writeJson(CLOSE_ALT_BACKFILL_STATE_FILE, state);
+    console.log(`[close-alt-backfill] done -- ${state.processed} processed, ${state.updated} updated with extra emails/phones, ${state.errors} errors`);
+    return;
+  }
+
+  const t0 = Date.now();
+  const startIndex = state.nextIndex;
+  let i = startIndex;
+  let contactsChanged = false;
+  for (; i < targets.length && Date.now() - t0 < CLOSE_ALT_BACKFILL_BATCH_MS; i++) {
+    try {
+      if (await backfillOneContactAltFields(targets[i])) { state.updated++; contactsChanged = true; }
+    } catch (e) {
+      state.errors++;
+      console.error(`[close-alt-backfill] contact ${targets[i].id} failed:`, e.message);
+    }
+    state.processed++;
+    await new Promise(res => setTimeout(res, CLOSE_ALT_BACKFILL_DELAY_MS));
+  }
+  state.nextIndex = i;
+  if (contactsChanged) writeJson(CONTACTS_FILE, contacts);
+  writeJson(CLOSE_ALT_BACKFILL_STATE_FILE, state);
+  console.log(`[close-alt-backfill] ${state.nextIndex}/${targets.length} processed (+${i - startIndex} this tick), ${state.updated} updated so far`);
+}
 async function searchCloseLeadByIdentity(email, phone) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   for (const [field, value] of [["email", email], ["phone", phone]]) {

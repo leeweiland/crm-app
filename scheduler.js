@@ -8,6 +8,7 @@ import { syncWritingCacheIfDue } from "./ai_agents_backend.js";
 import { processAiActiveBatches } from "./ai_active_backend.js";
 import { checkMeetingReminders } from "./meetings_backend.js";
 import { checkGmailInbox } from "./gmail_backend.js";
+import { processCloseAltBackfillBatch } from "./import_backend.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
 // Phase 2 only checks scheduled campaigns; Phase 3 adds automation
@@ -32,6 +33,7 @@ async function tick() {
     await processAiActiveBatches();
     await checkMeetingReminders();
     await checkGmailInbox();
+    await processCloseAltBackfillBatch();
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }
