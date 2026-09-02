@@ -67,8 +67,8 @@ export function recheckStopStatus(contactId) {
   return true;
 }
 
-// Applied whenever a contact's status is being set to STOP or BAD FIT /
-// BLACKLIST, from any path (manual status dropdown, the Inbox's Blacklist
+// Applied whenever a contact's status is being set to STOP or BLACKLIST,
+// from any path (manual status dropdown, the Inbox's Blacklist
 // context-menu action, etc). Mutates the in-memory contact only -- the
 // caller already owns the writeJson(CONTACTS_FILE, ...) for this edit --
 // but does archive the conversation directly, since that's a separate file.
@@ -76,5 +76,5 @@ export function applyStatusOptOut(contact) {
   const settings = getComplianceSettings();
   if (!settings.blacklistAutoOptOut) return;
   if (contact.status === "STOP") { contact.smsOptOut = true; setConvoMeta(contact.id, { archived: true }); }
-  else if (contact.status === "BAD FIT / BLACKLIST") { contact.smsOptOut = true; contact.emailOptOut = true; setConvoMeta(contact.id, { archived: true }); }
+  else if (contact.status === "BLACKLIST") { contact.smsOptOut = true; contact.emailOptOut = true; setConvoMeta(contact.id, { archived: true }); }
 }

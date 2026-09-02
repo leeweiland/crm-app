@@ -533,7 +533,7 @@ const STATUS_GLOW = {
   "RSVP'ed": '#2cdf2b',
   'ENROLLED': '#39ff14',
   'STOP': '#4a4a52',
-  'BAD FIT / BLACKLIST': '#4a4a52',
+  'BLACKLIST': '#4a4a52',
 };
 // A thread with one of the CRM's own staff/admin users (e.g. testing by
 // messaging lee@ or alexis@) glows blue regardless of lead status -- "this
@@ -793,7 +793,7 @@ function wireConvoRow(row) {
       showToast('Status updated');
       if (convo.contact) convo.contact.status = status;
       e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
-      // A status change can auto-archive the conversation (STOP / Bad Fit &
+      // A status change can auto-archive the conversation (STOP / Blacklist &
       // Blacklist) -- same reload chatStatusSelect's handler does, so a
       // freshly-archived row actually drops out of the current view instead
       // of sticking around from the stale local `conversations` array.
@@ -900,8 +900,8 @@ document.getElementById('ctxBlacklistBtn').onclick = async () => {
   const c = ctxMenuConvo;
   closeContextMenu();
   if (!c?.contactId) return;
-  await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BAD FIT / BLACKLIST' }) });
-  showToast('Marked as Bad Fit / Blacklist');
+  await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) });
+  showToast('Marked as Blacklist');
   await loadRefs();
   loadConversations();
 };
@@ -1406,7 +1406,7 @@ function renderThread() {
     showToast('Status updated');
     e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
     await loadRefs();
-    // A status change can auto-archive the conversation (STOP / Bad Fit &
+    // A status change can auto-archive the conversation (STOP / Blacklist &
     // Blacklist) -- loadRefs() only refreshes contacts/statuses/users, not
     // the conversation list itself, so without this the row would keep
     // showing in the sidebar (stale local `conversations` array) even

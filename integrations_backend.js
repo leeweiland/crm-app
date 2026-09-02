@@ -57,7 +57,7 @@ export function getTwilioSettings() {
 
 // SMS "STOP" is a carrier-compliance keyword (SMS opt-out only, never
 // email); email opt-out only ever happens via an explicit unsubscribe-link
-// click. BAD FIT / BLACKLIST is a staff judgment call, not a legal
+// click. BLACKLIST is a staff judgment call, not a legal
 // requirement, so it's the one status that suppresses both channels.
 const DEFAULT_STOP_KEYWORDS = ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"];
 // Reference values for attributing traffic back to a specific ad/link.

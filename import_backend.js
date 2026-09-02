@@ -465,7 +465,7 @@ export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
 // Close statuses that mean "never text this person again" -- checked
 // against whatever status the lead ends up with (existing contact's
 // current status kept if Close has none, matching the line below).
-const SMS_BLOCKED_STATUSES = ["STOP", "BAD FIT / BLACKLIST"];
+const SMS_BLOCKED_STATUSES = ["STOP", "BLACKLIST"];
 // Close's address object shape is {label, address_1, address_2, city,
 // state, zipcode, country} -- joins whichever parts are actually present
 // into one readable line rather than assuming every field is populated.

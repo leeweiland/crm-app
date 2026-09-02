@@ -8,7 +8,7 @@ export const STATUSES_FILE = "crm_statuses.json";
 // ready-to-use status vocabulary instead of an empty list.
 const SEED_STATUSES = [
   "FINISHED", "POTENTIAL", "FOLLOW UP (They have a Task / Date set)", "APPLICATION",
-  "BOOKED", "WE CANCELLED", "RSVP'ed", "ENROLLED", "STOP", "BAD FIT / BLACKLIST",
+  "BOOKED", "WE CANCELLED", "RSVP'ed", "ENROLLED", "STOP", "BLACKLIST",
 ].map((label, i) => ({ id: randomUUID(), label, order: i, color: "#5f727f", isTerminal: false, createdAt: new Date().toISOString() }));
 
 function getStatuses() {
