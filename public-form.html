@@ -7,13 +7,20 @@
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   body { background: var(--pra-black-soft); }
-  .pf-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-  .pf-card { width: 100%; max-width: 560px; padding: 36px 32px; border-radius: var(--pf-radius, 12px); }
+  .pf-wrap { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+  .pf-card { width: 100%; max-width: 680px; padding: 40px 36px; border-radius: var(--pf-radius, 12px); box-sizing: border-box; }
   /* A step with a calendar field embeds the real booking widget, which
      wants room for its 3-column desktop layout (see book.html's own
-     780px-wide card) -- the normal 560px text-form width would force it
+     780px-wide card) -- the normal 680px text-form width would force it
      into its cramped mobile layout on every device, desktop included. */
-  .pf-card.pf-card-wide { max-width: 900px; }
+  .pf-card.pf-card-wide { max-width: 960px; }
+  /* Below ~560px (phones, and any narrow embed container) the floating
+     card + gutters just reads as wasted space -- go edge-to-edge like a
+     native app screen instead of a postage stamp. */
+  @media (max-width: 560px) {
+    .pf-wrap { padding: 0; align-items: flex-start; }
+    .pf-card { max-width: none; min-height: 100vh; min-height: 100dvh; border-radius: 0; padding: 28px 20px; }
+  }
   .pf-card .pra-input, .pf-card .pra-select, .pf-card .pra-textarea, .pf-card .pra-btn, .pf-choice-row { border-radius: calc(var(--pf-radius, 12px) * .65); }
   .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }
   .pf-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--pra-border); }
