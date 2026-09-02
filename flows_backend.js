@@ -5,6 +5,7 @@ import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal } from "./automati
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
+import { sendEmail } from "./email_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -13,9 +14,17 @@ const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migr
 export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet",
-  "enroll_automation", "enroll_workflow", "add_update_contact",
+  "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event",
 ];
+
+// send_email's Body is a plain textarea, not the block editor's rich HTML --
+// escape it like real text, then turn line breaks into <br> so paragraphs
+// still read as paragraphs once it's wrapped in a single "text" block for
+// sendEmail() (block_editor_shared.js just injects a text block's html raw).
+function escapeHtmlForEmail(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+}
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function saveContact(contact) {
@@ -290,6 +299,27 @@ async function advanceFlowRun(run, flow) {
         const row = (step.config.columns || []).map(tpl => resolveTemplate(tpl, ctx));
         try { await appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row); }
         catch (e) { console.error("[flows] sheet append failed", e.message); }
+      }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "send_email") {
+      const cfg = step.config || {};
+      const toRaw = resolveTemplate(cfg.to || "", ctx);
+      // Free-typed, unlike Automations' own send_email step which always
+      // mails contact.email -- this one's just as likely aimed at staff
+      // (a "new lead" notification) as at the contact, so it accepts
+      // however many comma/whitespace-separated addresses got typed in.
+      const toAddresses = toRaw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+      if (toAddresses.length) {
+        const fromResolved = cfg.from ? resolveTemplate(cfg.from, ctx).trim() : "";
+        const subjectResolved = resolveTemplate(cfg.subject || "", ctx);
+        const bodyHtml = escapeHtmlForEmail(resolveTemplate(cfg.body || "", ctx));
+        for (const to of toAddresses) {
+          await sendEmail({
+            to, subject: subjectResolved, blocks: [{ type: "text", html: bodyHtml }],
+            contactId: contact?.id || null, sourceType: "flow_step", sourceId: `${flow.id}:${step.id}`,
+            from: fromResolved || undefined,
+          }).catch(e => console.error("[flows] send_email failed", e.message));
+        }
       }
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "send_conversion_event") {

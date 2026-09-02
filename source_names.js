@@ -29,6 +29,15 @@ export function resolveSendSourceSlug(sourceType, sourceId) {
     const w = readJson(WORKFLOWS_FILE, []).find(x => x.id === workflowId);
     return w ? slugify(w.name) : "workflow";
   }
+  if (sourceType === "flow_step") {
+    // Reads crm_flows.json by its literal filename rather than importing
+    // FLOWS_FILE from flows_backend.js -- that module already imports
+    // sendEmail (email_backend.js), which imports this file, so pulling
+    // flows_backend.js in here too would close a circular import.
+    const flowId = String(sourceId || "").split(":")[0];
+    const f = readJson("crm_flows.json", []).find(x => x.id === flowId);
+    return f ? slugify(f.name) : "flow";
+  }
   if (sourceType === "booking") return "booking";
   if (sourceType === "inbox") return "inbox";
   return "manual";

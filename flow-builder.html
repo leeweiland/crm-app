@@ -138,6 +138,7 @@
       <button data-type="enroll_automation"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="13" rx="2" stroke="#fff" stroke-width="1.6"/><path d="M4.5 7l7.5 6 7.5-6" stroke="#009bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Enroll in Email Automation</button>
       <button data-type="enroll_workflow"><svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16v10H10l-4 3.5V16H4V6Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="9" cy="11" r="1" fill="#009bff"/><circle cx="12" cy="11" r="1" fill="#009bff"/><circle cx="15" cy="11" r="1" fill="#009bff"/></svg>Enroll in SMS Sequence</button>
       <button data-type="add_update_contact"><svg viewBox="0 0 24 24" fill="none"><circle cx="10" cy="8.5" r="3.5" stroke="#fff" stroke-width="1.6"/><path d="M3.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><path d="M18 5v6M15 8h6" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add/Update Contact</button>
+      <button data-type="send_email"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="13" rx="2" stroke="#fff" stroke-width="1.6"/><path d="M4.5 7l7.5 6 7.5-6" stroke="#009bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Send Email</button>
       <button data-type="add_tag"><svg viewBox="0 0 24 24" fill="none"><path d="M11.5 3.5H19a1 1 0 0 1 1 1v7.5L11 21 3.5 13.5 11.5 3.5Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="8" r="1.3" fill="#fff"/><path d="M10 18h4M12 16v4" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add Tag</button>
       <button data-type="remove_tag"><svg viewBox="0 0 24 24" fill="none"><path d="M11.5 3.5H19a1 1 0 0 1 1 1v7.5L11 21 3.5 13.5 11.5 3.5Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="8" r="1.3" fill="#fff"/><path d="M10 18h4" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Remove Tag</button>
       <button data-type="add_to_list"><svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="#fff" stroke-width="1.6"/><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Add to List</button>
@@ -212,13 +213,14 @@ function stepSummary(step) {
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
   if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
   if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length || 'no'} field(s)`;
+  if (step.type === 'send_email') return `Email ${escapeHtml(c.to || '—')}${c.subject ? `: "${escapeHtml(c.subject)}"` : ''}`;
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'add_to_list') return `Add to list: ${escapeHtml(allLists.find(l => l.id === c.listId)?.name || '—')}`;
   if (step.type === 'send_conversion_event') return `Send "${escapeHtml(allConversionEvents.find(e => e.key === c.eventKey)?.label || c.eventKey || '—')}" conversion`;
   return '';
 }
-const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event' };
+const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event' };
 
 function stepCardHtml(stepId, isLast) {
   const step = flow.steps[stepId];
@@ -531,6 +533,7 @@ function defaultConfig(type) {
   if (type === 'enroll_automation') return { automationId: '' };
   if (type === 'enroll_workflow') return { workflowId: '' };
   if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '' };
+  if (type === 'send_email') return { to: '', from: '', subject: '', body: '' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_list') return { listId: '' };
   if (type === 'send_conversion_event') return { eventKey: '' };
@@ -722,6 +725,15 @@ function openStepConfigModal(step, isNew) {
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
       <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgAltEmail" value="${escapeHtml(c.altEmail || '')}" placeholder="{{payload.Secondary Email}}"/></div><div class="field"><label class="pra-label">Extra phone</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgAltPhone" value="${escapeHtml(c.altPhone || '')}" placeholder="{{payload.Secondary Phone}}"/></div></div>
     `;
+  } else if (step.type === 'send_email') {
+    const c = step.config;
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Sends a plain email through this business's own sender -- not tied to the contact like Automations' Send Email step, so "To" can be staff addresses (a "new lead" notification), the lead itself via a token, or both. Multiple recipients: separate with commas.</div>
+      <div class="field"><label class="pra-label">To</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgEmailTo" value="${escapeHtml(c.to || '')}" placeholder="lee@pacificrimathletics.com, {{payload.Email}}"/></div>
+      <div class="field"><label class="pra-label">From (optional -- defaults to this business's sender)</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgEmailFrom" value="${escapeHtml(c.from || '')}" placeholder="leave blank to use the default sender"/></div>
+      <div class="field"><label class="pra-label">Subject</label><input class="pra-input" list="sheetFieldOptions" autocomplete="off" id="cfgEmailSubject" value="${escapeHtml(c.subject || '')}" placeholder="New {{payload.Program}} lead: {{payload.First Name}}"/></div>
+      <div class="field"><label class="pra-label">Body</label><textarea class="pra-input" id="cfgEmailBody" rows="6" placeholder="{{payload.First Name}} {{payload.Last Name}}&#10;{{payload.Email}}&#10;{{payload.Phone}}">${escapeHtml(c.body || '')}</textarea></div>
+    `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'add_to_list') {
@@ -757,6 +769,12 @@ function openStepConfigModal(step, isNew) {
       step.config.statusId = document.getElementById('cfgAucStatus').value;
       step.config.altEmail = document.getElementById('cfgAltEmail').value.trim();
       step.config.altPhone = document.getElementById('cfgAltPhone').value.trim();
+    }
+    else if (step.type === 'send_email') {
+      step.config.to = document.getElementById('cfgEmailTo').value.trim();
+      step.config.from = document.getElementById('cfgEmailFrom').value.trim();
+      step.config.subject = document.getElementById('cfgEmailSubject').value.trim();
+      step.config.body = document.getElementById('cfgEmailBody').value;
     }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
     else if (step.type === 'add_to_list') { step.config.listId = document.getElementById('cfgList').value; }
