@@ -265,7 +265,15 @@ function upsertContactFromSubmission(form, answers) {
     if (email) contact.email = email;
     if (phone) contact.phone = phone;
     contact.customFields = { ...contact.customFields, ...customFields };
-    if (form.settings.defaultStatus && !contact.status) contact.status = form.settings.defaultStatus;
+    // Only-if-blank is the safe default for a plain lead-capture form (an
+    // established contact's real pipeline stage shouldn't get clobbered by
+    // someone re-filling a generic form) -- but a form built around booking
+    // a call is different: completing it (new or returning contact either
+    // way) IS the actual event this status represents, same as the
+    // calendar step's own "on booking, set status" already applies
+    // unconditionally in scheduling_backend.js's upsertContactFromBooking.
+    const hasCalendarStep = form.fields.some(f => f.type === "calendar" && f.eventTypeSlug);
+    if (form.settings.defaultStatus && (hasCalendarStep || !contact.status)) contact.status = form.settings.defaultStatus;
   } else {
     contact = {
       id: randomUUID(), type: "lead", accountName: "",
