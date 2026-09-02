@@ -344,10 +344,13 @@ function updateNextVisibility() {
   const hiddenByRule = !!matchingRule(fields, 'hide_next');
   const aiPending = fields.some(f => aiRuleFor(f) && aiScreenResults[f.id] === 'pending');
   btn.style.display = hiddenByRule ? 'none' : '';
+  // Still silently disabled while an AI check is in flight (so a click
+  // can't race ahead of the result), just without a visible "checking"
+  // message -- the button simply isn't clickable for a moment.
   btn.disabled = aiPending;
   const msgEl = document.getElementById('pfHiddenMsg');
-  msgEl.textContent = aiPending ? 'Checking your answer…' : 'Complete this step to continue.';
-  msgEl.style.display = (hiddenByRule || aiPending) ? 'block' : 'none';
+  msgEl.textContent = 'Complete this step to continue.';
+  msgEl.style.display = hiddenByRule ? 'block' : 'none';
 }
 
 function validateStep(fields) {
