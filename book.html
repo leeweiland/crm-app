@@ -421,9 +421,12 @@ async function submitBooking() {
     // by public-form.html after ITS OWN submission) is what should fire
     // here, not this event type's own -- that would navigate just this
     // iframe via location.href, stranding the visitor inside a redirected
-    // iframe nested in the still-showing outer form.
+    // iframe nested in the still-showing outer form. No renderConfirmed()
+    // here either -- the parent takes over immediately (its own submit,
+    // then its redirect or confirmation screen), so this iframe's own
+    // "You're booked!" would just be a flash of a screen the visitor is
+    // about to be navigated away from anyway.
     parent.postMessage({ type: 'pf-booked', success: true, booking: d.booking }, location.origin);
-    renderConfirmed(d);
     return;
   }
   const redirectUrl = eventType.branding?.redirectUrl;

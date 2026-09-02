@@ -218,16 +218,28 @@ async function checkSubmissionDisqualified(form, answers, req) {
     }
   }
   if (process.env.ANTHROPIC_API_KEY) {
+    // Every ai_disqualify rule on the form gets re-checked at submit time
+    // (the client-side gate a savvy visitor could bypass isn't enough) --
+    // a form with two or three such questions was running these Claude
+    // round trips one after another, adding their full latency together
+    // on top of the booking itself. They're independent checks, so run
+    // them concurrently instead; still disqualified if ANY of them fails.
+    const checks = [];
     for (const f of form.fields) {
       for (const rule of f.logic || []) {
         if (rule.op !== "ai_disqualify" || !rule.value) continue;
         if (rule.action !== "hide_next" && rule.action !== "redirect") continue;
-        const fail = await askClaudeYesNo(
-          `You are screening one answer to a single form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${rule.value}`,
-          `Respondent's answer to "${f.label || "this question"}": ${String(answers[f.id] ?? "")}`
-        ).then(pass => !pass).catch(() => false); // a failed/rate-limited call blocks nobody
-        if (fail) return true;
+        checks.push(
+          askClaudeYesNo(
+            `You are screening one answer to a single form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${rule.value}`,
+            `Respondent's answer to "${f.label || "this question"}": ${String(answers[f.id] ?? "")}`
+          ).then(pass => !pass).catch(() => false) // a failed/rate-limited call blocks nobody
+        );
       }
+    }
+    if (checks.length) {
+      const results = await Promise.all(checks);
+      if (results.some(Boolean)) return true;
     }
   }
   return false;
