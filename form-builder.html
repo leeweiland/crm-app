@@ -35,9 +35,9 @@
   .fb-side-title { font-family: var(--font-primary); font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pra-dim); margin-bottom: 12px; }
   .fb-side-section .field { margin-bottom: 12px; }
   .fb-side-section .field:last-child { margin-bottom: 0; }
-  .fb-color-field { display: flex; align-items: center; gap: 10px; }
-  .fb-color-field input[type=color] { width: 40px; height: 32px; padding: 2px; border-radius: 6px; border: 1px solid var(--pra-border); background: none; cursor: pointer; flex-shrink: 0; }
-  .fb-color-field span { font-size: .78rem; color: var(--pra-dim); font-family: monospace; }
+  .fb-color-field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .fb-color-field input[type=color] { width: 32px; height: 32px; padding: 2px; border-radius: 6px; border: 1px solid var(--pra-border); background: none; cursor: pointer; flex-shrink: 0; }
+  .fb-color-field .fb-hex-input { flex: 1; min-width: 90px; font-family: monospace; font-size: .82rem; padding: 6px 8px; }
 
   /* ── Visual canvas — mirrors public-form.html's pf-* rendering exactly,
      so the editor IS a live preview of the published form, Tally-style. ── */
@@ -204,19 +204,19 @@
               <div class="field"><label class="pra-label">Secondary font (help text, descriptions)</label><select class="pra-select" id="themeSecondaryFontFamily"></select></div>
               <div class="field">
                 <label class="pra-label">Accent color</label>
-                <div class="fb-color-field"><input type="color" id="themeAccent"/><span id="themeAccentHex"></span></div>
+                <div class="fb-color-field"><input type="color" id="themeAccent" tabindex="-1"/><input type="text" class="pra-input fb-hex-input" id="themeAccentHex" spellcheck="false"/></div>
               </div>
               <div class="field">
                 <label class="pra-label">Page background</label>
-                <div class="fb-color-field"><input type="color" id="themeBg"/><span id="themeBgHex"></span></div>
+                <div class="fb-color-field"><input type="color" id="themeBg" tabindex="-1"/><input type="text" class="pra-input fb-hex-input" id="themeBgHex" spellcheck="false"/><button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="themeBgTransparentBtn">Transparent</button></div>
               </div>
               <div class="field">
                 <label class="pra-label">Card background</label>
-                <div class="fb-color-field"><input type="color" id="themeCardBg"/><span id="themeCardBgHex"></span></div>
+                <div class="fb-color-field"><input type="color" id="themeCardBg" tabindex="-1"/><input type="text" class="pra-input fb-hex-input" id="themeCardBgHex" spellcheck="false"/></div>
               </div>
               <div class="field">
                 <label class="pra-label">Text color</label>
-                <div class="fb-color-field"><input type="color" id="themeText"/><span id="themeTextHex"></span></div>
+                <div class="fb-color-field"><input type="color" id="themeText" tabindex="-1"/><input type="text" class="pra-input fb-hex-input" id="themeTextHex" spellcheck="false"/></div>
               </div>
               <div class="field"><label class="pra-label">Corners</label><select class="pra-select" id="themeRadius">
                 <option value="sharp">Sharp</option><option value="rounded">Rounded</option><option value="pill">Pill</option>
@@ -1318,24 +1318,54 @@ function renderDesign() {
   fontSel.innerHTML = Object.entries(FONT_OPTIONS).map(([k, f]) => `<option value="${k}" ${form.theme.fontFamily === k ? 'selected' : ''}>${f.label}</option>`).join('');
   const secondaryFontSel = document.getElementById('themeSecondaryFontFamily');
   secondaryFontSel.innerHTML = Object.entries(FONT_OPTIONS).map(([k, f]) => `<option value="${k}" ${form.theme.secondaryFontFamily === k ? 'selected' : ''}>${f.label}</option>`).join('');
-  document.getElementById('themeAccent').value = form.theme.accentColor;
-  document.getElementById('themeAccentHex').textContent = form.theme.accentColor;
-  document.getElementById('themeBg').value = form.theme.backgroundColor;
-  document.getElementById('themeBgHex').textContent = form.theme.backgroundColor;
-  document.getElementById('themeCardBg').value = form.theme.cardBackground;
-  document.getElementById('themeCardBgHex').textContent = form.theme.cardBackground;
-  document.getElementById('themeText').value = form.theme.textColor;
-  document.getElementById('themeTextHex').textContent = form.theme.textColor;
+  setColorField('themeAccent', 'themeAccentHex', form.theme.accentColor);
+  setColorField('themeBg', 'themeBgHex', form.theme.backgroundColor);
+  setColorField('themeCardBg', 'themeCardBgHex', form.theme.cardBackground);
+  setColorField('themeText', 'themeTextHex', form.theme.textColor);
   document.getElementById('themeRadius').value = form.theme.borderRadius;
 }
 function onThemeChange() { saveDebounced(); applyTheme(form.theme, document.getElementById('fbCanvas')); renderDesign(); }
 document.getElementById('themeFontFamily').addEventListener('change', e => { form.theme.fontFamily = e.target.value; onThemeChange(); });
 document.getElementById('themeSecondaryFontFamily').addEventListener('change', e => { form.theme.secondaryFontFamily = e.target.value; onThemeChange(); });
 document.getElementById('themeRadius').addEventListener('change', e => { form.theme.borderRadius = e.target.value; onThemeChange(); });
-document.getElementById('themeAccent').addEventListener('input', e => { form.theme.accentColor = e.target.value; onThemeChange(); });
-document.getElementById('themeBg').addEventListener('input', e => { form.theme.backgroundColor = e.target.value; onThemeChange(); });
-document.getElementById('themeCardBg').addEventListener('input', e => { form.theme.cardBackground = e.target.value; onThemeChange(); });
-document.getElementById('themeText').addEventListener('input', e => { form.theme.textColor = e.target.value; onThemeChange(); });
+// Hex-first color fields: the swatch (input[type=color]) is a secondary
+// visual picker, but typing/pasting a hex code directly -- no extra click
+// into the native picker's own hex tab -- is the primary way to set these.
+function normalizeHex(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return null;
+  if (s[0] !== '#') s = '#' + s;
+  if (/^#[0-9a-f]{3}$/i.test(s)) s = '#' + s.slice(1).split('').map(c => c + c).join('');
+  return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : null;
+}
+function setColorField(colorId, hexId, value) {
+  document.getElementById(hexId).value = value;
+  const hex = normalizeHex(value);
+  if (hex) document.getElementById(colorId).value = hex;
+}
+function wireColorField(colorId, hexId, apply, opts) {
+  opts = opts || {};
+  const colorEl = document.getElementById(colorId), hexEl = document.getElementById(hexId);
+  colorEl.addEventListener('input', () => { hexEl.value = colorEl.value; apply(colorEl.value); });
+  hexEl.addEventListener('input', () => {
+    const raw = hexEl.value.trim();
+    if (opts.allowTransparent && /^transparent$/i.test(raw)) { apply('transparent'); return; }
+    const hex = normalizeHex(raw);
+    if (!hex) return; // still mid-typing -- wait for a full value instead of fighting the cursor
+    if (colorEl.value.toLowerCase() !== hex) colorEl.value = hex;
+    apply(hex);
+  });
+  hexEl.addEventListener('blur', () => {
+    const raw = hexEl.value.trim();
+    if (opts.allowTransparent && /^transparent$/i.test(raw)) { hexEl.value = 'transparent'; return; }
+    hexEl.value = normalizeHex(raw) || colorEl.value;
+  });
+}
+wireColorField('themeAccent', 'themeAccentHex', v => { form.theme.accentColor = v; onThemeChange(); });
+wireColorField('themeBg', 'themeBgHex', v => { form.theme.backgroundColor = v; onThemeChange(); }, { allowTransparent: true });
+wireColorField('themeCardBg', 'themeCardBgHex', v => { form.theme.cardBackground = v; onThemeChange(); });
+wireColorField('themeText', 'themeTextHex', v => { form.theme.textColor = v; onThemeChange(); });
+document.getElementById('themeBgTransparentBtn').addEventListener('click', () => { form.theme.backgroundColor = 'transparent'; onThemeChange(); });
 
 // ── Left sidebar: Settings ──────────────────────────────────────────────
 function renderPicker(kind, allItems, selectedIds, addElId, chipsElId, onChange) {
@@ -1388,7 +1418,7 @@ async function openEmbedModal() {
   const url = `${base}/f/${form.id}`;
   document.getElementById('embedDraftWarning').style.display = form.status === 'published' ? 'none' : 'block';
   document.getElementById('embedInlineCode').value =
-    `<div class="form-inline-widget" data-url="${url}" style="min-width:320px;height:700px;"></div>\n` +
+    `<div class="form-inline-widget" data-url="${url}" style="width:100%;min-width:320px;height:700px;"></div>\n` +
     `<script src="${base}/forms-widget.js" async><\/script>`;
   document.getElementById('embedPopupCode').value =
     `<script src="${base}/forms-widget.js" async><\/script>\n` +

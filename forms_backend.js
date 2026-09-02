@@ -69,6 +69,12 @@ const FORMS_WIDGET_JS = `(function(){
       var el = els[i];
       if (el.getAttribute('data-form-widget-initialized')) continue;
       el.setAttribute('data-form-widget-initialized', '1');
+      // Older/hand-pasted embed snippets only set min-width, which lets a
+      // flex-based site builder (Framer etc.) shrink the div to its content
+      // instead of stretching it to fill its column. Default to full width
+      // here so that already-placed embeds pick this up too, without
+      // clobbering a width the site owner deliberately set.
+      if (!el.style.width) el.style.width = '100%';
       var iframe = document.createElement('iframe');
       iframe.src = el.getAttribute('data-url');
       iframe.style.width = '100%';
