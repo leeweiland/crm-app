@@ -4,6 +4,7 @@ import { CONTACTS_FILE, matchesSegment, findContactMatch } from "./segments_shar
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -12,7 +13,7 @@ const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migr
 export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet",
-  "enroll_automation", "enroll_workflow", "change_status",
+  "enroll_automation", "enroll_workflow", "change_status", "add_update_contact",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event",
 ];
 
@@ -20,7 +21,14 @@ function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === 
 function saveContact(contact) {
   const contacts = readJson(CONTACTS_FILE, []);
   const idx = contacts.findIndex(c => c.id === contact.id);
-  if (idx >= 0) { contact.updatedAt = new Date().toISOString(); contacts[idx] = contact; writeJson(CONTACTS_FILE, contacts); }
+  if (idx >= 0) {
+    contact.updatedAt = new Date().toISOString(); contacts[idx] = contact; writeJson(CONTACTS_FILE, contacts);
+    // Every step below (add_tag/change_status/add_update_contact/etc) used
+    // to skip this -- confirmed live the sidebar's SQLite snapshot just
+    // silently never picked up a status/name/email change made by a flow
+    // step until something else happened to re-sync that contact.
+    try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+  }
 }
 
 // ── One-time migration: the old Settings > Webhook Forms UI (crm_webhook_configs.json,
@@ -204,6 +212,53 @@ async function advanceFlowRun(run, flow) {
       if (contact && step.config.statusId) {
         const prevStatus = contact.status;
         contact.status = step.config.statusId;
+        saveContact(contact);
+        if (contact.status !== prevStatus) {
+          checkConversionGoal("lead_status_change", contact.id);
+          checkAutomationGoal("lead_status_change", contact.id, contact.status);
+        }
+      }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "add_update_contact") {
+      // Explicit, admin-controlled version of the implicit upsert the
+      // webhook trigger itself already does at the top of this file (see
+      // handleWebhookTrigger below) -- that one only ever sets first/last/
+      // email/phone/customFields from a fixed mapping, with no type/status
+      // control and no way to place it mid-flow (e.g. after a Filter/
+      // If-Then). This one operates on whatever contact the run is already
+      // attached to (resolved at trigger time, same as every other step
+      // here) rather than re-running its own dedup search -- "add/update"
+      // in the sense that every field is optional and only overwrites what's
+      // actually configured, same as the trigger-level upsert's own
+      // "existing contact ? patch : create" behavior, just explicit and
+      // step-driven instead of baked into the trigger.
+      if (contact) {
+        const cfg = step.config || {};
+        const prevStatus = contact.status;
+        for (const field of ["first", "last", "email", "phone", "type"]) {
+          if (cfg[field]) {
+            const resolved = resolveTemplate(cfg[field], ctx);
+            if (resolved) contact[field] = field === "email" ? resolved.toLowerCase() : resolved;
+          }
+        }
+        if (cfg.statusId) contact.status = cfg.statusId;
+        // Extra emails/phones beyond the primary -- same altEmails/
+        // altPhones arrays segments_shared.js's findContactMatch and every
+        // inbound-matching function now checks (SMS, Gmail), not a second
+        // primary field.
+        if (cfg.altEmail) {
+          const resolved = resolveTemplate(cfg.altEmail, ctx).toLowerCase();
+          if (resolved && resolved !== contact.email && !(contact.altEmails || []).includes(resolved)) {
+            contact.altEmails = [...(contact.altEmails || []), resolved];
+          }
+        }
+        if (cfg.altPhone) {
+          const resolved = resolveTemplate(cfg.altPhone, ctx);
+          const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+          if (resolved && digits(resolved) !== digits(contact.phone) && !(contact.altPhones || []).some(p => digits(p) === digits(resolved))) {
+            contact.altPhones = [...(contact.altPhones || []), resolved];
+          }
+        }
         saveContact(contact);
         if (contact.status !== prevStatus) {
           checkConversionGoal("lead_status_change", contact.id);
