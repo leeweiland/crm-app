@@ -296,6 +296,7 @@ function renderField(f) {
 let aiScreenResults = {}, aiScreenTimers = {};
 function aiRuleFor(field) { return (field?.logic || []).find(r => r.op === 'ai_disqualify'); }
 async function runAiScreen(fieldId) {
+  const stepAtStart = stepIndex; // may navigate away during the round trip below
   const val = answers[fieldId];
   if (val === undefined || val === '' || (Array.isArray(val) && !val.length)) { delete aiScreenResults[fieldId]; updateNextVisibility(); return; }
   aiScreenResults[fieldId] = 'pending';
@@ -307,7 +308,19 @@ async function runAiScreen(fieldId) {
   } catch {
     aiScreenResults[fieldId] = true;
   }
+  if (stepIndex !== stepAtStart) return; // Back/Next already moved on while this was in flight
   updateNextVisibility();
+  // Same auto-advance a single-question step already gets for a radio/select
+  // answer, just triggered a beat later here -- an AI-screened field can't
+  // confirm valid until this round trip resolves, so it advances once that
+  // comes back a PASS instead of racing ahead on input like the others do.
+  const singleQuestionStep = new Set(Array.from(document.querySelectorAll('[data-field]')).map(el => el.dataset.field)).size === 1;
+  // answers[fieldId] === val guards against the visitor having already
+  // started typing a NEW answer while this round trip was in flight -- the
+  // PASS just resolved belongs to the old value, not whatever's there now.
+  if (aiScreenResults[fieldId] === true && singleQuestionStep && answers[fieldId] === val) {
+    setTimeout(() => { if (stepIndex === stepAtStart && answers[fieldId] === val) document.getElementById('pfNext')?.click(); }, 300);
+  }
 }
 
 // "country" never renders a visible input (see renderField above) -- its
@@ -347,6 +360,16 @@ function bindStepInputs() {
         answers[id] = el.value;
       }
       updateNextVisibility();
+      // Clears a "This field is required." error the moment it's actually
+      // fixed -- without this it just sat there stale (still reading
+      // "required" even once answered) until the next click on Next
+      // re-ran validateStep and finally cleared it.
+      const errEl = document.getElementById('err-' + id);
+      if (errEl && errEl.textContent) {
+        const val = answers[id];
+        const empty = field?.type === 'checkboxes' ? !Array.isArray(val) || !val.length : val === undefined || val === null || String(val).trim() === '';
+        if (!empty) errEl.textContent = '';
+      }
       if (hasAiRule) {
         clearTimeout(aiScreenTimers[id]);
         aiScreenTimers[id] = setTimeout(() => runAiScreen(id), 800);
@@ -403,6 +426,13 @@ function updateNextVisibility() {
   // can't race ahead of the result), just without a visible "checking"
   // message -- the button simply isn't clickable for a moment.
   btn.disabled = aiPending;
+  // Disqualified means disqualified -- Back stays available for every OTHER
+  // hide_next case (an unanswered required step, mid-flow), but not when an
+  // ai_disqualify rule actually failed them, so there's no way to page back
+  // and re-answer around the screening.
+  const disqualified = fields.some(f => aiRuleFor(f) && aiScreenResults[f.id] === false);
+  const backBtn = document.getElementById('pfBack');
+  if (backBtn) backBtn.style.display = disqualified ? 'none' : '';
   const msgEl = document.getElementById('pfHiddenMsg');
   msgEl.textContent = 'Complete this step to continue.';
   msgEl.style.display = hiddenByRule ? 'block' : 'none';
