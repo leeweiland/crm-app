@@ -49,7 +49,6 @@ export function sqliteInboxAvailable() {
     CREATE INDEX IF NOT EXISTS idx_unread ON conversations(archived, unread_count);
     CREATE INDEX IF NOT EXISTS idx_display_name ON conversations(display_name);
     CREATE INDEX IF NOT EXISTS idx_email ON conversations(email);
-    CREATE INDEX IF NOT EXISTS idx_hidden ON conversations(hidden);
   `);
   // CREATE TABLE IF NOT EXISTS is a no-op against an already-existing table
   // from an earlier schema version (e.g. production's original build, made
@@ -65,7 +64,18 @@ export function sqliteInboxAvailable() {
   for (const col of ["owner_id", "phone", "first_seen_at"]) {
     if (!existingCols.has(col)) db.exec(`ALTER TABLE conversations ADD COLUMN ${col} TEXT`);
   }
-  if (!existingCols.has("hidden")) db.exec(`ALTER TABLE conversations ADD COLUMN hidden INTEGER DEFAULT 0`);
+  // hidden's own CREATE INDEX has to run down here too, AFTER the ALTER
+  // TABLE that actually adds the column on an existing (pre-this-feature)
+  // database -- confirmed live that bundling "CREATE INDEX ...(hidden)"
+  // into the CREATE TABLE block above throws "no such column: hidden" on
+  // any database where CREATE TABLE IF NOT EXISTS was a no-op (i.e. every
+  // real deployment, since the table already existed long before this
+  // column did), which safeSqliteSync's try/catch was swallowing silently
+  // -- so hidden's ALTER TABLE never actually got reached at all.
+  if (!existingCols.has("hidden")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN hidden INTEGER DEFAULT 0`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_hidden ON conversations(hidden)`);
+  }
   return true;
 }
 
