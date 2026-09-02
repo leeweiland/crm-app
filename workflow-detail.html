@@ -294,6 +294,12 @@ function renderCanvas() {
     const amount = step.delayValue ?? step.dayOffset ?? 0;
     const unit = step.delayUnit || 'days';
     const unitOptionsHtml = ['seconds', 'minutes', 'hours', 'days', 'weeks', 'months'].map(u => `<option value="${u}" ${u === unit ? 'selected' : ''}>${u[0].toUpperCase()}${u.slice(1)}</option>`).join('');
+    // stepCounts is keyed by currentStepIndex, which points into
+    // workflow.steps' raw storage order -- NOT this render's delay-sorted
+    // `sorted` position, so the lookup index has to be found separately.
+    const realIndex = workflow.steps.findIndex(s => s.id === step.id);
+    const count = (window._wfStepCounts || {})[realIndex] || 0;
+    const countLabel = step.type === 'wait' ? `${count} waiting` : `${count} here`;
     return `
     <div class="step-card" data-step-id="${step.id}">
       <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>
@@ -306,6 +312,7 @@ function renderCanvas() {
         </div>
         <select class="step-unit-select" data-unit-for="${step.id}">${unitOptionsHtml}</select>
         ${step.type === 'sms' ? '<span class="step-delay-sms-tag">&middot; SMS</span>' : ''}
+        <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
       </div>
       ${step.type === 'sms' ? `<textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>` : ''}
     </div>
@@ -526,6 +533,7 @@ document.getElementById('enrolledMenuBtn').onclick = async () => {
   const d = await r.json();
   workflow = d.workflow;
   window._wfStats = d.stats;
+  window._wfStepCounts = d.stepCounts || {};
   document.getElementById('wfName').value = workflow.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (workflow.active ? ' on' : '');
   document.getElementById('activeLabel').textContent = workflow.active ? 'Active' : 'Inactive';

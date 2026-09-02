@@ -191,6 +191,16 @@ function workflowStats(workflowId) {
   };
 }
 
+// Mirrors automations_backend.js's stepCounts() -- workflow steps have no
+// persistent id-graph though, just a delay-sorted array, so an enrollment's
+// position is a numeric currentStepIndex instead of a step id.
+function workflowStepCounts(workflowId) {
+  const enrollments = readJson(WF_ENROLLMENTS_FILE, []).filter(e => e.workflowId === workflowId && e.status === "active");
+  const counts = {};
+  enrollments.forEach(e => { if (typeof e.currentStepIndex === "number") counts[e.currentStepIndex] = (counts[e.currentStepIndex] || 0) + 1; });
+  return counts;
+}
+
 export async function handleWorkflowsRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/workflows")) return false;
@@ -240,7 +250,7 @@ export async function handleWorkflowsRequest(req, res, url) {
     const workflow = workflows.find(w => w.id === workflowMatch[1]);
     if (req.method === "GET") {
       if (!workflow) return sendJson(res, 404, { error: "Not found" });
-      return sendJson(res, 200, { workflow, stats: workflowStats(workflow.id) });
+      return sendJson(res, 200, { workflow, stats: workflowStats(workflow.id), stepCounts: workflowStepCounts(workflow.id) });
     }
     if (req.method === "PATCH") {
       if (!workflow) return sendJson(res, 404, { error: "Not found" });
