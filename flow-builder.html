@@ -204,7 +204,7 @@ function stepSummary(step) {
   if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
   if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
-  if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'type', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length || 'no'} field(s)`;
+  if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length || 'no'} field(s)`;
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'add_to_list') return `Add to list: ${escapeHtml(allLists.find(l => l.id === c.listId)?.name || '—')}`;
@@ -433,7 +433,7 @@ function defaultConfig(type) {
   if (type === 'google_sheet') return { spreadsheetId: '', spreadsheetName: '', sheetName: '', columns: [], headers: [] };
   if (type === 'enroll_automation') return { automationId: '' };
   if (type === 'enroll_workflow') return { workflowId: '' };
-  if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', type: '', statusId: '', altEmail: '', altPhone: '' };
+  if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_list') return { listId: '' };
   if (type === 'send_conversion_event') return { eventKey: '' };
@@ -621,7 +621,7 @@ function openStepConfigModal(step, isNew) {
       <div class="field-row"><div class="field"><label class="pra-label">First name</label><input class="pra-input" id="cfgFirst" value="${escapeHtml(c.first || '')}" placeholder="{{payload.First Name}}"/></div><div class="field"><label class="pra-label">Last name</label><input class="pra-input" id="cfgLast" value="${escapeHtml(c.last || '')}" placeholder="{{payload.Last Name}}"/></div></div>
       <div class="field-row"><div class="field"><label class="pra-label">Email</label><input class="pra-input" id="cfgEmail" value="${escapeHtml(c.email || '')}" placeholder="{{payload.Email}}"/></div><div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="cfgPhone" value="${escapeHtml(c.phone || '')}" placeholder="{{payload.Phone}}"/></div></div>
       <div class="field-row">
-        <div class="field"><label class="pra-label">Type</label><select class="pra-select" id="cfgType"><option value="" ${!c.type ? 'selected' : ''}>Don't change</option><option value="contact" ${c.type === 'contact' ? 'selected' : ''}>Contact</option><option value="lead" ${c.type === 'lead' ? 'selected' : ''}>Lead</option></select></div>
+        <div class="field"><label class="pra-label">Type</label><input class="pra-input" id="cfgProgramType" value="${escapeHtml(c.programType || '')}" placeholder="ONLINE or GYM"/></div>
         <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="cfgAucStatus">${statusOptions}</select></div>
       </div>
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
@@ -654,7 +654,7 @@ function openStepConfigModal(step, isNew) {
       step.config.last = document.getElementById('cfgLast').value.trim();
       step.config.email = document.getElementById('cfgEmail').value.trim();
       step.config.phone = document.getElementById('cfgPhone').value.trim();
-      step.config.type = document.getElementById('cfgType').value;
+      step.config.programType = document.getElementById('cfgProgramType').value.trim();
       step.config.statusId = document.getElementById('cfgAucStatus').value;
       step.config.altEmail = document.getElementById('cfgAltEmail').value.trim();
       step.config.altPhone = document.getElementById('cfgAltPhone').value.trim();

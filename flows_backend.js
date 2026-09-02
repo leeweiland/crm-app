@@ -247,10 +247,10 @@ async function advanceFlowRun(run, flow) {
         run.contactId = workingContact.id;
       }
       const prevStatus = workingContact.status;
-      for (const field of ["first", "last", "email", "phone", "type"]) {
+      for (const field of ["first", "last", "email", "phone", "programType"]) {
         if (cfg[field]) {
           const resolved = resolveTemplate(cfg[field], ctx);
-          if (resolved) workingContact[field] = field === "email" ? resolved.toLowerCase() : resolved;
+          if (resolved) workingContact[field] = (field === "email" || field === "programType") ? resolved.toLowerCase() : resolved;
         }
       }
       if (cfg.statusId) workingContact.status = cfg.statusId;
