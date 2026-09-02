@@ -70,11 +70,19 @@ for (let i = START; i < targets.length && processed < LIMIT; i++) {
       || nested.find(n => (n.phones || []).some(p => String(p.phone || "").replace(/\D/g, "").slice(-10) === String(contact.phone || "").replace(/\D/g, "").slice(-10)))
       || nested[0];
     if (!nc) continue;
+    const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+    const primaryPhoneDigits = digits(contact.phone);
     const extraEmails = (nc.emails || []).map(e => e.email).filter(Boolean).filter(e => e.toLowerCase() !== contact.email?.toLowerCase());
-    const extraPhones = (nc.phones || []).map(p => p.phone).filter(Boolean).filter(p => p !== contact.phone);
+    // Compare by normalized last-10-digits, not raw string equality -- Close
+    // itself sometimes lists the SAME number twice in different formats
+    // ("+14088326290" vs "4088326290"), which a naive string compare
+    // mistook for a second, genuinely different phone number.
+    const extraPhones = (nc.phones || []).map(p => p.phone).filter(Boolean).filter(p => digits(p) !== primaryPhoneDigits);
     if (!extraEmails.length && !extraPhones.length) continue;
     contact.altEmails = [...new Set([...(contact.altEmails || []), ...extraEmails.map(e => e.toLowerCase())])];
-    contact.altPhones = [...new Set([...(contact.altPhones || []), ...extraPhones])];
+    contact.altPhones = [...new Set([...(contact.altPhones || []), ...extraPhones])].filter((p, i, arr) =>
+      arr.findIndex(p2 => digits(p2) === digits(p)) === i // also dedup WITHIN altPhones itself by normalized digits
+    );
     updated++;
   } catch (e) {
     errors++;
