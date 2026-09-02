@@ -447,22 +447,16 @@ function updateNextVisibility() {
   // can't race ahead of the result), just without a visible "checking"
   // message -- the button simply isn't clickable for a moment.
   btn.disabled = aiPending;
-  // Disqualified means disqualified -- Back stays available for every OTHER
-  // hide_next case (an unanswered required step, mid-flow), but not when an
-  // ai_disqualify rule actually failed them, so there's no way to page back
-  // and re-answer around the screening.
-  const disqualified = fields.some(f => aiRuleFor(f) && aiScreenResults[f.id] === false);
+  // A hide_next match is always a deliberate screening/gating rule the form
+  // creator set on a specific answer -- an AI disqualification, or an
+  // ordinary "Later" -> hide_next choice, same thing either way. It's never
+  // an "unfinished form" state (an unanswered required field doesn't match
+  // any rule, so it never sets hiddenByRule -- that's validateStep's job,
+  // on click), so there's no path back to re-answer around it and no
+  // "Complete this step to continue" message implying they just need to
+  // finish something -- they answered, in full, and were screened out.
   const backBtn = document.getElementById('pfBack');
-  if (backBtn) backBtn.style.display = disqualified ? 'none' : '';
-  // "Complete this step to continue" implies the visitor left something
-  // unfinished -- true for an ordinary hide_next rule, actively misleading
-  // for an AI disqualification: they DID answer, in full, and were screened
-  // out. Next/Back both already go silent for that case above; the message
-  // does too, rather than telling someone to do something they can't do
-  // anything about.
-  const msgEl = document.getElementById('pfHiddenMsg');
-  msgEl.textContent = 'Complete this step to continue.';
-  msgEl.style.display = hiddenByRule && !disqualified ? 'block' : 'none';
+  if (backBtn) backBtn.style.display = hiddenByRule ? 'none' : '';
 }
 
 function validateStep(fields) {
@@ -538,7 +532,6 @@ function renderStep() {
   card.innerHTML = `
     ${renderProgress()}
     ${fields.map(renderField).join('')}
-    <div class="pf-hidden-msg pra-muted" id="pfHiddenMsg" style="display:none;font-size:.82rem;margin-bottom:8px">Complete this step to continue.</div>
     <div class="pf-error" id="pfBookError" style="display:none;margin-bottom:8px"></div>
     <div class="pf-nav">
       ${stepIndex > 0 ? `<button class="pra-btn pra-btn-ghost" id="pfBack">Back</button>` : ''}
