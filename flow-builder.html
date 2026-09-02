@@ -565,16 +565,20 @@ function sheetColRowHtml(value) {
 function sheetColHeaderRowHtml(header, value, index) {
   return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><div class="token-input-wrap" style="flex:1"><input class="pra-input" placeholder="{{first}}, static text, …" value="${escapeHtml(value || '')}" data-sheet-col/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>`;
 }
-function customFieldRowHtml(fieldId, value) {
-  return `
-    <div class="field-row" style="margin-bottom:8px" data-cf-row>
-      <select class="pra-select" data-cf-field>${allCustomFields.map(f => `<option value="${f.id}" ${f.id === fieldId ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}</select>
-      <div class="token-input-wrap" style="flex:1"><input class="pra-input" autocomplete="off" data-cf-value placeholder="{{payload.Field Name}}" value="${escapeHtml(value || '')}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-remove-cf-row type="button">&times;</button>
-    </div>
-  `;
+// Every custom field the account has, shown all at once (two per row, same
+// 50%-width pairing as First/Last etc above) instead of an "add a row, pick
+// which field" model -- with only a handful of custom fields typically
+// defined, seeing them all and just filling in what applies is faster than
+// hunting for the right one in a dropdown per row.
+function customFieldsGridHtml(customFields) {
+  const rows = [];
+  for (let i = 0; i < allCustomFields.length; i += 2) {
+    rows.push(`<div class="field-row">${allCustomFields.slice(i, i + 2).map(f => `
+      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" data-cf-field-id="${f.id}" value="${escapeHtml(customFields[f.id] || '')}" placeholder="{{payload.Field Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+    `).join('')}</div>`);
+  }
+  return rows.join('');
 }
-function wireCustomFieldRow(el) { el.querySelector('[data-remove-cf-row]').onclick = () => el.remove(); }
 
 function openStepConfigModal(step, isNew) {
   editingStepId = step.id;
@@ -744,22 +748,8 @@ function openStepConfigModal(step, isNew) {
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
       <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAltEmail" value="${escapeHtml(c.altEmail || '')}" placeholder="{{payload.Secondary Email}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Extra phone</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAltPhone" value="${escapeHtml(c.altPhone || '')}" placeholder="{{payload.Secondary Phone}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
       <div class="pra-label" style="margin:12px 0 6px">Custom fields (optional)</div>
-      ${allCustomFields.length ? '' : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields defined yet -- add one in Contacts &rarr; manage columns first.</div>`}
-      <div id="cfgCustomFieldRows"></div>
-      ${allCustomFields.length ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addCfgCustomFieldRowBtn" style="margin-top:4px">+ Add Custom Field</button>` : ''}
+      ${allCustomFields.length ? `<div id="cfgCustomFieldRows">${customFieldsGridHtml(c.customFields || {})}</div>` : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields defined yet -- add one in Contacts &rarr; manage columns first.</div>`}
     `;
-    const cfRowsWrap = document.getElementById('cfgCustomFieldRows');
-    Object.entries(c.customFields || {}).forEach(([fieldId, value]) => {
-      cfRowsWrap.insertAdjacentHTML('beforeend', customFieldRowHtml(fieldId, value));
-      wireCustomFieldRow(cfRowsWrap.lastElementChild);
-    });
-    const addCfBtn = document.getElementById('addCfgCustomFieldRowBtn');
-    if (addCfBtn) addCfBtn.onclick = () => {
-      cfRowsWrap.insertAdjacentHTML('beforeend', customFieldRowHtml(allCustomFields[0]?.id, ''));
-      const row = cfRowsWrap.lastElementChild;
-      wireCustomFieldRow(row);
-      wireTokenButtons(row); // added after body's own wireTokenButtons(body) already ran
-    };
   } else if (step.type === 'send_email') {
     const c = step.config;
     body.innerHTML = `
@@ -805,10 +795,9 @@ function openStepConfigModal(step, isNew) {
       step.config.altEmail = document.getElementById('cfgAltEmail').value.trim();
       step.config.altPhone = document.getElementById('cfgAltPhone').value.trim();
       const customFields = {};
-      document.querySelectorAll('#cfgCustomFieldRows [data-cf-row]').forEach(row => {
-        const fieldId = row.querySelector('[data-cf-field]').value;
-        const val = row.querySelector('[data-cf-value]').value.trim();
-        if (fieldId && val) customFields[fieldId] = val;
+      document.querySelectorAll('#cfgCustomFieldRows [data-cf-field-id]').forEach(inp => {
+        const val = inp.value.trim();
+        if (val) customFields[inp.dataset.cfFieldId] = val;
       });
       step.config.customFields = customFields;
     }
