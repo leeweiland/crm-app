@@ -13,7 +13,7 @@ const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migr
 export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet",
-  "enroll_automation", "enroll_workflow", "change_status", "add_update_contact",
+  "enroll_automation", "enroll_workflow", "add_update_contact",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event",
 ];
 
@@ -53,7 +53,7 @@ function migrateOldWebhookConfigs() {
       if (prevId) steps[prevId].nextStepId = id; else startStepId = id;
       prevId = id;
     };
-    if (config.defaultStatusId) addStep("change_status", { statusId: config.defaultStatusId });
+    if (config.defaultStatusId) addStep("add_update_contact", { statusId: config.defaultStatusId });
     (config.defaultTagIds || []).forEach(tagId => addStep("add_tag", { tagId }));
     (config.defaultListIds || []).forEach(listId => addStep("add_to_list", { listId }));
     flows.push({
@@ -218,62 +218,63 @@ async function advanceFlowRun(run, flow) {
     } else if (step.type === "add_to_list") {
       if (contact && step.config.listId && !contact.listIds.includes(step.config.listId)) { contact.listIds.push(step.config.listId); saveContact(contact); }
       run.currentStepId = step.nextStepId || null;
-    } else if (step.type === "change_status") {
-      if (contact && step.config.statusId) {
-        const prevStatus = contact.status;
-        contact.status = step.config.statusId;
-        saveContact(contact);
-        if (contact.status !== prevStatus) {
-          checkConversionGoal("lead_status_change", contact.id);
-          checkAutomationGoal("lead_status_change", contact.id, contact.status);
+    } else if (step.type === "add_update_contact") {
+      // The one place a contact gets created or matched for a webhook-
+      // triggered run -- the trigger itself no longer does this (see
+      // framerMatch below), so a webhook flow needs this step, usually
+      // first, or every later step has no contact to act on. If the run
+      // already has a contact (form/booking triggers always do, since
+      // forms_backend.js/scheduling_backend.js resolve one before firing),
+      // this just patches it -- same "add/update" behavior either way.
+      const cfg = step.config || {};
+      let workingContact = contact;
+      if (!workingContact) {
+        const resolvedEmail = cfg.email ? resolveTemplate(cfg.email, ctx).toLowerCase() : "";
+        const resolvedPhone = cfg.phone ? resolveTemplate(cfg.phone, ctx) : "";
+        const contacts = readJson(CONTACTS_FILE, []);
+        workingContact = findContactMatch(contacts, resolvedEmail, resolvedPhone);
+        if (!workingContact) {
+          workingContact = {
+            id: randomUUID(), type: "contact", accountName: "",
+            first: "", last: "", email: resolvedEmail, phone: resolvedPhone,
+            status: "", tags: [], listIds: [], customFields: {}, source: `flow:${flow.id}`, ownerId: null,
+            emailOptOut: false, smsOptOut: false, externalIds: { acContactId: null, closeLeadId: null },
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          };
+          contacts.push(workingContact);
+          writeJson(CONTACTS_FILE, contacts);
+        }
+        run.contactId = workingContact.id;
+      }
+      const prevStatus = workingContact.status;
+      for (const field of ["first", "last", "email", "phone", "type"]) {
+        if (cfg[field]) {
+          const resolved = resolveTemplate(cfg[field], ctx);
+          if (resolved) workingContact[field] = field === "email" ? resolved.toLowerCase() : resolved;
         }
       }
-      run.currentStepId = step.nextStepId || null;
-    } else if (step.type === "add_update_contact") {
-      // Explicit, admin-controlled version of the implicit upsert the
-      // webhook trigger itself already does at the top of this file (see
-      // handleWebhookTrigger below) -- that one only ever sets first/last/
-      // email/phone/customFields from a fixed mapping, with no type/status
-      // control and no way to place it mid-flow (e.g. after a Filter/
-      // If-Then). This one operates on whatever contact the run is already
-      // attached to (resolved at trigger time, same as every other step
-      // here) rather than re-running its own dedup search -- "add/update"
-      // in the sense that every field is optional and only overwrites what's
-      // actually configured, same as the trigger-level upsert's own
-      // "existing contact ? patch : create" behavior, just explicit and
-      // step-driven instead of baked into the trigger.
-      if (contact) {
-        const cfg = step.config || {};
-        const prevStatus = contact.status;
-        for (const field of ["first", "last", "email", "phone", "type"]) {
-          if (cfg[field]) {
-            const resolved = resolveTemplate(cfg[field], ctx);
-            if (resolved) contact[field] = field === "email" ? resolved.toLowerCase() : resolved;
-          }
+      if (cfg.statusId) workingContact.status = cfg.statusId;
+      // Extra emails/phones beyond the primary -- same altEmails/
+      // altPhones arrays segments_shared.js's findContactMatch and every
+      // inbound-matching function now checks (SMS, Gmail), not a second
+      // primary field.
+      if (cfg.altEmail) {
+        const resolved = resolveTemplate(cfg.altEmail, ctx).toLowerCase();
+        if (resolved && resolved !== workingContact.email && !(workingContact.altEmails || []).includes(resolved)) {
+          workingContact.altEmails = [...(workingContact.altEmails || []), resolved];
         }
-        if (cfg.statusId) contact.status = cfg.statusId;
-        // Extra emails/phones beyond the primary -- same altEmails/
-        // altPhones arrays segments_shared.js's findContactMatch and every
-        // inbound-matching function now checks (SMS, Gmail), not a second
-        // primary field.
-        if (cfg.altEmail) {
-          const resolved = resolveTemplate(cfg.altEmail, ctx).toLowerCase();
-          if (resolved && resolved !== contact.email && !(contact.altEmails || []).includes(resolved)) {
-            contact.altEmails = [...(contact.altEmails || []), resolved];
-          }
+      }
+      if (cfg.altPhone) {
+        const resolved = resolveTemplate(cfg.altPhone, ctx);
+        const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+        if (resolved && digits(resolved) !== digits(workingContact.phone) && !(workingContact.altPhones || []).some(p => digits(p) === digits(resolved))) {
+          workingContact.altPhones = [...(workingContact.altPhones || []), resolved];
         }
-        if (cfg.altPhone) {
-          const resolved = resolveTemplate(cfg.altPhone, ctx);
-          const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
-          if (resolved && digits(resolved) !== digits(contact.phone) && !(contact.altPhones || []).some(p => digits(p) === digits(resolved))) {
-            contact.altPhones = [...(contact.altPhones || []), resolved];
-          }
-        }
-        saveContact(contact);
-        if (contact.status !== prevStatus) {
-          checkConversionGoal("lead_status_change", contact.id);
-          checkAutomationGoal("lead_status_change", contact.id, contact.status);
-        }
+      }
+      saveContact(workingContact);
+      if (workingContact.status !== prevStatus) {
+        checkConversionGoal("lead_status_change", workingContact.id);
+        checkAutomationGoal("lead_status_change", workingContact.id, workingContact.status);
       }
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "enroll_automation") {
@@ -394,36 +395,12 @@ export async function handleFlowsRequest(req, res, url) {
 
     if (!flow.active) { res.writeHead(200); res.end(); return true; } // accept + no-op so a paused flow doesn't error the external form
 
-    const cfg = flow.trigger.config || {};
-    const mapped = { first: "", last: "", email: "", phone: "", customFields: {} };
-    for (const [externalLabel, target] of Object.entries(cfg.fieldMap || {})) {
-      const value = fields[externalLabel];
-      if (value === undefined || value === null) continue;
-      if (target.startsWith("customField:")) mapped.customFields[target.slice("customField:".length)] = value;
-      else mapped[target] = value;
-    }
-
-    const contacts = readJson(CONTACTS_FILE, []);
-    let contact = findContactMatch(contacts, mapped.email, mapped.phone);
-    if (contact) {
-      contact.first = mapped.first || contact.first;
-      contact.last = mapped.last || contact.last;
-      contact.phone = mapped.phone || contact.phone;
-      contact.customFields = { ...contact.customFields, ...mapped.customFields };
-      contact.updatedAt = new Date().toISOString();
-    } else {
-      contact = {
-        id: randomUUID(), type: "contact", accountName: "",
-        first: mapped.first || "", last: mapped.last || "", email: (mapped.email || "").toLowerCase(), phone: mapped.phone || "",
-        status: "", tags: [], listIds: [], customFields: mapped.customFields, source: `webhook:${flow.id}`, ownerId: null,
-        emailOptOut: false, smsOptOut: false, externalIds: { acContactId: null, closeLeadId: null },
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      };
-      contacts.push(contact);
-    }
-    writeJson(CONTACTS_FILE, contacts);
-
-    startFlowRun(flow, contact.id, fields);
+    // No contact resolution here anymore -- that's now an explicit
+    // "Add/Update Contact" step the flow itself contains (usually first),
+    // so it's visible/editable in the builder instead of an implicit
+    // upsert baked into the trigger. A flow with no such step just never
+    // gets a contact, and every contact-dependent step downstream no-ops.
+    startFlowRun(flow, null, fields);
     return sendJson(res, 200, { ok: true });
   }
 
