@@ -430,7 +430,13 @@ export async function handleFormsRequest(req, res, url) {
       fireFlowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id, payload: labeledAnswers });
     }
 
-    return sendJson(res, 200, { ok: true, confirmationMessage: form.settings.confirmationMessage, redirectUrl: form.settings.redirectUrl || null });
+    // contactId is returned so the form iframe (public-form.html, itself
+    // served from the CRM's own origin) can hand it off to the PARENT page
+    // via postMessage -- the same cross-origin problem /api/email/click has
+    // (see tracking_backend.js/track.js): a cookie set from a response on
+    // this origin would never be visible to document.cookie on the Framer
+    // site the iframe is embedded in.
+    return sendJson(res, 200, { ok: true, contactId: result?.contact.id || null, confirmationMessage: form.settings.confirmationMessage, redirectUrl: form.settings.redirectUrl || null });
   }
 
   // Clean public URL (/f/:id) -- just hands back the same static SPA shell

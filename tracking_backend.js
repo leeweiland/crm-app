@@ -9,26 +9,49 @@ const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
 
 // Simplified page-visit tracking: rather than a fully anonymous
 // visitor-identity system (cookie sync before a contact is even known),
-// this piggybacks on identity we already establish elsewhere -- every
-// tracked email-link click (email_backend.js's /api/email/click) sets a
-// crm_cid cookie on the clicker's browser. Once that cookie exists,
-// subsequent pageviews on the Framer site (via the /track.js snippet
-// below) can be attributed to a known contact and fire "page_visit"
-// automation triggers. Visitors who never click a tracked email link stay
-// anonymous -- consistent with not having a Framer-side identity cookie
-// system to build against.
+// this piggybacks on identity we already establish elsewhere -- a tracked
+// email-link click, or a form submission, identifies the visitor's browser.
+// Once identified, subsequent pageviews on the Framer site (via this
+// /track.js snippet) can be attributed to a known contact and fire
+// "page_visit" automation triggers. Visitors who never click a tracked
+// link or submit a form stay anonymous.
+//
+// This has to run entirely on the FRAMER origin, not the CRM's -- a cookie
+// set via a Set-Cookie header on a response FROM the CRM's own domain
+// (crm-app-production-eb8f.up.railway.app) is invisible to document.cookie
+// on the Framer site's domain; browsers scope cookies strictly per-origin
+// unless a shared parent domain is explicitly declared, which isn't the
+// case here. Confirmed live (2026-09-02): the CRM's own /api/email/click
+// redirect was setting crm_cid via Set-Cookie on ITS OWN origin, which
+// this script (running on the Framer origin) could never actually read --
+// meaning email-click attribution had never worked. Fixed at both ends:
+// - /api/email/click now passes crm_cid as a query param on the
+//   destination URL instead of (only) a header -- plain text in a URL
+//   crosses origins fine, and THIS script (already running on the
+//   destination's own origin) picks it up and sets the cookie itself.
+// - public-form.html (the form iframe, itself on the CRM's origin) can't
+//   set a cookie the parent Framer page will see either, so on a
+//   successful submission it postMessages the contact id to the parent
+//   window instead; this script listens for that and sets the cookie the
+//   same way.
 // Sends location.search too (not just the path) now -- with Hyros retired,
 // this CRM is the only thing left reading the "el=..." tag on every link it
 // (and ads/social/YouTube, tagged by hand) already carries, so the visit
 // log is where that signal has to land to be useful for anything.
 // Still fires for a visit with NO crm_cid (an anonymous visitor who hasn't
-// clicked a tracked link yet) -- the el value on its own is a real signal
-// worth keeping even without a known contact.
+// been identified yet) -- the el value on its own is a real signal worth
+// keeping even without a known contact.
 const TRACK_SNIPPET = `(function(){
   function getCookie(name){var m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)'));return m?decodeURIComponent(m[1]):null;}
+  function setCid(id){document.cookie='crm_cid='+encodeURIComponent(id)+'; max-age=2592000; path=/; SameSite=Lax';}
+  var urlCid = new URLSearchParams(location.search).get('crm_cid');
+  if (urlCid) setCid(urlCid);
+  window.addEventListener('message', function(e){
+    if (e.data && e.data.type === 'pf-identify' && e.data.contactId) setCid(e.data.contactId);
+  });
   fetch('${"__BASE_URL__"}/api/track/pageview', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ cid: getCookie('crm_cid'), path: location.pathname, search: location.search })
+    body: JSON.stringify({ cid: urlCid || getCookie('crm_cid'), path: location.pathname, search: location.search })
   }).catch(function(){});
 })();`;
 

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
-import { logMessage, updateMessageStatusByProviderId, MESSAGE_LOG_FILE } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
@@ -251,19 +251,14 @@ export async function handleEmailRequest(req, res, url) {
     const dest = url.searchParams.get("u");
     let row = null;
     if (messageLogId) {
-      const log = readJson(MESSAGE_LOG_FILE, []);
-      row = log.find(m => m.id === messageLogId);
+      // O(1) via MESSAGE_ID_INDEX_FILE -- was a full readJson+writeJson of
+      // the whole message log on every single click, the exact class of bug
+      // that filled the disk and hung the server on 2026-08-29 (see
+      // message_log.js). Every real click was paying that cost.
+      row = updateMessageById(messageLogId, { status: "clicked" });
       if (row) {
-        row.status = "clicked"; row.statusHistory.push({ status: "clicked", at: new Date().toISOString() });
-        writeJson(MESSAGE_LOG_FILE, log);
         if (row.contactId) { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
         if (dest) executeLinkClickAction(row, dest);
-      }
-      // Identifies this browser for page-visit tracking (tracking_backend.js's
-      // /track.js snippet, embedded on the Framer site) -- 30 days, matching
-      // the click-tracking window a marketer would actually care about.
-      if (row?.contactId) {
-        res.setHeader("Set-Cookie", `crm_cid=${encodeURIComponent(row.contactId)}; Max-Age=2592000; Path=/; SameSite=Lax`);
       }
     }
     // Tagged with "el=email-<slug>" resolved from THIS message's own
@@ -271,7 +266,25 @@ export async function handleEmailRequest(req, res, url) {
     // setting, so the value always names whichever campaign/automation
     // actually sent it.
     const elValue = row ? `email-${resolveSendSourceSlug(row.sourceType, row.sourceId)}` : null;
-    const taggedDest = dest ? appendSourceTag(dest, elValue) : dest;
+    let taggedDest = dest ? appendSourceTag(dest, elValue) : dest;
+    // Identifies this browser for page-visit tracking (tracking_backend.js's
+    // /track.js snippet, embedded on the Framer site) -- passed as a query
+    // param on the DESTINATION url rather than (or in addition to) a
+    // Set-Cookie header here, because this response is from the CRM's own
+    // origin and the Framer site is a different origin entirely; a cookie
+    // set here would never be visible to document.cookie once the browser
+    // lands on the Framer page. track.js (running ON that page) reads this
+    // param and sets the cookie itself. 30 days, matching the click-
+    // tracking window a marketer would actually care about.
+    if (row?.contactId && taggedDest) {
+      try {
+        const u = new URL(taggedDest);
+        u.searchParams.set("crm_cid", row.contactId);
+        taggedDest = u.toString();
+      } catch {
+        taggedDest += `${taggedDest.includes("?") ? "&" : "?"}crm_cid=${encodeURIComponent(row.contactId)}`;
+      }
+    }
     res.writeHead(302, { Location: taggedDest || "/" });
     res.end();
     return true;

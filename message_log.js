@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { appendJsonRecordFast, appendToJsonObjectFast, updateJsonArrayRecordByField, readJson } from "./auth_backend.js";
+import { appendJsonRecordFast, appendToJsonObjectFast, readJson } from "./auth_backend.js";
 import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition } from "./message_index.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
@@ -12,6 +12,10 @@ export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // back to the full scan that filled the disk and hung the server (2026-08-29
 // incident -- see git history on this file for the postmortem comment).
 export const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
+// Same idea, keyed by OUR OWN row id instead of the provider's -- lets
+// something that only has a message's own id (e.g. /api/email/click's ?m=)
+// find its contactId in O(1) too, instead of the same full-log scan.
+export const MESSAGE_ID_INDEX_FILE = "crm_message_id_index.json";
 
 // logMessage/updateMessage* used to do readJson(MESSAGE_LOG_FILE,
 // [])+writeJson on every single send/webhook -- at 12GB+ (millions of
@@ -50,6 +54,7 @@ export function logMessage({ channel, direction, contactId, sourceType, sourceId
   recordDailyStatsNew(row);
   upsertConversationSummary(row);
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
+  appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
   return row;
 }
 // Was a full scan+rewrite of the entire main log to find one row by
@@ -83,21 +88,22 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   }
   return found;
 }
-// No current callers (the send path logs once with a final status instead,
-// see logMessage's own comment) -- kept updating all three places anyway so
-// this doesn't quietly reintroduce a stale/incomplete update path if
-// something starts calling it again later.
+// Used by /api/email/click (marking a message "clicked" by our own row id).
+// Same fix as updateMessageStatusByProviderId above: was a full scan of the
+// main log to find the row by id, which is exactly the class of bug that
+// caused the 2026-08-29 outage -- now O(1) via MESSAGE_ID_INDEX_FILE.
 export function updateMessageById(id, patch) {
+  const entry = readJson(MESSAGE_ID_INDEX_FILE, {})[id];
+  if (!entry) return null;
   let oldStatus = null;
-  const found = updateJsonArrayRecordByField(MESSAGE_LOG_FILE, "id", id, row => {
+  const found = updateContactMessage(entry.contactId, "id", id, row => {
     oldStatus = row.status;
     Object.assign(row, patch);
     if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
     return row;
   });
   if (found) {
-    updateContactMessage(found.contactId, "id", id, () => found);
-    recomputeConversationSummary(found.contactId);
+    recomputeConversationSummary(entry.contactId);
     if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
     if (patch.status) recordDailyStatsTransition(found, oldStatus, patch.status);
   }

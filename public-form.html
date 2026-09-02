@@ -568,6 +568,12 @@ async function submit() {
     });
     const d = await r.json();
     if (!r.ok) { btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit'; alert(d.error || 'Something went wrong — please try again.'); return; }
+    // This page is itself in an iframe on the CRM's own origin -- a cookie
+    // set from this fetch's response would never be visible to
+    // document.cookie on the parent Framer page (different origin). Hand
+    // the contact id to the parent instead; track.js (running on the
+    // Framer page) listens for this and sets the identity cookie itself.
+    if (d.contactId) window.parent.postMessage({ type: 'pf-identify', contactId: d.contactId }, '*');
     if (d.redirectUrl) { location.href = d.redirectUrl; return; }
     document.getElementById('pfCard').innerHTML = `<div class="pf-confirm"><div class="big">${CHECK_ICON}</div><div>${escapeHtml(d.confirmationMessage || 'Thanks!')}</div></div>`;
   } catch {
