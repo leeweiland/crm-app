@@ -331,17 +331,11 @@ async function runAiScreen(fieldId) {
   }
   if (stepIndex !== stepAtStart) return; // Back/Next already moved on while this was in flight
   updateNextVisibility();
-  // Same auto-advance a single-question step already gets for a radio/select
-  // answer, just triggered a beat later here -- an AI-screened field can't
-  // confirm valid until this round trip resolves, so it advances once that
-  // comes back a PASS instead of racing ahead on input like the others do.
-  const singleQuestionStep = new Set(Array.from(document.querySelectorAll('[data-field]')).map(el => el.dataset.field)).size === 1;
-  // answers[fieldId] === val guards against the visitor having already
-  // started typing a NEW answer while this round trip was in flight -- the
-  // PASS just resolved belongs to the old value, not whatever's there now.
-  if (aiScreenResults[fieldId] === true && singleQuestionStep && answers[fieldId] === val) {
-    setTimeout(() => { if (stepIndex === stepAtStart && answers[fieldId] === val) document.getElementById('pfNext')?.click(); }, 300);
-  }
+  // Deliberately no auto-advance here, unlike a radio/select answer -- an
+  // AI-screened field is always a typing box (short_text/long_text), and a
+  // visitor who's still mid-thought when the PASS comes back shouldn't get
+  // yanked to the next question out from under them. They click Next
+  // themselves; the button just stops being disabled once this resolves.
 }
 
 // "country" never renders a visible input (see renderField above) -- its

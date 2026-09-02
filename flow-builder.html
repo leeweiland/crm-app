@@ -653,10 +653,13 @@ function openStepConfigModal(step, isNew) {
         wrap.innerHTML = (savedColumns.length ? savedColumns : ['']).map(sheetColRowHtml).join('');
       }
       wrap.querySelectorAll('[data-sheet-col-row]').forEach(wireSheetColRow);
+      wireTokenButtons(wrap); // renderSheetColumns rebuilds these rows after body's own wireTokenButtons(body) already ran, so they need their own pass
     }
     document.getElementById('addSheetColBtn').onclick = () => {
       document.getElementById('sheetColRows').insertAdjacentHTML('beforeend', sheetColRowHtml(''));
-      wireSheetColRow(document.getElementById('sheetColRows').lastElementChild);
+      const row = document.getElementById('sheetColRows').lastElementChild;
+      wireSheetColRow(row);
+      wireTokenButtons(row);
     };
 
     async function loadTabsAndColumns() {
@@ -753,7 +756,9 @@ function openStepConfigModal(step, isNew) {
     const addCfBtn = document.getElementById('addCfgCustomFieldRowBtn');
     if (addCfBtn) addCfBtn.onclick = () => {
       cfRowsWrap.insertAdjacentHTML('beforeend', customFieldRowHtml(allCustomFields[0]?.id, ''));
-      wireCustomFieldRow(cfRowsWrap.lastElementChild);
+      const row = cfRowsWrap.lastElementChild;
+      wireCustomFieldRow(row);
+      wireTokenButtons(row); // added after body's own wireTokenButtons(body) already ran
     };
   } else if (step.type === 'send_email') {
     const c = step.config;
