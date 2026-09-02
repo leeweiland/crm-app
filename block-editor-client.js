@@ -514,6 +514,14 @@ window.BlockEditor = (function () {
           const { block, isFooter } = findBlock(el.dataset.id);
           if (block) { block.html = el.innerHTML; notifyChange(isFooter); }
         });
+        // A real <a> inside contenteditable is still a live link -- clicking
+        // one navigates/opens it instead of just placing the cursor there
+        // to keep editing, which is what every other rich text editor does.
+        // preventDefault leaves the click free to do its normal job of
+        // positioning the caret; only following the href is what's stopped.
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('a')) e.preventDefault();
+        });
         // Pasted HTML (e.g. from an old ActiveCampaign template) often
         // carries its own inline padding/margin/border on wrapper elements.
         // Left in place, that becomes a second, hidden layout source the
