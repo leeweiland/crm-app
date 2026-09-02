@@ -1,8 +1,9 @@
 import { readJson, writeJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
+import { getContactMessages } from "./message_index.js";
 import { getComplianceSettings } from "./integrations_backend.js";
-import { setConvoMeta } from "./conversation_meta.js";
+import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 
 // Real carriers require the ENTIRE message body to be exactly one reserved
 // word (case/punctuation-insensitive) to trigger opt-out -- substring
@@ -77,4 +78,68 @@ export function applyStatusOptOut(contact) {
   if (!settings.blacklistAutoOptOut) return;
   if (contact.status === "STOP") { contact.smsOptOut = true; setConvoMeta(contact.id, { archived: true }); }
   else if (contact.status === "BLACKLIST") { contact.smsOptOut = true; contact.emailOptOut = true; setConvoMeta(contact.id, { archived: true }); }
+}
+
+// Two more automatic actions off a reply's exact-word match, same
+// carrier-compliance-style whole-message check as isStopKeyword above, but
+// deliberately separate from stopKeywords/recheckStopStatus:
+//   - blacklistKeywords -> contact.status = "BLACKLIST" (permanent -- same
+//     effect a human blacklisting them manually has, via applyStatusOptOut:
+//     both channels opted out, archived; no reverse trigger, ever).
+//   - hideKeywords -> smsOptOut + hidden (a dedicated, reversible flag --
+//     see conversation_meta.js -- distinct from `archived`, so it gets its
+//     own "Hidden" tab in the Inbox instead of blending into manually-
+//     archived conversations). reOptInKeywords reverses ONLY this one.
+// Checked in that priority order against the single latest inbound SMS
+// (reads the per-contact message file, not the full multi-GB log
+// recheckStopStatus above still reads -- see message_index.js's own
+// comment on why that split exists) -- a message can only ever match one
+// of these three word lists in practice, but blacklist wins if an admin's
+// lists happen to overlap, since it's the more severe/permanent action.
+// Called once per inbound SMS, right alongside recheckStopStatus.
+export function checkAutoTriggers(contactId) {
+  if (!contactId) return;
+  const settings = getComplianceSettings();
+  const latestInbound = getContactMessages(contactId)
+    .filter(m => m.channel === "sms" && m.direction === "inbound")
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  if (!latestInbound) return;
+  const body = latestInbound.body || latestInbound.bodyPreview;
+
+  if (settings.blacklistKeywordsEnabled && settings.blacklistKeywords.length && isStopKeyword(body, settings.blacklistKeywords)) {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find(c => c.id === contactId);
+    if (contact && contact.status !== "BLACKLIST") {
+      contact.status = "BLACKLIST";
+      contact.updatedAt = new Date().toISOString();
+      applyStatusOptOut(contact);
+      writeJson(CONTACTS_FILE, contacts);
+    }
+    return;
+  }
+
+  if (settings.hideKeywordsEnabled && settings.hideKeywords.length && isStopKeyword(body, settings.hideKeywords)) {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find(c => c.id === contactId);
+    if (contact && !contact.smsOptOut) {
+      contact.smsOptOut = true;
+      contact.updatedAt = new Date().toISOString();
+      writeJson(CONTACTS_FILE, contacts);
+    }
+    setConvoMeta(contactId, { hidden: true });
+    return;
+  }
+
+  // Only matters if this contact is actually hidden right now -- a re-
+  // opt-in keyword arriving for anyone else is just a normal message.
+  if (getConvoMeta(contactId)?.hidden && isStopKeyword(body, settings.reOptInKeywords)) {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find(c => c.id === contactId);
+    if (contact) {
+      contact.smsOptOut = false;
+      contact.updatedAt = new Date().toISOString();
+      writeJson(CONTACTS_FILE, contacts);
+    }
+    setConvoMeta(contactId, { hidden: false });
+  }
 }

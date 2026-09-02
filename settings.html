@@ -150,6 +150,16 @@
         <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out on suppression status</label>
         <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Blacklist</b>, both SMS and email are opted out. Applies no matter how the status was changed (manually, or automatically above).</div>
 
+        <hr style="border-color:var(--pra-border);margin:20px 0 18px"/>
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="hideKeywordsEnabled"/> Auto-hide on trigger words</label>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words, SMS is opted out and the conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter). Reversible -- a reply matching a re-opt-in keyword below brings it back and re-enables SMS.</div>
+        <div class="field"><label class="pra-label">Hide keywords (comma-separated)</label><input class="pra-input" id="hideKeywordsList" placeholder="e.g. quiet, leave me alone"/></div>
+        <div class="field"><label class="pra-label">Re-opt-in keywords (comma-separated)</label><input class="pra-input" id="reOptInKeywordsList" placeholder="start, unstop"/></div>
+
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistKeywordsEnabled"/> Auto-blacklist on trigger words</label>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words, the contact's status is set to <b>Blacklist</b> -- both SMS and email opted out, hidden under the <b>Blacklist</b> filter. Permanent: unlike the hide keywords above, there's no reverse trigger.</div>
+        <div class="field"><label class="pra-label">Blacklist keywords (comma-separated)</label><input class="pra-input" id="blacklistKeywordsList" placeholder="e.g. scam, fuck off"/></div>
+
         <button class="pra-btn" id="saveComplianceBtn">Save</button>
         <div class="pra-muted" id="complianceSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
@@ -568,12 +578,22 @@ async function loadComplianceSettings() {
   document.getElementById('stopKeywordsEnabled').checked = !!c.stopKeywordsEnabled;
   document.getElementById('stopKeywordsList').value = (c.stopKeywords || []).join(', ');
   document.getElementById('blacklistAutoOptOut').checked = !!c.blacklistAutoOptOut;
+  document.getElementById('hideKeywordsEnabled').checked = !!c.hideKeywordsEnabled;
+  document.getElementById('hideKeywordsList').value = (c.hideKeywords || []).join(', ');
+  document.getElementById('reOptInKeywordsList').value = (c.reOptInKeywords || []).join(', ');
+  document.getElementById('blacklistKeywordsEnabled').checked = !!c.blacklistKeywordsEnabled;
+  document.getElementById('blacklistKeywordsList').value = (c.blacklistKeywords || []).join(', ');
 }
 document.getElementById('saveComplianceBtn').onclick = async () => {
   const body = {
     stopKeywordsEnabled: document.getElementById('stopKeywordsEnabled').checked,
     stopKeywords: document.getElementById('stopKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
     blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked,
+    hideKeywordsEnabled: document.getElementById('hideKeywordsEnabled').checked,
+    hideKeywords: document.getElementById('hideKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
+    reOptInKeywords: document.getElementById('reOptInKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
+    blacklistKeywordsEnabled: document.getElementById('blacklistKeywordsEnabled').checked,
+    blacklistKeywords: document.getElementById('blacklistKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
   };
   const r = await fetch('/api/integrations/compliance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   document.getElementById('complianceSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';

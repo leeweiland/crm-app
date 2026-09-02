@@ -123,7 +123,7 @@ export async function handleInboxRequest(req, res, url) {
         lastChannel: last.channel, lastDirection: last.direction,
         lastPreview: last.subject || last.bodyPreview || "",
         lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount: g.unreadCount,
-        pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived,
+        pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived, hidden: !!meta?.hidden,
         // "Done" only counts once you've actually seen everything -- new
         // inbound activity after being marked done drops unreadCount back
         // above 0, which is enough on its own to fall out of the DONE
@@ -135,12 +135,19 @@ export async function handleInboxRequest(req, res, url) {
 
     let rows = conversations;
     if (search) rows = rows.filter(c => c.displayName.toLowerCase().includes(search));
-    // Archived conversations (opted-out / blacklisted contacts, or manually
-    // archived) stay out of every other view -- there's nothing left to
-    // action on them -- and only show up when Archived is explicitly selected.
-    if (bucket === "archived") rows = rows.filter(c => c.archived);
+    // Archived conversations (manually archived) stay out of every other
+    // view -- there's nothing left to action on them -- and only show up
+    // when Archived is explicitly selected. hidden (opt-out-triggered,
+    // reversible on re-opt-in) and BLACKLIST status (permanent) are their
+    // own dedicated buckets, kept crisply separate from generic "archived"
+    // even though BLACKLIST always sets archived=true too (via
+    // applyStatusOptOut) -- otherwise it'd show up in both tabs at once.
+    const isBlacklist = (c) => c.contact?.status === "BLACKLIST";
+    if (bucket === "hidden") rows = rows.filter(c => c.hidden);
+    else if (bucket === "blacklist") rows = rows.filter(isBlacklist);
+    else if (bucket === "archived") rows = rows.filter(c => c.archived && !c.hidden && !isBlacklist(c));
     else {
-      rows = rows.filter(c => !c.archived);
+      rows = rows.filter(c => !c.archived && !c.hidden && !isBlacklist(c));
       if (bucket === "done") rows = rows.filter(c => c.done);
       else if (bucket === "unresponded") rows = rows.filter(c => c.unreadCount > 0);
       else if (bucket === "favorites") rows = rows.filter(c => c.starred);

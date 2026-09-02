@@ -37,6 +37,7 @@ export function sqliteInboxAvailable() {
       status TEXT, program_type TEXT, owner_id TEXT,
       last_at_ms INTEGER, last_inbound_at_ms INTEGER, unread_count INTEGER,
       pinned INTEGER DEFAULT 0, starred INTEGER DEFAULT 0, archived INTEGER DEFAULT 0, done INTEGER DEFAULT 0,
+      hidden INTEGER DEFAULT 0,
       last_channel TEXT, last_direction TEXT, last_preview TEXT, last_status TEXT, last_opened INTEGER,
       last_message_id TEXT, last_by_channel_json TEXT
     );
@@ -48,6 +49,7 @@ export function sqliteInboxAvailable() {
     CREATE INDEX IF NOT EXISTS idx_unread ON conversations(archived, unread_count);
     CREATE INDEX IF NOT EXISTS idx_display_name ON conversations(display_name);
     CREATE INDEX IF NOT EXISTS idx_email ON conversations(email);
+    CREATE INDEX IF NOT EXISTS idx_hidden ON conversations(hidden);
   `);
   // CREATE TABLE IF NOT EXISTS is a no-op against an already-existing table
   // from an earlier schema version (e.g. production's original build, made
@@ -63,6 +65,7 @@ export function sqliteInboxAvailable() {
   for (const col of ["owner_id", "phone", "first_seen_at"]) {
     if (!existingCols.has(col)) db.exec(`ALTER TABLE conversations ADD COLUMN ${col} TEXT`);
   }
+  if (!existingCols.has("hidden")) db.exec(`ALTER TABLE conversations ADD COLUMN hidden INTEGER DEFAULT 0`);
   return true;
 }
 
@@ -146,12 +149,12 @@ export function deleteConversationRow(key) {
 export function syncMetaFields(contactId, meta) {
   if (!sqliteInboxAvailable()) return;
   db.prepare(`
-    UPDATE conversations SET pinned = :pinned, starred = :starred, archived = :archived, done = :done
+    UPDATE conversations SET pinned = :pinned, starred = :starred, archived = :archived, done = :done, hidden = :hidden
     WHERE contact_id = :contactId
   `).run({
     contactId,
     pinned: meta.pinned ? 1 : 0, starred: meta.starred ? 1 : 0,
-    archived: meta.archived ? 1 : 0, done: meta.done ? 1 : 0,
+    archived: meta.archived ? 1 : 0, done: meta.done ? 1 : 0, hidden: meta.hidden ? 1 : 0,
   });
 }
 
@@ -182,9 +185,25 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bu
 
   const where = [];
   const params = {};
-  if (bucket === "archived") { where.push("archived = 1"); }
+  // hidden (opt-out-triggered, reversible on re-opt-in) and BLACKLIST
+  // status (permanent) are their own dedicated buckets now, kept crisply
+  // separate from generic "archived" -- a contact can be archived for
+  // plain manual reasons without being either of those, and vice versa
+  // (BLACKLIST always sets archived=1 too via applyStatusOptOut, but the
+  // "archived" bucket below deliberately excludes it so it only shows up
+  // once, under its own tab). See compliance_backend.js's checkHideTrigger/
+  // checkBlacklistTrigger for what sets these.
+  // "status IS NULL OR status != 'BLACKLIST'", not just "status !=
+  // 'BLACKLIST'" -- SQL's != against NULL (an unmatched/potential-contact
+  // conversation, or a contact with no status set) evaluates to NULL, not
+  // TRUE, which a bare != would have silently excluded from every default
+  // view and the archived tab.
+  const notBlacklistSql = "(status IS NULL OR status != 'BLACKLIST')";
+  if (bucket === "hidden") { where.push("hidden = 1"); }
+  else if (bucket === "blacklist") { where.push("status = 'BLACKLIST'"); }
+  else if (bucket === "archived") { where.push("archived = 1", "hidden = 0", notBlacklistSql); }
   else {
-    where.push("archived = 0");
+    where.push("archived = 0", "hidden = 0", notBlacklistSql);
     if (bucket === "done") where.push("done = 1");
     else if (bucket === "unresponded") where.push("unread_count > 0");
     else if (bucket === "favorites") where.push("starred = 1");

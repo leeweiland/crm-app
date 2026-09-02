@@ -121,12 +121,29 @@ export function getMeetingReminderSettings() {
   };
 }
 
+// Same reserved-exact-word carrier-compliance shape as stopKeywords above,
+// but for two DIFFERENT automatic actions (see compliance_backend.js's
+// checkHideTrigger/checkBlacklistTrigger), deliberately separate from the
+// existing stopKeywords/blacklistAutoOptOut settings rather than folded
+// into them:
+//   - hideKeywords: opts out of SMS AND hides the conversation from the
+//     default Inbox view under its own "Hidden" tab -- reversible, unlike
+//     everything else here: reOptInKeywords brings them back.
+//   - blacklistKeywords: moves the contact straight to BLACKLIST status
+//     (same effect as a human doing it manually -- both channels opted
+//     out, archived) with no reverse trigger, ever.
+const DEFAULT_REOPTIN_KEYWORDS = ["start", "unstop"];
 export function getComplianceSettings() {
   const c = readSettings().compliance || {};
   return {
     stopKeywordsEnabled: c.stopKeywordsEnabled !== false,
     stopKeywords: Array.isArray(c.stopKeywords) && c.stopKeywords.length ? c.stopKeywords : DEFAULT_STOP_KEYWORDS,
     blacklistAutoOptOut: c.blacklistAutoOptOut !== false,
+    hideKeywordsEnabled: !!c.hideKeywordsEnabled,
+    hideKeywords: Array.isArray(c.hideKeywords) ? c.hideKeywords : [],
+    reOptInKeywords: Array.isArray(c.reOptInKeywords) && c.reOptInKeywords.length ? c.reOptInKeywords : DEFAULT_REOPTIN_KEYWORDS,
+    blacklistKeywordsEnabled: !!c.blacklistKeywordsEnabled,
+    blacklistKeywords: Array.isArray(c.blacklistKeywords) ? c.blacklistKeywords : [],
   };
 }
 
@@ -228,6 +245,11 @@ export async function handleIntegrationsRequest(req, res, url) {
     if ("stopKeywordsEnabled" in body) all.compliance.stopKeywordsEnabled = !!body.stopKeywordsEnabled;
     if ("blacklistAutoOptOut" in body) all.compliance.blacklistAutoOptOut = !!body.blacklistAutoOptOut;
     if (Array.isArray(body.stopKeywords)) all.compliance.stopKeywords = body.stopKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    if ("hideKeywordsEnabled" in body) all.compliance.hideKeywordsEnabled = !!body.hideKeywordsEnabled;
+    if (Array.isArray(body.hideKeywords)) all.compliance.hideKeywords = body.hideKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    if (Array.isArray(body.reOptInKeywords)) all.compliance.reOptInKeywords = body.reOptInKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    if ("blacklistKeywordsEnabled" in body) all.compliance.blacklistKeywordsEnabled = !!body.blacklistKeywordsEnabled;
+    if (Array.isArray(body.blacklistKeywords)) all.compliance.blacklistKeywords = body.blacklistKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
   }

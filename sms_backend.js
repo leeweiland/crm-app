@@ -5,7 +5,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings } from "./integrations_backend.js";
-import { recheckStopStatus } from "./compliance_backend.js";
+import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
 import { appendSourceTagToSmsBody } from "./block_editor_shared.js";
 import { resolveSendSourceSlug } from "./source_names.js";
 
@@ -99,6 +99,7 @@ export async function handleSmsRequest(req, res, url) {
       logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
       checkConversionGoal("incoming_sms", contact.id);
       recheckStopStatus(contact.id);
+      checkAutoTriggers(contact.id);
     } else {
       // Message from a number with no matching contact -- still logged
       // (contactId: null) so it's visible in the Inbox, just unattributed.
