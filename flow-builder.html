@@ -24,18 +24,21 @@
   .ab-zoom-controls span { font-size: .74rem; color: var(--pra-dim); min-width: 34px; text-align: center; }
   .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
   .chain-arrow-wrap { position: relative; display: flex; align-items: center; justify-content: center; height: 26px; }
-  .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s; }
+  .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s, background .12s, transform .12s; }
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
+  .ab-canvas.drag-active .insert-step-btn { opacity: 1; }
+  .insert-step-btn.drop-target, .add-step-btn.drop-target { border-color: var(--pra-blue); color: var(--pra-blue); background: rgba(0,155,255,0.18); transform: scale(1.35); }
   .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; }
-  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; }
+  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s, opacity .12s; cursor: grab; }
   .step-card:hover { border-color: var(--pra-blue); }
+  .step-card.dragging { opacity: .35; cursor: grabbing; }
   .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
   .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
   .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
   .step-card .step-actions button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .8rem; }
   .step-card .step-actions button:hover { color: #fff; }
-  .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; }
+  .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; transition: border-color .12s, color .12s, background .12s, transform .12s; }
   .add-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .branch-row { display: flex; gap: 40px; margin-top: 4px; }
   .branch-col { display: flex; flex-direction: column; align-items: center; }
@@ -218,7 +221,7 @@ function stepCardHtml(stepId, isLast) {
   const count = runCounts[stepId] || 0;
   const countLabel = step.type === 'delay' ? `${count} waiting` : `${count} here`;
   return `
-    <div class="step-card" data-open-step="${stepId}" style="cursor:pointer">
+    <div class="step-card" data-open-step="${stepId}" data-drag-step="${stepId}" draggable="true">
       <div class="step-actions">
         ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
       </div>
@@ -285,6 +288,36 @@ function render() {
     pendingAddAfter = btn.dataset.after || null;
     pendingAddBefore = btn.dataset.before || null;
     openModal('typePickerModal');
+  });
+  canvas.querySelectorAll('[data-drag-step]').forEach(card => {
+    card.addEventListener('dragstart', (e) => {
+      draggedStepId = card.dataset.dragStep;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedStepId); // Firefox refuses to drag without data actually set
+      card.classList.add('dragging');
+      canvas.classList.add('drag-active');
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      canvas.classList.remove('drag-active');
+      canvas.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+      draggedStepId = null;
+    });
+  });
+  canvas.querySelectorAll('.insert-step-btn, .add-step-btn').forEach(btn => {
+    btn.addEventListener('dragover', (e) => {
+      if (!draggedStepId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      btn.classList.add('drop-target');
+    });
+    btn.addEventListener('dragleave', () => btn.classList.remove('drop-target'));
+    btn.addEventListener('drop', (e) => {
+      e.preventDefault();
+      btn.classList.remove('drop-target');
+      if (!draggedStepId) return;
+      moveStep(draggedStepId, btn.dataset.path, btn.dataset.after || null, btn.dataset.before || null);
+    });
   });
 }
 
@@ -400,25 +433,85 @@ document.getElementById('saveTriggerBtn').onclick = async () => {
 };
 
 // ── Add step: type picker -> config ─────────────────────────────────────
-function attachNewStep(step) {
-  flow.steps[step.id] = step;
-  if (pendingAddBefore) {
-    step.nextStepId = pendingAddBefore;
-    if (pendingAddPath === 'root') flow.startStepId = step.id;
-    else if (pendingAddPath.startsWith('yes:')) flow.steps[pendingAddPath.slice(4)].yesStepId = step.id;
-    else if (pendingAddPath.startsWith('no:')) flow.steps[pendingAddPath.slice(3)].noStepId = step.id;
-  } else if (pendingAddPath === 'root' && !pendingAddAfter) {
+// Shared by attachNewStep (a brand-new step) and moveStep (an existing one
+// being dragged) -- both just need "put this step object at this
+// path/after/before slot", the only difference is whether the step already
+// has an old position to detach from first.
+function placeStepAt(step, path, afterId, beforeId) {
+  if (beforeId) {
+    step.nextStepId = beforeId;
+    if (path === 'root') flow.startStepId = step.id;
+    else if (path.startsWith('yes:')) flow.steps[path.slice(4)].yesStepId = step.id;
+    else if (path.startsWith('no:')) flow.steps[path.slice(3)].noStepId = step.id;
+  } else if (path === 'root' && !afterId) {
     flow.startStepId = step.id;
-  } else if (pendingAddAfter) {
-    const prevStep = flow.steps[pendingAddAfter];
+  } else if (afterId) {
+    const prevStep = flow.steps[afterId];
     step.nextStepId = prevStep.nextStepId || null;
     prevStep.nextStepId = step.id;
-  } else if (pendingAddPath.startsWith('yes:')) {
-    flow.steps[pendingAddPath.slice(4)].yesStepId = step.id;
-  } else if (pendingAddPath.startsWith('no:')) {
-    flow.steps[pendingAddPath.slice(3)].noStepId = step.id;
+  } else if (path.startsWith('yes:')) {
+    flow.steps[path.slice(4)].yesStepId = step.id;
+  } else if (path.startsWith('no:')) {
+    flow.steps[path.slice(3)].noStepId = step.id;
   }
 }
+function attachNewStep(step) {
+  flow.steps[step.id] = step;
+  placeStepAt(step, pendingAddPath, pendingAddAfter, pendingAddBefore);
+}
+
+// ── Drag-to-reorder ──────────────────────────────────────────────────────
+// Everything that would move WITH stepId if it's relocated: itself, plus
+// (only for an if_then) its yes/no branches and everything chained off
+// them, recursively. NOT stepId's own nextStepId trunk -- that stays
+// behind, re-linked to whatever follows it, when stepId is detached (see
+// detachStep). Used to refuse a drop that would drag a step into its own
+// branch, which would create a cycle.
+function carriedByStep(stepId) {
+  const carried = new Set([stepId]);
+  function walkBranch(id) {
+    let cur = id;
+    while (cur && !carried.has(cur)) {
+      carried.add(cur);
+      const s = flow.steps[cur];
+      if (!s) break;
+      if (s.type === 'if_then') { walkBranch(s.yesStepId); walkBranch(s.noStepId); break; }
+      cur = s.nextStepId;
+    }
+  }
+  const root = flow.steps[stepId];
+  if (root?.type === 'if_then') { walkBranch(root.yesStepId); walkBranch(root.noStepId); }
+  return carried;
+}
+// Unlinks stepId from wherever it currently sits -- its old neighbor(s)
+// close the gap by pointing straight at whatever used to follow it, same
+// as deleteStep's relinking except the step itself survives to be placed
+// elsewhere instead of deleted.
+function detachStep(stepId) {
+  const step = flow.steps[stepId];
+  const next = step.nextStepId || null;
+  if (flow.startStepId === stepId) { flow.startStepId = next; step.nextStepId = null; return; }
+  for (const s of Object.values(flow.steps)) {
+    if (s.id === stepId) continue;
+    if (s.nextStepId === stepId) { s.nextStepId = next; step.nextStepId = null; return; }
+    if (s.yesStepId === stepId) { s.yesStepId = next; step.nextStepId = null; return; }
+    if (s.noStepId === stepId) { s.noStepId = next; step.nextStepId = null; return; }
+  }
+}
+function moveStep(stepId, path, afterId, beforeId) {
+  if (stepId === afterId || stepId === beforeId) return; // dropped back where it already was -- no-op
+  const carried = carriedByStep(stepId);
+  const pathId = (path.match(/^(?:yes|no):(.+)$/) || [])[1];
+  if ((afterId && carried.has(afterId)) || (beforeId && carried.has(beforeId)) || (pathId && carried.has(pathId))) {
+    showToast("Can't drop a step into its own branch", true);
+    return;
+  }
+  const step = flow.steps[stepId];
+  detachStep(stepId);
+  placeStepAt(step, path, afterId, beforeId);
+  render(); saveDebounced();
+}
+let draggedStepId = null;
 document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
   btn.onclick = () => {
     const type = btn.dataset.type;
