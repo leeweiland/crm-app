@@ -169,9 +169,6 @@
   .resp-answers .q { color: var(--pra-dim); font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; }
 
   .picker-add-select { max-width: 100%; }
-  .sheet-search-result { padding: 8px 12px; font-size: .84rem; cursor: pointer; border-bottom: 1px solid var(--pra-border); }
-  .sheet-search-result:last-child { border-bottom: none; }
-  .sheet-search-result:hover { background: rgba(0,155,255,0.08); color: var(--pra-blue); }
   .picker-chips { margin-top: 8px; }
   .chip-option.removable { display: inline-flex; align-items: center; gap: 6px; cursor: default; }
   .chip-option.removable .chip-x { cursor: pointer; opacity: .7; }
@@ -241,26 +238,6 @@
                 <label class="pra-label">Add to lists on submit</label>
                 <select class="pra-select picker-add-select" id="setListAdd"></select>
                 <div class="chip-multiselect picker-chips" id="setListsChips"></div>
-              </div>
-            </div>
-
-            <div class="fb-side-section">
-              <div class="fb-side-title">Google Sheet</div>
-              <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Every submission appends a row -- map which question goes in which column on each question's own settings panel.</div>
-              <div id="sheetSearchRow">
-                <input class="pra-input" id="sheetSearchInput" placeholder="Search your Google Sheets…"/>
-                <div id="sheetSearchResults" style="display:none;margin-top:6px;max-height:180px;overflow-y:auto;border:1px solid var(--pra-border);border-radius:8px"></div>
-              </div>
-              <div id="sheetPickedRow" style="display:none">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                  <span style="flex:1;font-size:.85rem;font-weight:700" id="sheetPickedName"></span>
-                  <button class="pra-btn pra-btn-ghost pra-btn-sm" id="sheetChangeBtn" type="button">Change</button>
-                </div>
-                <div class="field" style="margin-bottom:0">
-                  <label class="pra-label">Tab</label>
-                  <select class="pra-select" id="sheetTabSelect"></select>
-                  <div class="pra-muted" style="font-size:.72rem;margin-top:6px;color:var(--pra-red)" id="sheetPickError"></div>
-                </div>
               </div>
             </div>
 
@@ -696,19 +673,6 @@ function renderLogicPanel(f, i) {
   </div>`;
 }
 
-function sheetColumnFieldHtml(f, i) {
-  if (!sheetPicked.id) return '';
-  return `
-    <div class="field" style="margin-bottom:0">
-      <label class="pra-label">Maps to Google Sheet column</label>
-      <select class="pra-select" data-mapsheet-idx="${i}">
-        <option value="">Don't send to sheet</option>
-        ${sheetPicked.headers.map(h => `<option value="${escapeHtml(h)}" ${f.mapToSheetColumn === h ? 'selected' : ''}>${escapeHtml(h)}</option>`).join('')}
-      </select>
-    </div>
-  `;
-}
-
 function renderPanel(f, i) {
   const logicHtml = renderLogicPanel(f, i);
   if (!openPanel || openPanel.idx !== i || openPanel.kind !== 'gear') return logicHtml;
@@ -716,7 +680,7 @@ function renderPanel(f, i) {
   if (f.type === 'calendar') gearHtml = renderCalendarPanel(f, i);
   else if (f.type === 'country') {
     gearHtml = `<div class="fb-panel">
-      <div class="field">
+      <div class="field" style="margin-bottom:0">
         <label class="pra-label">Maps to contact field</label>
         <select class="pra-select" data-mapfield-idx="${i}">
           <option value="">Auto (new field from question text)</option>
@@ -725,7 +689,6 @@ function renderPanel(f, i) {
         </select>
         <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Optional -- saves the detected country onto the contact record.</div>
       </div>
-      ${sheetColumnFieldHtml(f, i)}
     </div>`;
   } else if (f.type === 'image') {
     gearHtml = `<div class="fb-panel">
@@ -734,12 +697,11 @@ function renderPanel(f, i) {
     </div>`;
   } else {
     const showPlaceholder = f.type !== 'statement';
-    const isAnswerable = !NON_ANSWERABLE_TYPES.includes(f.type);
     gearHtml = `<div class="fb-panel">
       ${showPlaceholder ? `<div class="field"><label class="pra-label">Placeholder</label><input class="pra-input" data-placeholder-idx="${i}" value="${escapeHtml(f.placeholder || '')}"/></div>` : ''}
-      <div class="field" ${canMapToCustomField(f) || (isAnswerable && sheetPicked.id) ? '' : 'style="margin-bottom:0"'}><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
+      <div class="field" ${canMapToCustomField(f) ? '' : 'style="margin-bottom:0"'}><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
       ${canMapToCustomField(f) ? `
-        <div class="field" ${isAnswerable && sheetPicked.id ? '' : 'style="margin-bottom:0"'}>
+        <div class="field" style="margin-bottom:0">
           <label class="pra-label">Maps to contact field</label>
           <select class="pra-select" data-mapfield-idx="${i}">
             <option value="">Auto (new field from question text)</option>
@@ -748,7 +710,6 @@ function renderPanel(f, i) {
           </select>
         </div>
       ` : ''}
-      ${isAnswerable ? sheetColumnFieldHtml(f, i) : ''}
     </div>`;
   }
   return gearHtml + logicHtml;
@@ -967,10 +928,6 @@ function bindCanvas(canvas) {
       return;
     }
     form.fields[idx].mapToCustomFieldId = e.target.value;
-    saveDebounced();
-  }));
-  canvas.querySelectorAll('[data-mapsheet-idx]').forEach(el => el.addEventListener('change', e => {
-    form.fields[+e.target.dataset.mapsheetIdx].mapToSheetColumn = e.target.value;
     saveDebounced();
   }));
 
@@ -1389,97 +1346,6 @@ function renderPicker(kind, allItems, selectedIds, addElId, chipsElId, onChange)
   });
 }
 
-// ── Google Sheet mapping -- one sheet+tab per form; each field maps to a
-// column via its own gear panel (sheetColumnFieldHtml above), not a
-// per-column template array like the Flows google_sheet step -- a form's
-// fields already know their own answers, there's nothing to template.
-// Same search -> pick -> tab flow as flow-builder.html's step config,
-// reusing the same /api/flows/sheets/* routes (already built there, no
-// reason to duplicate the Drive search / header-reading logic here too).
-let sheetPicked = { id: '', name: '', tab: '', headers: [] };
-async function loadSheetSection() {
-  sheetPicked = { id: form.settings.sheetsSpreadsheetId || '', name: form.settings.sheetsSpreadsheetName || '', tab: form.settings.sheetsTabName || '', headers: [] };
-  if (sheetPicked.id) { showSheetPicked(); await loadSheetTabsAndHeaders(); }
-  else showSheetSearch();
-}
-function showSheetPicked() {
-  document.getElementById('sheetPickedRow').style.display = 'block';
-  document.getElementById('sheetPickedName').textContent = sheetPicked.name || sheetPicked.id;
-  document.getElementById('sheetSearchRow').style.display = 'none';
-}
-function showSheetSearch() {
-  document.getElementById('sheetPickedRow').style.display = 'none';
-  document.getElementById('sheetSearchRow').style.display = 'block';
-  // A dropdown-like list of recent sheets shows immediately, same courtesy
-  // flow-builder.html's own picker gives (and same as any real spreadsheet
-  // picker, e.g. Zapier's) -- an empty query still returns real results
-  // (Drive orders by modifiedTime desc), so there's no reason to make
-  // someone type before seeing anything.
-  document.getElementById('sheetSearchInput').dispatchEvent(new Event('input'));
-}
-async function loadSheetTabsAndHeaders() {
-  // Only skip the save when we're restoring an ALREADY-saved tab (a normal
-  // page load) -- picking a brand-new sheet for the first time still needs
-  // to persist whichever tab gets auto-selected below, or the settings
-  // silently disagree with what the UI is showing (defaulting to "Sheet1"
-  // at submit time instead of the tab actually displayed/mapped against).
-  const alreadyHadTab = !!sheetPicked.tab;
-  const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/tabs`);
-  const d = await r.json();
-  const errEl = document.getElementById('sheetPickError');
-  // A failed tabs fetch used to silently fall back to an empty list --
-  // right for "this spreadsheet genuinely has zero visible tabs" (rare),
-  // wrong for "the request failed" (Sheets access not connected/expired,
-  // wrong ID, etc.), which looked identical: an empty dropdown with no
-  // explanation either way.
-  if (!r.ok) { errEl.textContent = d.error || 'Could not load tabs for that spreadsheet.'; document.getElementById('sheetTabSelect').innerHTML = ''; return; }
-  errEl.textContent = '';
-  const tabs = d.tabs || [];
-  if (!tabs.length) { errEl.textContent = 'That spreadsheet has no visible tabs.'; }
-  if (!sheetPicked.tab && tabs.length) sheetPicked.tab = tabs[0];
-  document.getElementById('sheetTabSelect').innerHTML = tabs.map(t => `<option value="${escapeHtml(t)}" ${t === sheetPicked.tab ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('');
-  if (tabs.length) await onSheetTabChosen(sheetPicked.tab, !alreadyHadTab);
-}
-// shouldSave is false only for the initial load's own tab -- re-fetching
-// its headers shouldn't count as an edit needing a save.
-async function onSheetTabChosen(tab, shouldSave) {
-  sheetPicked.tab = tab;
-  const errEl = document.getElementById('sheetPickError');
-  const hr = await fetch(`/api/flows/sheets/${sheetPicked.id}/headers?tab=${encodeURIComponent(tab)}`);
-  const hd = await hr.json();
-  if (!hr.ok) errEl.textContent = hd.error || 'Could not load that tab\'s columns.';
-  else if (!hd.headers?.length) errEl.textContent = 'That tab has no header row (row 1 is empty) -- add column headers there first.';
-  else errEl.textContent = '';
-  sheetPicked.headers = (hr.ok && hd.headers) || [];
-  if (shouldSave) { form.settings.sheetsTabName = tab; saveDebounced(); }
-  renderCanvas(); // field panels' column dropdowns need the fresh headers/selection
-}
-document.getElementById('sheetTabSelect').addEventListener('change', e => onSheetTabChosen(e.target.value, true));
-document.getElementById('sheetChangeBtn').onclick = showSheetSearch;
-let sheetSearchTimer;
-document.getElementById('sheetSearchInput').addEventListener('input', e => {
-  clearTimeout(sheetSearchTimer);
-  const q = e.target.value.trim();
-  sheetSearchTimer = setTimeout(async () => {
-    const resultsEl = document.getElementById('sheetSearchResults');
-    resultsEl.style.display = 'block';
-    resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">Searching…</div>';
-    const r = await fetch('/api/flows/sheets/search?q=' + encodeURIComponent(q));
-    const d = await r.json();
-    if (!d.files?.length) { resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">No spreadsheets found.</div>'; return; }
-    resultsEl.innerHTML = d.files.map(f => `<div class="sheet-search-result" data-id="${f.id}" data-name="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>`).join('');
-    resultsEl.querySelectorAll('[data-id]').forEach(row => row.onclick = async () => {
-      sheetPicked = { id: row.dataset.id, name: row.dataset.name, tab: '', headers: [] };
-      form.settings.sheetsSpreadsheetId = sheetPicked.id;
-      form.settings.sheetsSpreadsheetName = sheetPicked.name;
-      form.settings.sheetsTabName = '';
-      saveDebounced();
-      showSheetPicked();
-      await loadSheetTabsAndHeaders();
-    });
-  }, 300);
-});
-
 function renderSettings() {
   document.getElementById('setSubmitText').value = form.settings.submitButtonText || '';
   document.getElementById('setConfirmMsg').value = form.settings.confirmationMessage || '';
@@ -1596,7 +1462,6 @@ function render() {
   renderSettings();
   renderDesign();
   loadFormFlows();
-  loadSheetSection();
 }
 
 document.getElementById('formName').addEventListener('input', e => { form.name = e.target.value; saveDebounced(); });

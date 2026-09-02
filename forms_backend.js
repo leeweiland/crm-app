@@ -9,7 +9,6 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { clientIp, lookupIpLocation } from "./tracking_backend.js";
-import { sheetsConfigured, appendSheetRow, getSheetHeaders } from "./flows_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -301,27 +300,6 @@ function upsertContactFromSubmission(form, answers) {
   return { contact, isNew };
 }
 
-// Reads the sheet's ACTUAL current header row rather than trusting
-// whatever order was cached when a field's mapping was last set in the
-// builder -- a column the admin renamed or reordered directly on the sheet
-// since then still maps correctly, and a header with no field mapped to it
-// just gets an empty cell instead of throwing the row out of alignment.
-// Non-fatal by design (caught by the caller): a Sheets outage shouldn't
-// fail a real visitor's submission, which already saved as a contact/
-// response by the time this runs.
-async function appendFormSubmissionToSheet(form, answers) {
-  const { sheetsSpreadsheetId, sheetsTabName } = form.settings;
-  if (!sheetsSpreadsheetId || !sheetsConfigured()) return;
-  const headers = await getSheetHeaders(sheetsSpreadsheetId, sheetsTabName);
-  const row = headers.map(header => {
-    const field = form.fields.find(f => f.mapToSheetColumn === header);
-    if (!field) return "";
-    const val = answers[field.id];
-    return val === undefined || val === null ? "" : Array.isArray(val) ? val.join(", ") : String(val);
-  });
-  await appendSheetRow(sheetsSpreadsheetId, sheetsTabName || "Sheet1", row);
-}
-
 export async function handleFormsRequest(req, res, url) {
   const p = url.pathname;
 
@@ -393,7 +371,6 @@ export async function handleFormsRequest(req, res, url) {
     const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, submittedAt: new Date().toISOString() };
     responses.push(response);
     writeJson(RESPONSES_FILE, responses);
-    appendFormSubmissionToSheet(form, cleanAnswers).catch(e => console.error("[forms] sheet append failed", e.message));
 
     if (result?.contact.id) {
       // Log the submission itself as an inbound Inbox activity -- otherwise

@@ -88,11 +88,7 @@ async function getSheetsAccessToken() {
   if (!d.access_token) throw new Error("Sheets token refresh failed: " + JSON.stringify(d));
   return d.access_token;
 }
-// Exported for forms_backend.js's field->column mapping (see its
-// appendFormSubmissionToSheet) -- reads live rather than trusting a cached
-// header list, so a column the admin renamed/reordered on the actual sheet
-// since the form was last edited still maps correctly.
-export async function getSheetHeaders(spreadsheetId, tabName) {
+async function getSheetHeaders(spreadsheetId, tabName) {
   const accessToken = await getSheetsAccessToken();
   const range = encodeURIComponent(`'${tabName || "Sheet1"}'!1:1`);
   const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`, {
@@ -118,7 +114,7 @@ function columnLetter(n) {
 // sidesteps that entirely -- values.length reflects the true last row with
 // data (Google preserves gap rows as [] within the array), regardless of
 // any gaps earlier in the sheet.
-export async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
+async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
   const accessToken = await getSheetsAccessToken();
   const endCol = columnLetter(rowValues.length);
   const colRange = encodeURIComponent(`'${sheetName}'!A:${endCol}`);
