@@ -23,8 +23,12 @@ function getTwilioClient() {
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function findContactByPhone(phone) {
-  const digits = String(phone || "").replace(/\D/g, "");
-  return readJson(CONTACTS_FILE, []).find(c => String(c.phone || "").replace(/\D/g, "").slice(-10) === digits.slice(-10)) || null;
+  const digits = String(phone || "").replace(/\D/g, "").slice(-10);
+  return readJson(CONTACTS_FILE, []).find(c =>
+    String(c.phone || "").replace(/\D/g, "").slice(-10) === digits ||
+    (c.altPhones || []).some(p => String(p || "").replace(/\D/g, "").slice(-10) === digits) ||
+    (c.hyrosPhones || []).some(p => String(p || "").replace(/\D/g, "").slice(-10) === digits)
+  ) || null;
 }
 
 // Shared send primitive, same shape/convention as email_backend.js's

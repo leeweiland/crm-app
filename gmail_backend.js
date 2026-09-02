@@ -185,6 +185,7 @@ function getContactIdByEmail(email) {
     contactsByEmailCache = new Map();
     for (const c of readJson(CONTACTS_FILE, [])) {
       if (c.email) contactsByEmailCache.set(c.email.toLowerCase(), c.id);
+      for (const alt of c.altEmails || []) contactsByEmailCache.set(alt.toLowerCase(), c.id);
     }
   }
   return contactsByEmailCache.get(email) || null;

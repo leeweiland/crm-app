@@ -20,14 +20,19 @@ export function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""
 // compares on the last 10 digits so formatting/country-code differences
 // ("+18085551234" vs "808-555-1234") don't cause a false miss.
 // Beyond the contact's own primary email/phone, also checks the identity
-// signals Hyros/merges have already surfaced: hyrosOriginLead.email (Hyros's
-// own "this pre-conversion click identity belongs to that lead" link),
-// hyrosPhones (every phone Hyros ever saw for the lead, not just one), and
-// altEmails (emails folded in by a manual/bulk duplicate merge). Without
-// this, a new AC/Close record matching only a contact's ORIGIN identity
-// would create a fresh duplicate instead of attaching to the already-merged
-// person -- exactly the gap that let 8,000+ Hyros-flagged duplicates sit
-// unmerged before this was added.
+// signals Hyros/merges/multi-contact-method imports have already surfaced:
+// hyrosOriginLead.email (Hyros's own "this pre-conversion click identity
+// belongs to that lead" link), hyrosPhones (every phone Hyros ever saw for
+// the lead, not just one), altEmails (emails folded in by a manual/bulk
+// duplicate merge, or a source system that had more than one email on
+// file), and altPhones (same idea as altEmails, for phones -- kept
+// separate from hyrosPhones rather than merged into it, since that field
+// is specifically Hyros's own click-identity signal and this app's own
+// multi-phone-per-contact support shouldn't be coupled to whether Hyros
+// happens to be connected). Without this, a new AC/Close record matching
+// only a contact's ORIGIN identity would create a fresh duplicate instead
+// of attaching to the already-merged person -- exactly the gap that let
+// 8,000+ Hyros-flagged duplicates sit unmerged before this was added.
 export function findContactMatch(contacts, email, phone) {
   const normEmail = String(email || "").trim().toLowerCase();
   const normPhone = digitsOnly(phone).slice(-10);
@@ -36,7 +41,8 @@ export function findContactMatch(contacts, email, phone) {
     (normPhone && digitsOnly(c.phone).slice(-10) === normPhone) ||
     (normEmail && (c.altEmails || []).some(e => e.toLowerCase() === normEmail)) ||
     (normEmail && c.hyrosOriginLead?.email?.toLowerCase() === normEmail) ||
-    (normPhone && (c.hyrosPhones || []).some(p => digitsOnly(p).slice(-10) === normPhone))
+    (normPhone && (c.hyrosPhones || []).some(p => digitsOnly(p).slice(-10) === normPhone)) ||
+    (normPhone && (c.altPhones || []).some(p => digitsOnly(p).slice(-10) === normPhone))
   ) || null;
 }
 
