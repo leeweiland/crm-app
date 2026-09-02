@@ -14,7 +14,7 @@ window.crmNavReady = (async function () {
     { href: "/contacts.html", label: "Contacts" },
     { href: "/forms.html", label: "Forms" },
     { href: "/scheduling.html", label: "Calendars" },
-    { href: "/flows.html", label: "Connections & Flows" },
+    { href: "/flows.html", label: "Flows" },
     { href: "/campaigns.html", label: "Email Campaigns" },
     { href: "/automations.html", label: "Email Automations" },
     { href: "/workflows.html", label: "SMS Sequences" },

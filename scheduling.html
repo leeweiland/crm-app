@@ -34,6 +34,10 @@
   .toggle-switch::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: var(--pra-dim); top: 2px; left: 2px; transition: left .15s, background .15s; }
   .toggle-switch.on { border-color: var(--pra-blue); }
   .toggle-switch.on::after { left: 18px; background: var(--pra-blue); }
+  .data-table th[data-sort] { cursor: pointer; user-select: none; }
+  .data-table th[data-sort]:hover { color: var(--pra-white); }
+  .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
+  .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
 </style>
 </head>
 <body>
@@ -62,7 +66,7 @@
         </div>
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th>Name</th><th>Duration</th><th>Calendar</th><th>Location</th><th>Active</th><th>Booking Link</th><th></th></tr></thead>
+            <thead><tr><th data-sort="name">Name</th><th data-sort="duration">Duration</th><th data-sort="calendar">Calendar</th><th data-sort="location">Location</th><th data-sort="active">Active</th><th>Booking Link</th><th></th></tr></thead>
             <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
@@ -297,11 +301,38 @@ async function loadBookings() {
 }
 
 // ── Event types ───────────────────────────────────────────────────────────
+let eventTypesCache = [];
+let eventTypesSort = { key: 'updatedAt', dir: 'desc' };
+const EVENT_TYPE_SORT_ACCESSORS = {
+  name: et => (et.name || '').toLowerCase(),
+  duration: et => et.durationMinutes || 0,
+  calendar: et => (calendarsState[et.calendarId]?.name || et.calendarEmail || 'Default').toLowerCase(),
+  location: et => (et.location?.type || '').toLowerCase(),
+  active: et => et.active ? 1 : 0,
+  updatedAt: et => new Date(et.updatedAt).getTime() || 0,
+};
+document.querySelectorAll('#tab-eventTypes [data-sort]').forEach(th => th.onclick = () => {
+  const key = th.dataset.sort;
+  eventTypesSort = { key, dir: eventTypesSort.key === key && eventTypesSort.dir === 'desc' ? 'asc' : 'desc' };
+  renderEventTypesTable();
+});
+
 async function loadEventTypes() {
-  const body = document.getElementById('eventTypesBody');
   const r = await fetch('/api/scheduling/admin/event-types');
-  const { eventTypes } = await r.json();
-  if (!eventTypes.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No event types yet — click "+ New Event Type".</td></tr>'; return; }
+  eventTypesCache = (await r.json()).eventTypes;
+  renderEventTypesTable();
+}
+
+function renderEventTypesTable() {
+  const body = document.getElementById('eventTypesBody');
+  document.querySelectorAll('#tab-eventTypes [data-sort]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === eventTypesSort.key) th.classList.add('sort-' + eventTypesSort.dir);
+  });
+  if (!eventTypesCache.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No event types yet — click "+ New Event Type".</td></tr>'; return; }
+  const acc = EVENT_TYPE_SORT_ACCESSORS[eventTypesSort.key];
+  const factor = eventTypesSort.dir === 'asc' ? 1 : -1;
+  const eventTypes = [...eventTypesCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
   body.innerHTML = eventTypes.map(et => `
     <tr>
       <td>${escapeHtml(et.name)}</td>

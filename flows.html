@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Connections & Flows — CRM</title>
+<title>Flows — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
@@ -11,6 +11,10 @@
   .active-toggle.on { background: var(--pra-blue); }
   .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
   .active-toggle.on::after { transform: translateX(18px); }
+  .data-table th[data-sort] { cursor: pointer; user-select: none; }
+  .data-table th[data-sort]:hover { color: var(--pra-white); }
+  .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
+  .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
 </style>
 </head>
 <body>
@@ -20,7 +24,7 @@
     <div class="app-main">
       <div class="mobile-sticky-header">
         <div class="toolbar">
-          <div class="pra-h1" style="flex:1">Connections & Flows</div>
+          <div class="pra-h1" style="flex:1">Flows</div>
           <button class="pra-btn" id="newFlowBtn">+ New Flow</button>
         </div>
         <div class="pra-muted" style="font-size:.82rem">Your Zapier alternative — trigger a flow from a webhook (Framer, or anything else), a form submission, or a booking, then filter, delay, branch, write to Google Sheets, enroll in an Email Automation or SMS Sequence, or change a contact's status.</div>
@@ -28,7 +32,7 @@
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
           <thead><tr>
-            <th>Name</th><th>Trigger</th><th>Active</th><th>Runs</th><th>Last Edited</th><th></th>
+            <th data-sort="name">Name</th><th data-sort="trigger">Trigger</th><th data-sort="active">Active</th><th data-sort="runs">Runs</th><th data-sort="updatedAt">Last Edited</th><th></th>
           </tr></thead>
           <tbody id="flowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
         </table>
@@ -42,13 +46,39 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', booking_created: 'Booking created' };
 
+let flowsCache = [];
+let flowsSort = { key: 'updatedAt', dir: 'desc' };
+const FLOW_SORT_ACCESSORS = {
+  name: f => (f.name || '').toLowerCase(),
+  trigger: f => TRIGGER_LABELS[f.trigger?.type] || '',
+  active: f => f.active ? 1 : 0,
+  runs: f => f.totalRuns || 0,
+  updatedAt: f => new Date(f.updatedAt).getTime() || 0,
+};
+document.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => {
+  const key = th.dataset.sort;
+  flowsSort = { key, dir: flowsSort.key === key && flowsSort.dir === 'desc' ? 'asc' : 'desc' };
+  renderFlowsTable();
+});
+
 async function loadFlows() {
   const r = await fetch('/api/flows');
   const body = document.getElementById('flowsBody');
   if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load flows.</td></tr>'; return; }
-  const { flows } = await r.json();
-  if (!flows.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>'; return; }
-  const sorted = [...flows].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  flowsCache = (await r.json()).flows;
+  renderFlowsTable();
+}
+
+function renderFlowsTable() {
+  const body = document.getElementById('flowsBody');
+  document.querySelectorAll('[data-sort]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === flowsSort.key) th.classList.add('sort-' + flowsSort.dir);
+  });
+  if (!flowsCache.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>'; return; }
+  const acc = FLOW_SORT_ACCESSORS[flowsSort.key];
+  const factor = flowsSort.dir === 'asc' ? 1 : -1;
+  const sorted = [...flowsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
   body.innerHTML = sorted.map(f => `
     <tr>
       <td class="clickable" onclick="location.href='/flow-builder.html?id=${f.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(f.name)}</td>

@@ -10,6 +10,10 @@
   .status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .status-draft { background: rgba(255,255,255,0.1); color: #fff; }
   .status-published { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .data-table th[data-sort] { cursor: pointer; user-select: none; }
+  .data-table th[data-sort]:hover { color: var(--pra-white); }
+  .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
+  .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
 </style>
 </head>
 <body>
@@ -27,7 +31,7 @@
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
           <thead><tr>
-            <th>Name</th><th>Status</th><th>Responses</th><th>Last Updated</th><th></th>
+            <th data-sort="name">Name</th><th data-sort="status">Status</th><th data-sort="responses">Responses</th><th data-sort="updatedAt">Last Updated</th><th></th>
           </tr></thead>
           <tbody id="formsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
         </table>
@@ -40,13 +44,38 @@
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
+let formsCache = [];
+let formsSort = { key: 'updatedAt', dir: 'desc' };
+const FORM_SORT_ACCESSORS = {
+  name: f => (f.name || '').toLowerCase(),
+  status: f => f.status || '',
+  responses: f => f.responseCount || 0,
+  updatedAt: f => new Date(f.updatedAt).getTime() || 0,
+};
+document.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => {
+  const key = th.dataset.sort;
+  formsSort = { key, dir: formsSort.key === key && formsSort.dir === 'desc' ? 'asc' : 'desc' };
+  renderFormsTable();
+});
+
 async function loadForms() {
   const r = await fetch('/api/forms');
   const body = document.getElementById('formsBody');
   if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Could not load forms.</td></tr>'; return; }
-  const { forms } = await r.json();
-  if (!forms.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No forms yet — click "+ New Form" to build one.</td></tr>'; return; }
-  const sorted = [...forms].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  formsCache = (await r.json()).forms;
+  renderFormsTable();
+}
+
+function renderFormsTable() {
+  const body = document.getElementById('formsBody');
+  document.querySelectorAll('[data-sort]').forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.sort === formsSort.key) th.classList.add('sort-' + formsSort.dir);
+  });
+  if (!formsCache.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No forms yet — click "+ New Form" to build one.</td></tr>'; return; }
+  const acc = FORM_SORT_ACCESSORS[formsSort.key];
+  const factor = formsSort.dir === 'asc' ? 1 : -1;
+  const sorted = [...formsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
   body.innerHTML = sorted.map(f => `
     <tr>
       <td class="clickable" onclick="location.href='/form-builder.html?id=${f.id}'" style="cursor:pointer">${escapeHtml(f.name)}</td>

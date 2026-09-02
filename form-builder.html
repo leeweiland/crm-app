@@ -243,7 +243,7 @@
 
             <div class="fb-side-section">
               <div class="fb-side-title">Automate</div>
-              <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Route every submission to Google Sheets, an Email Automation, or an SMS Sequence — powered by Connections & Flows.</div>
+              <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Route every submission to Google Sheets, an Email Automation, or an SMS Sequence — powered by Flows.</div>
               <div id="formFlowsList"></div>
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newFormFlowBtn" style="width:100%;margin-top:8px">+ New Flow for this Form</button>
             </div>
@@ -1460,11 +1460,11 @@ async function loadResponses() {
   wrap.querySelectorAll('[data-resp-idx]').forEach(row => row.onclick = () => row.classList.toggle('open'));
 }
 
-// ── Left sidebar: Automate (Connections & Flows scoped to this form) ────
+// ── Left sidebar: Automate (Flows scoped to this form) ──────────────────
 // Flows already own the Google Sheets / Email Automation / SMS Sequence
 // engine (flows_backend.js) -- this is just a shortcut so "route this
 // form's submissions somewhere" doesn't require leaving the form to
-// discover Connections & Flows exists.
+// discover Flows exists.
 async function loadFormFlows() {
   const wrap = document.getElementById('formFlowsList');
   const r = await fetch('/api/flows');
