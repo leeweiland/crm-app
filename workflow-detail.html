@@ -264,7 +264,20 @@ function renderOverview() {
   `).join('');
 }
 
-const TRIG_LABELS = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: 'Contact visits a page', booking_created: 'Booking is created' };
+// Called from renderCanvas (not a static map) so a specific list/tag/event
+// type shows its real name -- "Contact subscribes to GYM", not just the
+// generic "Contact subscribes to list" regardless of which list is picked.
+function trigLabel(trig) {
+  trig = trig || {};
+  const cfg = trig.config || {};
+  if (trig.type === 'list_subscribe') return cfg.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === cfg.listId)?.name || '—')}"` : 'Contact subscribes to any list';
+  if (trig.type === 'tag_added') return cfg.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === cfg.tagId)?.name || '—')}" is added` : 'Any tag is added';
+  if (trig.type === 'page_visit') return cfg.urlContains ? `Contact visits page containing "${escapeHtml(cfg.urlContains)}"` : 'Contact visits any page';
+  if (trig.type === 'booking_created') return cfg.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === cfg.eventTypeId)?.name || '—')}" is created` : 'Any booking is created';
+  if (trig.type === 'email_opened') return 'Email is opened';
+  if (trig.type === 'email_clicked') return 'Email link is clicked';
+  return '';
+}
 const GOAL_SHORT_LABELS = { incoming_email: 'Incoming email', incoming_sms: 'Incoming SMS', incoming_call: 'Incoming call', meeting_booked: 'Meeting booked', lead_status_change: 'Lead status change', outcome_met: 'Outcome met' };
 
 // Same conversion table as workflows_backend.js's stepDelayMinutes -- used
@@ -332,7 +345,7 @@ function renderCanvas() {
   canvas.innerHTML = `
     <div class="trigger-card" id="triggerCardBtn">
       <div class="pra-label">Start sequence when</div>
-      <div style="margin-top:4px">${TRIG_LABELS[workflow.trigger?.type] || ''}</div>
+      <div style="margin-top:4px">${trigLabel(workflow.trigger)}</div>
     </div>
     ${!goalHtml && sorted.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
     ${goalHtml}

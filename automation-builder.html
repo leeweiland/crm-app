@@ -337,7 +337,14 @@ function render() {
 
   const canvas = document.getElementById('canvas');
   const trig = automation.trigger || { type: 'list_subscribe', config: {} };
-  const trigLabelMap = { list_subscribe: 'Contact subscribes to list', tag_added: 'Tag is added', email_opened: 'Email is opened', email_clicked: 'Email link is clicked', page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page', form_submitted: trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted', booking_created: trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created' };
+  const trigLabelMap = {
+    list_subscribe: trig.config?.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === trig.config.listId)?.name || '—')}"` : 'Contact subscribes to any list',
+    tag_added: trig.config?.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === trig.config.tagId)?.name || '—')}" is added` : 'Any tag is added',
+    email_opened: 'Email is opened', email_clicked: 'Email link is clicked',
+    page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page',
+    form_submitted: trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted',
+    booking_created: trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created',
+  };
   // Not part of automation.steps -- a goal can fire at any point during
   // enrollment, not at a fixed position in the chain -- so it's a fixed
   // card right after Trigger rather than something spliced into the chain.
