@@ -70,11 +70,7 @@
 
       <div class="tab-panel pra-panel" id="tab-customfields" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:6px">Custom Fields</div>
-        <div style="display:flex;gap:20px;margin-bottom:14px">
-          <label class="pra-label" style="cursor:pointer"><input type="radio" name="cfEntity" value="contact" checked/> Contacts</label>
-          <label class="pra-label" style="cursor:pointer"><input type="radio" name="cfEntity" value="lead"/> Leads</label>
-          <label class="pra-label" style="cursor:pointer"><input type="radio" name="cfEntity" value="opportunity"/> Opportunities</label>
-        </div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Drag to reorder -- shown on the contact panel in this same order.</div>
         <div id="fieldsList"></div>
         <div class="add-row">
           <input class="pra-input" id="newFieldLabel" placeholder="New field label..."/>
@@ -144,21 +140,16 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Automatic opt-out rules, so no one keeps getting texted or emailed after they've asked to stop.</div>
 
         <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="stopKeywordsEnabled"/> Auto-detect SMS stop keywords</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words (not just mentioned in a sentence), the contact's status is set to <b>STOP</b> and SMS is opted out. This never affects email — email opt-out only happens via an explicit unsubscribe link click.</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words (not just mentioned in a sentence), SMS is opted out for that contact. Their pipeline status (ENROLLED, BOOKED, etc.) is never touched by this — someone can still very much be an active student and just want texts to stop, so status stays whatever a human set it to. This never affects email — email opt-out only happens via an explicit unsubscribe link click.</div>
         <div class="field"><label class="pra-label">Keywords (comma-separated)</label><input class="pra-input" id="stopKeywordsList" placeholder="stop, stopall, unsubscribe, cancel, end, quit"/></div>
 
         <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out on suppression status</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Blacklist</b>, both SMS and email are opted out. Applies no matter how the status was changed (manually, or automatically above).</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Blacklist</b>, both SMS and email are opted out and the conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter, no unread alerts). Applies no matter how the status was changed (manually, or automatically above).</div>
 
         <hr style="border-color:var(--pra-border);margin:20px 0 18px"/>
-        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="hideKeywordsEnabled"/> Auto-hide on trigger words</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words, SMS is opted out and the conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter). Reversible -- a reply matching a re-opt-in keyword below brings it back and re-enables SMS.</div>
-        <div class="field"><label class="pra-label">Hide keywords (comma-separated)</label><input class="pra-input" id="hideKeywordsList" placeholder="e.g. quiet, leave me alone"/></div>
-        <div class="field"><label class="pra-label">Re-opt-in keywords (comma-separated)</label><input class="pra-input" id="reOptInKeywordsList" placeholder="start, unstop"/></div>
-
-        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistKeywordsEnabled"/> Auto-blacklist on trigger words</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words, the contact's status is set to <b>Blacklist</b> -- both SMS and email opted out, hidden under the <b>Blacklist</b> filter. Permanent: unlike the hide keywords above, there's no reverse trigger.</div>
-        <div class="field"><label class="pra-label">Blacklist keywords (comma-separated)</label><input class="pra-input" id="blacklistKeywordsList" placeholder="e.g. scam, fuck off"/></div>
+        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="triggerKeywordsEnabled"/> Auto-blacklist on trigger words</label>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> -- both SMS and email opted out, conversation hidden. Permanent: no reverse trigger.</div>
+        <div class="field"><label class="pra-label">Trigger keywords (comma-separated)</label><input class="pra-input" id="triggerKeywordsList" placeholder="e.g. fuck you, scam, leave me alone"/></div>
 
         <button class="pra-btn" id="saveComplianceBtn">Save</button>
         <div class="pra-muted" id="complianceSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
@@ -384,13 +375,18 @@ document.getElementById('addStatusBtn').onclick = async () => {
 };
 
 // ── Custom fields ────────────────────────────────────────────────────────
+// Always entityType=contact -- the only kind anything (contact-detail.html,
+// the contacts table, etc) actually displays; see the backend comment for
+// why "lead"/"opportunity" fields exist in the data but aren't surfaced
+// here anymore.
 async function loadFields() {
-  const entityType = document.querySelector('input[name="cfEntity"]:checked').value;
-  const r = await fetch('/api/custom-fields?entityType=' + entityType);
+  const r = await fetch('/api/custom-fields?entityType=contact');
   const { fields } = await r.json();
   const list = document.getElementById('fieldsList');
   list.innerHTML = fields.map(f => `
-    <div class="row-item"><span style="flex:1">${escapeHtml(f.label)}</span><span class="pra-muted" style="font-size:.78rem">Text</span>
+    <div class="row-item" draggable="true" data-id="${f.id}">
+      <span class="drag-handle">&#8942;&#8942;</span>
+      <span style="flex:1">${escapeHtml(f.label)}</span><span class="pra-muted" style="font-size:.78rem">Text</span>
       <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-field="${f.id}">Delete</button>
     </div>
   `).join('') || '<div class="pra-muted">No custom fields yet.</div>';
@@ -398,13 +394,14 @@ async function loadFields() {
     await fetch('/api/custom-fields/' + btn.dataset.delField, { method: 'DELETE' });
     loadFields();
   });
+  wireDragReorder(list, async (orderedIds) => {
+    await fetch('/api/custom-fields/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderedIds }) });
+  });
 }
-document.querySelectorAll('input[name="cfEntity"]').forEach(r => r.addEventListener('change', loadFields));
 document.getElementById('addFieldBtn').onclick = async () => {
   const input = document.getElementById('newFieldLabel');
   if (!input.value.trim()) return;
-  const entityType = document.querySelector('input[name="cfEntity"]:checked').value;
-  await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entityType, label: input.value.trim() }) });
+  await fetch('/api/custom-fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: input.value.trim() }) });
   input.value = '';
   loadFields();
 };
@@ -578,22 +575,16 @@ async function loadComplianceSettings() {
   document.getElementById('stopKeywordsEnabled').checked = !!c.stopKeywordsEnabled;
   document.getElementById('stopKeywordsList').value = (c.stopKeywords || []).join(', ');
   document.getElementById('blacklistAutoOptOut').checked = !!c.blacklistAutoOptOut;
-  document.getElementById('hideKeywordsEnabled').checked = !!c.hideKeywordsEnabled;
-  document.getElementById('hideKeywordsList').value = (c.hideKeywords || []).join(', ');
-  document.getElementById('reOptInKeywordsList').value = (c.reOptInKeywords || []).join(', ');
-  document.getElementById('blacklistKeywordsEnabled').checked = !!c.blacklistKeywordsEnabled;
-  document.getElementById('blacklistKeywordsList').value = (c.blacklistKeywords || []).join(', ');
+  document.getElementById('triggerKeywordsEnabled').checked = !!c.triggerKeywordsEnabled;
+  document.getElementById('triggerKeywordsList').value = (c.triggerKeywords || []).join(', ');
 }
 document.getElementById('saveComplianceBtn').onclick = async () => {
   const body = {
     stopKeywordsEnabled: document.getElementById('stopKeywordsEnabled').checked,
     stopKeywords: document.getElementById('stopKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
     blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked,
-    hideKeywordsEnabled: document.getElementById('hideKeywordsEnabled').checked,
-    hideKeywords: document.getElementById('hideKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
-    reOptInKeywords: document.getElementById('reOptInKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
-    blacklistKeywordsEnabled: document.getElementById('blacklistKeywordsEnabled').checked,
-    blacklistKeywords: document.getElementById('blacklistKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
+    triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked,
+    triggerKeywords: document.getElementById('triggerKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
   };
   const r = await fetch('/api/integrations/compliance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   document.getElementById('complianceSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';

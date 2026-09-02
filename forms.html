@@ -56,7 +56,22 @@ document.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => {
   const key = th.dataset.sort;
   formsSort = { key, dir: formsSort.key === key && formsSort.dir === 'desc' ? 'asc' : 'desc' };
   renderFormsTable();
+  saveSortPreference();
 });
+
+// Persisted server-side (not localStorage) so it follows the user across
+// devices, same pattern as workflows.html/automations.html/campaigns.html.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.formsSort;
+    if (saved?.key) formsSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ formsSort }) });
+}
 
 async function loadForms() {
   const r = await fetch('/api/forms');
@@ -102,7 +117,10 @@ document.getElementById('newFormBtn').onclick = async () => {
   if (r.ok) location.href = '/form-builder.html?id=' + d.form.id;
 };
 
-loadForms();
+(async function init() {
+  await loadSortPreference();
+  loadForms();
+})();
 </script>
 </body>
 </html>

@@ -117,18 +117,24 @@ export async function handleInboxRequest(req, res, url) {
       // leads who last engaged a year ago but are still mid-sequence.
       // lastInboundAt is what "Newest first" actually sorts by; lastAt
       // stays the true last-touch for the preview text/ticks.
+      const hidden = !!meta?.hidden;
+      // A hidden conversation (blacklisted, via applyStatusOptOut) is a
+      // permanent quarantine, not something waiting on a reply -- its
+      // inbound messages never count toward the unread badge or the
+      // Unresponded filter, in the Hidden tab or anywhere else.
+      const unreadCount = hidden ? 0 : g.unreadCount;
       return {
         key: g.key, contactId: g.contactId, contact,
         displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
         lastChannel: last.channel, lastDirection: last.direction,
         lastPreview: last.subject || last.bodyPreview || "",
-        lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount: g.unreadCount,
-        pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived, hidden: !!meta?.hidden,
+        lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount,
+        pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived, hidden,
         // "Done" only counts once you've actually seen everything -- new
         // inbound activity after being marked done drops unreadCount back
         // above 0, which is enough on its own to fall out of the DONE
         // filter (unresponded && done are mutually exclusive by construction).
-        done: !!meta?.done && g.unreadCount === 0,
+        done: !!meta?.done && unreadCount === 0,
         lastStatus: lastMine?.status || null, lastOpened,
       };
     });
@@ -137,17 +143,15 @@ export async function handleInboxRequest(req, res, url) {
     if (search) rows = rows.filter(c => c.displayName.toLowerCase().includes(search));
     // Archived conversations (manually archived) stay out of every other
     // view -- there's nothing left to action on them -- and only show up
-    // when Archived is explicitly selected. hidden (opt-out-triggered,
-    // reversible on re-opt-in) and BLACKLIST status (permanent) are their
-    // own dedicated buckets, kept crisply separate from generic "archived"
-    // even though BLACKLIST always sets archived=true too (via
-    // applyStatusOptOut) -- otherwise it'd show up in both tabs at once.
-    const isBlacklist = (c) => c.contact?.status === "BLACKLIST";
+    // when Archived is explicitly selected. Hidden (blacklisted contacts,
+    // set via applyStatusOptOut -- permanent, no reverse trigger) is its
+    // own dedicated bucket, kept separate from generic "archived" so a
+    // plain manually-archived conversation and a blacklisted one don't
+    // blend into the same tab.
     if (bucket === "hidden") rows = rows.filter(c => c.hidden);
-    else if (bucket === "blacklist") rows = rows.filter(isBlacklist);
-    else if (bucket === "archived") rows = rows.filter(c => c.archived && !c.hidden && !isBlacklist(c));
+    else if (bucket === "archived") rows = rows.filter(c => c.archived && !c.hidden);
     else {
-      rows = rows.filter(c => !c.archived && !c.hidden && !isBlacklist(c));
+      rows = rows.filter(c => !c.archived && !c.hidden);
       if (bucket === "done") rows = rows.filter(c => c.done);
       else if (bucket === "unresponded") rows = rows.filter(c => c.unreadCount > 0);
       else if (bucket === "favorites") rows = rows.filter(c => c.starred);

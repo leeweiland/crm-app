@@ -437,22 +437,40 @@ export async function handleContactsRequest(req, res, url) {
   }
 
   // ── Custom fields ────────────────────────────────────────────────────
+  // entityType still exists on each record (import_backend.js's Close merge
+  // can create "lead"-typed fields, following the underlying contact's own
+  // .type) but nothing actually DISPLAYS those anywhere -- contact-detail.html
+  // and every other consumer only ever fetch entityType=contact. So the admin
+  // UI (settings.html) manages contact fields only; existing lead/opportunity
+  // field definitions are left alone in the data, just no longer exposed
+  // through this UI (already effectively true before this, since they were
+  // never shown anywhere else either).
   if (p === "/api/custom-fields" && req.method === "GET") {
     const entityType = url.searchParams.get("entityType");
     let fields = readJson(CUSTOM_FIELDS_FILE, []);
     if (entityType) fields = fields.filter(f => f.entityType === entityType);
-    return sendJson(res, 200, { fields });
+    return sendJson(res, 200, { fields: fields.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) });
   }
   if (p === "/api/custom-fields" && req.method === "POST") {
-    const { entityType, label } = await readJsonBody(req);
-    if (!["lead", "contact", "opportunity"].includes(entityType)) return sendJson(res, 400, { error: "entityType must be 'lead', 'contact', or 'opportunity'" });
+    const { label } = await readJsonBody(req);
     if (!label) return sendJson(res, 400, { error: "label is required" });
     const fields = readJson(CUSTOM_FIELDS_FILE, []);
-    const order = fields.filter(f => f.entityType === entityType).length;
-    const field = { id: randomUUID(), entityType, label, type: "text", order, createdAt: new Date().toISOString() };
+    const order = fields.filter(f => f.entityType === "contact").length;
+    const field = { id: randomUUID(), entityType: "contact", label, type: "text", order, createdAt: new Date().toISOString() };
     fields.push(field);
     writeJson(CUSTOM_FIELDS_FILE, fields);
     return sendJson(res, 200, { ok: true, field });
+  }
+  if (p === "/api/custom-fields/reorder" && req.method === "POST") {
+    const { orderedIds } = await readJsonBody(req);
+    if (!Array.isArray(orderedIds)) return sendJson(res, 400, { error: "orderedIds must be an array" });
+    const fields = readJson(CUSTOM_FIELDS_FILE, []);
+    orderedIds.forEach((id, i) => {
+      const f = fields.find(x => x.id === id);
+      if (f) f.order = i;
+    });
+    writeJson(CUSTOM_FIELDS_FILE, fields);
+    return sendJson(res, 200, { ok: true });
   }
   const fieldMatch = p.match(/^\/api\/custom-fields\/([^/]+)$/);
   if (fieldMatch && req.method === "DELETE") {

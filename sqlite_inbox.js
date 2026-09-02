@@ -195,25 +195,15 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bu
 
   const where = [];
   const params = {};
-  // hidden (opt-out-triggered, reversible on re-opt-in) and BLACKLIST
-  // status (permanent) are their own dedicated buckets now, kept crisply
-  // separate from generic "archived" -- a contact can be archived for
-  // plain manual reasons without being either of those, and vice versa
-  // (BLACKLIST always sets archived=1 too via applyStatusOptOut, but the
-  // "archived" bucket below deliberately excludes it so it only shows up
-  // once, under its own tab). See compliance_backend.js's checkHideTrigger/
-  // checkBlacklistTrigger for what sets these.
-  // "status IS NULL OR status != 'BLACKLIST'", not just "status !=
-  // 'BLACKLIST'" -- SQL's != against NULL (an unmatched/potential-contact
-  // conversation, or a contact with no status set) evaluates to NULL, not
-  // TRUE, which a bare != would have silently excluded from every default
-  // view and the archived tab.
-  const notBlacklistSql = "(status IS NULL OR status != 'BLACKLIST')";
+  // Hidden (blacklisted contacts, set via compliance_backend.js's
+  // applyStatusOptOut -- permanent, no reverse trigger) is its own
+  // dedicated bucket, kept separate from generic "archived" so a plain
+  // manually-archived conversation and a blacklisted one don't blend into
+  // the same tab.
   if (bucket === "hidden") { where.push("hidden = 1"); }
-  else if (bucket === "blacklist") { where.push("status = 'BLACKLIST'"); }
-  else if (bucket === "archived") { where.push("archived = 1", "hidden = 0", notBlacklistSql); }
+  else if (bucket === "archived") { where.push("archived = 1", "hidden = 0"); }
   else {
-    where.push("archived = 0", "hidden = 0", notBlacklistSql);
+    where.push("archived = 0", "hidden = 0");
     if (bucket === "done") where.push("done = 1");
     else if (bucket === "unresponded") where.push("unread_count > 0");
     else if (bucket === "favorites") where.push("starred = 1");
@@ -282,7 +272,10 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bu
       lastAt: last?.createdAt || (r.last_at_ms ? new Date(r.last_at_ms).toISOString() : null),
       lastInboundAt: r.last_inbound_at_ms ? new Date(r.last_inbound_at_ms).toISOString() : null,
       lastMessageId: last?.id || r.last_message_id,
-      unreadCount: r.unread_count,
+      // Hidden (blacklisted) conversations never show an unread badge --
+      // see the "hidden" bucket comment above and inbox_backend.js's
+      // matching JSON-fallback path.
+      unreadCount: r.hidden ? 0 : r.unread_count,
       pinned: !!r.pinned, starred: !!r.starred, archived: !!r.archived, done: !!r.done,
       lastStatus: r.last_status, lastOpened: !!r.last_opened,
     };

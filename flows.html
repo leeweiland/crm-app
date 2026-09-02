@@ -59,7 +59,22 @@ document.querySelectorAll('[data-sort]').forEach(th => th.onclick = () => {
   const key = th.dataset.sort;
   flowsSort = { key, dir: flowsSort.key === key && flowsSort.dir === 'desc' ? 'asc' : 'desc' };
   renderFlowsTable();
+  saveSortPreference();
 });
+
+// Persisted server-side (not localStorage) so it follows the user across
+// devices, same pattern as workflows.html/automations.html/campaigns.html.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.flowsSort;
+    if (saved?.key) flowsSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ flowsSort }) });
+}
 
 async function loadFlows() {
   const r = await fetch('/api/flows');
@@ -109,7 +124,10 @@ document.getElementById('newFlowBtn').onclick = async () => {
   if (r.ok) location.href = '/flow-builder.html?id=' + d.flow.id;
 };
 
-loadFlows();
+(async function init() {
+  await loadSortPreference();
+  loadFlows();
+})();
 </script>
 </body>
 </html>

@@ -373,7 +373,6 @@
               <option value="favorites">Favorites</option>
               <option value="archived">Archived</option>
               <option value="hidden">Hidden</option>
-              <option value="blacklist">Blacklist</option>
             </select>
             <select class="pra-select" id="convoChannelSelect">
               <option value="">Email &amp; SMS</option>
@@ -795,10 +794,11 @@ function wireConvoRow(row) {
       showToast('Status updated');
       if (convo.contact) convo.contact.status = status;
       e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
-      // A status change can auto-archive the conversation (STOP / Blacklist &
-      // Blacklist) -- same reload chatStatusSelect's handler does, so a
-      // freshly-archived row actually drops out of the current view instead
-      // of sticking around from the stale local `conversations` array.
+      // A status change can auto-archive (STOP) or auto-hide (Blacklist)
+      // the conversation -- same reload chatStatusSelect's handler does, so
+      // a freshly-archived/hidden row actually drops out of the current
+      // view instead of sticking around from the stale local
+      // `conversations` array.
       await loadConversations();
     });
   }
@@ -1408,11 +1408,11 @@ function renderThread() {
     showToast('Status updated');
     e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
     await loadRefs();
-    // A status change can auto-archive the conversation (STOP / Blacklist &
-    // Blacklist) -- loadRefs() only refreshes contacts/statuses/users, not
-    // the conversation list itself, so without this the row would keep
+    // A status change can auto-archive (STOP) or auto-hide (Blacklist) the
+    // conversation -- loadRefs() only refreshes contacts/statuses/users,
+    // not the conversation list itself, so without this the row would keep
     // showing in the sidebar (stale local `conversations` array) even
-    // though the backend already archived it.
+    // though the backend already archived/hidden it.
     await loadConversations();
   });
 

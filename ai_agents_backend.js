@@ -6,6 +6,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { getContactMessages } from "./message_index.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
+import { BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WRITING_CACHE_PATH = join(__dirname, "data", "chunks_cache.json");
@@ -221,7 +222,7 @@ export const AI_GENERATION_LOG_FILE = "crm_ai_generation_log.json";
 // Statuses where the sales conversation is already resolved one way or
 // another -- no reply is ever needed regardless of what the last message
 // looks like. Skipped before ever calling the model.
-export const TERMINAL_STATUSES = new Set(["ENROLLED", "STOP", "BLACKLIST", "WE CANCELLED"]);
+export const TERMINAL_STATUSES = new Set(["ENROLLED", "STOP", BLACKLIST_STATUS_LABEL, "WE CANCELLED"]);
 // A human personally sent the last outbound message (not the AI) within
 // this window -- they're actively on this lead, don't suggest anything.
 const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;

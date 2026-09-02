@@ -315,7 +315,22 @@ document.querySelectorAll('#tab-eventTypes [data-sort]').forEach(th => th.onclic
   const key = th.dataset.sort;
   eventTypesSort = { key, dir: eventTypesSort.key === key && eventTypesSort.dir === 'desc' ? 'asc' : 'desc' };
   renderEventTypesTable();
+  saveSortPreference();
 });
+
+// Persisted server-side (not localStorage) so it follows the user across
+// devices, same pattern as workflows.html/automations.html/campaigns.html.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.eventTypesSort;
+    if (saved?.key) eventTypesSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventTypesSort }) });
+}
 
 async function loadEventTypes() {
   const r = await fetch('/api/scheduling/admin/event-types');
@@ -400,6 +415,7 @@ document.getElementById('saveMeetingRemindersBtn').onclick = async () => {
   loadStatus();
   loadBookings();
   await loadCalendars();
+  await loadSortPreference();
   loadEventTypes();
   loadMeetingReminderSettings();
 })();
