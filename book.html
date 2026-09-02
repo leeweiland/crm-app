@@ -108,6 +108,13 @@ const prefillName = qs.get('prefillName') || '';
 const prefillEmail = qs.get('prefillEmail') || '';
 const prefillPhone = qs.get('prefillPhone') || '';
 const prefillFormAnswers = qs.get('formAnswers') || '';
+// Same data as prefillFormAnswers, individually labeled instead of one
+// flattened blob -- sent to the booking endpoint as its own field (not
+// folded into `answers`, which stays keyed by this event type's own
+// question ids) so scheduling_backend.js can put each one on the
+// booking_created Flow trigger's payload as its own {{payload.X}} token.
+let prefillFormAnswersJson = null;
+try { prefillFormAnswersJson = JSON.parse(qs.get('formAnswersJson') || 'null'); } catch { prefillFormAnswersJson = null; }
 // Set alongside the prefill params above -- the outer form already has its
 // own Next/Submit button at the bottom of the page, so a second "Confirm
 // Booking" button inside this iframe is a redundant, confusing second
@@ -399,7 +406,7 @@ async function submitBooking() {
   btn.disabled = true; btn.textContent = 'Booking…';
   const r = await fetch('/api/scheduling/bookings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers }),
+    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined }),
   });
   const d = await r.json();
   if (!r.ok) {

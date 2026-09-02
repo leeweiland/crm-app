@@ -670,7 +670,7 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
-    const { slug, startAt, timezone, answers } = await readJsonBody(req);
+    const { slug, startAt, timezone, answers, formAnswers } = await readJsonBody(req);
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
@@ -739,7 +739,17 @@ export async function handleSchedulingRequest(req, res, url) {
     fireWorkflowTrigger("booking_created", { contactId: contact.id, eventTypeId: et.id });
     fireFlowTrigger("booking_created", {
       contactId: contact.id, eventTypeId: et.id,
-      payload: { "Event Type": et.name, "When": when, "Name": name, "Email": booking.email, "Phone": booking.phone, "Notes": notes || "" },
+      // Spread first so the real booking fields always win a same-named
+      // collision (e.g. a form question that happened to be labeled
+      // "Email") -- formAnswers is book.html's own forwarded copy of a
+      // calendar-embedded form's OTHER answers (see public-form.html's
+      // bookingWidgetUrl), individually labeled so a flow triggered off
+      // this event can reference {{payload.Career}} etc. directly instead
+      // of only the one combined Notes blob.
+      payload: {
+        ...(formAnswers && typeof formAnswers === "object" ? formAnswers : {}),
+        "Event Type": et.name, "When": when, "Name": name, "Email": booking.email, "Phone": booking.phone, "Notes": notes || "",
+      },
     });
     checkConversionGoal("meeting_booked", contact.id);
 

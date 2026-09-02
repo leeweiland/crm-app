@@ -184,9 +184,16 @@ const VIDEO_ASPECT_PADDING = { '16:9': '56.25%', '9:16': '177.78%', '1:1': '100%
 
 // Calendly-style handoff into the embedded booking widget: anything the
 // form already collected on an earlier step -- name/email/phone via
-// book.html's own prefill params (so it isn't asked a second time) and
-// every other answer via formAnswers (so it ends up on the actual calendar
-// event, not just this form's own submission record).
+// book.html's own prefill params (so it isn't asked a second time), every
+// other answer via formAnswers as one flattened blob (so it ends up on the
+// actual calendar event/notes, not just this form's own submission
+// record), AND the same answers again as formAnswersJson -- individually
+// labeled, like forms_backend.js's own labeledAnswers -- so a Flow
+// triggered off booking_created can reference {{payload.Career}} etc.
+// individually instead of only the one combined Notes blob. This is the
+// only path those ever reach a Flow at all when the form itself has no
+// email/phone field of its own (upsertContactFromSubmission needs one to
+// create/match a contact, so form_submitted never fires without it).
 function bookingWidgetUrl(f) {
   const url = new URL(`${location.origin}/book/${encodeURIComponent(f.eventTypeSlug)}`);
   // Tells book.html to hide its own "Confirm Booking" button -- this
@@ -202,11 +209,18 @@ function bookingWidgetUrl(f) {
   if (emailField && answers[emailField.id]) url.searchParams.set('prefillEmail', answers[emailField.id]);
   if (phoneField && answers[phoneField.id]) url.searchParams.set('prefillPhone', answers[phoneField.id]);
   const carriedIds = new Set([emailField?.id, phoneField?.id, firstField?.id, lastField?.id, f.id]);
-  const extraQA = form.fields
-    .filter(ff => !NON_ANSWERABLE_TYPES.includes(ff.type) && !carriedIds.has(ff.id))
-    .map(ff => { const v = answers[ff.id]; return v === undefined || v === '' ? null : `${ff.label}: ${Array.isArray(v) ? v.join(', ') : v}`; })
-    .filter(Boolean);
+  const extraFields = form.fields.filter(ff => !NON_ANSWERABLE_TYPES.includes(ff.type) && !carriedIds.has(ff.id));
+  const extraQA = [];
+  const labeledAnswers = {};
+  extraFields.forEach(ff => {
+    const v = answers[ff.id];
+    if (v === undefined || v === '') return;
+    const flat = Array.isArray(v) ? v.join(', ') : v;
+    extraQA.push(`${ff.label}: ${flat}`);
+    labeledAnswers[ff.label] = flat;
+  });
   if (extraQA.length) url.searchParams.set('formAnswers', extraQA.join('\n'));
+  if (Object.keys(labeledAnswers).length) url.searchParams.set('formAnswersJson', JSON.stringify(labeledAnswers));
   return url.toString();
 }
 
@@ -433,9 +447,15 @@ function updateNextVisibility() {
   const disqualified = fields.some(f => aiRuleFor(f) && aiScreenResults[f.id] === false);
   const backBtn = document.getElementById('pfBack');
   if (backBtn) backBtn.style.display = disqualified ? 'none' : '';
+  // "Complete this step to continue" implies the visitor left something
+  // unfinished -- true for an ordinary hide_next rule, actively misleading
+  // for an AI disqualification: they DID answer, in full, and were screened
+  // out. Next/Back both already go silent for that case above; the message
+  // does too, rather than telling someone to do something they can't do
+  // anything about.
   const msgEl = document.getElementById('pfHiddenMsg');
   msgEl.textContent = 'Complete this step to continue.';
-  msgEl.style.display = hiddenByRule ? 'block' : 'none';
+  msgEl.style.display = hiddenByRule && !disqualified ? 'block' : 'none';
 }
 
 function validateStep(fields) {
