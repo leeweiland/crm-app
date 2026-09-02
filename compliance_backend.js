@@ -4,6 +4,7 @@ import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { getContactMessages } from "./message_index.js";
 import { getComplianceSettings } from "./integrations_backend.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 
 // Real carriers require the ENTIRE message body to be exactly one reserved
 // word (case/punctuation-insensitive) to trigger opt-out -- substring
@@ -114,6 +115,13 @@ export function checkAutoTriggers(contactId) {
       contact.updatedAt = new Date().toISOString();
       applyStatusOptOut(contact);
       writeJson(CONTACTS_FILE, contacts);
+      // Status changed but this doesn't go through contacts_backend.js's
+      // PATCH handler (the usual place that syncs a status change to the
+      // sidebar's SQLite snapshot) -- without this, the Blacklist filter
+      // tab and every other view keeps showing the OLD status until
+      // something else happens to touch this contact. Confirmed live:
+      // this was silently missing and the filter tab stayed empty.
+      try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
     }
     return;
   }
