@@ -180,7 +180,7 @@ function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 const flowId = new URLSearchParams(location.search).get('id');
 let flow = null, runCounts = {};
 let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [];
-let saveTimer, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
+let saveTimer, editingStepId = null, pendingAddPath = null, pendingAddAfter = null, pendingAddBefore = null;
 let cachedSamples = null;
 
 async function loadRefs() {
@@ -242,14 +242,15 @@ function renderChainHtml(startId, path) {
     const step = flow.steps[cur];
     cur = step.type === 'if_then' ? null : (step.nextStepId || null);
   }
-  let html = ids.map((id, i) => stepCardHtml(id, i === ids.length - 1) + (i < ids.length - 1
+  let html = `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div>${ids.length ? `<button class="insert-step-btn" data-path="${path}" data-before="${ids[0]}" title="Insert a step here">+</button>` : ''}</div>`;
+  html += ids.map((id, i) => stepCardHtml(id, i === ids.length - 1) + (i < ids.length - 1
     ? `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-path="${path}" data-after="${id}" title="Insert a step here">+</button></div>`
     : '')).join('');
   const lastId = ids[ids.length - 1] || null;
   const lastStep = lastId ? flow.steps[lastId] : null;
 
   if (!lastStep || lastStep.type !== 'if_then') {
-    if (html) html += '<div class="chain-arrow">&darr;</div>';
+    if (ids.length) html += '<div class="chain-arrow">&darr;</div>';
     html += `<button class="add-step-btn" data-path="${path}" data-after="${lastId || ''}">+ Add Step</button>`;
   } else {
     html += `
@@ -277,7 +278,6 @@ function render() {
       <div class="pra-label">Start flow when</div>
       <div style="margin-top:4px">${trigLabel}</div>
     </div>
-    <div class="chain-arrow">&darr;</div>
     ${renderChainHtml(flow.startStepId, 'root')}
   `;
   document.getElementById('triggerCardBtn').onclick = openTriggerModal;
@@ -289,6 +289,7 @@ function render() {
   canvas.querySelectorAll('[data-path]').forEach(btn => btn.onclick = () => {
     pendingAddPath = btn.dataset.path;
     pendingAddAfter = btn.dataset.after || null;
+    pendingAddBefore = btn.dataset.before || null;
     openModal('typePickerModal');
   });
 }
@@ -462,7 +463,12 @@ document.getElementById('saveTriggerBtn').onclick = async () => {
 // ── Add step: type picker -> config ─────────────────────────────────────
 function attachNewStep(step) {
   flow.steps[step.id] = step;
-  if (pendingAddPath === 'root' && !pendingAddAfter) {
+  if (pendingAddBefore) {
+    step.nextStepId = pendingAddBefore;
+    if (pendingAddPath === 'root') flow.startStepId = step.id;
+    else if (pendingAddPath.startsWith('yes:')) flow.steps[pendingAddPath.slice(4)].yesStepId = step.id;
+    else if (pendingAddPath.startsWith('no:')) flow.steps[pendingAddPath.slice(3)].noStepId = step.id;
+  } else if (pendingAddPath === 'root' && !pendingAddAfter) {
     flow.startStepId = step.id;
   } else if (pendingAddAfter) {
     const prevStep = flow.steps[pendingAddAfter];
