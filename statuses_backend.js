@@ -3,12 +3,16 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 
 export const STATUSES_FILE = "crm_statuses.json";
 
-// Seeded from Lee's actual Close "Lead Statuses" list (same order shown in
-// Settings -> Statuses & Pipelines) so day-one contacts have a familiar,
-// ready-to-use status vocabulary instead of an empty list.
+// Seeded from Lee's actual Close "Lead Statuses" list, in real pipeline
+// order (POTENTIAL lowest, FINISHED highest) so day-one contacts have a
+// familiar, ready-to-use status vocabulary instead of an empty list. This
+// order is a real hierarchy, not just display order -- see
+// segments_shared.js's applyAdvancingStatus, which every automated status
+// change (a form's booking step, a new booking) goes through so it can
+// never move a contact backward.
 const SEED_STATUSES = [
-  "FINISHED", "POTENTIAL", "FOLLOW UP (They have a Task / Date set)", "APPLICATION",
-  "BOOKED", "WE CANCELLED", "RSVP'ed", "ENROLLED", "STOP", "BLACKLIST",
+  "POTENTIAL", "FOLLOW UP (They have a Task / Date set)", "APPLICATION",
+  "BOOKED", "WE CANCELLED", "RSVP'ed", "ENROLLED", "STOP", "BLACKLIST", "FINISHED",
 ].map((label, i) => ({ id: randomUUID(), label, order: i, color: "#5f727f", isTerminal: false, createdAt: new Date().toISOString() }));
 
 function getStatuses() {

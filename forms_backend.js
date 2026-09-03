@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
@@ -311,10 +311,14 @@ function upsertContactFromSubmission(form, answers) {
     // someone re-filling a generic form) -- but a form built around booking
     // a call is different: completing it (new or returning contact either
     // way) IS the actual event this status represents, same as the
-    // calendar step's own "on booking, set status" already applies
-    // unconditionally in scheduling_backend.js's upsertContactFromBooking.
+    // calendar step's own "on booking, set status" in scheduling_backend.js's
+    // upsertContactFromBooking. Either way, applyAdvancingStatus only ever
+    // moves a contact FORWARD in the Settings > Statuses hierarchy -- a
+    // blacklisted contact re-filling a booking-step form, or an already-
+    // ENROLLED contact mistakenly booking a second call, must never get
+    // silently knocked back down to this form's default status.
     const hasCalendarStep = form.fields.some(f => f.type === "calendar" && f.eventTypeSlug);
-    if (form.settings.defaultStatus && (hasCalendarStep || !contact.status)) contact.status = form.settings.defaultStatus;
+    if (form.settings.defaultStatus && (hasCalendarStep || !contact.status)) applyAdvancingStatus(contact, form.settings.defaultStatus);
   } else {
     contact = {
       id: randomUUID(), type: "lead", accountName: "",

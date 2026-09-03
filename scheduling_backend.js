@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { CONTACTS_FILE, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
 import { STATUSES_FILE } from "./statuses_backend.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
@@ -605,7 +605,11 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
     if (last) contact.last = last;
     if (normalizedEmail) contact.email = normalizedEmail;
     if (normalizedPhone) contact.phone = normalizedPhone;
-    if (statusId) contact.status = statusId;
+    // Never downgrades -- see applyAdvancingStatus's own comment. An
+    // already-ENROLLED contact who mistakenly books a second call must
+    // stay ENROLLED, not get knocked back down to this event type's
+    // BOOKED status.
+    if (statusId) applyAdvancingStatus(contact, statusId);
     contact.customFields = { ...contact.customFields, ...customFields };
     contact.updatedAt = new Date().toISOString();
   } else {

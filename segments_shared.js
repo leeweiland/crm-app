@@ -6,11 +6,38 @@
 // cycle. Pure data/functions only, no side effects, safe for anything to
 // import.
 import { readJson } from "./auth_backend.js";
+import { STATUSES_FILE } from "./statuses_backend.js";
 
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
 
 export function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
+
+// Settings > Statuses' drag-to-reorder position is a real pipeline
+// hierarchy (POTENTIAL lowest, FINISHED highest) -- higher order means
+// further along, and a contact should never move backward in that
+// hierarchy from an AUTOMATED trigger (a re-submitted form, a mistakenly-
+// booked second call). A human explicitly picking a status from the
+// dropdown bypasses this entirely (contacts_backend.js's PATCH handler
+// sets contact.status directly, no guard) -- only inferred status changes
+// go through here.
+export function getStatusOrderMap() {
+  return new Map(readJson(STATUSES_FILE, []).map(s => [s.label, s.order]));
+}
+// Returns true if it actually changed contact.status. Fails OPEN (applies
+// the change) whenever either label isn't found in the hierarchy -- a
+// custom status someone added, or one that got renamed/deleted, must
+// never silently get stuck because this guard can't place it, only ever
+// block a move it can actually confirm is a downgrade.
+export function applyAdvancingStatus(contact, newLabel, orderMap) {
+  if (!newLabel || contact.status === newLabel) return false;
+  if (!contact.status) { contact.status = newLabel; return true; }
+  const map = orderMap || getStatusOrderMap();
+  const curOrder = map.get(contact.status);
+  const newOrder = map.get(newLabel);
+  if (curOrder == null || newOrder == null || newOrder >= curOrder) { contact.status = newLabel; return true; }
+  return false;
+}
 
 // A person is the same contact if EITHER their email OR their phone
 // matches -- not "phone only when there's no email" like several importers
