@@ -211,7 +211,17 @@ function getContactIdByEmail(email) {
 // per-contact message files -- so a mailbox with thousands of messages
 // costs the same O(new mail since last tick) every poll, not O(mailbox size).
 export async function checkGmailInbox() {
-  const users = readJson(USERS_FILE, []).filter(u => u.gmailRefreshToken);
+  // Read the FULL roster and filter down to a separate list to iterate --
+  // the loop below mutates entries in place and, when anything changed,
+  // writes `allUsers` (every user) back, never the filtered subset. This
+  // used to filter and reassign `users` to the connected-only subset, then
+  // write THAT back to USERS_FILE -- silently deleting every user who
+  // hadn't connected Gmail (an admin's own historyId update was enough to
+  // trigger the write) on every 30s tick where it happened to fire.
+  // Confirmed live: this is what wiped crm_users.json down to a single
+  // account, repeatedly, on 2026-09-03.
+  const allUsers = readJson(USERS_FILE, []);
+  const users = allUsers.filter(u => u.gmailRefreshToken);
   if (!users.length) return;
   contactsByEmailCache = null; // fresh per tick, reused across all messages/users within it
   let usersChanged = false;
@@ -284,5 +294,5 @@ export async function checkGmailInbox() {
       console.error(`[gmail] poll failed for ${user.gmailEmail || user.id}:`, e.message);
     }
   }
-  if (usersChanged) writeJson(USERS_FILE, users);
+  if (usersChanged) writeJson(USERS_FILE, allUsers);
 }
