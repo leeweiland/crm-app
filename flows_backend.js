@@ -352,6 +352,16 @@ async function advanceFlowRun(run, flow) {
     }
 
     if (!run.currentStepId) { completeRun(run); return; }
+    // Persisted after EVERY step, not just at the natural exit points
+    // (delay/complete) below -- confirmed live that skipping this let a
+    // stale-run resume (recoverStaleFlowRuns above) re-execute steps that
+    // had already genuinely succeeded on an earlier attempt, because the
+    // only on-disk record of progress was the run's state from BEFORE this
+    // step started. A step with a real side effect (send_email, in this
+    // case) isn't idempotent, so re-running it on every retry sent dozens
+    // of duplicate emails to the same recipients before the run finally
+    // got past whatever kept failing later in the chain.
+    saveRun(run);
   }
   saveRun(run);
 }
