@@ -660,6 +660,51 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
   return found;
 }
 
+// Same byte-copy philosophy as updateJsonArrayRecordByField, but updates
+// EVERY matching element in one pass instead of stopping at the first --
+// for when a field can legitimately appear on many records (e.g. contactId
+// on every message a contact ever sent/received), not just one. Confirmed
+// live (2026-09-02): duplicates_backend.js's mergeContacts() did
+// readJson(MESSAGE_LOG_FILE)+forEach+writeJson to reassign every message's
+// contactId from the losing contact to the surviving one -- fine when the
+// message log was small, but it grew to 12GB+ and that full read+parse+
+// rewrite hung the single-threaded server outright (14+ minutes with zero
+// write progress) the next time anyone merged a duplicate contact.
+export function updateAllJsonArrayRecordsByField(file, field, value, updater) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) return 0;
+  const needleCompact = Buffer.from(`"${field}":"${value}"`);
+  const needleSpaced = Buffer.from(`"${field}": "${value}"`);
+  let changedCount = 0;
+  const tmp = `${p}.tmp${process.pid}`;
+  const dstFd = openSync(tmp, "w");
+  let wroteAny = false;
+  try {
+    writeSync(dstFd, "[");
+    forEachJsonArrayElement(p, (buf, start, end) => {
+      const view = buf.subarray(start, end);
+      const candidate = view.indexOf(needleCompact) !== -1 || view.indexOf(needleSpaced) !== -1;
+      let toWrite = null;
+      if (candidate) {
+        let obj;
+        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+        if (obj && obj[field] === value) {
+          toWrite = updater(obj) || obj;
+          changedCount++;
+        }
+      }
+      if (wroteAny) writeSync(dstFd, ",");
+      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+      else writeSync(dstFd, buf, start, end - start);
+      wroteAny = true;
+    });
+    writeSync(dstFd, "]");
+  } finally { closeSync(dstFd); }
+  if (changedCount > 0) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+  else { try { unlinkSync(tmp); } catch {} }
+  return changedCount;
+}
+
 // Same byte-copy philosophy, generalized to a bounded SET of ids (matched by
 // the record's own "id" field) in one pass -- used for bulk operations like
 // "mark these 30 inbox items done" where the ids are already known (e.g.
