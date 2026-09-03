@@ -591,14 +591,21 @@ async function loadRefs() {
   // handling) -- that's now a targeted /api/contacts/:id lookup instead,
   // done only when actually needed, so a normal Inbox load no longer
   // downloads and parses the whole contacts database first.
-  const [statusesRes, usersRes, meRes, teamRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/auth/users'), fetch('/api/auth/me'), fetch('/api/auth/team')]);
+  // crm-nav.js's own init already fetched /api/auth/me and /api/auth/team
+  // (window.crmNavReady, awaited by this page's own init() before loadRefs()
+  // ever runs) -- re-fetching both here was pure duplicate network traffic,
+  // and on a page load already sensitive to server load variance (see
+  // init()'s own comment on why loadRefs/loadConversations now run
+  // concurrently instead of waiting on each other), every avoidable round
+  // trip matters.
+  const [statusesRes, usersRes] = await Promise.all([fetch('/api/statuses'), fetch('/api/auth/users')]);
   allStatuses = statusesRes.ok ? (await statusesRes.json()).statuses : [];
   allUsers = usersRes.ok ? (await usersRes.json()).users : []; // 403s for a non-admin -- avatarStyle() just falls back to status-only glow
-  currentUser = meRes.ok ? (await meRes.json()).user : null;
+  currentUser = window.crmMe || null;
   // /api/auth/team (not /api/auth/users) -- readable by every staff member,
   // not just admins, since the compose panel's From display needs to show
   // teammates exist even to non-admin senders.
-  teamUsers = teamRes.ok ? (await teamRes.json()).users : [];
+  teamUsers = window.crmTeamUsers || [];
   const statusSel = document.getElementById('convoStatusSelect');
   statusSel.innerHTML = '<option value="">All statuses</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}"${STATUS_GLOW[s.label] ? ` data-color="${STATUS_GLOW[s.label]}"` : ''}>${escapeHtml(s.label)}</option>`).join('');
 }
@@ -1843,8 +1850,17 @@ const SIDEBAR_MIN_WIDTH = 220, SIDEBAR_MAX_WIDTH = 560;
   // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
   // crmTeamUsers -- those are only guaranteed populated after this resolves.
   await window.crmNavReady;
-  await loadRefs();
-  await loadConversations();
+  // loadConversations() doesn't actually depend on loadRefs()'s own output
+  // (allStatuses/allUsers only matter for status-dropdown options and
+  // avatar glow colors, not for fetching/rendering the conversation rows
+  // themselves) -- these used to run one after the other, so any latency
+  // in EITHER phase added directly onto total load time instead of
+  // overlapping. Confirmed live this was a real contributor to the Inbox
+  // feeling slow to open under any server load: three sequential waits
+  // (crmNavReady, then loadRefs, then loadConversations) stack, they don't
+  // overlap, so ordinary per-request variance compounds into a multi-
+  // second wait instead of staying bounded by the single slowest request.
+  await Promise.all([loadRefs(), loadConversations()]);
 })();
 </script>
 </body>
