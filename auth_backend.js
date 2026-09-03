@@ -386,6 +386,16 @@ function writeJsonToDisk(p, data) {
   renameSync(tmp, p);
 }
 export function writeJson(file, data) {
+  // Temporary diagnostic: crm_users.json has been found wiped down to a
+  // single account (with no delete endpoint anywhere in this codebase to
+  // explain it) more than once. Every writeJson(USERS_FILE, ...) call logs
+  // who called it and how many records it's about to write, so the NEXT
+  // occurrence is caught with a stack trace instead of guessed at after
+  // the fact. Remove once the cause is found.
+  if (file === USERS_FILE) {
+    const count = Array.isArray(data) ? data.length : "n/a";
+    console.log(`[users-write-audit] writing ${count} user(s) to ${file}\n${new Error().stack}`);
+  }
   if (_batchIo) { _jsonCache.set(file, data); _dirtyFiles.add(file); return; }
   const p = join(DATA_DIR, file);
   writeJsonToDisk(p, data);

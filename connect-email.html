@@ -20,11 +20,23 @@
         <button class="pra-btn pra-btn-sm" id="gmailConnectBtn" style="display:none">Connect Gmail</button>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="gmailDisconnectBtn" style="display:none">Disconnect</button>
       </div>
+
+      <div class="pra-panel" style="padding:22px;max-width:620px;margin-top:20px;display:none" id="teamPanel">
+        <div class="pra-h2" style="margin-bottom:6px">Team</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, and which address.</div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="teamTable">
+            <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th></tr></thead>
+            <tbody id="teamBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 <script src="/crm-nav.js"></script>
 <script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 async function loadGmailStatus() {
   const r = await fetch('/api/auth/gmail/status');
   const status = document.getElementById('gmailStatus');
@@ -34,6 +46,19 @@ async function loadGmailStatus() {
   document.getElementById('gmailConnectBtn').style.display = d.connected ? 'none' : 'inline-block';
   document.getElementById('gmailDisconnectBtn').style.display = d.connected ? 'inline-block' : 'none';
 }
+async function loadTeamStatus() {
+  const r = await fetch('/api/auth/gmail/team-status');
+  if (!r.ok) return; // not an admin -- panel stays hidden
+  const { team } = await r.json();
+  document.getElementById('teamPanel').style.display = 'block';
+  document.getElementById('teamBody').innerHTML = team.map(u => `
+    <tr>
+      <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
+      <td>${escapeHtml(u.email)}</td>
+      <td>${u.connected ? escapeHtml(u.gmailEmail || 'Connected') : '<span class="pra-muted">Not connected</span>'}</td>
+    </tr>
+  `).join('');
+}
 document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailDisconnectBtn').onclick = async () => {
   if (!confirm('Disconnect Gmail? Replies will stop showing up in the Inbox automatically.')) return;
@@ -41,6 +66,7 @@ document.getElementById('gmailDisconnectBtn').onclick = async () => {
   loadGmailStatus();
 };
 loadGmailStatus();
+loadTeamStatus();
 </script>
 </body>
 </html>

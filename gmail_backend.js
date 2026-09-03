@@ -1,4 +1,4 @@
-import { readJson, writeJson, sendJson, getSessionUser, USERS_FILE } from "./auth_backend.js";
+import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
@@ -121,6 +121,20 @@ export async function handleGmailRequest(req, res, url) {
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const user = readJson(USERS_FILE, []).find(u => u.id === me.id);
     return sendJson(res, 200, { connected: !!user?.gmailRefreshToken, email: user?.gmailEmail || null });
+  }
+
+  // Admin-only roster of who on the team has connected Gmail -- lets an
+  // admin see at a glance whose replies are actually flowing into the
+  // Inbox without having to ask each person individually.
+  if (p === "/api/auth/gmail/team-status" && req.method === "GET") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const team = readJson(USERS_FILE, []).filter(u => !u.archived).map(u => ({
+      id: u.id, first: u.first, last: u.last, email: u.email,
+      connected: !!u.gmailRefreshToken, gmailEmail: u.gmailEmail || null,
+    }));
+    return sendJson(res, 200, { team });
   }
 
   if (p === "/api/auth/gmail/disconnect" && req.method === "POST") {
