@@ -64,8 +64,12 @@ export function recheckStopStatus(contactId) {
   writeJson(CONTACTS_FILE, contacts);
   // A suppressed contact has nothing left to action in the Inbox -- get
   // their thread out of the main list the same way a real STOP reply
-  // would in any texting platform.
-  setConvoMeta(contactId, { archived: true });
+  // would in any texting platform. Hidden (not archived): STOP is
+  // reversible -- see checkAutoTriggers below, which un-hides a contact
+  // the moment they send a genuine, non-keyword reply. Archived has no
+  // such reversal path anywhere in the app, which would have left a
+  // recovered STOP silently stuck out of the main list forever.
+  setConvoMeta(contactId, { hidden: true });
   return true;
 }
 
@@ -87,24 +91,24 @@ export const BLACKLIST_STATUS_LABEL = "BLACKLIST";
 // edit -- but does update the conversation directly, since that's a
 // separate file.
 //
-// BLACKLIST hides the conversation (not archives it) -- same bucket the
-// Inbox sidebar's "Hidden" filter already shows, so there's one single
-// place to review every blacklisted contact rather than a dedicated
-// tab of its own. A hidden conversation's inbound messages also stop
-// counting toward unreadCount (see inbox_backend.js/sqlite_inbox.js) --
-// permanently quarantined, not something that should ever demand
-// attention again.
+// Both STOP and BLACKLIST hide the conversation (not archive it) -- same
+// bucket the Inbox sidebar's "Hidden" filter already shows, so there's one
+// single place to review every quarantined contact rather than splitting
+// them across Hidden and Archived. STOP's hide is reversible (see
+// checkAutoTriggers, which un-hides on the contact's next genuine reply);
+// BLACKLIST's is not -- permanently quarantined, not something that
+// should ever demand attention again.
 export function applyStatusOptOut(contact) {
   const settings = getComplianceSettings();
   if (!settings.blacklistAutoOptOut) return;
-  if (contact.status === "STOP") { contact.smsOptOut = true; setConvoMeta(contact.id, { archived: true }); }
+  if (contact.status === "STOP") { contact.smsOptOut = true; setConvoMeta(contact.id, { hidden: true }); }
   else if (contact.status === BLACKLIST_STATUS_LABEL) { contact.smsOptOut = true; contact.emailOptOut = true; setConvoMeta(contact.id, { hidden: true }); }
 }
 
 // A reply CONTAINING (not being exactly) one of these words moves the
 // contact straight to the blacklist status -- same effect a human
 // blacklisting them manually has, via applyStatusOptOut: both channels
-// opted out, archived, no reverse trigger, ever. Deliberately NOT the same
+// opted out, hidden, no reverse trigger, ever. Deliberately NOT the same
 // whole-message-only check isStopKeyword uses for the carrier-compliance
 // STOP keywords above -- those are reserved single-word replies by
 // convention (real carriers require an exact match there), but someone
@@ -125,30 +129,50 @@ export function containsTriggerWord(text, keywords) {
 // Called once per inbound SMS, right alongside recheckStopStatus (reads
 // the per-contact message file, not the full multi-GB log recheckStopStatus
 // reads -- see message_index.js's own comment on why that split exists).
+//
+// Also owns the STOP reversal: a contact hidden by a prior STOP reply
+// (recheckStopStatus above) re-surfaces in the sidebar the moment they
+// send a genuine reply that isn't itself a STOP/trigger keyword -- texting
+// again at all counts as "re-opting in" for VISIBILITY. This does NOT
+// touch smsOptOut (a carrier-compliance flag that only recheckStopStatus
+// owns) or contact.status -- purely un-hides the conversation so a human
+// sees the new message instead of it sitting quietly in the Hidden tab.
+// BLACKLIST never reverses this way, by design -- see applyStatusOptOut's
+// own comment on that being permanent, no reverse trigger, ever.
 export function checkAutoTriggers(contactId) {
   if (!contactId) return;
   const settings = getComplianceSettings();
-  if (!settings.triggerKeywordsEnabled || !settings.triggerKeywords.length) return;
   const latestInbound = getContactMessages(contactId)
     .filter(m => m.channel === "sms" && m.direction === "inbound")
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
   if (!latestInbound) return;
   const body = latestInbound.body || latestInbound.bodyPreview;
-  if (!containsTriggerWord(body, settings.triggerKeywords)) return;
+  const isBlacklistTrigger = !!(settings.triggerKeywordsEnabled && settings.triggerKeywords.length && containsTriggerWord(body, settings.triggerKeywords));
 
   const contacts = readJson(CONTACTS_FILE, []);
   const contact = contacts.find(c => c.id === contactId);
-  if (contact && contact.status !== BLACKLIST_STATUS_LABEL) {
-    contact.status = BLACKLIST_STATUS_LABEL;
-    contact.updatedAt = new Date().toISOString();
-    applyStatusOptOut(contact);
-    writeJson(CONTACTS_FILE, contacts);
-    // Status changed but this doesn't go through contacts_backend.js's
-    // PATCH handler (the usual place that syncs a status change to the
-    // sidebar's SQLite snapshot) -- without this, the Blacklist filter
-    // tab and every other view keeps showing the OLD status until
-    // something else happens to touch this contact. Confirmed live:
-    // this was silently missing and the filter tab stayed empty.
-    try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+  if (!contact) return;
+
+  if (isBlacklistTrigger) {
+    if (contact.status !== BLACKLIST_STATUS_LABEL) {
+      contact.status = BLACKLIST_STATUS_LABEL;
+      contact.updatedAt = new Date().toISOString();
+      applyStatusOptOut(contact);
+      writeJson(CONTACTS_FILE, contacts);
+      // Status changed but this doesn't go through contacts_backend.js's
+      // PATCH handler (the usual place that syncs a status change to the
+      // sidebar's SQLite snapshot) -- without this, the Blacklist filter
+      // tab and every other view keeps showing the OLD status until
+      // something else happens to touch this contact. Confirmed live:
+      // this was silently missing and the filter tab stayed empty.
+      try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+    }
+    return;
+  }
+
+  const isStopTrigger = !!(settings.stopKeywordsEnabled && isStopKeyword(body, settings.stopKeywords));
+  if (!isStopTrigger && contact.status !== BLACKLIST_STATUS_LABEL) {
+    const meta = getConvoMeta(contactId);
+    if (meta?.hidden) setConvoMeta(contactId, { hidden: false });
   }
 }
