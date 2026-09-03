@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, updateAllJsonArrayRecordsByField } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
 import { CONVERSATION_META_FILE } from "./conversation_meta.js";
-import { PAGE_VISITS_FILE } from "./tracking_backend.js";
+import { PAGE_VISITS_FILE, claimVisitorHistory } from "./tracking_backend.js";
 
 export const POSSIBLE_DUPLICATES_FILE = "crm_possible_duplicates.json";
 
@@ -85,6 +85,74 @@ export function scanForPossibleDuplicates() {
   return added;
 }
 
+// Phase 2 of ad/social click attribution (Phase 1 is
+// tracking_backend.js's claimVisitorHistory, which links a visitor's OWN
+// anonymous browsing to the contact THEY opt in as -- same device, same
+// crm_vid cookie, certain). This covers the case Phase 1 can't: an
+// anonymous visit from a DIFFERENT device than the one that eventually
+// opted in (phone ad click, laptop opt-in). There's no cookie to bridge
+// that gap -- the only signals available are IP/approximate location,
+// which is exactly the same fuzzy, "could be a coincidence" territory
+// scanForPossibleDuplicates above already works in for two CONTACTS. This
+// is that same idea applied to one contact + one still-anonymous session:
+// flag it for a human to confirm, never auto-attribute. An anonymous
+// visit carries no name/email/phone to layer on top of IP/location the
+// way two real contact records can be compared -- IP/location is the only
+// signal there is until a human confirms it, at which point the visit
+// stops being anonymous.
+export const POSSIBLE_VISITOR_MATCHES_FILE = "crm_possible_visitor_matches.json";
+// Indexed rather than compared pairwise (orphan x every contact) --
+// crm_contacts.json already has 176K+ rows, and looping every anonymous
+// session against every contact to recompute its visit signals each time
+// is exactly the O(orphans x contacts x visits) shape that already caused
+// real trouble elsewhere this session once real data volume hit it. One
+// pass over the visits log builds ip/location -> contactIds indexes, and
+// looks each orphan's own signals up in O(1) against those instead.
+export function scanForPossibleVisitorMatches() {
+  const contacts = readJson(CONTACTS_FILE, []);
+  const contactsById = new Map(contacts.map(c => [c.id, c]));
+  const visits = readJson(PAGE_VISITS_FILE, []);
+  const existing = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []);
+  const alreadyFlagged = new Set(existing.map(m => `${m.visitorId}|${m.contactId}`));
+
+  const contactsByIp = new Map(), contactsByLocation = new Map();
+  const orphans = new Map(); // visitorId -> {ips, locations, lastVisit}
+  for (const v of visits) {
+    if (v.contactId) {
+      if (v.ip) { if (!contactsByIp.has(v.ip)) contactsByIp.set(v.ip, new Set()); contactsByIp.get(v.ip).add(v.contactId); }
+      if (v.location) { const k = `${v.location.city}|${v.location.region}|${v.location.country}`; if (!contactsByLocation.has(k)) contactsByLocation.set(k, new Set()); contactsByLocation.get(k).add(v.contactId); }
+    } else if (v.visitorId) {
+      if (!orphans.has(v.visitorId)) orphans.set(v.visitorId, { ips: new Set(), locations: new Set(), lastVisit: null });
+      const o = orphans.get(v.visitorId);
+      if (v.ip) o.ips.add(v.ip);
+      if (v.location) o.locations.add(`${v.location.city}|${v.location.region}|${v.location.country}`);
+      o.lastVisit = v; // visits are appended in order, so this ends up as the latest
+    }
+  }
+
+  let added = 0;
+  for (const [vid, sig] of orphans) {
+    const ipCandidates = new Set();
+    for (const ip of sig.ips) { const s = contactsByIp.get(ip); if (s) s.forEach(id => ipCandidates.add(id)); }
+    const locCandidates = new Set();
+    for (const loc of sig.locations) { const s = contactsByLocation.get(loc); if (s) s.forEach(id => locCandidates.add(id)); }
+    for (const contactId of new Set([...ipCandidates, ...locCandidates])) {
+      const key = `${vid}|${contactId}`;
+      if (alreadyFlagged.has(key) || !contactsById.has(contactId)) continue;
+      existing.push({
+        id: randomUUID(), visitorId: vid, contactId,
+        reason: ipCandidates.has(contactId) ? "ip" : "location",
+        sampleVisit: sig.lastVisit ? { path: sig.lastVisit.path, el: sig.lastVisit.el, at: sig.lastVisit.at } : null,
+        status: "pending", createdAt: new Date().toISOString(),
+      });
+      alreadyFlagged.add(key);
+      added++;
+    }
+  }
+  if (added) writeJson(POSSIBLE_VISITOR_MATCHES_FILE, existing);
+  return added;
+}
+
 const DUPLICATE_SCAN_STATE_FILE = "crm_duplicate_scan_state.json";
 const SCAN_INTERVAL_MS = 24 * 60 * 60 * 1000; // once/day -- new page-visit data trickles in continuously, no need for this to run every scheduler tick
 // Called every scheduler tick (see scheduler.js) -- cheap no-op unless a
@@ -95,9 +163,11 @@ export function runScheduledDuplicateScan() {
   const state = readJson(DUPLICATE_SCAN_STATE_FILE, { lastScanAt: null });
   if (state.lastScanAt && Date.now() - new Date(state.lastScanAt).getTime() < SCAN_INTERVAL_MS) return;
   const added = scanForPossibleDuplicates();
+  const visitorMatches = scanForPossibleVisitorMatches();
   state.lastScanAt = new Date().toISOString();
   writeJson(DUPLICATE_SCAN_STATE_FILE, state);
   if (added) console.log(`[duplicates] scheduled scan found ${added} new possible duplicate${added === 1 ? "" : "s"}`);
+  if (visitorMatches) console.log(`[duplicates] scheduled scan found ${visitorMatches} new possible visitor match${visitorMatches === 1 ? "" : "es"}`);
 }
 
 // Reassigns every message/call/task/conversation-meta row from mergeId to
@@ -123,21 +193,13 @@ export function mergeContacts(keepId, mergeId) {
   keep.updatedAt = new Date().toISOString();
   writeJson(CONTACTS_FILE, contacts.filter(c => c.id !== mergeId));
 
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  log.forEach(m => { if (m.contactId === mergeId) m.contactId = keepId; });
-  writeJson(MESSAGE_LOG_FILE, log);
-
-  const calls = readJson(CALLS_FILE, []);
-  calls.forEach(c => { if (c.contactId === mergeId) c.contactId = keepId; });
-  writeJson(CALLS_FILE, calls);
-
-  const tasks = readJson(TASKS_FILE, []);
-  tasks.forEach(t => { if (t.contactId === mergeId) t.contactId = keepId; });
-  writeJson(TASKS_FILE, tasks);
-
-  const visits = readJson(PAGE_VISITS_FILE, []);
-  visits.forEach(v => { if (v.contactId === mergeId) v.contactId = keepId; });
-  writeJson(PAGE_VISITS_FILE, visits);
+  // Byte-scanned in place instead of readJson+forEach+writeJson -- the
+  // message log alone reached 12GB+ and a full parse/rewrite of it hung the
+  // server outright the moment someone next merged a duplicate contact.
+  updateAllJsonArrayRecordsByField(MESSAGE_LOG_FILE, "contactId", mergeId, m => { m.contactId = keepId; return m; });
+  updateAllJsonArrayRecordsByField(CALLS_FILE, "contactId", mergeId, c => { c.contactId = keepId; return c; });
+  updateAllJsonArrayRecordsByField(TASKS_FILE, "contactId", mergeId, t => { t.contactId = keepId; return t; });
+  updateAllJsonArrayRecordsByField(PAGE_VISITS_FILE, "contactId", mergeId, v => { v.contactId = keepId; return v; });
 
   // Keep whichever conversation meta (pin/star/done/archived) already
   // exists for the surviving contact; the losing one's meta row (if any)
@@ -193,6 +255,44 @@ export async function handleDuplicatesRequest(req, res, url) {
     row.status = "merged";
     writeJson(POSSIBLE_DUPLICATES_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+
+  // Phase 2 visitor-match review queue (see scanForPossibleVisitorMatches
+  // above) -- same "flag for a human, never auto-attribute" shape as the
+  // contact-duplicate pairs above.
+  if (p === "/api/duplicates/visitor-matches" && req.method === "GET") {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const rows = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []).filter(m => m.status === "pending");
+    const withContacts = rows
+      .map(m => ({ ...m, contact: contacts.find(c => c.id === m.contactId) || null }))
+      .filter(m => m.contact); // contact may have been deleted/merged since flagging
+    return sendJson(res, 200, { matches: withContacts });
+  }
+
+  if (p === "/api/duplicates/visitor-matches/scan" && req.method === "POST") {
+    const added = scanForPossibleVisitorMatches();
+    return sendJson(res, 200, { ok: true, added });
+  }
+
+  const visitorDismissMatch = p.match(/^\/api\/duplicates\/visitor-matches\/([^/]+)\/dismiss$/);
+  if (visitorDismissMatch && req.method === "POST") {
+    const all = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []);
+    const row = all.find(m => m.id === visitorDismissMatch[1]);
+    if (!row) return sendJson(res, 404, { error: "Not found" });
+    row.status = "dismissed";
+    writeJson(POSSIBLE_VISITOR_MATCHES_FILE, all);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  const visitorConfirmMatch = p.match(/^\/api\/duplicates\/visitor-matches\/([^/]+)\/confirm$/);
+  if (visitorConfirmMatch && req.method === "POST") {
+    const all = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []);
+    const row = all.find(m => m.id === visitorConfirmMatch[1]);
+    if (!row) return sendJson(res, 404, { error: "Not found" });
+    const claimed = claimVisitorHistory(row.visitorId, row.contactId);
+    row.status = "confirmed";
+    writeJson(POSSIBLE_VISITOR_MATCHES_FILE, all);
+    return sendJson(res, 200, { ok: true, claimed });
   }
 
   return false;

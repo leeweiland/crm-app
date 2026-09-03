@@ -258,6 +258,13 @@
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanDuplicatesBtn">Scan for Duplicates</button>
         <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
         <div id="duplicatesList" style="margin-top:18px"></div>
+
+        <hr style="border-color:var(--pra-border);margin:28px 0 22px"/>
+        <div class="pra-h2" style="margin-bottom:6px">Possible Visitor Matches</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">An anonymous website visit (someone who clicked an ad or social post but hasn't identified themselves yet) that shares an IP address or rough location with a known contact's own tracked visits -- e.g. their phone clicked the ad, their laptop is what opted in. Confirming links that visit (and everything else from that same anonymous session) into the contact's history. Never linked automatically -- an IP can be shared by more than one person (same office, same household), so this is always a deliberate choice below.</div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanVisitorMatchesBtn">Scan for Visitor Matches</button>
+        <span class="pra-muted" id="visitorMatchesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
+        <div id="visitorMatchesList" style="margin-top:18px"></div>
       </div>
     </div>
   </div>
@@ -1187,6 +1194,53 @@ document.getElementById('scanDuplicatesBtn').onclick = async () => {
   msg.textContent = r.ok ? `Found ${d.added} new possible duplicate${d.added === 1 ? '' : 's'}.` : 'Scan failed.';
   if (r.ok) loadDuplicates();
 };
+
+// ── Possible visitor matches (anonymous session -> known contact) ───────
+async function loadVisitorMatches() {
+  const r = await fetch('/api/duplicates/visitor-matches');
+  if (!r.ok) return;
+  const { matches } = await r.json();
+  const wrap = document.getElementById('visitorMatchesList');
+  if (!matches.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.</div>'; return; }
+  wrap.innerHTML = matches.map(m => `
+    <div class="pra-card" style="padding:16px;margin-bottom:12px">
+      <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${m.reason === 'ip' ? 'same IP address' : 'same rough location'}</div>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px;flex:1;min-width:200px">
+          <div class="pra-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Known contact</div>
+          <div style="font-weight:700">${escapeHtml(m.contact.first)} ${escapeHtml(m.contact.last)}</div>
+          <div class="pra-muted" style="font-size:.8rem">${escapeHtml(m.contact.email || '')}${m.contact.email && m.contact.phone ? ' · ' : ''}${escapeHtml(m.contact.phone || '')}</div>
+        </div>
+        <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px;flex:1;min-width:200px">
+          <div class="pra-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Anonymous session</div>
+          <div style="font-weight:700">${m.sampleVisit ? escapeHtml(m.sampleVisit.path) : '(no page recorded)'}</div>
+          <div class="pra-muted" style="font-size:.8rem">${m.sampleVisit?.el ? 'Source: ' + escapeHtml(m.sampleVisit.el) : 'No source tag'}${m.sampleVisit?.at ? ' · ' + new Date(m.sampleVisit.at).toLocaleDateString() : ''}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <button class="pra-btn pra-btn-sm" style="flex:1" data-confirm-vm="${m.id}">Yes, Same Person — Link It</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" style="flex:1" data-dismiss-vm="${m.id}">Not a Match</button>
+      </div>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('[data-confirm-vm]').forEach(btn => btn.onclick = async () => {
+    const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.confirmVm}/confirm`, { method: 'POST' });
+    if (r.ok) { showToast('Linked'); loadVisitorMatches(); } else showToast('Could not link', true);
+  });
+  wrap.querySelectorAll('[data-dismiss-vm]').forEach(btn => btn.onclick = async () => {
+    const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.dismissVm}/dismiss`, { method: 'POST' });
+    if (r.ok) { showToast('Dismissed'); loadVisitorMatches(); } else showToast('Could not dismiss', true);
+  });
+}
+document.getElementById('scanVisitorMatchesBtn').onclick = async () => {
+  const msg = document.getElementById('visitorMatchesScanMsg');
+  msg.textContent = 'Scanning…';
+  const r = await fetch('/api/duplicates/visitor-matches/scan', { method: 'POST' });
+  const d = await r.json();
+  msg.textContent = r.ok ? `Found ${d.added} new possible match${d.added === 1 ? '' : 'es'}.` : 'Scan failed.';
+  if (r.ok) loadVisitorMatches();
+};
+loadVisitorMatches();
 
 wireInlineEditTable(document.getElementById('contactsBody'), {
   onSaved: (cell, value) => {
