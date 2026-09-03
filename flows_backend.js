@@ -470,6 +470,39 @@ export async function handleFlowsRequest(req, res, url) {
     if (contentType.includes("application/json")) fields = await readJsonBody(req);
     else { const raw = await readRawBody(req); fields = Object.fromEntries(new URLSearchParams(raw)); }
 
+    if (!flow.active) { res.writeHead(200); res.end(); return true; } // accept + no-op so a paused flow doesn't error the external form
+
+    // Framer (or whatever's calling this) retries on a slow/failed
+    // response -- up to 5 times, confirmed live: a real lead's single form
+    // submission produced 5 separate flow runs within 17 seconds, each
+    // independently emailing/texting the same person, because nothing here
+    // was idempotent against a retried call. Dedup against an identical
+    // payload already submitted to this same flow in the last couple
+    // minutes, rather than trying to make every downstream step itself
+    // idempotent -- still responds 200 either way, so a genuine retry stops
+    // erroring on the sender's end too. Checked via disk (not an in-memory
+    // cache) specifically so it survives this process restarting mid-retry-
+    // storm, which is exactly the kind of moment a retry storm happens in.
+    const recentRuns = readJson(RUNS_FILE, []);
+    const payloadKey = JSON.stringify(fields);
+    const dedupeCutoffMs = Date.now() - 2 * 60 * 1000;
+    const isDuplicate = recentRuns.some(r => r.flowId === flow.id &&
+      JSON.stringify(r.triggerPayload || {}) === payloadKey &&
+      new Date(r.enteredAt).getTime() > dedupeCutoffMs);
+
+    // Respond BEFORE any writes -- confirmed live, this volume's per-file-
+    // write latency alone was regularly eating 5-8+ seconds (writeJson on
+    // an array writes it one element at a time, see writeJsonToDisk's own
+    // comment on why -- each of those small writeSync calls apparently
+    // costs real wall-clock time here), consistently landing close to or
+    // past whatever window Framer/the caller waits before deciding to
+    // retry. Two reads (above) is now the only I/O left before this
+    // response; everything that WRITES happens after, since nothing past
+    // this point can make the caller retry anymore -- it already has its
+    // 2xx.
+    sendJson(res, 200, { ok: true, deduped: isDuplicate });
+    if (isDuplicate) return true;
+
     // Captured even while the flow is still being built (inactive) -- same
     // "send a real test hit and we'll show you what arrived" flow Zapier's
     // trigger step uses, so the field-mapping UI has real field names to
@@ -478,32 +511,13 @@ export async function handleFlowsRequest(req, res, url) {
     flow.trigger.config = { ...flow.trigger.config, samples: [fields, ...(flow.trigger.config.samples || [])].slice(0, 5) };
     writeJson(FLOWS_FILE, flows);
 
-    if (!flow.active) { res.writeHead(200); res.end(); return true; } // accept + no-op so a paused flow doesn't error the external form
-
-    // Framer (or whatever's calling this) retries on a slow/failed
-    // response -- confirmed live: a real lead's single form submission
-    // produced 5 separate flow runs within 17 seconds, each independently
-    // emailing/texting the same person, because nothing here was idempotent
-    // against a retried call. Dedup against an identical payload already
-    // submitted to this same flow in the last couple minutes, rather than
-    // trying to make every downstream step itself idempotent -- still
-    // responds 200 either way, so a genuine retry stops erroring on the
-    // sender's end too.
-    const recentRuns = readJson(RUNS_FILE, []);
-    const payloadKey = JSON.stringify(fields);
-    const dedupeCutoffMs = Date.now() - 2 * 60 * 1000;
-    const isDuplicate = recentRuns.some(r => r.flowId === flow.id &&
-      JSON.stringify(r.triggerPayload || {}) === payloadKey &&
-      new Date(r.enteredAt).getTime() > dedupeCutoffMs);
-    if (isDuplicate) return sendJson(res, 200, { ok: true, deduped: true });
-
     // No contact resolution here anymore -- that's now an explicit
     // "Add/Update Contact" step the flow itself contains (usually first),
     // so it's visible/editable in the builder instead of an implicit
     // upsert baked into the trigger. A flow with no such step just never
     // gets a contact, and every contact-dependent step downstream no-ops.
     startFlowRun(flow, null, fields);
-    return sendJson(res, 200, { ok: true });
+    return true;
   }
 
   // ── Authed: flow management ───────────────────────────────────────────
