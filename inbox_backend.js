@@ -66,6 +66,7 @@ export async function handleInboxRequest(req, res, url) {
     const channel = url.searchParams.get("channel"); // 'email' | 'sms' | null (both, plus form/booking activity)
     const statusFilter = url.searchParams.get("status") || "";
     const typeFilter = url.searchParams.get("type") || "";
+    const ownerFilter = url.searchParams.get("owner") || ""; // a user id, "unassigned", or "" (no filter)
     const bucket = url.searchParams.get("filter") || "all"; // all|done|unresponded|archived|favorites
     const sortDir = url.searchParams.get("sort") === "oldest" ? "oldest" : "newest";
     const search = (url.searchParams.get("search") || "").trim().toLowerCase();
@@ -80,7 +81,7 @@ export async function handleInboxRequest(req, res, url) {
     // against or to recover from a bad sync without waiting on a redeploy.
     if (url.searchParams.get("_sqlite") !== "0") {
       const t0 = Date.now();
-      const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, bucket, sortDir, search, limit, offset });
+      const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset });
       if (result) return sendJson(res, 200, { ...result, _queryMs: Date.now() - t0, _engine: "sqlite" });
     }
     const _t0 = Date.now();
@@ -158,6 +159,8 @@ export async function handleInboxRequest(req, res, url) {
     }
     if (statusFilter) rows = rows.filter(c => c.contact?.status === statusFilter);
     if (typeFilter) rows = rows.filter(c => c.contact?.programType === typeFilter);
+    if (ownerFilter === "unassigned") rows = rows.filter(c => !c.contact?.ownerId);
+    else if (ownerFilter) rows = rows.filter(c => c.contact?.ownerId === ownerFilter);
 
     rows.sort((a, b) => {
       if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;

@@ -64,6 +64,15 @@ export function sqliteInboxAvailable() {
   for (const col of ["owner_id", "phone", "first_seen_at"]) {
     if (!existingCols.has(col)) db.exec(`ALTER TABLE conversations ADD COLUMN ${col} TEXT`);
   }
+  // Same "index has to come after the ALTER that adds the column" reasoning
+  // as idx_hidden below -- owner_id had no index at all until the Inbox
+  // sidebar's owner filter needed one; without it, filtering ~170k rows by
+  // owner_id would be a full table scan on every request. Unconditional
+  // (not gated on "just added the column" like the ALTER above) since
+  // owner_id already exists on every real deployment by now -- CREATE INDEX
+  // IF NOT EXISTS is a cheap no-op once it's there, same as every other
+  // index in this function.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_owner_id ON conversations(owner_id)`);
   // hidden's own CREATE INDEX has to run down here too, AFTER the ALTER
   // TABLE that actually adds the column on an existing (pre-this-feature)
   // database -- confirmed live that bundling "CREATE INDEX ...(hidden)"
@@ -201,7 +210,7 @@ export function renameStatusInSqlite(oldLabel, newLabel) {
 // inbox_backend.js -- see that handler for what each param means. Returns
 // the same {conversations, total, hasMore} shape so the frontend needs zero
 // changes to consume either path.
-export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bucket, sortDir, search, limit, offset }) {
+export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset }) {
   if (!sqliteInboxAvailable()) return null;
 
   const where = [];
@@ -221,6 +230,10 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, bu
   }
   if (statusFilter) { where.push("status = :status"); params.status = statusFilter; }
   if (typeFilter) { where.push("program_type = :programType"); params.programType = typeFilter; }
+  // "unassigned" (empty/NULL owner_id) vs a specific user id -- so a coach
+  // like Josh can filter the sidebar down to exactly his own leads.
+  if (ownerFilter === "unassigned") { where.push("(owner_id IS NULL OR owner_id = '')"); }
+  else if (ownerFilter) { where.push("owner_id = :ownerId"); params.ownerId = ownerFilter; }
   if (search) { where.push("LOWER(display_name) LIKE :search"); params.search = `%${search.toLowerCase()}%`; }
   // Channel filter changes which message counts as "last" for a row -- only
   // conversations with at least one message on that channel qualify, and

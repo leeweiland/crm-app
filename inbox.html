@@ -396,6 +396,11 @@
               <option value="online">Online</option>
               <option value="gym">Gym</option>
             </select>
+            <select class="pra-select" id="convoOwnerSelect">
+              <option value="">All owners</option>
+              <option value="me">Assigned to me</option>
+              <option value="unassigned">Unassigned</option>
+            </select>
             <select class="pra-select" id="convoSortSelect">
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
@@ -521,7 +526,7 @@ let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
 let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
 let currentUser = null, teamUsers = [];
-let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', ctxMenuConvo = null, longPressTimer = null;
+let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', convoOwner = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
 // rows at a time (filtered/sorted server-side first, see inbox_backend.js)
 // instead of loading the entire conversation list up front; scrolling near
@@ -617,6 +622,15 @@ async function loadRefs() {
   teamUsers = window.crmTeamUsers || [];
   const statusSel = document.getElementById('convoStatusSelect');
   statusSel.innerHTML = '<option value="">All statuses</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}"${STATUS_GLOW[s.label] ? ` data-color="${STATUS_GLOW[s.label]}"` : ''}>${escapeHtml(s.label)}</option>`).join('');
+  // "Assigned to me"/"Unassigned" stay fixed options in the HTML -- only
+  // the rest of the team gets appended here, so a coach like Josh can
+  // filter to exactly his own leads without hunting for his own name in
+  // an alphabetical list.
+  const ownerSel = document.getElementById('convoOwnerSelect');
+  const teamOptionsHtml = teamUsers
+    .filter(u => u.id !== currentUser?.id)
+    .map(u => `<option value="${u.id}">${escapeHtml(`${u.first} ${u.last}`.trim())}</option>`).join('');
+  ownerSel.insertAdjacentHTML('beforeend', teamOptionsHtml);
 }
 
 // ── Tab switching ───────────────────────────────────────────────────────
@@ -644,6 +658,7 @@ function convoQueryParams(offset) {
   if (convoFilter && convoFilter !== 'all') params.set('filter', convoFilter);
   if (convoStatus) params.set('status', convoStatus);
   if (convoType) params.set('type', convoType);
+  if (convoOwner) params.set('owner', convoOwner === 'me' ? (window.crmMe?.id || '') : convoOwner);
   if (convoSort && convoSort !== 'newest') params.set('sort', convoSort);
   if (convoSearchQuery.trim()) params.set('search', convoSearchQuery.trim());
   params.set('limit', CONVO_PAGE_SIZE);
@@ -880,6 +895,7 @@ document.getElementById('convoSortSelect').addEventListener('change', (e) => { c
 document.getElementById('convoChannelSelect').addEventListener('change', (e) => { convoChannel = e.target.value; loadConversations(); });
 document.getElementById('convoStatusSelect').addEventListener('change', (e) => { convoStatus = e.target.value; loadConversations(); });
 document.getElementById('convoTypeSelect').addEventListener('change', (e) => { convoType = e.target.value; loadConversations(); });
+document.getElementById('convoOwnerSelect').addEventListener('change', (e) => { convoOwner = e.target.value; loadConversations(); });
 
 // ── Chat: right-click (desktop) / long-press (mobile) row menu ──────────
 function openContextMenu(c, x, y) {
