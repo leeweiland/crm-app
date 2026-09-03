@@ -28,6 +28,11 @@ export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
 export const AUTOMATION_VERSIONS_FILE = "crm_automation_versions.json";
 const VERSIONED_FIELDS = ["name", "trigger", "steps", "startStepId", "goal"];
+// A send_email step's failure retries up to this many times, waiting this
+// long between attempts, before giving up and moving on -- see
+// advanceEnrollment's send_email branch.
+const SEND_STEP_MAX_RETRIES = 3;
+const SEND_STEP_RETRY_DELAY_MS = 5 * 60 * 1000;
 function automationSnapshotFields(automation) {
   const out = {};
   for (const k of VERSIONED_FIELDS) out[k] = automation[k];
@@ -171,12 +176,31 @@ async function advanceEnrollment(enrollment, automation) {
           if (previewText) previewText = applyBookingTokens(previewText, tokens);
           blocks = blocks.map(b => (b.type === "text" && b.html) ? { ...b, html: applyBookingTokens(b.html, tokens) } : b);
         }
-        await sendEmail({
+        const result = await sendEmail({
           to: contact.email, subject, previewText, blocks, theme: step.config.theme,
           footerTemplateId: step.config.footerTemplateId, contactId: contact.id,
           sourceType: "automation_step", sourceId: `${automation.id}:${step.id}`,
         });
+        // A transient failure here used to be permanent -- silently logged
+        // "failed" and the enrollment moved straight past this step with no
+        // retry and nothing visible to notice. Confirmed live: a real lead
+        // never got their welcome email this way. opted_out is a genuine,
+        // permanent reason to skip -- retrying that would just keep hitting
+        // the same opt-out forever, so it counts as "done", not "failed".
+        if (!result.ok && result.reason !== "opted_out") {
+          const retryCount = (enrollment.stepRetryCount || 0) + 1;
+          if (retryCount <= SEND_STEP_MAX_RETRIES) {
+            enrollment.stepRetryCount = retryCount;
+            enrollment.waitUntil = new Date(Date.now() + SEND_STEP_RETRY_DELAY_MS).toISOString();
+            saveEnrollment(enrollment);
+            return; // pauses here like a wait step -- advanceDueEnrollments resumes and retries this exact step
+          }
+          // Retries exhausted -- move on rather than leaving the enrollment
+          // stuck here forever (which would also block ever re-enrolling
+          // this contact, via enrollContact's own active-enrollment check).
+        }
       }
+      enrollment.stepRetryCount = 0;
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "add_tag") {
       const contact = getContact(enrollment.contactId);
@@ -224,9 +248,13 @@ export async function advanceDueEnrollments() {
     const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === enrollment.automationId);
     if (!automation) continue;
     if (!automation.active) continue; // leave waitUntil as-is -- fires as soon as reactivated, not lost
-    const waitStep = automation.steps[enrollment.currentStepId];
+    const currentStep = automation.steps[enrollment.currentStepId];
     enrollment.waitUntil = null;
-    enrollment.currentStepId = waitStep?.nextStepId || null;
+    // A genuine "wait" step advances past itself once due -- but a
+    // send_email step that set waitUntil for its own retry (see
+    // advanceEnrollment's send_email branch) needs to be RE-ATTEMPTED, not
+    // skipped, so currentStepId only moves for an actual wait step here.
+    if (currentStep?.type === "wait") enrollment.currentStepId = currentStep.nextStepId || null;
     if (!enrollment.currentStepId) { completeEnrollment(enrollment); continue; }
     await advanceEnrollment(enrollment, automation);
   }

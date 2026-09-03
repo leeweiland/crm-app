@@ -6,6 +6,11 @@ import { sendSms } from "./sms_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 
 export const WORKFLOWS_FILE = "crm_workflows.json";
+// An sms step's failure retries up to this many times, waiting this long
+// between attempts, before giving up (marking the enrollment "errored") --
+// see advanceDueWorkflowEnrollments's sms branch.
+const SMS_STEP_MAX_RETRIES = 3;
+const SMS_STEP_RETRY_DELAY_MS = 5 * 60 * 1000;
 export const WF_ENROLLMENTS_FILE = "crm_workflow_enrollments.json";
 
 // Which booking a step's %EVENTNAME%/%WHEN%/etc tokens refer to -- see
@@ -220,8 +225,22 @@ export async function advanceDueWorkflowEnrollments() {
           to: contact.phone, body: applyMergeTags(body, contact), contactId: contact.id,
           sourceType: "workflow_step", sourceId: `${workflow.id}:${step.id}`,
         });
-        if (!result.ok && result.reason !== "twilio_not_configured" && result.reason !== "opted_out") enrollment.status = "errored";
+        // A transient failure here used to be permanent -- marked the whole
+        // enrollment "errored" (no automatic retry) and moved straight past
+        // this step regardless. opted_out/twilio_not_configured are genuine
+        // permanent reasons to skip, not failures to retry.
+        if (!result.ok && result.reason !== "twilio_not_configured" && result.reason !== "opted_out") {
+          const retryCount = (enrollment.stepRetryCount || 0) + 1;
+          if (retryCount <= SMS_STEP_MAX_RETRIES) {
+            enrollment.stepRetryCount = retryCount;
+            enrollment.nextStepDueAt = new Date(Date.now() + SMS_STEP_RETRY_DELAY_MS).toISOString();
+            saveWfEnrollment(enrollment);
+            continue; // retry this same step later -- currentStepIndex deliberately untouched
+          }
+          enrollment.status = "errored"; // retries exhausted -- same as before, falls through to advance past it below
+        }
       }
+      enrollment.stepRetryCount = 0;
     }
 
     const nextIndex = enrollment.currentStepIndex + 1;
