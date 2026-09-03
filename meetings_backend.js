@@ -120,11 +120,21 @@ export async function checkMeetingReminders() {
   const users = readJson(USERS_FILE, []);
   const now = Date.now();
   let changed = false;
+  // Read once per TICK, not once per meeting -- getContact() re-reads the
+  // full ~190MB contacts file on every call, and this loop used to call it
+  // per meeting on every 30s tick regardless of whether a reminder was
+  // actually due. Same fix as scheduling_backend.js's sendDueBookingReminders
+  // (confirmed live there: a handful of items in this kind of loop was
+  // enough to turn into the Inbox hanging for a full minute under
+  // concurrent load) -- lazy-built so a quiet tick with nothing to remind
+  // about still costs nothing.
+  let contactsById = null;
 
   for (const meeting of meetings) {
     const startMs = new Date(meeting.startISO).getTime();
     if (!startMs || startMs <= now) continue; // meeting already happened
-    const contact = getContact(meeting.contactId);
+    if (!contactsById) contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
+    const contact = contactsById.get(meeting.contactId);
     const coach = users.find(u => u.id === meeting.userId);
     if (!contact || !coach) continue;
     meeting.remindersSent = meeting.remindersSent || [];
