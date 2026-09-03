@@ -319,12 +319,12 @@ function renderField(f) {
 // Debounced per field so a still-typing text answer doesn't fire a Claude
 // call on every keystroke. Fails OPEN (pass:true) on any network/server
 // hiccup -- a real visitor should never get stuck over an outage.
-let aiScreenResults = {}, aiScreenTimers = {};
+let aiScreenResults = {}, aiScreenTimers = {}, aiScreenedFor = {};
 function aiRuleFor(field) { return (field?.logic || []).find(r => r.op === 'ai_disqualify'); }
 async function runAiScreen(fieldId) {
   const stepAtStart = stepIndex; // may navigate away during the round trip below
   const val = answers[fieldId];
-  if (val === undefined || val === '' || (Array.isArray(val) && !val.length)) { delete aiScreenResults[fieldId]; updateNextVisibility(); return; }
+  if (val === undefined || val === '' || (Array.isArray(val) && !val.length)) { delete aiScreenResults[fieldId]; delete aiScreenedFor[fieldId]; updateNextVisibility(); return; }
   aiScreenResults[fieldId] = 'pending';
   updateNextVisibility();
   try {
@@ -334,6 +334,13 @@ async function runAiScreen(fieldId) {
   } catch {
     aiScreenResults[fieldId] = true;
   }
+  // Stamps which exact value this result covers -- updateNextVisibility
+  // checks this, not just the 'pending' string, so Next stays disabled for
+  // the whole 800ms debounce window too, not only once the request is
+  // actually in flight. Without it, typing one character and clicking Next
+  // inside that window skipped the screen entirely (validateStep only
+  // checks non-empty, and the debounced runAiScreen call hadn't fired yet).
+  aiScreenedFor[fieldId] = val;
   if (stepIndex !== stepAtStart) return; // Back/Next already moved on while this was in flight
   updateNextVisibility();
   // Deliberately no auto-advance here, unlike a radio/select answer -- an
@@ -440,11 +447,23 @@ function updateNextVisibility() {
   if (!btn) return;
   const fields = steps[stepIndex];
   const hiddenByRule = !!matchingRule(fields, 'hide_next');
-  const aiPending = fields.some(f => aiRuleFor(f) && aiScreenResults[f.id] === 'pending');
+  // True the instant a non-empty answer differs from whatever value the
+  // last AI result actually covers -- not just while a request is
+  // literally in flight ('pending'). That includes the debounce window
+  // between typing and runAiScreen firing, which is exactly the gap a
+  // quick single-character answer + fast click could otherwise slip
+  // through in (validateStep only checks non-empty, it doesn't know this
+  // field needs an AI-verified answer specifically).
+  const aiPending = fields.some(f => {
+    if (!aiRuleFor(f)) return false;
+    const val = answers[f.id];
+    const empty = Array.isArray(val) ? !val.length : (val === undefined || val === null || String(val).trim() === '');
+    return !empty && aiScreenedFor[f.id] !== val;
+  });
   btn.style.display = hiddenByRule ? 'none' : '';
-  // Still silently disabled while an AI check is in flight (so a click
-  // can't race ahead of the result), just without a visible "checking"
-  // message -- the button simply isn't clickable for a moment.
+  // Still silently disabled while unverified (so a click can't race ahead
+  // of the result), just without a visible "checking" message -- the
+  // button simply isn't clickable for a moment.
   btn.disabled = aiPending;
   // A hide_next match is always a deliberate screening/gating rule the form
   // creator set on a specific answer -- an AI disqualification, or an
