@@ -28,6 +28,22 @@ export function markContactEmailEngagement(contactId, kind) { // kind: "opened" 
     return c;
   });
 }
+// A hard bounce or spam complaint (SES webhook, see email_backend.js) is
+// treated the same as an explicit unsubscribe -- reuses the exact same
+// emailOptOut flag sendEmail() already checks before every send, so a
+// bounced/complained address stops getting mailed automatically instead of
+// only being recorded as a data point nobody acts on. Required for SES
+// production access review, and just correct practice regardless --
+// repeatedly mailing a bounced address is what damages sender reputation.
+export function suppressContactEmail(contactId, reason) { // reason: "bounced" | "complained"
+  if (!contactId) return;
+  updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+    c.emailOptOut = true;
+    c.emailSuppressedReason = reason;
+    c.emailSuppressedAt = new Date().toISOString();
+    return c;
+  });
+}
 export function markContactVisitedPage(contactId, path) {
   if (!contactId || !path) return;
   updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
