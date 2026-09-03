@@ -2,7 +2,7 @@ import { readJson } from "./auth_backend.js";
 import { CAMPAIGNS_FILE, sendCampaignNow } from "./campaigns_backend.js";
 import { advanceDueEnrollments } from "./automations_backend.js";
 import { advanceDueWorkflowEnrollments } from "./workflows_backend.js";
-import { advanceDueFlowRuns } from "./flows_backend.js";
+import { advanceDueFlowRuns, recoverStaleFlowRuns } from "./flows_backend.js";
 import { runScheduledDuplicateScan } from "./duplicates_backend.js";
 import { syncWritingCacheIfDue } from "./ai_agents_backend.js";
 import { processAiActiveBatches } from "./ai_active_backend.js";
@@ -28,6 +28,7 @@ async function tick() {
     await advanceDueEnrollments();
     await advanceDueWorkflowEnrollments();
     await advanceDueFlowRuns();
+    await recoverStaleFlowRuns();
     runScheduledDuplicateScan();
     await syncWritingCacheIfDue();
     await processAiActiveBatches();

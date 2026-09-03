@@ -26,6 +26,19 @@ function escapeHtmlForEmail(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 }
 
+// Bounds any single external call (Sheets API, SES) a step makes -- without
+// this, a stalled connection just hangs the awaiting advanceFlowRun call
+// forever with no rejection to .catch(), silently wedging the ENTIRE run
+// (and every step after it) in "active" limbo permanently. Confirmed live:
+// several runs stuck mid-flow with no error logged anywhere, no way to tell
+// something had gone wrong short of noticing they never completed.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function saveContact(contact) {
   const contacts = readJson(CONTACTS_FILE, []);
@@ -304,7 +317,7 @@ async function advanceFlowRun(run, flow) {
     } else if (step.type === "google_sheet") {
       if (step.config.spreadsheetId && step.config.sheetName) {
         const row = (step.config.columns || []).map(tpl => resolveTemplate(tpl, ctx));
-        try { await appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row); }
+        try { await withTimeout(appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row), 20000, "google_sheet append"); }
         catch (e) { console.error("[flows] sheet append failed", e.message); }
       }
       run.currentStepId = step.nextStepId || null;
@@ -321,11 +334,11 @@ async function advanceFlowRun(run, flow) {
         const subjectResolved = resolveTemplate(cfg.subject || "", ctx);
         const bodyHtml = escapeHtmlForEmail(resolveTemplate(cfg.body || "", ctx));
         for (const to of toAddresses) {
-          await sendEmail({
+          await withTimeout(sendEmail({
             to, subject: subjectResolved, blocks: [{ type: "text", html: bodyHtml }],
             contactId: contact?.id || null, sourceType: "flow_step", sourceId: `${flow.id}:${step.id}`,
             from: fromResolved || undefined,
-          }).catch(e => console.error("[flows] send_email failed", e.message));
+          }), 20000, "send_email").catch(e => console.error("[flows] send_email failed", e.message));
         }
       }
       run.currentStepId = step.nextStepId || null;
@@ -386,6 +399,31 @@ export async function advanceDueFlowRuns() {
     run.currentStepId = delayStep?.nextStepId || null;
     if (!run.currentStepId) { completeRun(run); continue; }
     await advanceFlowRun(run, flow);
+  }
+}
+
+// Called by scheduler.js every tick -- resumes any run that's been "active"
+// with no waitUntil (so NOT a legitimate delay pause) for way longer than a
+// normal run should ever take. A real run finishes in well under a second
+// once external calls are bounded by withTimeout above; anything still
+// "active" after several minutes almost certainly got orphaned mid-flight
+// -- e.g. a deploy restarting the container while a request was still
+// awaiting a step (confirmed live: several runs frozen at different steps,
+// all from webhook hits that landed right around a deploy). Resuming from
+// run.currentStepId means whatever step it was stuck ON re-runs -- an
+// at-least-once retry, not guaranteed-exactly-once -- but a duplicate
+// email/sheet-row is a far smaller problem than a run stuck forever with
+// nothing downstream of it ever executing and no record anywhere that
+// something went wrong.
+const STALE_RUN_MS = 3 * 60 * 1000;
+export async function recoverStaleFlowRuns() {
+  const runs = readJson(RUNS_FILE, []);
+  const stale = runs.filter(r => r.status === "active" && !r.waitUntil && Date.now() - new Date(r.enteredAt).getTime() > STALE_RUN_MS);
+  for (const run of stale) {
+    const flow = readJson(FLOWS_FILE, []).find(f => f.id === run.flowId);
+    if (!flow) { completeRun(run); continue; } // flow deleted since -- nothing left to resume
+    console.error(`[flows] resuming stale run ${run.id} (flow "${flow.name}", stuck at step ${run.currentStepId} since ${run.enteredAt})`);
+    await advanceFlowRun(run, flow).catch(e => console.error("[flows] stale-run resume failed", run.id, e.message));
   }
 }
 
