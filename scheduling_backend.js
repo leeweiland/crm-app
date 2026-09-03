@@ -756,6 +756,15 @@ export async function sendDueBookingReminders() {
   const eventTypes = getEventTypes();
   const now = Date.now();
   let changed = false;
+  // Read once per TICK, not once per booking -- this runs every 30s
+  // regardless of whether any reminder is actually due (it has to check),
+  // so a contacts.json read inside the loop meant every confirmed future
+  // booking cost its own full ~190MB synchronous read, forever, blocking
+  // the whole single-threaded server for however long that took. Confirmed
+  // live: 4 bookings was enough to turn into Inbox-hanging-for-a-minute
+  // territory under concurrent load. Only built when at least one booking
+  // could plausibly need it (below), so this stays free on a quiet tick.
+  let contactsById = null;
   for (const booking of bookings) {
     if (booking.status !== "confirmed") continue;
     const startMs = new Date(booking.startAt).getTime();
@@ -764,7 +773,8 @@ export async function sendDueBookingReminders() {
     const emailReminders = et?.reminders?.email || [];
     const smsReminders = et?.reminders?.sms || [];
     if (!emailReminders.length && !smsReminders.length) continue;
-    const contact = readJson(CONTACTS_FILE, []).find(c => c.id === booking.contactId);
+    if (!contactsById) contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
+    const contact = contactsById.get(booking.contactId);
     if (!contact) continue;
     const createdMs = new Date(booking.createdAt).getTime();
     booking.remindersSent = booking.remindersSent || [];
