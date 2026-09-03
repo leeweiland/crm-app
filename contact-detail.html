@@ -133,6 +133,9 @@
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fEmailOptOut"/> Email opt-out</label>
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="fSmsOptOut"/> SMS opt-out</label>
             </div>
+            <div class="field-row" style="margin:8px 0 0">
+              <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Excludes this contact's sends from the Reporting dashboards (Email/SMS/Automations/Sequences) -- still sends, still logs, just doesn't count toward those numbers"><input type="checkbox" id="fTestContact"/> Test contact (exclude from Reporting)</label>
+            </div>
             <div id="customFieldsWrap"></div>
             <button class="pra-btn pra-btn-danger" id="deleteBtn" style="margin-top:16px">Delete Contact</button>
           </div>
@@ -372,6 +375,7 @@ async function autoSaveDetails() {
   contact.status = document.getElementById('fStatus').value;
   contact.emailOptOut = document.getElementById('fEmailOptOut').checked;
   contact.smsOptOut = document.getElementById('fSmsOptOut').checked;
+  contact.testContact = document.getElementById('fTestContact').checked;
   contact.customFields = contact.customFields || {};
   document.querySelectorAll('.custom-field-input').forEach(inp => { contact.customFields[inp.dataset.field] = inp.value; });
   await saveContact();
@@ -380,7 +384,7 @@ async function autoSaveDetails() {
   renderConvoPanel();
   showToast('Saved');
 }
-['fFirst', 'fLast', 'fAccount', 'fEmail', 'fPhone', 'fEmailOptOut', 'fSmsOptOut'].forEach(id => document.getElementById(id).addEventListener('change', autoSaveDetails));
+['fFirst', 'fLast', 'fAccount', 'fEmail', 'fPhone', 'fEmailOptOut', 'fSmsOptOut', 'fTestContact'].forEach(id => document.getElementById(id).addEventListener('change', autoSaveDetails));
 
 document.getElementById('deleteBtn').onclick = async () => {
   if (!confirm('Delete this contact? This cannot be undone.')) return;
@@ -415,6 +419,7 @@ document.getElementById('deleteBtn').onclick = async () => {
   statusSel.addEventListener('change', () => { applyStatusGlow(statusSel.value); autoSaveDetails(); });
   document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
   document.getElementById('fSmsOptOut').checked = !!contact.smsOptOut;
+  document.getElementById('fTestContact').checked = !!contact.testContact;
   renderOptOutBadges();
   document.getElementById('fEmailOptOut').addEventListener('change', renderOptOutBadges);
   document.getElementById('fSmsOptOut').addEventListener('change', renderOptOutBadges);

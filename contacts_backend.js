@@ -110,7 +110,7 @@ export function newContactRecord({ type, accountName, first, last, email, phone,
     customFields: customFields || {},
     source: source || "manual",
     ownerId: ownerId || null,
-    emailOptOut: false, smsOptOut: false,
+    emailOptOut: false, smsOptOut: false, testContact: false,
     externalIds: { acContactId: null, closeLeadId: null },
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
@@ -257,7 +257,7 @@ export async function handleContactsRequest(req, res, url) {
       // this shared PATCH endpoint (status changes, tags, etc.) stays open
       // to any staff member who can already reach it.
       if ("ownerId" in body && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
-      const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut"];
+      const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut", "testContact"];
       let prevListIds, prevTags, prevStatus;
       const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactMatch[1], (contact) => {
         prevListIds = [...contact.listIds]; prevTags = [...contact.tags]; prevStatus = contact.status;

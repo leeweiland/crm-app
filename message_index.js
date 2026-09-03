@@ -2,6 +2,7 @@ import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson, writeJson, appendJsonRecords, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
+import { CONTACTS_FILE } from "./segments_shared.js";
 
 // The Inbox's two hottest reads -- "everything said with contact X" and
 // "one summary row per contact, most-recently-active first" -- both used to
@@ -123,14 +124,26 @@ function applyDailyDelta(bucket, row, status, delta) {
   // Other channels (form/booking/activity/manual) don't feed these
   // dashboards -- no bucket to touch.
 }
+// A contact flagged testContact (contact-detail.html's "Test Contact"
+// checkbox) never contributes to these dashboards -- lets a real send/SMS
+// round-trip get tested against a real phone/inbox without permanently
+// skewing the business's own reporting numbers. Still fully logged
+// everywhere else (main log, per-contact, per-source) -- this only skips
+// the aggregate daily-stats delta.
+function isTestContact(contactId) {
+  if (!contactId) return false;
+  const c = readJson(CONTACTS_FILE, []).find(x => x.id === contactId);
+  return !!c?.testContact;
+}
 export function recordDailyStatsNew(row) {
+  if (isTestContact(row.contactId)) return;
   const all = readJson(DAILY_STATS_FILE, {});
   const bucket = all[dayKey(row.createdAt)] || (all[dayKey(row.createdAt)] = emptyDayBucket());
   applyDailyDelta(bucket, row, row.status, 1);
   writeJson(DAILY_STATS_FILE, all);
 }
 export function recordDailyStatsTransition(row, oldStatus, newStatus) {
-  if (oldStatus === newStatus) return;
+  if (oldStatus === newStatus || isTestContact(row.contactId)) return;
   const all = readJson(DAILY_STATS_FILE, {});
   const bucket = all[dayKey(row.createdAt)] || (all[dayKey(row.createdAt)] = emptyDayBucket());
   applyDailyDelta(bucket, row, oldStatus, -1);
