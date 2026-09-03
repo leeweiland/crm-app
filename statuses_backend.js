@@ -34,6 +34,21 @@ function getStatuses() {
   return SEED_STATUSES;
 }
 
+// Shared by the PATCH rename and DELETE-with-reassignment paths below --
+// same reasoning both times: contact.status is a free-standing string
+// COPY of a status's label, not a foreign key, so moving contacts off the
+// old label is the caller's job, not something that happens for free.
+function cascadeStatusLabel(oldLabel, newLabel) {
+  const contacts = readJson(CONTACTS_FILE, []);
+  let changed = 0;
+  for (const c of contacts) {
+    if (c.status === oldLabel) { c.status = newLabel; c.updatedAt = new Date().toISOString(); changed++; }
+  }
+  if (changed) writeJson(CONTACTS_FILE, contacts);
+  try { renameStatusInSqlite(oldLabel, newLabel); } catch (e) { console.error("[sqlite_inbox] status cascade sync failed:", e.message); }
+  return changed;
+}
+
 export async function handleStatusesRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/statuses")) return false;
@@ -86,25 +101,29 @@ export async function handleStatusesRequest(req, res, url) {
       if ("color" in body) status.color = body.color;
       if ("isTerminal" in body) status.isTerminal = !!body.isTerminal;
       writeJson(STATUSES_FILE, statuses);
-      // contact.status is a free-standing string COPY of this label, not a
-      // foreign key -- renaming the definition alone would orphan every
-      // contact still holding the old string, same gap that once left 561
-      // contacts stuck on "BAD FIT / BLACKLIST" after that status got
-      // renamed back to plain "BLACKLIST" with nothing to follow it (see
-      // compliance_backend.js's BLACKLIST_STATUS_LABEL comment). Every
-      // matching contact gets the new label too, same request.
-      if (renamed) {
-        const contacts = readJson(CONTACTS_FILE, []);
-        let changed = 0;
-        for (const c of contacts) {
-          if (c.status === oldLabel) { c.status = status.label; c.updatedAt = new Date().toISOString(); changed++; }
-        }
-        if (changed) writeJson(CONTACTS_FILE, contacts);
-        try { renameStatusInSqlite(oldLabel, status.label); } catch (e) { console.error("[sqlite_inbox] status rename sync failed:", e.message); }
-      }
+      // Renaming the definition alone would orphan every contact still
+      // holding the old string -- same gap that once left 561 contacts
+      // stuck on "BAD FIT / BLACKLIST" after that status got renamed back
+      // to plain "BLACKLIST" with nothing to follow it (see
+      // compliance_backend.js's BLACKLIST_STATUS_LABEL comment).
+      if (renamed) cascadeStatusLabel(oldLabel, status.label);
       return sendJson(res, 200, { ok: true, status });
     }
     if (req.method === "DELETE") {
+      if (!status) return sendJson(res, 404, { error: "Status not found" });
+      if (PROTECTED_STATUS_LABELS.includes(status.label)) {
+        return sendJson(res, 400, { error: `"${status.label}" can't be deleted -- it's wired into compliance/reporting logic by that exact name.` });
+      }
+      // Optional -- reassigns every contact currently on this status to
+      // another one before removing the definition, same cascade the
+      // rename path uses. Without it, contacts stay on the now-undefined
+      // label (matches this endpoint's old behavior; the caller's choice).
+      const { reassignTo } = await readJsonBody(req).catch(() => ({}));
+      if (reassignTo) {
+        const target = statuses.find(s => s.label === reassignTo && s.id !== status.id);
+        if (!target) return sendJson(res, 400, { error: `No other status named "${reassignTo}" to reassign to` });
+        cascadeStatusLabel(status.label, target.label);
+      }
       writeJson(STATUSES_FILE, statuses.filter(s => s.id !== statusMatch[1]));
       return sendJson(res, 200, { ok: true });
     }

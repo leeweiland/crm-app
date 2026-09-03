@@ -365,7 +365,18 @@ async function loadStatuses() {
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.value = original; inp.blur(); } });
   });
   list.querySelectorAll('[data-del-status]').forEach(btn => btn.onclick = async () => {
-    await fetch('/api/statuses/' + btn.dataset.delStatus, { method: 'DELETE' });
+    const id = btn.dataset.delStatus;
+    const own = statuses.find(s => s.id === id);
+    const others = statuses.filter(s => s.id !== id).map(s => s.label);
+    const reassignTo = prompt(
+      `Delete "${own?.label}"? Any contact currently on this status can be moved to another one instead of being left on a status that no longer exists.\n\nType the exact name of a status to reassign them to, or leave blank to skip:\n\n${others.join(', ')}`,
+      ''
+    );
+    if (reassignTo === null) return; // cancelled
+    const body = reassignTo.trim() ? { reassignTo: reassignTo.trim() } : {};
+    const r = await fetch('/api/statuses/' + id, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not delete', true); return; }
+    showToast(body.reassignTo ? `Deleted -- contacts moved to "${body.reassignTo}"` : 'Deleted');
     loadStatuses();
   });
   wireDragReorder(list, async (orderedIds) => {
