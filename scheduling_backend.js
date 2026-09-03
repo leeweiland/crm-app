@@ -766,10 +766,20 @@ export async function sendDueBookingReminders() {
     if (!emailReminders.length && !smsReminders.length) continue;
     const contact = readJson(CONTACTS_FILE, []).find(c => c.id === booking.contactId);
     if (!contact) continue;
+    const createdMs = new Date(booking.createdAt).getTime();
     booking.remindersSent = booking.remindersSent || [];
     for (const reminder of emailReminders) {
       if (booking.remindersSent.includes(reminder.id)) continue;
-      if (now < startMs - reminderDueMs(reminder)) continue; // not due yet
+      const dueAt = startMs - reminderDueMs(reminder);
+      // A reminder whose "before" window had already elapsed by the time
+      // the booking was even made (booked same-day, a few hours out, with
+      // a 24-hours-before reminder configured) never had a real advance-
+      // notice window to fill -- firing it retroactively right alongside
+      // the instant confirmation (and any other already-overdue reminders)
+      // just reads as a burst of duplicate-looking texts/emails. Skip it
+      // permanently instead of catching it up.
+      if (dueAt < createdMs) continue;
+      if (now < dueAt) continue; // not due yet
       await sendBookingEmail(booking, et, contact, true).catch(() => {});
       booking.remindersSent.push(reminder.id);
       changed = true;
@@ -777,7 +787,9 @@ export async function sendDueBookingReminders() {
     for (const reminder of smsReminders) {
       if (booking.remindersSent.includes(reminder.id)) continue;
       if (!contact.phone) continue;
-      if (now < startMs - reminderDueMs(reminder)) continue; // not due yet
+      const dueAt = startMs - reminderDueMs(reminder);
+      if (dueAt < createdMs) continue; // see emailReminders above
+      if (now < dueAt) continue; // not due yet
       await sendBookingSms(booking, et, contact, true).catch(() => {});
       booking.remindersSent.push(reminder.id);
       changed = true;
