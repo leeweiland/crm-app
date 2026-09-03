@@ -82,6 +82,10 @@ const WIDGET_JS = `(function(){
       var el = els[i];
       if (el.getAttribute('data-scheduling-initialized')) continue;
       el.setAttribute('data-scheduling-initialized', '1');
+      // Same reasoning as forms-widget.js's identical fallback -- a
+      // flex-based site builder can otherwise shrink this div to its
+      // content instead of filling its column.
+      if (!el.style.width) el.style.width = '100%';
       var iframe = document.createElement('iframe');
       iframe.src = el.getAttribute('data-url');
       iframe.style.width = '100%';
@@ -91,6 +95,18 @@ const WIDGET_JS = `(function(){
       el.appendChild(iframe);
     }
   }
+  // The clamp()-based fallback height on the container div (set by whatever
+  // rendered the .scheduling-inline-widget) is just what's shown before
+  // book.html measures its own real content and posts it here -- once that
+  // arrives, the box fits the actual calendar/times view instead of
+  // floating small in a too-tall clamp() guess either way.
+  window.addEventListener('message', function(e){
+    if (!e.data || e.data.type !== 'bk-resize' || !e.data.height) return;
+    var frames = document.querySelectorAll('.scheduling-inline-widget iframe');
+    for (var i = 0; i < frames.length; i++){
+      if (frames[i].contentWindow === e.source) { frames[i].parentElement.style.height = e.data.height + 'px'; break; }
+    }
+  });
   window.SchedulingWidget = { initPopupWidget: openPopup };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInlineWidgets);
   else initInlineWidgets();

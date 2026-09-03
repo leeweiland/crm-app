@@ -4,11 +4,24 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Book a time</title>
+<script>
+// Set as early as possible (before first paint) so .bk-embedded's CSS
+// below applies from the first frame -- see the embedded-vs-standalone
+// split on .bk-wrap and reportHeightToParent further down.
+try { if (window.self !== window.top) document.documentElement.classList.add('bk-embedded'); } catch (e) { document.documentElement.classList.add('bk-embedded'); }
+</script>
 <style>
   :root { --bk-bg: #ffffff; --bk-page-bg: #f2f2f5; --bk-text: #0a0a0a; --bk-accent: #009bff; --bk-dim: #6b7280; --bk-border: #e5e7eb; --bk-divider: #e5e7eb; --bk-font-primary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; --bk-font-secondary: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: var(--bk-font-secondary); background: var(--bk-page-bg); color: var(--bk-text); }
-  .bk-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .bk-wrap { display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+  /* Only force full-viewport height (nice vertical centering) when opened
+     directly -- embedded (in a form step, or a direct scheduling-widget
+     embed) it self-reports its real content height to the parent instead
+     (see reportHeightToParent), so the box can shrink to fit a short
+     calendar-only view instead of always being at least one viewport
+     tall with the card floating, small, in the leftover space. */
+  html:not(.bk-embedded) .bk-wrap { min-height: 100vh; }
   .bk-card { width: 100%; max-width: 900px; background: var(--bk-bg); color: var(--bk-text); border-radius: 14px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); overflow: hidden; }
   .bk-grid { display: grid; grid-template-columns: 260px 1fr; }
   .bk-grid.with-times { grid-template-columns: 260px 1fr 220px; }
@@ -93,6 +106,33 @@
 // `background: var(--bk-page-bg)` rule regardless of what applyBranding()
 // later sets that variable to, so this stays transparent no matter what.
 if (window.self !== window.top) document.body.style.background = 'transparent';
+
+// ── Auto-height for the embed ────────────────────────────────────────────
+// widget.js's iframe starts at a fixed fallback height (see below); without
+// this, a short calendar-only view sits in a too-tall box (see .bk-wrap
+// above) and a taller one (times list expanded, mobile's stacked layout)
+// can get clipped. Posts the real content height any time it changes --
+// same pattern as public-form.html's reportHeightToParent, duplicated
+// rather than shared per this codebase's no-shared-modules convention.
+// Poll is the real reliability net (ResizeObserver alone didn't fire
+// consistently for a cross-frame observe() in testing); type is 'bk-resize'
+// (not public-form.html's 'pf-resize') so widget.js's one listener can
+// still tell a calendar-embed message apart if it's ever nested two levels
+// deep the way a form's calendar step is (Framer -> public-form.html's
+// iframe -> this one) and something upstream is also listening for resizes.
+let lastReportedHeight = 0;
+function reportHeightToParent() {
+  if (window.self === window.top) return;
+  const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+  if (h === lastReportedHeight) return;
+  lastReportedHeight = h;
+  window.parent.postMessage({ type: 'bk-resize', height: h }, '*');
+}
+if (window.self !== window.top) {
+  if ('ResizeObserver' in window) new ResizeObserver(reportHeightToParent).observe(document.body);
+  window.addEventListener('load', reportHeightToParent);
+  setInterval(reportHeightToParent, 400);
+}
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 const pathParts = location.pathname.split('/').filter(Boolean); // ["book", ":slug", "manage"?]
