@@ -506,7 +506,14 @@ document.getElementById('saveNavPermsBtn').onclick = async () => {
   msg.textContent = r.ok ? 'Saved.' : 'Could not save.';
   if (r.ok) showToast('Tab access saved');
 };
-document.getElementById('addUserBtn').onclick = () => document.getElementById('userModal').classList.add('show');
+function resetUserForm() {
+  document.getElementById('uFirst').value = '';
+  document.getElementById('uLast').value = '';
+  document.getElementById('uEmail').value = '';
+  document.getElementById('uPassword').value = '';
+  document.getElementById('uRole').value = 'user';
+}
+document.getElementById('addUserBtn').onclick = () => { resetUserForm(); document.getElementById('userModal').classList.add('show'); };
 document.getElementById('cancelUserBtn').onclick = () => document.getElementById('userModal').classList.remove('show');
 document.getElementById('saveUserBtn').onclick = async () => {
   const body = {
@@ -519,6 +526,7 @@ document.getElementById('saveUserBtn').onclick = async () => {
   const r = await fetch('/api/auth/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not create user', true); return; }
   document.getElementById('userModal').classList.remove('show');
+  resetUserForm();
   showToast('User created');
   loadUsers();
 };
