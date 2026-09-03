@@ -86,7 +86,16 @@
      instead of being the only element that shrinks all the way to nothing
      when the row is tight. */
   .convo-name { font-weight: 700; font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 44px; }
-  .convo-time { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; flex-shrink: 0; }
+  /* min-width (not just white-space:nowrap) so the date column has a
+     consistent starting edge down the list -- .convo-name is the row's
+     only flex:1 item, so it absorbs whatever width this column ISN'T
+     using; a short date like "Sep 1" let the name grow wider than next to
+     a longer one like "Aug 28", shifting the whole status/owner/type
+     badge cluster left or right row-to-row instead of lining up like a
+     table column. Sized for the longest realistic value (a same-day
+     time, e.g. "12:45 PM") with text-align:right so shorter values still
+     land flush with the ones next to them. */
+  .convo-time { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; flex-shrink: 0; min-width: 54px; text-align: right; }
   .convo-time.has-unread { color: #39ff14; font-weight: 700; }
   .convo-bottom { display: flex; align-items: center; gap: 4px; }
   .convo-preview { font-size: .78rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
@@ -154,7 +163,7 @@
     .convo-row [data-type-badge] { padding: 2px 5px !important; }
     .convo-row .type-badge-full { display: none; }
     .convo-row .type-badge-short { display: inline; }
-    .convo-time { font-size: .64rem; }
+    .convo-time { font-size: .64rem; min-width: 44px; }
   }
   .chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
 
