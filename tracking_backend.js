@@ -117,6 +117,26 @@ export async function handleTrackingRequest(req, res, url) {
     return true;
   }
 
+  // TRACK_SNIPPET runs on the FRAMER origin (pacificrimathletics.com), not
+  // this one -- a cross-origin POST with a JSON content-type isn't a CORS
+  // "simple request", so the browser sends an OPTIONS preflight before the
+  // real POST. Confirmed live (2026-09-03): with no route answering that
+  // preflight, it 404'd with no Access-Control-Allow-* headers, so the
+  // browser silently blocked every real POST from ever going out --
+  // swallowed by the snippet's own .catch(), so it looked like nothing was
+  // wrong anywhere. This is why essentially no real site traffic ever
+  // produced a page-visit row, independent of (and on top of) the stale
+  // snippet issue fixed alongside this.
+  if (p === "/api/track/pageview" && req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST",
+      "Access-Control-Allow-Headers": "Content-Type",
+    });
+    res.end();
+    return true;
+  }
+
   if (p === "/api/track/pageview" && req.method === "POST") {
     let body = "";
     await new Promise(resolve => { req.on("data", d => body += d); req.on("end", resolve); });
@@ -159,7 +179,7 @@ export async function handleTrackingRequest(req, res, url) {
     // of finding out the hard way once traffic grows.
     appendJsonRecordFast(PAGE_VISITS_FILE, { contactId: cid || null, visitorId: parsed.vid || null, path: parsed.path || "", el, search, ip, location, at: new Date().toISOString() });
 
-    res.writeHead(204); res.end();
+    res.writeHead(204, { "Access-Control-Allow-Origin": "*" }); res.end();
     return true;
   }
 
