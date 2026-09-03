@@ -480,6 +480,23 @@ export async function handleFlowsRequest(req, res, url) {
 
     if (!flow.active) { res.writeHead(200); res.end(); return true; } // accept + no-op so a paused flow doesn't error the external form
 
+    // Framer (or whatever's calling this) retries on a slow/failed
+    // response -- confirmed live: a real lead's single form submission
+    // produced 5 separate flow runs within 17 seconds, each independently
+    // emailing/texting the same person, because nothing here was idempotent
+    // against a retried call. Dedup against an identical payload already
+    // submitted to this same flow in the last couple minutes, rather than
+    // trying to make every downstream step itself idempotent -- still
+    // responds 200 either way, so a genuine retry stops erroring on the
+    // sender's end too.
+    const recentRuns = readJson(RUNS_FILE, []);
+    const payloadKey = JSON.stringify(fields);
+    const dedupeCutoffMs = Date.now() - 2 * 60 * 1000;
+    const isDuplicate = recentRuns.some(r => r.flowId === flow.id &&
+      JSON.stringify(r.triggerPayload || {}) === payloadKey &&
+      new Date(r.enteredAt).getTime() > dedupeCutoffMs);
+    if (isDuplicate) return sendJson(res, 200, { ok: true, deduped: true });
+
     // No contact resolution here anymore -- that's now an explicit
     // "Add/Update Contact" step the flow itself contains (usually first),
     // so it's visible/editable in the builder instead of an implicit
