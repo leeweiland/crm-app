@@ -888,15 +888,11 @@ document.getElementById('historyBtn').onclick = async () => {
   stepCounts = d.stepCounts;
   const reportRes = await fetch('/api/reporting/automations/' + automationId);
   if (reportRes.ok) {
-    const { messages } = await reportRes.json();
+    const { stepStats } = await reportRes.json();
     stepEmailStats = {};
     Object.keys(automation.steps).forEach(stepId => {
-      const stepMessages = messages.filter(m => m.sourceId === `${automation.id}:${stepId}`);
-      stepEmailStats[stepId] = {
-        sent: stepMessages.filter(m => ['sent','delivered','opened','clicked'].includes(m.status)).length,
-        opened: stepMessages.filter(m => ['opened','clicked'].includes(m.status)).length,
-        clicked: stepMessages.filter(m => m.status === 'clicked').length,
-      };
+      const s = stepStats?.[stepId];
+      stepEmailStats[stepId] = { sent: s?.sent || 0, opened: s?.opened || 0, clicked: s?.clicked || 0 };
     });
   }
   render();

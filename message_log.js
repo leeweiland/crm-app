@@ -34,9 +34,13 @@ export const MESSAGE_ID_INDEX_FILE = "crm_message_id_index.json";
 // anywhere in the file) -- see email_backend.js/sms_backend.js, which no
 // longer call updateMessageById at all for their own just-created row on
 // the send path, logging once with the final status instead.
-export function logMessage({ channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status }) {
+export function logMessage({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status }) {
   const row = {
-    id: randomUUID(), channel, direction,
+    // Accepts a pre-generated id -- email_backend.js's click-tracking link
+    // wrapping needs the row's id baked into the email body BEFORE the send
+    // (and therefore before this log call) happens, so it can't wait for
+    // logMessage to mint one itself.
+    id: id || randomUUID(), channel, direction,
     contactId: contactId || null,
     sourceType: sourceType || "manual", sourceId: sourceId || null,
     providerMessageId: providerMessageId || null,

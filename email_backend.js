@@ -149,6 +149,29 @@ function absolutizeUploadUrls(html, baseUrl) {
   return html.replace(/src="\/uploads\//g, `src="${baseUrl}/uploads/`);
 }
 
+// Rewrites every real content link to route through /api/email/click first
+// -- that handler marks the message row "clicked", fires email_clicked
+// triggers, resolves the block's own linkAction (see block_editor_shared.js),
+// and only then 302s on to the original destination. Without this, nothing
+// in the rendered HTML ever pointed at that handler, so "clicked" stayed 0
+// no matter what a recipient actually did.
+// Skips mailto:/tel:/anchor links (nothing to click through to) and the
+// %UNSUBSCRIBE% placeholder specifically -- this runs BEFORE that token is
+// replaced with the real unsubscribe URL, so it's still the literal string
+// at this point and would otherwise get mangled into a broken double-
+// encoded link; the real unsubscribe URL is inserted after this step and
+// deliberately stays a direct, unwrapped link.
+function wrapLinksForClickTracking(html, rowId) {
+  const base = getPublicBaseUrl();
+  if (!base) return html;
+  return String(html || "").replace(/href="([^"]+)"/g, (match, url) => {
+    // Case-insensitive, matching the %UNSUBSCRIBE% replace's own /gi flag --
+    // the footer template actually carries it lowercase.
+    if (!url || /^%unsubscribe%/i.test(url) || /^(mailto:|tel:|#)/i.test(url)) return match;
+    return `href="${base}/api/email/click?m=${encodeURIComponent(rowId)}&u=${encodeURIComponent(url)}"`;
+  });
+}
+
 // `from` optionally overrides ses.fromAddress -- used by the Inbox so a
 // reply goes out as the logged-in staff member's own address instead of the
 // single shared sender every campaign/automation/booking email uses.
@@ -164,9 +187,27 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     return { ok: false, reason: "opted_out" };
   }
 
+  // Minted before the send (not left to logMessage) so it can be baked into
+  // the click-tracking redirect below -- /api/email/click looks a click back
+  // up by this exact id via MESSAGE_ID_INDEX_FILE.
+  const rowId = randomUUID();
+
   let html = buildPreheaderHtml(previewText) + renderEmailBody(blocks, resolveFooterHtml(footerTemplateId, contactId), theme);
   html = absolutizeUploadUrls(html, getPublicBaseUrl());
   if (contact) html = applyMergeTags(html, contact);
+  // Tagged before logging, so the stored body matches exactly what the
+  // recipient received (same convention sms_backend.js's sendSms() uses).
+  // "el=email-<slug>" resolved from THIS send's own sourceType/sourceId
+  // (source_names.js), matching the el= convention already used on ads,
+  // social, and YouTube links.
+  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(sourceType, sourceId)}`);
+  // Every link now routes through /api/email/click first (real click
+  // tracking -- the "clicked" stat was always 0 before this, since nothing
+  // ever generated a link pointing there) -- done BEFORE the %UNSUBSCRIBE%
+  // substitution below so the unsubscribe link itself is skipped and stays
+  // a direct link to /api/email/unsubscribe, not routed through a second
+  // redirect on top of the first.
+  html = wrapLinksForClickTracking(html, rowId);
   // %UNSUBSCRIBE% resolves the same URL the footer's own auto-generated
   // unsubscribe link uses (see resolveFooterHtml above) -- always, not just
   // when a real contactId exists. That link already handles no contactId
@@ -174,18 +215,12 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // a matching contact to opt out), so test sends get a working, clickable
   // link too instead of the literal, non-functional string "%unsubscribe%".
   html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`);
-  // Tagged before logging, so the stored body matches exactly what the
-  // recipient received (same convention sms_backend.js's sendSms() uses).
-  // "el=email-<slug>" resolved from THIS send's own sourceType/sourceId
-  // (source_names.js), matching the el= convention already used on ads,
-  // social, and YouTube links -- links stay real, direct, recognizable
-  // URLs, not routed through a redirect on this CRM's own domain.
-  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(sourceType, sourceId)}`);
   const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
   const fromAddress = from || ses.fromAddress;
 
   const bodyPreview = (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "";
   const baseRow = {
+    id: rowId,
     channel: "email", direction: "outbound", contactId, sourceType, sourceId,
     to, from: fromAddress || null, subject: renderedSubject, body: html, bodyPreview,
   };

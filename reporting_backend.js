@@ -122,12 +122,23 @@ export async function handleReportingRequest(req, res, url) {
   // small and already known, so this just reads each step's own small
   // per-source file (see message_index.js's getSourceMessages) and merges
   // them -- O(this automation's steps), never O(every message ever sent).
+  // stepStats is keyed by stepId directly -- getMessagesForSource's rows are
+  // deliberately slim (id/contactId/to/status/sentAt, no sourceId; which
+  // source they came from is already implicit in which per-source file was
+  // read) so the per-step breakdown has to be computed here, server-side,
+  // rather than the frontend trying to filter the flat list back apart by a
+  // sourceId field that was never on these rows.
   const automationMatch = p.match(/^\/api\/reporting\/automations\/([^/]+)$/);
   if (automationMatch && req.method === "GET") {
     const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === automationMatch[1]);
     const stepIds = automation ? Object.keys(automation.steps || {}) : [];
-    const messages = stepIds.flatMap(stepId => getMessagesForSource("automation_step", `${automationMatch[1]}:${stepId}`));
-    return sendJson(res, 200, { stats: statsFromMessages(messages), messages });
+    const stepStats = {};
+    const messages = stepIds.flatMap(stepId => {
+      const stepMessages = getMessagesForSource("automation_step", `${automationMatch[1]}:${stepId}`);
+      stepStats[stepId] = statsFromMessages(stepMessages);
+      return stepMessages;
+    });
+    return sendJson(res, 200, { stats: statsFromMessages(messages), stepStats, messages });
   }
 
   const workflowMatch = p.match(/^\/api\/reporting\/workflows\/([^/]+)$/);

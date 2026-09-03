@@ -4,7 +4,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
-import { getTwilioSettings } from "./integrations_backend.js";
+import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
 import { appendSourceTagToSmsBody } from "./block_editor_shared.js";
 import { resolveSendSourceSlug } from "./source_names.js";
@@ -54,7 +54,15 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   if (!client) { logMessage({ ...baseRow, status: "failed" }); return { ok: false, reason: "twilio_not_configured" }; }
 
   try {
-    const msg = await client.messages.create({ to, from: twilioSettings.fromNumber, body: taggedBody });
+    // Without this, Twilio has no per-message destination for delivery
+    // status -- /api/webhooks/twilio/status exists and is fully wired
+    // (see below), but was never actually being told about, so every
+    // outbound SMS sat at "queued" forever in our own records no matter
+    // what actually happened on the wire.
+    const msg = await client.messages.create({
+      to, from: twilioSettings.fromNumber, body: taggedBody,
+      statusCallback: `${getPublicBaseUrl()}/api/webhooks/twilio/status`,
+    });
     // Logged once with the final status/sid already known, same reasoning
     // as email_backend.js's sendEmail -- see message_log.js's comment.
     logMessage({ ...baseRow, status: msg.status || "sent", providerMessageId: msg.sid });
