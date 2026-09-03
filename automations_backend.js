@@ -5,6 +5,7 @@ import { sendEmail } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
+import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 
 export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
@@ -68,7 +69,7 @@ export function checkAutomationGoal(trigger, contactId, statusValue) {
 // and email_backend.js (SES open/click webhook + click-tracking redirect).
 // This is the ONE place any future event source (Framer webhook, Twilio
 // inbound SMS) needs to call into to enroll contacts. ─────────────────
-export function fireTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId }) {
+export function fireTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId, bookingId }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
   const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && a.trigger?.type === type);
   for (const automation of automations) {
@@ -81,11 +82,16 @@ export function fireTrigger(type, { contactId, listId, tagId, path, formId, even
     if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
     // email_opened / email_clicked: any tracked email counts for v1 -- no
     // per-campaign trigger scoping yet.
-    if (matches) enrollContact(automation, contactId);
+    if (matches) enrollContact(automation, contactId, { bookingId });
   }
 }
 
-export function enrollContact(automation, contactId) {
+// context.bookingId (only ever set for a booking_created trigger) rides
+// along on the enrollment itself so a later send_email step -- possibly
+// after a wait step, well after the triggering request has returned --
+// can still look up which specific booking this contact's journey through
+// the automation is about, to resolve %WHEN%/%DATE%/%TIME% etc.
+export function enrollContact(automation, contactId, context) {
   // An inactive automation must never start (or resume) sending -- the
   // trigger-fired path already filtered on `.active` before calling here,
   // but manual/API enrollment and jump_to_automation didn't, so a toggled-
@@ -97,7 +103,7 @@ export function enrollContact(automation, contactId) {
     id: randomUUID(), automationId: automation.id, contactId,
     status: "active", currentStepId: automation.startStepId || null,
     enteredAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    waitUntil: null, history: [],
+    waitUntil: null, history: [], bookingId: context?.bookingId || null,
   };
   enrollments.push(enrollment);
   writeJson(ENROLLMENTS_FILE, enrollments);
@@ -130,8 +136,26 @@ async function advanceEnrollment(enrollment, automation) {
     if (step.type === "send_email") {
       const contact = getContact(enrollment.contactId);
       if (contact) {
+        let subject = step.config.subject || "";
+        let previewText = step.config.previewText;
+        let blocks = step.config.blocks || [];
+        // Only an automation enrolled off a booking_created trigger carries
+        // a bookingId -- resolve %EVENTNAME%/%WHEN%/%DATE%/%TIME%/etc (see
+        // scheduling_backend.js) before the normal contact merge tags run
+        // inside sendEmail(), same substitution scheduling_backend.js's own
+        // confirmation/reminder sends do.
+        if (enrollment.bookingId) {
+          const booking = readJson(BOOKINGS_FILE, []).find(b => b.id === enrollment.bookingId);
+          const et = booking ? readJson(EVENT_TYPES_FILE, []).find(e => e.id === booking.eventTypeId) : null;
+          if (booking && et) {
+            const tokens = getBookingTokenValues(booking, et);
+            subject = applyBookingTokens(subject, tokens);
+            if (previewText) previewText = applyBookingTokens(previewText, tokens);
+            blocks = blocks.map(b => (b.type === "text" && b.html) ? { ...b, html: applyBookingTokens(b.html, tokens) } : b);
+          }
+        }
         await sendEmail({
-          to: contact.email, subject: step.config.subject || "", previewText: step.config.previewText, blocks: step.config.blocks || [], theme: step.config.theme,
+          to: contact.email, subject, previewText, blocks, theme: step.config.theme,
           footerTemplateId: step.config.footerTemplateId, contactId: contact.id,
           sourceType: "automation_step", sourceId: `${automation.id}:${step.id}`,
         });
@@ -157,7 +181,7 @@ async function advanceEnrollment(enrollment, automation) {
       enrollment.currentStepId = (matched ? step.yesStepId : step.noStepId) || null;
     } else if (step.type === "jump_to_automation") {
       const target = readJson(AUTOMATIONS_FILE, []).find(a => a.id === step.config.automationId);
-      if (target) enrollContact(target, enrollment.contactId);
+      if (target) enrollContact(target, enrollment.contactId, { bookingId: enrollment.bookingId });
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "end_automation") {
       const all = readJson(ENROLLMENTS_FILE, []);

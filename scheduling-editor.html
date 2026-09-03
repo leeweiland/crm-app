@@ -26,6 +26,11 @@
   .ed-notif-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
   .ed-notif-title { font-family: var(--font-primary); font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pra-dim); margin-bottom: 4px; }
   .ed-notif-hint { font-size: .74rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
+  .ed-notif-email-layout { display: grid; grid-template-columns: 1fr 220px; gap: 20px; align-items: start; }
+  .ed-notif-email-main .field { margin-bottom: 12px; }
+  @media (max-width: 1200px) { .ed-notif-email-layout { grid-template-columns: 1fr; } }
+  .ed-sms-toolbar { margin-bottom: 8px; }
+  .ed-sms-toolbar select { font-size: .78rem; padding: 5px 8px; }
   .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .reminder-row input[type=number] { width: 80px; flex-shrink: 0; }
   .reminder-row select { width: 130px; flex-shrink: 0; }
@@ -271,19 +276,41 @@
           <div class="ed-notif-section">
             <div class="ed-notif-card">
               <div class="ed-notif-title">Confirmation Email</div>
-              <div class="ed-notif-hint">Sent the instant someone books. Tokens: %EVENTNAME% %WHEN% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE%. Leave empty to use the default message.</div>
-              <div id="confEmailEditorRoot"></div>
+              <div class="ed-notif-hint">Sent the instant someone books, and reused (with a "Reminder:" lead-in) for any email reminders below. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE%. Leave empty to use the default message.</div>
+              <div class="ed-notif-email-layout">
+                <div class="ed-notif-email-main">
+                  <div class="field"><label class="pra-label">Subject line</label><input class="pra-input" id="confEmailSubject" placeholder="Confirmed: %EVENTNAME%"/></div>
+                  <div class="field"><label class="pra-label">Preview text</label><input class="pra-input" id="confEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/></div>
+                  <div id="confEmailEditorRoot"></div>
+                </div>
+                <div class="ed-notif-email-sidebar">
+                  <div class="pra-label" style="margin-bottom:8px">Footer</div>
+                  <select class="pra-select" id="confEmailFooter"><option value="">Default</option></select>
+                  <div id="confEmailFooterDirtyBar" style="display:none;margin-top:12px">
+                    <div class="pra-muted" style="font-size:.74rem;margin-bottom:8px">Footer content changed here -- these edits aren't saved yet.</div>
+                    <button class="pra-btn pra-btn-sm" id="confEmailFooterUpdateBtn" type="button" style="width:100%;margin-bottom:6px">Update this footer everywhere</button>
+                    <button class="pra-btn pra-btn-ghost pra-btn-sm" id="confEmailFooterSaveAsNewBtn" type="button" style="width:100%">Save as new footer</button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="ed-notif-card">
               <div class="ed-notif-title">Confirmation SMS</div>
-              <div class="ed-notif-hint">Only sent if the contact has a phone number.</div>
+              <div class="ed-notif-hint">Sent the instant someone books, and reused for any SMS reminders below. Only sent if the contact has a phone number.</div>
+              <div class="ed-sms-toolbar"><select class="pra-select" id="confSmsPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
               <textarea class="pra-input" id="confSmsBody" rows="3" placeholder="You're booked for %EVENTNAME% on %WHEN%."></textarea>
             </div>
             <div class="ed-notif-card">
-              <div class="ed-notif-title">Reminders</div>
-              <div class="ed-notif-hint">Sent by email and, if the contact has a phone number, SMS — using the same Confirmation Email/SMS content above.</div>
-              <div id="remindersList"></div>
-              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderBtn">+ Add Reminder</button>
+              <div class="ed-notif-title">Email Reminders</div>
+              <div class="ed-notif-hint">Sends the Confirmation Email above again, timed ahead of the appointment.</div>
+              <div id="remindersEmailList"></div>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderEmailBtn">+ Add Email Reminder</button>
+            </div>
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">SMS Reminders</div>
+              <div class="ed-notif-hint">Sends the Confirmation SMS above again, timed ahead of the appointment. Only sent if the contact has a phone number.</div>
+              <div id="remindersSmsList"></div>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderSmsBtn">+ Add SMS Reminder</button>
             </div>
           </div>
         </div>
@@ -621,41 +648,167 @@ document.getElementById('addQuestionBtn').onclick = () => {
 };
 
 // ── Confirmation email/SMS + reminders ──────────────────────────────────
+// Booking-specific tokens the shared block editor's "Personalize..."
+// dropdown doesn't know about on its own (see block-editor-client.js's
+// opts.extraPersonalizeOptions) -- %FIRSTNAME% etc. are already built in.
+const BOOKING_PERSONALIZE_OPTIONS = [
+  { value: '%EVENTNAME%', label: 'Event name' },
+  { value: '%WHEN%', label: 'When (date & time)' },
+  { value: '%DATE%', label: 'Date' },
+  { value: '%TIME%', label: 'Time' },
+  { value: '%LOCATION%', label: 'Location' },
+  { value: '%NOTES%', label: 'Notes' },
+];
+const SMS_PERSONALIZE_OPTIONS = [
+  { value: '%FIRSTNAME%', label: 'First name' },
+  { value: '%LASTNAME%', label: 'Last name' },
+  { value: '%EMAIL%', label: 'Email' },
+  { value: '%PHONE%', label: 'Phone' },
+  ...BOOKING_PERSONALIZE_OPTIONS,
+];
+document.getElementById('confSmsPersonalize').innerHTML = '<option value="">Personalize...</option>' + SMS_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+// Plain <textarea> has no execCommand/contenteditable to lean on like the
+// block editor's own Personalize dropdown -- insert at the cursor (or
+// replace a selection) by hand and fire input so saveDebounced() picks it
+// up, same as if it had been typed.
+document.getElementById('confSmsPersonalize').addEventListener('change', (e) => {
+  const token = e.target.value;
+  e.target.value = '';
+  if (!token) return;
+  const ta = document.getElementById('confSmsBody');
+  const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = start + token.length;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+});
 const REMINDER_UNITS = ['minutes', 'hours', 'days'];
-function reminderRowHtml(rem, i) {
+let allFooters = [];
+
+function reminderRowHtml(rem, i, prefix) {
   return `
     <div class="reminder-row" data-rem-idx="${i}">
-      <input class="pra-input" type="number" min="1" data-rem-amount="${i}" value="${rem.amount}"/>
-      <select class="pra-select" data-rem-unit="${i}">
+      <input class="pra-input" type="number" min="1" data-rem-amount="${prefix}-${i}" value="${rem.amount}"/>
+      <select class="pra-select" data-rem-unit="${prefix}-${i}">
         ${REMINDER_UNITS.map(u => `<option value="${u}" ${rem.unit === u ? 'selected' : ''}>${u}</option>`).join('')}
       </select>
       <span>before the appointment</span>
-      <button class="reminder-del" data-rem-del="${i}" title="Delete reminder">&times;</button>
+      <button class="reminder-del" data-rem-del="${prefix}-${i}" title="Delete reminder">&times;</button>
     </div>
   `;
 }
-function renderReminders() {
-  const list = document.getElementById('remindersList');
-  list.innerHTML = (draft.reminders.length ? draft.reminders.map(reminderRowHtml).join('') : '<div class="reminder-empty">No reminders yet — visitors only get the instant confirmation.</div>');
-  list.querySelectorAll('[data-rem-amount]').forEach(el => el.oninput = () => { draft.reminders[+el.dataset.remAmount].amount = Number(el.value) || 1; saveDebounced(); });
-  list.querySelectorAll('[data-rem-unit]').forEach(el => el.onchange = () => { draft.reminders[+el.dataset.remUnit].unit = el.value; saveDebounced(); });
-  list.querySelectorAll('[data-rem-del]').forEach(el => el.onclick = () => { draft.reminders.splice(+el.dataset.remDel, 1); renderReminders(); saveDebounced(); });
+// Shared by both the Email Reminders and SMS Reminders panels -- same
+// row shape, just pointed at a different draft.reminders.<channel> array
+// and a different list element, since the two channels are timed
+// independently (see scheduling_backend.js's sendDueBookingReminders).
+function renderReminderList(channel, listId, emptyMsg) {
+  const list = document.getElementById(listId);
+  const arr = draft.reminders[channel];
+  list.innerHTML = arr.length ? arr.map((r, i) => reminderRowHtml(r, i, channel)).join('') : `<div class="reminder-empty">${emptyMsg}</div>`;
+  list.querySelectorAll('[data-rem-amount]').forEach(el => el.oninput = () => { arr[+el.dataset.remAmount.split('-')[1]].amount = Number(el.value) || 1; saveDebounced(); });
+  list.querySelectorAll('[data-rem-unit]').forEach(el => el.onchange = () => { arr[+el.dataset.remUnit.split('-')[1]].unit = el.value; saveDebounced(); });
+  list.querySelectorAll('[data-rem-del]').forEach(el => el.onclick = () => { arr.splice(+el.dataset.remDel.split('-')[1], 1); renderReminderList(channel, listId, emptyMsg); saveDebounced(); });
 }
-document.getElementById('addReminderBtn').onclick = () => {
-  draft.reminders.push({ id: crypto.randomUUID(), amount: 24, unit: 'hours' });
-  renderReminders();
+function renderReminders() {
+  renderReminderList('email', 'remindersEmailList', 'No email reminders yet.');
+  renderReminderList('sms', 'remindersSmsList', 'No SMS reminders yet.');
+}
+document.getElementById('addReminderEmailBtn').onclick = () => {
+  draft.reminders.email.push({ id: crypto.randomUUID(), amount: 24, unit: 'hours' });
+  renderReminderList('email', 'remindersEmailList', 'No email reminders yet.');
+  saveDebounced();
+};
+document.getElementById('addReminderSmsBtn').onclick = () => {
+  draft.reminders.sms.push({ id: crypto.randomUUID(), amount: 1, unit: 'hours' });
+  renderReminderList('sms', 'remindersSmsList', 'No SMS reminders yet.');
   saveDebounced();
 };
 document.getElementById('confSmsBody').addEventListener('input', (e) => {
   draft.confirmation.sms = e.target.value;
   saveDebounced();
 });
+document.getElementById('confEmailSubject').addEventListener('input', (e) => {
+  draft.confirmation.email.subject = e.target.value;
+  saveDebounced();
+});
+document.getElementById('confEmailPreviewText').addEventListener('input', (e) => {
+  draft.confirmation.email.previewText = e.target.value;
+  saveDebounced();
+});
+
+// ── Confirmation email footer -- same "Default / pick one / edit inline"
+// setup as automation-builder.html's send_email step and campaign-builder,
+// just wired to draft.confirmation.email.footerTemplateId instead of a
+// step's config. ──
+function confCurrentFooter() {
+  const footerSel = document.getElementById('confEmailFooter');
+  return allFooters.find(f => f.id === footerSel.value) || allFooters.find(f => f.isDefault) || null;
+}
+function confUpdateEditorFooter() {
+  confEmailEditor.setFooter(confCurrentFooter());
+  document.getElementById('confEmailFooterDirtyBar').style.display = 'none';
+}
+document.getElementById('confEmailFooter').addEventListener('change', () => {
+  draft.confirmation.email.footerTemplateId = document.getElementById('confEmailFooter').value || null;
+  confUpdateEditorFooter();
+  saveDebounced();
+});
+document.getElementById('confEmailFooterUpdateBtn').onclick = async () => {
+  const footer = confCurrentFooter();
+  if (!footer) return;
+  const { blocks } = confEmailEditor.getFooterState();
+  const r = await fetch('/api/footer-templates/' + footer.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks }),
+  });
+  if (!r.ok) { showToast('Failed to update footer', true); return; }
+  const { template } = await r.json();
+  allFooters = allFooters.map(f => f.id === template.id ? template : f);
+  confEmailEditor.setFooter(template);
+  document.getElementById('confEmailFooterDirtyBar').style.display = 'none';
+  showToast('Footer updated everywhere it\'s used');
+};
+document.getElementById('confEmailFooterSaveAsNewBtn').onclick = async () => {
+  const footer = confCurrentFooter();
+  const name = prompt('Name for the new footer:', footer ? `Copy of ${footer.name}` : 'New Footer');
+  if (!name) return;
+  const { blocks } = confEmailEditor.getFooterState();
+  const r = await fetch('/api/footer-templates', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name, blocks, theme: footer?.theme || {},
+      physicalAddress: footer?.physicalAddress || '', socialLinks: footer?.socialLinks || [],
+      unsubscribeLinkText: footer?.unsubscribeLinkText || 'Unsubscribe',
+    }),
+  });
+  if (!r.ok) { showToast('Failed to save new footer', true); return; }
+  const { template } = await r.json();
+  allFooters.push(template);
+  const footerSel = document.getElementById('confEmailFooter');
+  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${template.id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+  draft.confirmation.email.footerTemplateId = template.id;
+  confEmailEditor.setFooter(template);
+  document.getElementById('confEmailFooterDirtyBar').style.display = 'none';
+  showToast('Saved as a new footer');
+};
+
 function renderNotifications() {
   document.getElementById('confSmsBody').value = draft.confirmation.sms || '';
+  document.getElementById('confEmailSubject').value = draft.confirmation.email.subject || '';
+  document.getElementById('confEmailPreviewText').value = draft.confirmation.email.previewText || '';
   renderReminders();
+
+  const footerSel = document.getElementById('confEmailFooter');
+  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${draft.confirmation.email.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+
   const root = document.getElementById('confEmailEditorRoot');
   root.innerHTML = '';
-  confEmailEditor = BlockEditor.init(root, { blocks: draft.confirmation.email.blocks || [], theme: draft.confirmation.email.theme || {} }, () => saveDebounced());
+  confEmailEditor = BlockEditor.init(
+    root, { blocks: draft.confirmation.email.blocks || [], theme: draft.confirmation.email.theme || {} },
+    () => saveDebounced(),
+    () => { document.getElementById('confEmailFooterDirtyBar').style.display = 'block'; },
+    { extraPersonalizeOptions: BOOKING_PERSONALIZE_OPTIONS }
+  );
+  confUpdateEditorFooter();
 }
 
 function saveDebounced() {
@@ -666,7 +819,8 @@ function saveDebounced() {
 async function saveNow() {
   if (confEmailEditor) {
     const state = confEmailEditor.getState();
-    draft.confirmation.email = { blocks: state.blocks, theme: state.theme };
+    draft.confirmation.email.blocks = state.blocks;
+    draft.confirmation.email.theme = state.theme;
   }
   const r = await fetch('/api/scheduling/admin/event-types/' + draft.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -857,13 +1011,15 @@ async function init() {
     ...(draft.branding || {}),
   };
   draft.questions = draft.questions || [];
-  draft.confirmation = { email: { blocks: [], theme: {} }, sms: '', ...(draft.confirmation || {}) };
-  draft.confirmation.email = { blocks: [], theme: {}, ...(draft.confirmation.email || {}) };
-  draft.reminders = draft.reminders || [];
+  draft.confirmation = { email: {}, sms: '', ...(draft.confirmation || {}) };
+  draft.confirmation.email = { blocks: [], theme: {}, subject: '', previewText: '', footerTemplateId: null, ...(draft.confirmation.email || {}) };
+  draft.reminders = { email: [], sms: [], ...(draft.reminders || {}) };
   renderPreview();
   const cfRes = await fetch('/api/custom-fields?entityType=contact');
   customFieldsState = cfRes.ok ? (await cfRes.json()).fields : [];
   renderQuestions();
+  const footersRes = await fetch('/api/footer-templates');
+  allFooters = footersRes.ok ? (await footersRes.json()).templates : [];
   renderNotifications();
   const calendars = await loadCalendars();
   // Event types saved before calendars existed only have the old

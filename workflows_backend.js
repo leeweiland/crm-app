@@ -3,6 +3,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { CONTACTS_FILE, resolveBulkContactIds } from "./segments_shared.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
+import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 
 export const WORKFLOWS_FILE = "crm_workflows.json";
 export const WF_ENROLLMENTS_FILE = "crm_workflow_enrollments.json";
@@ -123,7 +124,12 @@ function saveWfEnrollment(enrollment) {
   writeJson(WF_ENROLLMENTS_FILE, enrollments);
 }
 
-export function enrollContactInWorkflow(workflow, contactId) {
+// context.bookingId (only ever set for a booking_created trigger) rides
+// along on the enrollment so a later sms step can still look up which
+// specific booking this contact's sequence is about, to resolve
+// %WHEN%/%DATE%/%TIME%/etc -- same reasoning as automations_backend.js's
+// enrollContact.
+export function enrollContactInWorkflow(workflow, contactId, context) {
   // An inactive sequence must never start sending -- the trigger-fired path
   // already filtered on `.active` before calling here, but manual/API
   // enrollment (the "Manually Enroll a Contact" box) didn't, so a toggled-
@@ -137,13 +143,13 @@ export function enrollContactInWorkflow(workflow, contactId) {
   const enrollment = {
     id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: 0,
     enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[0]),
-    completedAt: null, goalMetAt: null,
+    completedAt: null, goalMetAt: null, bookingId: context?.bookingId || null,
   };
   enrollments.push(enrollment);
   writeJson(WF_ENROLLMENTS_FILE, enrollments);
 }
 
-export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId }) {
+export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId, bookingId }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
   const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && w.trigger?.type === type);
   for (const workflow of workflows) {
@@ -154,7 +160,7 @@ export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, form
     if (type === "page_visit" && cfg.urlContains) matches = String(path || "").includes(cfg.urlContains);
     if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
     if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
-    if (matches) enrollContactInWorkflow(workflow, contactId);
+    if (matches) enrollContactInWorkflow(workflow, contactId, { bookingId });
   }
 }
 
@@ -190,8 +196,17 @@ export async function advanceDueWorkflowEnrollments() {
     if (step.type === "sms") {
       const contact = getContact(enrollment.contactId);
       if (contact && step.config.body && contact.phone) {
+        let body = step.config.body;
+        // Only a sequence enrolled off a booking_created trigger carries a
+        // bookingId -- resolve %EVENTNAME%/%WHEN%/%DATE%/%TIME%/etc (see
+        // scheduling_backend.js) before the contact merge tags below.
+        if (enrollment.bookingId) {
+          const booking = readJson(BOOKINGS_FILE, []).find(b => b.id === enrollment.bookingId);
+          const et = booking ? readJson(EVENT_TYPES_FILE, []).find(e => e.id === booking.eventTypeId) : null;
+          if (booking && et) body = applyBookingTokens(body, getBookingTokenValues(booking, et));
+        }
         const result = await sendSms({
-          to: contact.phone, body: applyMergeTags(step.config.body, contact), contactId: contact.id,
+          to: contact.phone, body: applyMergeTags(body, contact), contactId: contact.id,
           sourceType: "workflow_step", sourceId: `${workflow.id}:${step.id}`,
         });
         if (!result.ok && result.reason !== "twilio_not_configured" && result.reason !== "opted_out") enrollment.status = "errored";

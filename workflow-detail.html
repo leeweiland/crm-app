@@ -327,7 +327,24 @@ function renderCanvas() {
         ${step.type === 'sms' ? '<span class="step-delay-sms-tag">&middot; SMS</span>' : ''}
         <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
       </div>
-      ${step.type === 'sms' ? `<textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>` : ''}
+      ${step.type === 'sms' ? `
+        <select class="step-unit-select" data-personalize-for="${step.id}" style="margin-top:8px;font-size:.78rem">
+          <option value="">Personalize...</option>
+          <option value="%FIRSTNAME%">First name</option>
+          <option value="%LASTNAME%">Last name</option>
+          <option value="%EMAIL%">Email</option>
+          <option value="%PHONE%">Phone</option>
+          ${workflow.trigger?.type === 'booking_created' ? `
+            <option value="%EVENTNAME%">Meeting event name</option>
+            <option value="%WHEN%">Meeting date & time</option>
+            <option value="%DATE%">Meeting date</option>
+            <option value="%TIME%">Meeting time</option>
+            <option value="%LOCATION%">Meeting location</option>
+            <option value="%NOTES%">Meeting notes</option>
+          ` : ''}
+        </select>
+        <textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>
+      ` : ''}
     </div>
     ${i < sorted.length - 1 ? arrowHtml(step) : '<div class="chain-arrow">&darr;</div>'}
   `;
@@ -405,6 +422,22 @@ function renderCanvas() {
       saveDebounced();
     });
   });
+  // Plain <textarea> has no execCommand/contenteditable to lean on --
+  // insert at the cursor (or replace a selection) by hand, same approach
+  // scheduling-editor.html's Confirmation SMS field uses.
+  canvas.querySelectorAll('[data-personalize-for]').forEach(sel => sel.addEventListener('change', (e) => {
+    const token = e.target.value;
+    e.target.value = '';
+    if (!token) return;
+    const ta = canvas.querySelector(`[data-body-for="${sel.dataset.personalizeFor}"]`);
+    if (!ta) return;
+    const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = start + token.length;
+    autoGrow(ta);
+    ta.dispatchEvent(new Event('change', { bubbles: true }));
+  }));
 }
 
 document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => btn.onclick = () => {

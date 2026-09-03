@@ -84,8 +84,13 @@ window.BlockEditor = (function () {
   // footer edit -- kept separate from onChange since footer content isn't
   // part of this campaign/step's own saved state, it belongs to the shared
   // footer template (see setFooter/getFooterState below).
-  function init(rootEl, initialState, onChange, onFooterChange) {
+  // opts.extraPersonalizeOptions (optional): [{value, label}] appended to
+  // the Personalize dropdown below the built-in contact tokens -- lets a
+  // caller outside the campaign/automation context (e.g. booking
+  // confirmations) offer its own tokens through the same UI.
+  function init(rootEl, initialState, onChange, onFooterChange, opts) {
     initialState = initialState || {};
+    opts = opts || {};
     let blocks = (initialState.blocks || []).map(b => ({ ...b, id: b.id || uid() }));
     let theme = { ...DEFAULT_THEME, ...(initialState.theme || {}) };
     let selectedId = null;
@@ -167,7 +172,7 @@ window.BlockEditor = (function () {
             </select>
             <select id="beFontSize"><option value="2">Small</option><option value="3" selected>Normal</option><option value="5">Large</option><option value="7">XL</option></select>
             <button type="button" id="beLinkBtn">Link</button>
-            <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option></select>
+            <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option>${(opts.extraPersonalizeOptions || []).map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>
             <span class="be-link-popover" id="beLinkPopover" style="display:none">
               <input type="text" id="beLinkUrl" placeholder="https://"/>
               ${hexColorFieldHtml('beLinkColor', '')}
