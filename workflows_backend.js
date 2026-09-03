@@ -38,6 +38,19 @@ function zonedTimeToUtc(dateStr, timeStr, timeZone) {
   const diff = asIfUtc.getTime() - inZone.getTime();
   return new Date(asIfUtc.getTime() + diff);
 }
+// The recipient's own calendar date, not the server's (UTC) one -- an
+// instant can be "today" in UTC and still "yesterday" (or "tomorrow") in
+// America/Anchorage, which every dateStr below needs to agree with, or a
+// step lands on the wrong side of a day boundary right when it matters
+// most (near midnight UTC / mid-afternoon Alaska).
+function localDateStr(iso, timeZone) {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone });
+}
+function addDays(dateStr, n) {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 // Steps carry a real delayValue+delayUnit (seconds/minutes/hours/days/weeks/
 // months) instead of only whole days, matching how Close's own sequences
 // mix a fast same-minute first reply with day/week-scale follow-ups.
@@ -54,31 +67,51 @@ function computeStepDueDate(workflow, enrolledAtISO, step) {
   const sendingDays = rs.sendingDays?.length ? rs.sendingDays : ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
   const blackoutDates = rs.blackoutDates || [];
   const windowStart = rs.sendingWindow?.start || "09:00";
+  const windowEnd = rs.sendingWindow?.end || "20:00";
   const unit = step?.delayUnit || "days";
   const amount = step?.delayValue ?? step?.dayOffset ?? 0;
 
   if (unit in SUB_DAY_UNIT_MS) {
     let target = new Date(new Date(enrolledAtISO).getTime() + amount * SUB_DAY_UNIT_MS[unit]);
     for (let i = 0; i < 14; i++) {
-      const dateStr = target.toISOString().slice(0, 10);
+      const dateStr = localDateStr(target.toISOString(), tz);
       const wd = weekdayInZone(dateStr, tz);
       if (sendingDays.includes(wd) && !blackoutDates.includes(dateStr)) return target.toISOString();
-      target = new Date(target.getTime() + 86400000);
-      target = new Date(zonedTimeToUtc(target.toISOString().slice(0, 10), windowStart, tz));
+      target = new Date(zonedTimeToUtc(addDays(dateStr, 1), windowStart, tz));
     }
     return new Date(Date.now() + 86400000).toISOString();
   }
 
   const days = unit === "weeks" ? amount * 7 : unit === "months" ? amount * 30 : amount;
-  let d = new Date(enrolledAtISO);
-  d.setUTCDate(d.getUTCDate() + (days || 0));
+  const enrolledDateStr = localDateStr(enrolledAtISO, tz);
+
+  // A same-day (0-day) step: if right now already falls on a valid sending
+  // day and inside the window, it goes out essentially immediately --
+  // there's no "window" left to wait for, it's already open. Confirmed
+  // live: a lead enrolled mid-afternoon (well inside an all-day 00:00-23:59
+  // window) still got pushed to the window's *start* the next time it
+  // "opened" -- nearly a full day later -- because this unconditionally
+  // targeted windowStart regardless of whether now already qualified.
+  // Only a genuinely future day (days > 0), or right now falling outside
+  // today's window/non-sending day, has no "now" to anchor to -- THOSE
+  // still fall through to the window-start search below.
+  if (days === 0) {
+    const wd = weekdayInZone(enrolledDateStr, tz);
+    const enrolledAt = new Date(enrolledAtISO);
+    const startInstant = zonedTimeToUtc(enrolledDateStr, windowStart, tz);
+    const endInstant = zonedTimeToUtc(enrolledDateStr, windowEnd, tz);
+    if (sendingDays.includes(wd) && !blackoutDates.includes(enrolledDateStr) && enrolledAt >= startInstant && enrolledAt <= endInstant) {
+      return enrolledAtISO;
+    }
+  }
+
+  let dateStr = addDays(enrolledDateStr, days || 0);
   for (let i = 0; i < 14; i++) {
-    const dateStr = d.toISOString().slice(0, 10);
     const wd = weekdayInZone(dateStr, tz);
     if (sendingDays.includes(wd) && !blackoutDates.includes(dateStr)) {
       return zonedTimeToUtc(dateStr, windowStart, tz).toISOString();
     }
-    d.setUTCDate(d.getUTCDate() + 1);
+    dateStr = addDays(dateStr, 1);
   }
   return new Date(Date.now() + 86400000).toISOString(); // 14-day search exhausted -- fall back rather than never scheduling
 }
