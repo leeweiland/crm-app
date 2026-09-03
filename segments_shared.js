@@ -6,10 +6,16 @@
 // cycle. Pure data/functions only, no side effects, safe for anything to
 // import.
 import { readJson } from "./auth_backend.js";
-import { STATUSES_FILE } from "./statuses_backend.js";
 
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
+// Duplicated from statuses_backend.js's own STATUSES_FILE (not imported) --
+// statuses_backend.js needs to import CONTACTS_FILE/sqlite sync helpers
+// from here and sqlite_inbox.js to cascade-rename a status across every
+// contact, and both of those already import from this module, so pulling
+// STATUSES_FILE the other way round would cycle back here. Just a filename
+// string, safe to duplicate.
+const STATUSES_FILE = "crm_statuses.json";
 
 export function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 

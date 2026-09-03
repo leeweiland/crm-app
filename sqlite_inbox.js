@@ -186,6 +186,17 @@ export function syncContactFields(contactId, contact) {
   });
 }
 
+// Bulk companion to syncContactFields above -- renaming a status definition
+// in Settings (statuses_backend.js) cascades across every contact holding
+// the old label, which for a status like STOP can be tens of thousands of
+// rows. One set-based UPDATE instead of a syncContactFields() call per
+// contact, since contact.status is a free-standing string copy, not a
+// foreign key, on both the contacts.json side AND this denormalized column.
+export function renameStatusInSqlite(oldLabel, newLabel) {
+  if (!sqliteInboxAvailable()) return;
+  db.prepare(`UPDATE conversations SET status = :newLabel WHERE status = :oldLabel`).run({ oldLabel, newLabel });
+}
+
 // Mirrors GET /api/inbox/conversations' filter/sort/pagination contract in
 // inbox_backend.js -- see that handler for what each param means. Returns
 // the same {conversations, total, hasMore} shape so the frontend needs zero

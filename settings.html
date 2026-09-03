@@ -331,17 +331,39 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 // ── Statuses ─────────────────────────────────────────────────────────────
+// STOP/BLACKLIST/ENROLLED are hardcoded by exact name in compliance and
+// reporting logic server-side (statuses_backend.js rejects a rename with a
+// 400) -- greyed out and non-editable here too so that shows up as "can't"
+// rather than "type a new name, then get an error toast".
+const PROTECTED_STATUS_LABELS = ["STOP", "BLACKLIST", "ENROLLED"];
 async function loadStatuses() {
   const r = await fetch('/api/statuses');
   const { statuses } = await r.json();
   const list = document.getElementById('statusesList');
-  list.innerHTML = statuses.map(s => `
+  list.innerHTML = statuses.map(s => {
+    const locked = PROTECTED_STATUS_LABELS.includes(s.label);
+    return `
     <div class="row-item" draggable="true" data-id="${s.id}">
       <span class="drag-handle">&#8942;&#8942;</span>
-      <span style="flex:1">${escapeHtml(s.label)}</span>
+      <input class="pra-input" data-status-label="${s.id}" value="${escapeHtml(s.label)}" style="flex:1;font-size:.85rem;padding:6px 10px" ${locked ? 'disabled title="Wired into compliance/reporting logic by this exact name -- can\'t be renamed"' : ''}/>
       <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-status="${s.id}">Delete</button>
     </div>
-  `).join('') || '<div class="pra-muted">No statuses yet.</div>';
+  `;
+  }).join('') || '<div class="pra-muted">No statuses yet.</div>';
+  list.querySelectorAll('[data-status-label]').forEach(inp => {
+    const original = inp.value;
+    inp.addEventListener('blur', async () => {
+      const label = inp.value.trim();
+      if (!label || label === original) { inp.value = original; return; }
+      const r = await fetch('/api/statuses/' + inp.dataset.statusLabel, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not rename', true); inp.value = original; return; }
+      showToast('Renamed -- updated on every contact with the old status');
+      loadStatuses();
+    });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.value = original; inp.blur(); } });
+  });
   list.querySelectorAll('[data-del-status]').forEach(btn => btn.onclick = async () => {
     await fetch('/api/statuses/' + btn.dataset.delStatus, { method: 'DELETE' });
     loadStatuses();
