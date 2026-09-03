@@ -88,6 +88,34 @@ function excludeTestContacts(messages) {
 // falls inside the selected range. Visit/unique-visitor counts, separately,
 // are bounded by the range directly (how much traffic each source drove
 // in this window, identified or not).
+// A page visit's attribution key: el= (every link this CRM itself sends --
+// email/SMS/campaigns/automations -- gets one automatically) if present,
+// otherwise whatever the AD PLATFORM'S OWN tracking template put on the
+// URL. Confirmed live (2026-09-03) against this account's actual Meta ad
+// template (Settings -> Ad Platform Link Tracking): real ad clicks never
+// carry el= at all, they carry fbc_id/h_ad_id (or gc_id/h_ad_id for
+// Google) instead -- h_ad_id is the one field both this account's
+// templates share, by design, so it's the fallback grouping key. Prefixed
+// by platform (meta-ad/google-ad) when the platform-specific id is also
+// present, so the two don't collide if the same numeric ad id somehow
+// existed on both platforms. Falls back to raw ad:<id> if h_ad_id shows up
+// with neither fbc_id nor gc_id (a template someone typo'd, or a future
+// platform not accounted for here yet). Labels are the ad platform's own
+// numeric ids, not human-readable names -- there's no lookup back to "what
+// this ad was called" without pulling that from Meta/Google's own APIs,
+// a separate integration this doesn't attempt.
+function attributionKeyForVisit(v) {
+  if (v.el) return v.el;
+  if (!v.search) return null;
+  let params;
+  try { params = new URLSearchParams(v.search); } catch { return null; }
+  const hAdId = params.get("h_ad_id");
+  if (!hAdId) return null;
+  if (params.get("fbc_id")) return `meta-ad:${hAdId}`;
+  if (params.get("gc_id")) return `google-ad:${hAdId}`;
+  return `ad:${hAdId}`;
+}
+
 export function computeAttribution(startMs, endMs) {
   // Same testContact exclusion as excludeTestContacts above -- this
   // report's own numbers would otherwise get real click/opt-in counts
@@ -98,49 +126,55 @@ export function computeAttribution(startMs, endMs) {
   const visits = readJson(PAGE_VISITS_FILE, []);
   const bookedContactIds = new Set(readJson(BOOKINGS_FILE, []).map(b => b.contactId));
 
-  const visitStats = new Map(); // el -> {visits, visitorIds:Set}
-  const firstTouchByContact = new Map(); // contactId -> {el, atMs}
+  const visitStats = new Map(); // key -> {visits, visitorIds:Set}
+  const firstTouchByContact = new Map(); // contactId -> {key, atMs}
   for (const v of visits) {
-    if (!v.el) continue;
+    const key = attributionKeyForVisit(v);
+    if (!key) continue;
     const atMs = new Date(v.at).getTime();
     if (atMs >= startMs && atMs <= endMs) {
-      if (!visitStats.has(v.el)) visitStats.set(v.el, { visits: 0, visitorIds: new Set() });
-      const s = visitStats.get(v.el);
+      if (!visitStats.has(key)) visitStats.set(key, { visits: 0, visitorIds: new Set() });
+      const s = visitStats.get(key);
       s.visits++;
       if (v.visitorId) s.visitorIds.add(v.visitorId);
     }
     if (v.contactId) {
       const existing = firstTouchByContact.get(v.contactId);
-      if (!existing || atMs < existing.atMs) firstTouchByContact.set(v.contactId, { el: v.el, atMs });
+      if (!existing || atMs < existing.atMs) firstTouchByContact.set(v.contactId, { key, atMs });
     }
   }
 
-  // byElStage powers the drill-down endpoint -- "el|stage" -> Set(contactId).
+  // byElStage powers the drill-down endpoint -- "key|stage" -> Set(contactId).
+  // Keyed by the same attributionKeyForVisit value as everything else here
+  // (el=, or the meta-ad:/google-ad:/ad: fallback) -- "el" in the name is
+  // legacy from before the fallback existed, kept as-is rather than
+  // renaming every call site for a label that's still accurate for the
+  // common case (this CRM's own sent links).
   const byElStage = new Map();
-  function addToStage(el, stage, contactId) {
-    const key = `${el}|${stage}`;
-    if (!byElStage.has(key)) byElStage.set(key, new Set());
-    byElStage.get(key).add(contactId);
+  function addToStage(key, stage, contactId) {
+    const k = `${key}|${stage}`;
+    if (!byElStage.has(k)) byElStage.set(k, new Set());
+    byElStage.get(k).add(contactId);
   }
-  const conversionStats = new Map(); // el -> {optIns, bookings, enrolled}
+  const conversionStats = new Map(); // key -> {optIns, bookings, enrolled}
   for (const [contactId, touch] of firstTouchByContact) {
     const contact = contactsById.get(contactId);
     if (!contact) continue;
     const createdMs = new Date(contact.createdAt).getTime();
     if (createdMs < startMs || createdMs > endMs) continue; // opt-in itself didn't happen in this window
-    if (!conversionStats.has(touch.el)) conversionStats.set(touch.el, { optIns: 0, bookings: 0, enrolled: 0 });
-    const c = conversionStats.get(touch.el);
+    if (!conversionStats.has(touch.key)) conversionStats.set(touch.key, { optIns: 0, bookings: 0, enrolled: 0 });
+    const c = conversionStats.get(touch.key);
     c.optIns++;
-    addToStage(touch.el, "optIns", contactId);
-    if (bookedContactIds.has(contactId)) { c.bookings++; addToStage(touch.el, "bookings", contactId); }
-    if (contact.status === "ENROLLED") { c.enrolled++; addToStage(touch.el, "enrolled", contactId); }
+    addToStage(touch.key, "optIns", contactId);
+    if (bookedContactIds.has(contactId)) { c.bookings++; addToStage(touch.key, "bookings", contactId); }
+    if (contact.status === "ENROLLED") { c.enrolled++; addToStage(touch.key, "enrolled", contactId); }
   }
 
-  const allEls = new Set([...visitStats.keys(), ...conversionStats.keys()]);
-  const sources = [...allEls].map(el => {
-    const vs = visitStats.get(el) || { visits: 0, visitorIds: new Set() };
-    const cs = conversionStats.get(el) || { optIns: 0, bookings: 0, enrolled: 0 };
-    return { el, visits: vs.visits, uniqueVisitors: vs.visitorIds.size, optIns: cs.optIns, bookings: cs.bookings, enrolled: cs.enrolled };
+  const allKeys = new Set([...visitStats.keys(), ...conversionStats.keys()]);
+  const sources = [...allKeys].map(key => {
+    const vs = visitStats.get(key) || { visits: 0, visitorIds: new Set() };
+    const cs = conversionStats.get(key) || { optIns: 0, bookings: 0, enrolled: 0 };
+    return { el: key, visits: vs.visits, uniqueVisitors: vs.visitorIds.size, optIns: cs.optIns, bookings: cs.bookings, enrolled: cs.enrolled };
   }).sort((a, b) => b.visits - a.visits);
 
   return { sources, byElStage };

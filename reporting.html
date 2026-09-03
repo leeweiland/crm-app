@@ -75,6 +75,7 @@
           <button class="tab-btn" data-tab="email">Email</button>
           <button class="tab-btn" data-tab="sms">SMS</button>
           <button class="tab-btn" data-tab="ads">Ads</button>
+          <button class="tab-btn" data-tab="attribution">Ad Attribution</button>
           <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
         </div>
 
@@ -143,6 +144,23 @@
         <div class="ads-cards" id="adsCards"></div>
       </div>
 
+      <div class="tab-panel" id="tab-attribution">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Click-to-conversion attribution by source (the <code>el=</code> tag every tracked email/SMS/ad/social link carries) -- distinct from the Ads tab, which shows ad spend from your Google Sheet. This is conversion data from this app's own tracking: how many visits each source drove, and of the contacts who opted in, how many went on to book and enroll. Each contact is credited to their EARLIEST tracked touch, even if they clicked something else later. Click any count to see the actual contacts behind it.</div>
+        <div class="pra-panel" style="padding:0;overflow-x:auto">
+          <table class="pra-table" style="width:100%;min-width:640px">
+            <thead><tr>
+              <th style="text-align:left;padding:12px 16px">Source</th>
+              <th style="text-align:right;padding:12px 16px">Visits</th>
+              <th style="text-align:right;padding:12px 16px">Unique Visitors</th>
+              <th style="text-align:right;padding:12px 16px">Opt-Ins</th>
+              <th style="text-align:right;padding:12px 16px">Bookings</th>
+              <th style="text-align:right;padding:12px 16px">Enrolled</th>
+            </tr></thead>
+            <tbody id="attributionBody"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="tab-panel" id="tab-journeys">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shows every tracked email/SMS/call/task touchpoint for a contact, oldest to newest. Ad-click-level attribution (which ad/creative brought them in) isn't tracked yet -- that needs the click-ID capture work discussed separately.</div>
         <div class="journey-layout">
@@ -158,6 +176,16 @@
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop" id="attributionDrilldownModal">
+  <div class="pra-panel modal-box" style="max-width:560px;max-height:80vh;overflow-y:auto">
+    <div class="pra-h2" style="margin-bottom:4px" id="attributionDrilldownTitle">Contacts</div>
+    <div class="pra-muted" style="font-size:.8rem;margin-bottom:16px" id="attributionDrilldownSubtitle"></div>
+    <div id="attributionDrilldownList"></div>
+    <button class="pra-btn pra-btn-ghost" style="margin-top:16px;width:100%" onclick="document.getElementById('attributionDrilldownModal').classList.remove('show')">Close</button>
+  </div>
+</div>
+
 <script src="/crm-nav.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
@@ -221,7 +249,7 @@ function applyPeriod() {
   currentStart = start.toISOString().slice(0, 10);
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
-  loadEmailReport(); loadSmsReport(); loadAdsReport();
+  loadEmailReport(); loadSmsReport(); loadAdsReport(); loadAttributionReport();
   if (document.getElementById('tab-overview').classList.contains('active')) loadOverview();
 }
 document.getElementById('periodSelect').addEventListener('change', applyPeriod);
@@ -315,6 +343,50 @@ async function loadAdsReport() {
 document.getElementById('refreshAdsBtn').onclick = () => {
   showToast('Ads data updates from the Google Sheet -- refresh it there, then click Update here to re-pull.');
 };
+
+// ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
+async function loadAttributionReport() {
+  const body = document.getElementById('attributionBody');
+  body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
+  const r = await fetch(`/api/reporting/attribution?start=${currentStart}&end=${currentEnd}`);
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
+  const { sources } = await r.json();
+  if (!sources.length) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">No tracked visits in this range.</td></tr>`; return; }
+  const cell = (n, stage, el) => n > 0
+    ? `<td style="text-align:right;padding:10px 16px"><button class="pra-link" style="background:none;border:none;cursor:pointer;font:inherit" data-drill-el="${escapeHtml(el)}" data-drill-stage="${stage}">${n}</button></td>`
+    : `<td style="text-align:right;padding:10px 16px;color:var(--pra-dim)">0</td>`;
+  body.innerHTML = sources.map(s => `
+    <tr style="border-top:1px solid var(--pra-border)">
+      <td style="padding:10px 16px;font-weight:600">${escapeHtml(s.el)}</td>
+      <td style="text-align:right;padding:10px 16px">${s.visits.toLocaleString()}</td>
+      <td style="text-align:right;padding:10px 16px">${s.uniqueVisitors.toLocaleString()}</td>
+      ${cell(s.optIns, 'optIns', s.el)}
+      ${cell(s.bookings, 'bookings', s.el)}
+      ${cell(s.enrolled, 'enrolled', s.el)}
+    </tr>
+  `).join('');
+  body.querySelectorAll('[data-drill-el]').forEach(btn => btn.onclick = () => openAttributionDrilldown(btn.dataset.drillEl, btn.dataset.drillStage));
+}
+const STAGE_LABELS = { optIns: 'Opt-Ins', bookings: 'Bookings', enrolled: 'Enrolled' };
+async function openAttributionDrilldown(el, stage) {
+  document.getElementById('attributionDrilldownTitle').textContent = `${STAGE_LABELS[stage] || stage} — ${el}`;
+  document.getElementById('attributionDrilldownSubtitle').textContent = `${currentStart} to ${currentEnd}`;
+  const list = document.getElementById('attributionDrilldownList');
+  list.innerHTML = '<div class="pra-muted">Loading…</div>';
+  document.getElementById('attributionDrilldownModal').classList.add('show');
+  const r = await fetch(`/api/reporting/attribution/contacts?start=${currentStart}&end=${currentEnd}&el=${encodeURIComponent(el)}&stage=${stage}`);
+  const { contacts } = r.ok ? await r.json() : { contacts: [] };
+  if (!contacts.length) { list.innerHTML = '<div class="pra-muted">No contacts found.</div>'; return; }
+  list.innerHTML = contacts.map(c => `
+    <div style="padding:10px 0;border-bottom:1px solid var(--pra-border);display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <a class="pra-link" href="/contact-detail.html?id=${c.id}" style="font-weight:600">${escapeHtml(c.first)} ${escapeHtml(c.last)}</a>
+        <div class="pra-muted" style="font-size:.78rem">${escapeHtml(c.email || c.phone || '')}</div>
+      </div>
+      <span class="pra-badge">${escapeHtml(c.status || '')}</span>
+    </div>
+  `).join('');
+}
 
 // ── Customer Journeys ────────────────────────────────────────────────────
 let journeysLoaded = false, allJourneyContacts = [], activeJourneyContactId = null;

@@ -138,6 +138,18 @@ export async function handleTrackingRequest(req, res, url) {
     // later -- see claimVisitorHistory.
     let el = null;
     try { el = new URLSearchParams(parsed.search || "").get("el"); } catch { /* malformed search string -- no el signal for this visit */ }
+    // Stored raw too, not just the el= extraction -- confirmed live
+    // (2026-09-03) that real Meta/Google ad clicks never carry el= at all;
+    // they carry whatever's in the Ad Platform Link Tracking settings'
+    // templates instead (e.g. fbc_id/h_ad_id for this account specifically).
+    // Extracting only "el" at write time meant every real ad click's actual
+    // tracking params were silently discarded the moment they landed --
+    // keeping the whole query string means reporting_backend.js's
+    // attribution report can derive a grouping key from whichever
+    // convention is actually present (el=, h_ad_id, or anything else typed
+    // into a future ad platform's tracking template) without another
+    // schema change every time that changes.
+    const search = typeof parsed.search === "string" ? parsed.search.slice(0, 500) : "";
     const ip = clientIp(req);
     const location = await lookupIpLocation(ip);
     // appendJsonRecordFast, not readJson+push+writeJson -- this file is
@@ -145,7 +157,7 @@ export async function handleTrackingRequest(req, res, url) {
     // built the same way message_log.js's live-send path had to be fixed
     // to be (see that file's history) rather than repeating the mistake
     // of finding out the hard way once traffic grows.
-    appendJsonRecordFast(PAGE_VISITS_FILE, { contactId: cid || null, visitorId: parsed.vid || null, path: parsed.path || "", el, ip, location, at: new Date().toISOString() });
+    appendJsonRecordFast(PAGE_VISITS_FILE, { contactId: cid || null, visitorId: parsed.vid || null, path: parsed.path || "", el, search, ip, location, at: new Date().toISOString() });
 
     res.writeHead(204); res.end();
     return true;
