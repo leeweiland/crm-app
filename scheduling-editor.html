@@ -13,10 +13,26 @@
   .ed-sidebar { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; padding-bottom: 4px; }
   .ed-hint { font-size: .72rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-preview-outer { border-radius: 14px; padding: 40px 24px; display: flex; justify-content: center; }
+  .ed-main { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
   @media (max-width: 900px) {
     .ed-shell { grid-template-columns: 1fr; }
     .ed-sidebar { position: static; max-height: none; }
   }
+
+  /* ── Confirmation email/SMS designer + reminders -- lives in the main
+       panel below the live calendar preview, not the 300px sidebar, since
+       the visual email editor needs real width to be usable. ── */
+  .ed-notif-section { display: flex; flex-direction: column; gap: 16px; }
+  .ed-notif-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
+  .ed-notif-title { font-family: var(--font-primary); font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pra-dim); margin-bottom: 4px; }
+  .ed-notif-hint { font-size: .74rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
+  .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .reminder-row input[type=number] { width: 80px; flex-shrink: 0; }
+  .reminder-row select { width: 130px; flex-shrink: 0; }
+  .reminder-row span { font-size: .8rem; color: var(--pra-dim); white-space: nowrap; }
+  .reminder-del { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 2px 6px; flex-shrink: 0; }
+  .reminder-del:hover { color: var(--pra-red); }
+  .reminder-empty { font-size: .78rem; color: var(--pra-dim); margin-bottom: 10px; }
   .tabs .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
   .tabs .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
 
@@ -215,38 +231,59 @@
           </div>
         </div>
 
-        <div class="ed-preview-outer">
-          <div class="bk-card">
-            <div class="bk-grid" id="pvGrid">
-              <div class="bk-info">
-                <div class="pv-logo-slot" id="pvLogoSlot">
-                  <div class="pv-logo-placeholder" id="pvLogoPlaceholder">Click to upload logo</div>
-                  <img id="pvLogoImg" style="display:none"/>
-                  <div class="pv-logo-remove" id="pvLogoRemove" title="Remove logo">&times;</div>
-                </div>
-                <input type="file" accept="image/*" id="pvLogoFileInput" style="display:none"/>
-                <div class="editable" id="pvBrand" contenteditable="true" data-placeholder="Brand name" style="font-size:.8rem;font-weight:600;color:var(--bk-accent);margin-bottom:4px"></div>
-                <div class="editable" id="pvTitle" contenteditable="true" data-placeholder="Event name" style="font-size:1.25rem;font-weight:700;margin-bottom:14px;line-height:1.3"></div>
-                <div class="bk-meta-row" id="pvDuration">⏱ 30 min</div>
-                <div class="loc-editor-wrap">
-                  <div class="bk-meta-row editable" id="pvLocation" style="cursor:pointer">📹 Zoom</div>
-                  <div class="loc-popover" id="locPopover" style="display:none">
-                    <select id="locType">
-                      <option value="zoom">Zoom</option>
-                      <option value="phone">Phone call</option>
-                      <option value="in_person">In person</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                    <div id="locIconField" style="display:none">
-                      <input id="locIcon" placeholder="Icon or emoji (optional)"/>
-                    </div>
-                    <input id="locDetail" placeholder="Zoom link, address, phone number, etc."/>
+        <div class="ed-main">
+          <div class="ed-preview-outer">
+            <div class="bk-card">
+              <div class="bk-grid" id="pvGrid">
+                <div class="bk-info">
+                  <div class="pv-logo-slot" id="pvLogoSlot">
+                    <div class="pv-logo-placeholder" id="pvLogoPlaceholder">Click to upload logo</div>
+                    <img id="pvLogoImg" style="display:none"/>
+                    <div class="pv-logo-remove" id="pvLogoRemove" title="Remove logo">&times;</div>
                   </div>
+                  <input type="file" accept="image/*" id="pvLogoFileInput" style="display:none"/>
+                  <div class="editable" id="pvBrand" contenteditable="true" data-placeholder="Brand name" style="font-size:.8rem;font-weight:600;color:var(--bk-accent);margin-bottom:4px"></div>
+                  <div class="editable" id="pvTitle" contenteditable="true" data-placeholder="Event name" style="font-size:1.25rem;font-weight:700;margin-bottom:14px;line-height:1.3"></div>
+                  <div class="bk-meta-row" id="pvDuration">⏱ 30 min</div>
+                  <div class="loc-editor-wrap">
+                    <div class="bk-meta-row editable" id="pvLocation" style="cursor:pointer">📹 Zoom</div>
+                    <div class="loc-popover" id="locPopover" style="display:none">
+                      <select id="locType">
+                        <option value="zoom">Zoom</option>
+                        <option value="phone">Phone call</option>
+                        <option value="in_person">In person</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                      <div id="locIconField" style="display:none">
+                        <input id="locIcon" placeholder="Icon or emoji (optional)"/>
+                      </div>
+                      <input id="locDetail" placeholder="Zoom link, address, phone number, etc."/>
+                    </div>
+                  </div>
+                  <div class="editable" id="pvDesc" contenteditable="true" data-placeholder="Description shown to visitors…" style="font-size:.84rem;color:var(--bk-dim);margin-top:14px;line-height:1.5;min-height:1.4em"></div>
                 </div>
-                <div class="editable" id="pvDesc" contenteditable="true" data-placeholder="Description shown to visitors…" style="font-size:.84rem;color:var(--bk-dim);margin-top:14px;line-height:1.5;min-height:1.4em"></div>
+                <!-- .bk-body / .bk-times-col are regenerated by renderCalendar() below --
+                     .bk-info above is never touched by that so contenteditable focus is preserved. -->
               </div>
-              <!-- .bk-body / .bk-times-col are regenerated by renderCalendar() below --
-                   .bk-info above is never touched by that so contenteditable focus is preserved. -->
+            </div>
+          </div>
+
+          <div class="ed-notif-section">
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">Confirmation Email</div>
+              <div class="ed-notif-hint">Sent the instant someone books. Tokens: %EVENTNAME% %WHEN% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE%. Leave empty to use the default message.</div>
+              <div id="confEmailEditorRoot"></div>
+            </div>
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">Confirmation SMS</div>
+              <div class="ed-notif-hint">Only sent if the contact has a phone number.</div>
+              <textarea class="pra-input" id="confSmsBody" rows="3" placeholder="You're booked for %EVENTNAME% on %WHEN%."></textarea>
+            </div>
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">Reminders</div>
+              <div class="ed-notif-hint">Sent by email and, if the contact has a phone number, SMS — using the same Confirmation Email/SMS content above.</div>
+              <div id="remindersList"></div>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderBtn">+ Add Reminder</button>
             </div>
           </div>
         </div>
@@ -282,9 +319,10 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/block-editor-client.js"></script>
 <script>
 const eventTypeId = new URLSearchParams(location.search).get('id');
-let draft = null, saveTimer = null;
+let draft = null, saveTimer = null, confEmailEditor = null;
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -582,19 +620,61 @@ document.getElementById('addQuestionBtn').onclick = () => {
   saveDebounced();
 };
 
+// ── Confirmation email/SMS + reminders ──────────────────────────────────
+const REMINDER_UNITS = ['minutes', 'hours', 'days'];
+function reminderRowHtml(rem, i) {
+  return `
+    <div class="reminder-row" data-rem-idx="${i}">
+      <input class="pra-input" type="number" min="1" data-rem-amount="${i}" value="${rem.amount}"/>
+      <select class="pra-select" data-rem-unit="${i}">
+        ${REMINDER_UNITS.map(u => `<option value="${u}" ${rem.unit === u ? 'selected' : ''}>${u}</option>`).join('')}
+      </select>
+      <span>before the appointment</span>
+      <button class="reminder-del" data-rem-del="${i}" title="Delete reminder">&times;</button>
+    </div>
+  `;
+}
+function renderReminders() {
+  const list = document.getElementById('remindersList');
+  list.innerHTML = (draft.reminders.length ? draft.reminders.map(reminderRowHtml).join('') : '<div class="reminder-empty">No reminders yet — visitors only get the instant confirmation.</div>');
+  list.querySelectorAll('[data-rem-amount]').forEach(el => el.oninput = () => { draft.reminders[+el.dataset.remAmount].amount = Number(el.value) || 1; saveDebounced(); });
+  list.querySelectorAll('[data-rem-unit]').forEach(el => el.onchange = () => { draft.reminders[+el.dataset.remUnit].unit = el.value; saveDebounced(); });
+  list.querySelectorAll('[data-rem-del]').forEach(el => el.onclick = () => { draft.reminders.splice(+el.dataset.remDel, 1); renderReminders(); saveDebounced(); });
+}
+document.getElementById('addReminderBtn').onclick = () => {
+  draft.reminders.push({ id: crypto.randomUUID(), amount: 24, unit: 'hours' });
+  renderReminders();
+  saveDebounced();
+};
+document.getElementById('confSmsBody').addEventListener('input', (e) => {
+  draft.confirmation.sms = e.target.value;
+  saveDebounced();
+});
+function renderNotifications() {
+  document.getElementById('confSmsBody').value = draft.confirmation.sms || '';
+  renderReminders();
+  const root = document.getElementById('confEmailEditorRoot');
+  root.innerHTML = '';
+  confEmailEditor = BlockEditor.init(root, { blocks: draft.confirmation.email.blocks || [], theme: draft.confirmation.email.theme || {} }, () => saveDebounced());
+}
+
 function saveDebounced() {
   document.getElementById('edSaveMsg').textContent = 'Saving…';
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveNow, 500);
 }
 async function saveNow() {
+  if (confEmailEditor) {
+    const state = confEmailEditor.getState();
+    draft.confirmation.email = { blocks: state.blocks, theme: state.theme };
+  }
   const r = await fetch('/api/scheduling/admin/event-types/' + draft.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
-      notifyEmails: draft.notifyEmails,
+      notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, reminders: draft.reminders,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -777,10 +857,14 @@ async function init() {
     ...(draft.branding || {}),
   };
   draft.questions = draft.questions || [];
+  draft.confirmation = { email: { blocks: [], theme: {} }, sms: '', ...(draft.confirmation || {}) };
+  draft.confirmation.email = { blocks: [], theme: {}, ...(draft.confirmation.email || {}) };
+  draft.reminders = draft.reminders || [];
   renderPreview();
   const cfRes = await fetch('/api/custom-fields?entityType=contact');
   customFieldsState = cfRes.ok ? (await cfRes.json()).fields : [];
   renderQuestions();
+  renderNotifications();
   const calendars = await loadCalendars();
   // Event types saved before calendars existed only have the old
   // calendarEmail field -- resolve it to a real calendarId here (matching

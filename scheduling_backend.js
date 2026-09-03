@@ -10,6 +10,7 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
+import { applyMergeTags } from "./block_editor_shared.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { claimVisitorHistory } from "./tracking_backend.js";
 
@@ -193,6 +194,8 @@ function getEventTypes() {
       et.questions = [...core, ...(et.questions || []), ...notes];
       changed = true;
     }
+    if (!et.confirmation) { et.confirmation = { ...DEFAULT_CONFIRMATION }; changed = true; }
+    if (!et.reminders) { et.reminders = []; changed = true; }
   }
   if (changed) writeJson(EVENT_TYPES_FILE, eventTypes);
   return eventTypes;
@@ -373,6 +376,16 @@ const DEFAULT_BRANDING = {
   redirectUrl: "",
 };
 
+// The confirmation email/SMS a booking triggers, plus however many
+// reminder sends before the appointment -- all admin-only (never part of
+// publicEventType below). email.blocks empty / sms blank means "use the
+// built-in fallback template" (see sendConfirmationOrReminder), so an
+// event type nobody's customized yet keeps behaving exactly as before this
+// existed. Each reminder is its own {id, amount, unit} row -- amount/unit
+// (minutes/hours/days) "before the appointment", not a fixed list, since
+// different event types reasonably want different reminder cadences.
+const DEFAULT_CONFIRMATION = { email: { blocks: [], theme: {} }, sms: "" };
+
 // The booking form's whole question list -- NOT just extras beyond a fixed
 // Name/Email/Phone/Notes, those are now ordinary entries in this same list
 // (types "first_name"/"last_name"/"email"/"phone") so every one of them is
@@ -423,6 +436,8 @@ function newEventType({ name, description, durationMinutes, location, branding, 
     // type's slots. Defaults to the connected account's own calendar.
     calendarId: calendarId || "default",
     questions: defaultQuestions(),
+    confirmation: { ...DEFAULT_CONFIRMATION },
+    reminders: [],
     active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 }
@@ -594,27 +609,100 @@ function locationText(location) {
   return location.detail || "";
 }
 
-async function sendBookingConfirmation(booking, eventType, contact) {
+// %EVENTNAME%/%WHEN%/%LOCATION%/%NOTES% -- same percent-tag convention
+// applyMergeTags already uses for contact fields (%FIRSTNAME% etc.), just
+// for the booking-specific values that aren't a property of the contact.
+// Order relative to applyMergeTags doesn't matter -- the two never touch
+// the same token names, so either can run first.
+function applyBookingTokens(text, { eventType, when, notes }) {
+  return String(text || "")
+    .replace(/%EVENTNAME%/gi, eventType.name || "")
+    .replace(/%WHEN%/gi, when || "")
+    .replace(/%LOCATION%/gi, locationText(eventType.location) || "")
+    .replace(/%NOTES%/gi, notes || "");
+}
+
+// Sends either the instant booking confirmation or a scheduled reminder --
+// same content either way (the event type's own confirmation.email/sms, or
+// the original hardcoded template when neither's been customized), just a
+// different subject/lead-in so a reminder doesn't read like a second,
+// confusing "you're booked" notice repeated verbatim.
+async function sendConfirmationOrReminder(booking, eventType, contact, isReminder) {
   const start = new Date(booking.startAt);
   const when = start.toLocaleString("en-US", { timeZone: booking.timezone || "America/Anchorage", dateStyle: "full", timeStyle: "short" });
-  const html = `<p>Hi ${contact.first || "there"},</p>
-    <p>You're booked for <b>${eventType.name}</b>.</p>
+  const tokens = { eventType, when, notes: booking.notes };
+  const cfg = eventType.confirmation || {};
+  const subject = isReminder ? `Reminder: ${eventType.name} is coming up` : `Confirmed: ${eventType.name}`;
+
+  const customBlocks = (cfg.email?.blocks || []).length ? cfg.email.blocks : null;
+  const blocks = customBlocks
+    // sendEmail() already runs applyMergeTags(html, contact) over the fully
+    // rendered HTML for %FIRSTNAME% etc. -- only the booking-specific
+    // tokens need substituting here, per block, before that happens.
+    ? customBlocks.map(b => (b.type === "text" && b.html) ? { ...b, html: applyBookingTokens(b.html, tokens) } : b)
+    : [{
+        id: "b1", type: "text", html: `<p>Hi ${contact.first || "there"},</p>
+    <p>${isReminder ? "Just a reminder — you're booked for" : "You're booked for"} <b>${eventType.name}</b>.</p>
     <p><b>When:</b> ${when}<br/><b>Where:</b> ${locationText(eventType.location)}</p>
-    ${booking.notes ? `<p><b>Notes:</b> ${booking.notes}</p>` : ""}`;
+    ${booking.notes ? `<p><b>Notes:</b> ${booking.notes}</p>` : ""}`,
+      }];
+
+  // sendSms(), unlike sendEmail(), doesn't apply contact merge tags itself
+  // -- same caller-resolves-it convention workflows_backend.js's SMS steps
+  // already follow.
+  const smsTemplate = cfg.sms || `${isReminder ? "Reminder: " : ""}You're booked for %EVENTNAME% on %WHEN%.`;
+  const smsBody = applyMergeTags(applyBookingTokens(smsTemplate, tokens), contact);
+
   // Independent sends -- no reason the SMS should wait on the email
   // finishing first (or vice versa) now that this whole function already
   // runs unawaited by its caller.
   await Promise.all([
     sendEmail({
-      to: contact.email, subject: `Confirmed: ${eventType.name}`,
-      blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
+      to: contact.email, subject,
+      blocks, theme: customBlocks ? (cfg.email.theme || {}) : {}, footerTemplateId: null,
       contactId: contact.id, sourceType: "booking", sourceId: booking.id,
     }).catch(() => {}),
     contact.phone ? sendSms({
-      to: contact.phone, body: `You're booked for ${eventType.name} on ${when}.`,
+      to: contact.phone, body: smsBody,
       contactId: contact.id, sourceType: "booking", sourceId: booking.id,
     }).catch(() => {}) : Promise.resolve(),
   ]);
+}
+
+// Called by scheduler.js every tick -- finds every not-yet-happened,
+// confirmed booking whose event type has reminders configured, and sends
+// whichever are now due. remindersSent (an array of reminder ids, on the
+// booking itself) is the same idempotent-dedup technique
+// meetings_backend.js's checkMeetingReminders() already uses: a reminder
+// only ever fires once per booking, re-polled harmlessly every tick until
+// it's actually due, and a failed send just gets silently retried next
+// tick (not marked sent) rather than lost.
+export async function sendDueBookingReminders() {
+  const bookings = readJson(BOOKINGS_FILE, []);
+  const eventTypes = getEventTypes();
+  const now = Date.now();
+  let changed = false;
+  for (const booking of bookings) {
+    if (booking.status !== "confirmed") continue;
+    const startMs = new Date(booking.startAt).getTime();
+    if (!(startMs > now)) continue; // already happened (or malformed) -- nothing left to remind about
+    const et = eventTypes.find(e => e.id === booking.eventTypeId);
+    if (!et || !(et.reminders || []).length) continue;
+    const contact = readJson(CONTACTS_FILE, []).find(c => c.id === booking.contactId);
+    if (!contact) continue;
+    booking.remindersSent = booking.remindersSent || [];
+    for (const reminder of et.reminders) {
+      if (booking.remindersSent.includes(reminder.id)) continue;
+      const ms = reminder.unit === "minutes" ? reminder.amount * 60000
+        : reminder.unit === "days" ? reminder.amount * 86400000
+        : reminder.amount * 3600000; // "hours", also the fallback for an old/unrecognized unit
+      if (now < startMs - ms) continue; // not due yet
+      await sendConfirmationOrReminder(booking, et, contact, true).catch(() => {});
+      booking.remindersSent.push(reminder.id);
+      changed = true;
+    }
+  }
+  if (changed) writeJson(BOOKINGS_FILE, bookings);
 }
 
 // One email, to whoever's listed in the event type's own "Notify these
@@ -753,6 +841,7 @@ export async function handleSchedulingRequest(req, res, url) {
       timezone: timezone || calendar.availability.timezone,
       status: "confirmed", calendarEventId, calendarId,
       cancelToken: randomBytes(24).toString("hex"),
+      remindersSent: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
     };
     const bookings = readJson(BOOKINGS_FILE, []);
@@ -789,13 +878,13 @@ export async function handleSchedulingRequest(req, res, url) {
     });
     checkConversionGoal("meeting_booked", contact.id);
 
-    // Not awaited -- sendBookingConfirmation already swallows its own
+    // Not awaited -- sendConfirmationOrReminder already swallows its own
     // failures (both sendEmail and sendSms are .catch(() => {})'d inside
     // it), so it was never able to fail this response either way. Awaiting
     // it just meant sitting through an email send and, if a phone was
     // given, a second sequential SMS send before the visitor ever saw
     // "You're booked" -- confirmation delivery doesn't need to block that.
-    sendBookingConfirmation(booking, et, contact).catch(() => {});
+    sendConfirmationOrReminder(booking, et, contact, false).catch(() => {});
     sendInternalBookingNotification(booking, et, contact).catch(() => {});
 
     const startDate = new Date(booking.startAt), endDate = new Date(booking.endAt);
@@ -931,7 +1020,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

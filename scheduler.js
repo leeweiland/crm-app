@@ -7,6 +7,7 @@ import { runScheduledDuplicateScan } from "./duplicates_backend.js";
 import { syncWritingCacheIfDue } from "./ai_agents_backend.js";
 import { processAiActiveBatches } from "./ai_active_backend.js";
 import { checkMeetingReminders } from "./meetings_backend.js";
+import { sendDueBookingReminders } from "./scheduling_backend.js";
 import { checkGmailInbox } from "./gmail_backend.js";
 import { processCloseAltBackfillBatch } from "./import_backend.js";
 
@@ -33,6 +34,7 @@ async function tick() {
     await syncWritingCacheIfDue();
     await processAiActiveBatches();
     await checkMeetingReminders();
+    await sendDueBookingReminders();
     await checkGmailInbox();
     await processCloseAltBackfillBatch();
   } catch (e) {
