@@ -426,9 +426,43 @@ async function loadUsers() {
       <td><select class="pra-select" data-user-footer="${u.id}" style="font-size:.8rem;padding:4px 8px">${footerOptions(u.footerTemplateId)}</select></td>
       <td><input class="pra-input" data-user-zoom="${u.id}" value="${escapeHtml(u.zoomLink || '')}" placeholder="https://zoom.us/j/..." style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
       <td><input class="pra-input" data-user-cal="${u.id}" value="${escapeHtml(u.calendarEmail || '')}" placeholder="${escapeHtml(u.email)}" style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
-      <td>${u.archived ? '<span class="pra-muted">Archived</span>' : ''}</td>
+      <td>
+        ${u.archived
+          ? `<span class="pra-muted" style="margin-right:8px">Archived</span><button class="pra-btn pra-btn-ghost pra-btn-sm" data-user-unarchive="${u.id}">Unarchive</button>`
+          : `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-user-archive="${u.id}">Archive</button>`}
+      </td>
     </tr>
   `).join('');
+  // Archiving blocks login (getSessionUser rejects an archived user's
+  // session) without deleting their account or anything tied to it --
+  // Zoom link/calendar email/footer/ownerId assignments on contacts all
+  // stay put, so re-enabling someone later (Unarchive) picks up exactly
+  // where they left off instead of needing the account rebuilt from
+  // scratch. The backend already refuses to let an admin archive their
+  // own account (auth_backend.js), so this can't lock everyone out.
+  body.querySelectorAll('[data-user-archive]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Archive this user? They will not be able to log in until unarchived.')) return;
+      const r = await fetch(`/api/auth/users/${btn.dataset.userArchive}/archived`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not archive', true); return; }
+      showToast('User archived');
+      loadUsers();
+    });
+  });
+  body.querySelectorAll('[data-user-unarchive]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const r = await fetch(`/api/auth/users/${btn.dataset.userUnarchive}/archived`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: false }),
+      });
+      if (!r.ok) { showToast('Could not unarchive', true); return; }
+      showToast('User unarchived');
+      loadUsers();
+    });
+  });
   body.querySelectorAll('[data-user-footer]').forEach(sel => {
     sel.addEventListener('change', async () => {
       const r = await fetch(`/api/auth/users/${sel.dataset.userFooter}/footer`, {
