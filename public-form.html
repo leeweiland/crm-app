@@ -38,6 +38,11 @@ try { if (window.self !== window.top) document.documentElement.classList.add('pf
     .pf-wrap { padding: 0; align-items: flex-start; }
     .pf-card { border-radius: 0; padding: 28px 20px; }
     html:not(.pf-embedded) .pf-card { min-height: 100vh; min-height: 100dvh; }
+    /* The calendar has its own card, shadow, and padding -- .pf-card's own
+       20px text-reading padding on top of that is redundant width lost on
+       a screen where every pixel matters. Negative-margin just this field
+       back out to the true edge instead of shrinking the calendar inside it. */
+    .pf-field:has(.scheduling-inline-widget) { margin-left: -20px; margin-right: -20px; }
   }
   .pf-card .pra-input, .pf-card .pra-select, .pf-card .pra-textarea, .pf-card .pra-btn, .pf-choice-row { border-radius: calc(var(--pf-radius, 12px) * .65); }
   .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }

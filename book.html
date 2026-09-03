@@ -80,9 +80,17 @@ try { if (window.self !== window.top) document.documentElement.classList.add('bk
        instead of cramming three columns into one narrow scrolling page. ── */
   @media (max-width: 640px) {
     .bk-grid, .bk-grid.with-times { grid-template-columns: 1fr; }
-    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-divider); }
+    .bk-info { border-right: none; border-bottom: 1px solid var(--bk-divider); padding: 20px 16px; }
     .bk-grid.with-times .bk-info, .bk-grid.with-times .bk-body { display: none; }
-    .bk-times-col { border-left: none; border-top: none; padding: 24px 20px; }
+    .bk-body { padding: 20px 16px; }
+    .bk-times-col { border-left: none; border-top: none; padding: 20px 16px; }
+    /* .bk-wrap's page-level padding is for the standalone /book/:slug view --
+       embedded (a form's calendar step, or a direct widget embed), the host
+       page already has its own margin around this, and every extra pixel of
+       redundant nested padding is one less pixel for the actual calendar
+       grid on a screen this narrow. */
+    .bk-wrap { padding: 10px; }
+    .bk-embedded .bk-wrap { padding: 2px; }
     .mobile-back-row { display: block; margin-bottom: 14px; }
     .mobile-back-btn { background: var(--bk-bg); border: 1px solid var(--bk-border); border-radius: 50%; width: 42px; height: 42px; font-size: 1.2rem; line-height: 1; cursor: pointer; color: var(--bk-accent); font-family: inherit; }
     .bk-times-col .bk-h2 { text-align: center; }
