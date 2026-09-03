@@ -5,6 +5,7 @@ import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
+import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -287,6 +288,15 @@ export async function handleContactsRequest(req, res, url) {
     if (req.method === "DELETE") {
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       writeJson(CONTACTS_FILE, contacts.filter(c => c.id !== contactMatch[1]));
+      // Deleting the contact record alone left its conversation summary
+      // (crm_conversation_index.json + the SQLite sidebar snapshot) and per-
+      // contact message file behind as orphans -- confirmed live: a deleted
+      // test contact kept showing up in the Inbox sidebar indefinitely,
+      // complete with a stuck unread badge nothing could ever clear, since
+      // there was no longer a real contact or messages behind it for any
+      // mark-done/recompute path to reconcile against.
+      removeConversationSummary(contactMatch[1]);
+      deleteContactMessageFile(contactMatch[1]);
       return sendJson(res, 200, { ok: true });
     }
   }
