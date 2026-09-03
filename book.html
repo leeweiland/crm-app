@@ -169,6 +169,13 @@ try { prefillFormAnswersJson = JSON.parse(qs.get('formAnswersJson') || 'null'); 
 // button. The form's own button drives booking instead via postMessage
 // (see the listener below and public-form.html's calendar-step handling).
 const formEmbed = qs.get('formEmbed') === '1';
+// Handed across from the parent Framer page's crm_vid cookie by the embed
+// script (scheduling_backend.js's WIDGET_JS, withVid) as a query param on
+// this iframe's own src -- this iframe is on the CRM's own origin and
+// can't read that cookie directly. Submitted with the booking so a
+// successful booking can retroactively attribute this visitor's prior
+// anonymous page history (see tracking_backend.js's claimVisitorHistory).
+const visitorId = qs.get('vid') || '';
 if (formEmbed) window.addEventListener('message', e => { if (e.origin === location.origin && e.data?.type === 'pf-book-now') submitBooking(); });
 
 const TZ_OPTIONS = [
@@ -454,7 +461,7 @@ async function submitBooking() {
   btn.disabled = true; btn.textContent = 'Booking…';
   const r = await fetch('/api/scheduling/bookings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined }),
+    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, vid: visitorId || undefined }),
   });
   const d = await r.json();
   if (!r.ok) {
