@@ -60,6 +60,10 @@
   .stat-card-sms { background: rgba(255,79,163,0.1); border: 1px solid rgba(255,79,163,0.35); }
   .stat-card-automations { background: rgba(0,60,110,0.5); border: 1px solid rgba(0,155,255,0.2); }
   .stat-card-workflows { background: rgba(110,15,65,0.5); border: 1px solid rgba(255,79,163,0.2); }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--pra-white); }
+  th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
+  th.sortable.sorted .sort-arrow { opacity: 1; }
 </style>
 </head>
 <body>
@@ -149,12 +153,12 @@
         <div class="pra-panel" style="padding:0;overflow-x:auto">
           <table class="pra-table" style="width:100%;min-width:640px">
             <thead><tr>
-              <th style="text-align:left;padding:12px 16px">Source</th>
-              <th style="text-align:right;padding:12px 16px">Visits</th>
-              <th style="text-align:right;padding:12px 16px">Unique Visitors</th>
-              <th style="text-align:right;padding:12px 16px">Opt-Ins</th>
-              <th style="text-align:right;padding:12px 16px">Bookings</th>
-              <th style="text-align:right;padding:12px 16px">Enrolled</th>
+              <th class="sortable" data-sort="el" style="text-align:left;padding:12px 16px">Source</th>
+              <th class="sortable" data-sort="visits" style="text-align:right;padding:12px 16px">Visits</th>
+              <th class="sortable" data-sort="uniqueVisitors" style="text-align:right;padding:12px 16px">Unique Visitors</th>
+              <th class="sortable" data-sort="optIns" style="text-align:right;padding:12px 16px">Opt-Ins</th>
+              <th class="sortable" data-sort="bookings" style="text-align:right;padding:12px 16px">Bookings</th>
+              <th class="sortable" data-sort="enrolled" style="text-align:right;padding:12px 16px">Enrolled</th>
             </tr></thead>
             <tbody id="attributionBody"></tbody>
           </table>
@@ -345,17 +349,34 @@ document.getElementById('refreshAdsBtn').onclick = () => {
 };
 
 // ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
+let allAttributionSources = [];
+let attributionSort = { field: 'visits', dir: -1 };
 async function loadAttributionReport() {
   const body = document.getElementById('attributionBody');
   body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
   const r = await fetch(`/api/reporting/attribution?start=${currentStart}&end=${currentEnd}`);
   if (!r.ok) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
-  const { sources } = await r.json();
-  if (!sources.length) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">No tracked visits in this range.</td></tr>`; return; }
+  allAttributionSources = (await r.json()).sources;
+  renderAttributionTable();
+}
+function renderAttributionTable() {
+  const body = document.getElementById('attributionBody');
+  if (!allAttributionSources.length) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">No tracked visits in this range.</td></tr>`; return; }
+  const { field, dir } = attributionSort;
+  const rows = [...allAttributionSources].sort((a, b) => {
+    const av = field === 'el' ? a.el.toLowerCase() : a[field];
+    const bv = field === 'el' ? b.el.toLowerCase() : b[field];
+    return av < bv ? -dir : av > bv ? dir : 0;
+  });
+  document.querySelectorAll('#tab-attribution th.sortable').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === field);
+    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
+    if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
+  });
   const cell = (n, stage, el) => n > 0
     ? `<td style="text-align:right;padding:10px 16px"><button class="pra-link" style="background:none;border:none;cursor:pointer;font:inherit" data-drill-el="${escapeHtml(el)}" data-drill-stage="${stage}">${n}</button></td>`
     : `<td style="text-align:right;padding:10px 16px;color:var(--pra-dim)">0</td>`;
-  body.innerHTML = sources.map(s => `
+  body.innerHTML = rows.map(s => `
     <tr style="border-top:1px solid var(--pra-border)">
       <td style="padding:10px 16px;font-weight:600">${escapeHtml(s.el)}</td>
       <td style="text-align:right;padding:10px 16px">${s.visits.toLocaleString()}</td>
@@ -367,6 +388,11 @@ async function loadAttributionReport() {
   `).join('');
   body.querySelectorAll('[data-drill-el]').forEach(btn => btn.onclick = () => openAttributionDrilldown(btn.dataset.drillEl, btn.dataset.drillStage));
 }
+document.querySelectorAll('#tab-attribution th.sortable').forEach(th => th.addEventListener('click', () => {
+  if (attributionSort.field === th.dataset.sort) attributionSort.dir *= -1;
+  else attributionSort = { field: th.dataset.sort, dir: th.dataset.sort === 'el' ? 1 : -1 };
+  renderAttributionTable();
+}));
 const STAGE_LABELS = { optIns: 'Opt-Ins', bookings: 'Bookings', enrolled: 'Enrolled' };
 async function openAttributionDrilldown(el, stage) {
   document.getElementById('attributionDrilldownTitle').textContent = `${STAGE_LABELS[stage] || stage} — ${el}`;
