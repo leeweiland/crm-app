@@ -151,7 +151,6 @@
         <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> -- both SMS and email opted out, conversation hidden. Permanent: no reverse trigger.</div>
         <div class="field"><label class="pra-label">Trigger keywords (comma-separated)</label><input class="pra-input" id="triggerKeywordsList" placeholder="e.g. fuck you, scam, leave me alone"/></div>
 
-        <button class="pra-btn" id="saveComplianceBtn">Save</button>
         <div class="pra-muted" id="complianceSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
@@ -620,7 +619,7 @@ async function loadComplianceSettings() {
   document.getElementById('triggerKeywordsEnabled').checked = !!c.triggerKeywordsEnabled;
   document.getElementById('triggerKeywordsList').value = (c.triggerKeywords || []).join(', ');
 }
-document.getElementById('saveComplianceBtn').onclick = async () => {
+async function saveComplianceSettings() {
   const body = {
     stopKeywordsEnabled: document.getElementById('stopKeywordsEnabled').checked,
     stopKeywords: document.getElementById('stopKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
@@ -628,10 +627,17 @@ document.getElementById('saveComplianceBtn').onclick = async () => {
     triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked,
     triggerKeywords: document.getElementById('triggerKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
   };
+  const msg = document.getElementById('complianceSaveMsg');
+  msg.textContent = 'Saving…';
   const r = await fetch('/api/integrations/compliance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  document.getElementById('complianceSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
-  if (r.ok) loadComplianceSettings();
-};
+  msg.textContent = r.ok ? 'Saved.' : 'Could not save.';
+}
+let complianceSaveDebounce = null;
+document.querySelectorAll('#tab-emailsettings input[type=checkbox]').forEach(el => el.addEventListener('change', saveComplianceSettings));
+document.querySelectorAll('#tab-emailsettings input[type=text], #tab-emailsettings input:not([type])').forEach(el => el.addEventListener('input', () => {
+  clearTimeout(complianceSaveDebounce);
+  complianceSaveDebounce = setTimeout(saveComplianceSettings, 600);
+}));
 
 // ── Website / tracking ───────────────────────────────────────────────────
 let siteSettingsCache = {};
