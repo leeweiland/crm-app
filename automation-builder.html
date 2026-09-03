@@ -613,18 +613,21 @@ function openEmailStepEditor(step, isNew) {
   footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${step.config.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   const root = document.getElementById('emailStepEditorRoot');
   root.innerHTML = '';
-  // Meeting date/time only exists on an automation triggered by
-  // booking_created -- enrollContact() only ever attaches a bookingId to
-  // the enrollment in that case (see automations_backend.js), so offering
-  // these tokens on any other trigger would just resolve to blank text.
-  const bookingPersonalizeOptions = automation.trigger?.type === 'booking_created' ? [
+  // Offered on every automation regardless of trigger type -- most aren't
+  // actually triggered by the booking itself (a lead comes in off a
+  // list/tag and is *separately* on the books for a call), so at send time
+  // this resolves against the contact's next upcoming confirmed booking of
+  // any event type when the enrollment didn't come from booking_created
+  // directly (see automations_backend.js's resolveTokenBooking). No
+  // booking on file just leaves the token as literal text.
+  const bookingPersonalizeOptions = [
     { value: '%EVENTNAME%', label: 'Event name' },
     { value: '%WHEN%', label: 'Meeting date & time' },
     { value: '%DATE%', label: 'Meeting date' },
     { value: '%TIME%', label: 'Meeting time' },
     { value: '%LOCATION%', label: 'Meeting location' },
     { value: '%NOTES%', label: 'Meeting notes' },
-  ] : [];
+  ];
   emailStepEditor = BlockEditor.init(root, { blocks: step.config.blocks || [], theme: step.config.theme }, () => {},
     () => { document.getElementById('emailStepFooterDirtyBar').style.display = 'block'; },
     { extraPersonalizeOptions: bookingPersonalizeOptions });

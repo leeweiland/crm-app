@@ -334,14 +334,16 @@ function renderCanvas() {
           <option value="%LASTNAME%">Last name</option>
           <option value="%EMAIL%">Email</option>
           <option value="%PHONE%">Phone</option>
-          ${workflow.trigger?.type === 'booking_created' ? `
-            <option value="%EVENTNAME%">Meeting event name</option>
-            <option value="%WHEN%">Meeting date & time</option>
-            <option value="%DATE%">Meeting date</option>
-            <option value="%TIME%">Meeting time</option>
-            <option value="%LOCATION%">Meeting location</option>
-            <option value="%NOTES%">Meeting notes</option>
-          ` : ''}
+          <!-- Offered regardless of trigger -- resolves against the
+               contact's next upcoming confirmed booking at send time when
+               this sequence wasn't itself triggered by booking_created
+               (see workflows_backend.js's resolveTokenBooking). -->
+          <option value="%EVENTNAME%">Meeting event name</option>
+          <option value="%WHEN%">Meeting date & time</option>
+          <option value="%DATE%">Meeting date</option>
+          <option value="%TIME%">Meeting time</option>
+          <option value="%LOCATION%">Meeting location</option>
+          <option value="%NOTES%">Meeting notes</option>
         </select>
         <textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>
       ` : ''}

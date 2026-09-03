@@ -8,6 +8,20 @@ import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenVal
 export const WORKFLOWS_FILE = "crm_workflows.json";
 export const WF_ENROLLMENTS_FILE = "crm_workflow_enrollments.json";
 
+// Which booking a step's %EVENTNAME%/%WHEN%/etc tokens refer to -- see
+// automations_backend.js's identical resolveTokenBooking for the reasoning
+// (most sequences aren't triggered by the booking itself, so falling back
+// to the contact's next upcoming confirmed booking is what actually
+// covers "your call is on ..." SMS content).
+function resolveTokenBooking(contactId, bookingId) {
+  const bookings = readJson(BOOKINGS_FILE, []);
+  if (bookingId) return bookings.find(b => b.id === bookingId) || null;
+  const now = Date.now();
+  return bookings
+    .filter(b => b.contactId === contactId && b.status === "confirmed" && new Date(b.startAt).getTime() > now)
+    .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
+}
+
 // Same trigger vocabulary automations_backend.js offers, for the same
 // reason (nothing wires page_visit/Facebook events yet) -- workflows also
 // support direct manual enrollment via POST /api/workflows/:id/enroll,
@@ -197,14 +211,11 @@ export async function advanceDueWorkflowEnrollments() {
       const contact = getContact(enrollment.contactId);
       if (contact && step.config.body && contact.phone) {
         let body = step.config.body;
-        // Only a sequence enrolled off a booking_created trigger carries a
-        // bookingId -- resolve %EVENTNAME%/%WHEN%/%DATE%/%TIME%/etc (see
+        // Resolve %EVENTNAME%/%WHEN%/%DATE%/%TIME%/etc (see
         // scheduling_backend.js) before the contact merge tags below.
-        if (enrollment.bookingId) {
-          const booking = readJson(BOOKINGS_FILE, []).find(b => b.id === enrollment.bookingId);
-          const et = booking ? readJson(EVENT_TYPES_FILE, []).find(e => e.id === booking.eventTypeId) : null;
-          if (booking && et) body = applyBookingTokens(body, getBookingTokenValues(booking, et));
-        }
+        const booking = resolveTokenBooking(enrollment.contactId, enrollment.bookingId);
+        const et = booking ? readJson(EVENT_TYPES_FILE, []).find(e => e.id === booking.eventTypeId) : null;
+        if (booking && et) body = applyBookingTokens(body, getBookingTokenValues(booking, et));
         const result = await sendSms({
           to: contact.phone, body: applyMergeTags(body, contact), contactId: contact.id,
           sourceType: "workflow_step", sourceId: `${workflow.id}:${step.id}`,

@@ -7,6 +7,23 @@ import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_share
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 
+// Which booking a step's %EVENTNAME%/%WHEN%/etc tokens refer to: the exact
+// booking that triggered enrollment when there is one (booking_created
+// trigger), otherwise this contact's next upcoming confirmed booking of
+// ANY event type -- most automations/sequences here aren't triggered by
+// the booking itself (a lead comes in off a list/tag and is *separately*
+// on the books for a call), so gating tokens to only the booking_created
+// trigger left them unavailable for exactly the "your call is on ..."
+// content this business actually sends.
+function resolveTokenBooking(contactId, bookingId) {
+  const bookings = readJson(BOOKINGS_FILE, []);
+  if (bookingId) return bookings.find(b => b.id === bookingId) || null;
+  const now = Date.now();
+  return bookings
+    .filter(b => b.contactId === contactId && b.status === "confirmed" && new Date(b.startAt).getTime() > now)
+    .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
+}
+
 export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
 export const AUTOMATION_VERSIONS_FILE = "crm_automation_versions.json";
@@ -139,20 +156,20 @@ async function advanceEnrollment(enrollment, automation) {
         let subject = step.config.subject || "";
         let previewText = step.config.previewText;
         let blocks = step.config.blocks || [];
-        // Only an automation enrolled off a booking_created trigger carries
-        // a bookingId -- resolve %EVENTNAME%/%WHEN%/%DATE%/%TIME%/etc (see
+        // Resolve %EVENTNAME%/%WHEN%/%DATE%/%TIME%/etc (see
         // scheduling_backend.js) before the normal contact merge tags run
         // inside sendEmail(), same substitution scheduling_backend.js's own
-        // confirmation/reminder sends do.
-        if (enrollment.bookingId) {
-          const booking = readJson(BOOKINGS_FILE, []).find(b => b.id === enrollment.bookingId);
-          const et = booking ? readJson(EVENT_TYPES_FILE, []).find(e => e.id === booking.eventTypeId) : null;
-          if (booking && et) {
-            const tokens = getBookingTokenValues(booking, et);
-            subject = applyBookingTokens(subject, tokens);
-            if (previewText) previewText = applyBookingTokens(previewText, tokens);
-            blocks = blocks.map(b => (b.type === "text" && b.html) ? { ...b, html: applyBookingTokens(b.html, tokens) } : b);
-          }
+        // confirmation/reminder sends do. No booking found (never booked,
+        // or nothing upcoming) just leaves these tokens unresolved as
+        // literal text -- same "didn't customize it" fallback behavior as
+        // an unset subject/blocks.
+        const booking = resolveTokenBooking(enrollment.contactId, enrollment.bookingId);
+        const et = booking ? readJson(EVENT_TYPES_FILE, []).find(e => e.id === booking.eventTypeId) : null;
+        if (booking && et) {
+          const tokens = getBookingTokenValues(booking, et);
+          subject = applyBookingTokens(subject, tokens);
+          if (previewText) previewText = applyBookingTokens(previewText, tokens);
+          blocks = blocks.map(b => (b.type === "text" && b.html) ? { ...b, html: applyBookingTokens(b.html, tokens) } : b);
         }
         await sendEmail({
           to: contact.email, subject, previewText, blocks, theme: step.config.theme,
