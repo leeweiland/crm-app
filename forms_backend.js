@@ -8,7 +8,7 @@ import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
-import { clientIp, lookupIpLocation } from "./tracking_backend.js";
+import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -41,6 +41,17 @@ const ANSWERABLE_TYPES = FIELD_TYPES.filter(t => !NON_ANSWERABLE_TYPES.includes(
 // auto-scan + JS-driven popup overlay), scoped to forms so the Embed modal
 // in form-builder.html can offer the same Inline/Popup/Direct Link choices.
 const FORMS_WIDGET_JS = `(function(){
+  // Appends the PARENT page's crm_vid (visitor id -- see tracking_backend.js)
+  // onto the iframe's own src. The iframe is on the CRM's own origin, so it
+  // can't read a cookie set by track.js running here on the Framer origin --
+  // this is the only way to hand it across, same reasoning as crm_cid
+  // crossing the OTHER direction via a query param on /api/email/click's
+  // redirect.
+  function withVid(url){
+    var m = document.cookie.match(/(?:^|; )crm_vid=([^;]*)/);
+    if (!m) return url;
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'vid=' + m[1];
+  }
   function injectStyles(){
     if (document.getElementById('form-widget-styles')) return;
     var s = document.createElement('style');
@@ -57,7 +68,7 @@ const FORMS_WIDGET_JS = `(function(){
     close.innerHTML = '\\u00d7';
     close.onclick = function(){ document.body.removeChild(overlay); };
     var iframe = document.createElement('iframe');
-    iframe.src = opts.url;
+    iframe.src = withVid(opts.url);
     overlay.appendChild(iframe);
     overlay.appendChild(close);
     overlay.addEventListener('click', function(e){ if (e.target === overlay) document.body.removeChild(overlay); });
@@ -76,7 +87,7 @@ const FORMS_WIDGET_JS = `(function(){
       // clobbering a width the site owner deliberately set.
       if (!el.style.width) el.style.width = '100%';
       var iframe = document.createElement('iframe');
-      iframe.src = el.getAttribute('data-url');
+      iframe.src = withVid(el.getAttribute('data-url'));
       iframe.style.width = '100%';
       iframe.style.height = '100%';
       iframe.style.border = '0';
@@ -384,7 +395,7 @@ export async function handleFormsRequest(req, res, url) {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
-    const { answers } = await readJsonBody(req);
+    const { answers, vid } = await readJsonBody(req);
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);
     if (validationError) return sendJson(res, 400, { error: validationError });
@@ -397,6 +408,11 @@ export async function handleFormsRequest(req, res, url) {
     }
 
     const result = upsertContactFromSubmission(form, cleanAnswers);
+    // Retroactively attribute every anonymous page visit this browser made
+    // BEFORE this submission (the ad click that brought them here, any
+    // pages they browsed) to the contact just created/matched -- see
+    // claimVisitorHistory's own comment for why.
+    if (result?.contact.id && vid) claimVisitorHistory(vid, result.contact.id);
     const responses = readJson(RESPONSES_FILE, []);
     const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, submittedAt: new Date().toISOString() };
     responses.push(response);

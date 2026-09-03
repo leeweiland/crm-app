@@ -11,6 +11,7 @@ import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
+import { claimVisitorHistory } from "./tracking_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,15 @@ const SEARCH_CAP_DAYS = 180;
 // a popup widget (`SchedulingWidget.initPopupWidget({url})`, called from an
 // onclick). Kept dependency-free and small enough to inline-review at a glance.
 const WIDGET_JS = `(function(){
+  // Same reasoning as forms-widget.js's withVid -- hands the parent Framer
+  // page's crm_vid (visitor id) across to this iframe (a different origin)
+  // via a query param, since the iframe can't read a cookie set on the
+  // parent's own origin.
+  function withVid(url){
+    var m = document.cookie.match(/(?:^|; )crm_vid=([^;]*)/);
+    if (!m) return url;
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + 'vid=' + m[1];
+  }
   function injectStyles(){
     if (document.getElementById('scheduling-widget-styles')) return;
     var s = document.createElement('style');
@@ -70,7 +80,7 @@ const WIDGET_JS = `(function(){
     close.innerHTML = '\\u00d7';
     close.onclick = function(){ document.body.removeChild(overlay); };
     var iframe = document.createElement('iframe');
-    iframe.src = opts.url;
+    iframe.src = withVid(opts.url);
     overlay.appendChild(iframe);
     overlay.appendChild(close);
     overlay.addEventListener('click', function(e){ if (e.target === overlay) document.body.removeChild(overlay); });
@@ -87,7 +97,7 @@ const WIDGET_JS = `(function(){
       // content instead of filling its column.
       if (!el.style.width) el.style.width = '100%';
       var iframe = document.createElement('iframe');
-      iframe.src = el.getAttribute('data-url');
+      iframe.src = withVid(el.getAttribute('data-url'));
       iframe.style.width = '100%';
       iframe.style.height = '100%';
       iframe.style.border = '0';
@@ -686,7 +696,7 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
-    const { slug, startAt, timezone, answers, formAnswers } = await readJsonBody(req);
+    const { slug, startAt, timezone, answers, formAnswers, vid } = await readJsonBody(req);
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
@@ -707,6 +717,10 @@ export async function handleSchedulingRequest(req, res, url) {
     }
 
     const contact = upsertContactFromBooking({ name, email, phone, statusId: et.statusId, questions: et.questions, answers });
+    // Retroactively attribute this browser's prior anonymous page visits
+    // (the ad click that brought them here, etc.) to the contact just
+    // created/matched -- see claimVisitorHistory's own comment.
+    if (contact?.id && vid) claimVisitorHistory(vid, contact.id);
     const start = new Date(startAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
     const calendarId = calendar.email || getCalendarId();

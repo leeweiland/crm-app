@@ -1,4 +1,4 @@
-import { readJson, writeJson, getCookie } from "./auth_backend.js";
+import { readJson, writeJson, appendJsonRecordFast, getCookie } from "./auth_backend.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
@@ -7,14 +7,22 @@ import { markContactVisitedPage } from "./contacts_backend.js";
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
 const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
 
-// Simplified page-visit tracking: rather than a fully anonymous
-// visitor-identity system (cookie sync before a contact is even known),
-// this piggybacks on identity we already establish elsewhere -- a tracked
-// email-link click, or a form submission, identifies the visitor's browser.
-// Once identified, subsequent pageviews on the Framer site (via this
-// /track.js snippet) can be attributed to a known contact and fire
-// "page_visit" automation triggers. Visitors who never click a tracked
-// link or submit a form stay anonymous.
+// Page-visit tracking, two layers of identity:
+//   crm_cid ("contact id") -- set once a visitor is DEFINITELY a known
+//     contact (clicked a tracked email link, or identified via a form/
+//     booking -- see below). Every subsequent pageview fires "page_visit"
+//     automation triggers for them.
+//   crm_vid ("visitor id") -- set on literally every visit, identified or
+//     not, so an anonymous visitor's journey (every ad click, every page,
+//     in order) is never lost just because they haven't opted in yet. When
+//     they DO opt in (form submission or booking -- the two events that
+//     create/match a contact), that contact id gets "claimed" back onto
+//     every PRIOR anonymous visit carrying the same crm_vid (see
+//     claimVisitorHistory below) -- so the ad click that brought them here
+//     shows up in their journey retroactively, not just from the moment
+//     they opted in. This is what makes "which ad drove this booking"
+//     answerable at all: without it, an ad click is permanently anonymous,
+//     forever disconnected from whatever they did 10 minutes later.
 //
 // This has to run entirely on the FRAMER origin, not the CRM's -- a cookie
 // set via a Set-Cookie header on a response FROM the CRM's own domain
@@ -29,21 +37,30 @@ const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
 //   destination URL instead of (only) a header -- plain text in a URL
 //   crosses origins fine, and THIS script (already running on the
 //   destination's own origin) picks it up and sets the cookie itself.
-// - public-form.html (the form iframe, itself on the CRM's origin) can't
-//   set a cookie the parent Framer page will see either, so on a
-//   successful submission it postMessages the contact id to the parent
-//   window instead; this script listens for that and sets the cookie the
-//   same way.
+// - public-form.html/the booking widget (both iframes on the CRM's origin)
+//   can't set a cookie the parent Framer page will see either, so on a
+//   successful submission/booking they postMessage the contact id to the
+//   parent window instead; this script listens for that and sets the
+//   cookie the same way. The SAME cross-origin problem applies in reverse
+//   for crm_vid -- the iframe needs to know the PARENT page's visitor id
+//   to submit it along with the form/booking, so the widget embed scripts
+//   (forms-widget.js, scheduling's equivalent) read crm_vid from THIS
+//   page's cookie (same origin as this script) and append it as a query
+//   param on the iframe's own src URL.
 // Sends location.search too (not just the path) now -- with Hyros retired,
 // this CRM is the only thing left reading the "el=..." tag on every link it
 // (and ads/social/YouTube, tagged by hand) already carries, so the visit
 // log is where that signal has to land to be useful for anything.
-// Still fires for a visit with NO crm_cid (an anonymous visitor who hasn't
-// been identified yet) -- the el value on its own is a real signal worth
-// keeping even without a known contact.
 const TRACK_SNIPPET = `(function(){
   function getCookie(name){var m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)'));return m?decodeURIComponent(m[1]):null;}
   function setCid(id){document.cookie='crm_cid='+encodeURIComponent(id)+'; max-age=2592000; path=/; SameSite=Lax';}
+  function randomId(){
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    var s = ''; for (var i=0;i<32;i++) s += Math.floor(Math.random()*16).toString(16);
+    return s;
+  }
+  var vid = getCookie('crm_vid');
+  if (!vid) { vid = randomId(); document.cookie = 'crm_vid=' + vid + '; max-age=31536000; path=/; SameSite=Lax'; }
   var urlCid = new URLSearchParams(location.search).get('crm_cid');
   if (urlCid) setCid(urlCid);
   window.addEventListener('message', function(e){
@@ -51,7 +68,7 @@ const TRACK_SNIPPET = `(function(){
   });
   fetch('${"__BASE_URL__"}/api/track/pageview', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ cid: urlCid || getCookie('crm_cid'), path: location.pathname, search: location.search })
+    body: JSON.stringify({ cid: urlCid || getCookie('crm_cid'), vid: vid, path: location.pathname, search: location.search })
   }).catch(function(){});
 })();`;
 
@@ -116,18 +133,41 @@ export async function handleTrackingRequest(req, res, url) {
 
     // The visit itself is logged either way -- el= on an anonymous visit is
     // still a real signal (which send/ad/social post drove it), even
-    // before/without a contact identified yet.
+    // before/without a contact identified yet. visitorId is stamped on
+    // EVERY visit (see TRACK_SNIPPET) so an anonymous one can be claimed
+    // later -- see claimVisitorHistory.
     let el = null;
     try { el = new URLSearchParams(parsed.search || "").get("el"); } catch { /* malformed search string -- no el signal for this visit */ }
     const ip = clientIp(req);
     const location = await lookupIpLocation(ip);
-    const visits = readJson(PAGE_VISITS_FILE, []);
-    visits.push({ contactId: cid || null, path: parsed.path || "", el, ip, location, at: new Date().toISOString() });
-    writeJson(PAGE_VISITS_FILE, visits);
+    // appendJsonRecordFast, not readJson+push+writeJson -- this file is
+    // small today but gets a write on every single pageview, so it's
+    // built the same way message_log.js's live-send path had to be fixed
+    // to be (see that file's history) rather than repeating the mistake
+    // of finding out the hard way once traffic grows.
+    appendJsonRecordFast(PAGE_VISITS_FILE, { contactId: cid || null, visitorId: parsed.vid || null, path: parsed.path || "", el, ip, location, at: new Date().toISOString() });
 
     res.writeHead(204); res.end();
     return true;
   }
 
   return false;
+}
+
+// Called when a form submission or booking identifies a visitor (creates
+// or matches a contact) -- retroactively attributes every PRIOR anonymous
+// visit carrying the same crm_vid to that contact, so an ad click 10
+// minutes (or 10 days) before someone opts in still shows up in their
+// journey instead of being permanently orphaned. Safe to call with a
+// missing/unknown vid (e.g. an older browser, or the widget embed script
+// hasn't been updated on every page yet) -- just finds nothing to claim.
+export function claimVisitorHistory(vid, contactId) {
+  if (!vid || !contactId) return 0;
+  const visits = readJson(PAGE_VISITS_FILE, []);
+  let claimed = 0;
+  for (const v of visits) {
+    if (v.visitorId === vid && !v.contactId) { v.contactId = contactId; claimed++; }
+  }
+  if (claimed) writeJson(PAGE_VISITS_FILE, visits);
+  return claimed;
 }

@@ -180,6 +180,12 @@ function applyTheme(theme) {
 }
 
 const formId = location.pathname.split('/').filter(Boolean).pop();
+// Handed across from the parent Framer page's crm_vid cookie by the embed
+// script (forms-widget.js's withVid) as a query param on this iframe's own
+// src -- this iframe is on the CRM's own origin and can't read that cookie
+// directly. Submitted along with the form so a successful submission can
+// retroactively attribute this visitor's prior anonymous page history.
+const visitorId = new URLSearchParams(location.search).get('vid');
 let form = null, steps = [], stepIndex = 0, answers = {};
 // Single-choice auto-advance (see bindStepInputs) schedules a delayed click
 // on #pfNext -- if the visitor manually clicks Next themselves before that
@@ -588,7 +594,7 @@ async function submit() {
   try {
     const r = await fetch(`/api/public/forms/${formId}/submit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers }),
+      body: JSON.stringify({ answers, vid: visitorId }),
     });
     const d = await r.json();
     if (!r.ok) { btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit'; alert(d.error || 'Something went wrong — please try again.'); return; }
