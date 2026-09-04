@@ -218,6 +218,17 @@ function bookingWidgetUrl(f) {
   // form's own Next/Submit button drives booking instead (see
   // bookCalendarStep/the message listener below).
   url.searchParams.set('formEmbed', '1');
+  // Confirmed live (2026-09-04): this was the one missing link in the
+  // whole identity-bridging chain -- public-form.html reads its own vid
+  // fine (see visitorId above) and threads it through the PLAIN submit
+  // path (line ~597), but the calendar-as-a-step case never submits
+  // through that path at all -- it drives book.html's own booking via
+  // postMessage (see bookCalendarStep below), and book.html reads vid
+  // from ITS OWN url query string. Without this, book.html always got
+  // vid='', so claimVisitorHistory was silently never called for any
+  // booking made through an in-form calendar step -- exactly the online
+  // funnel's real path (online-app's form ends in this calendar step).
+  if (visitorId) url.searchParams.set('vid', visitorId);
   const emailField = form.fields.find(ff => ff.type === 'email');
   const phoneField = form.fields.find(ff => ff.type === 'phone');
   const firstField = form.fields.find(ff => ff.type === 'first_name');
