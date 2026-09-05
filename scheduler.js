@@ -63,7 +63,25 @@ async function tick() {
   }
 }
 
+// setInterval fires every TICK_MS regardless of whether the previous tick()
+// call has returned yet -- confirmed live (2026-09-05) via the phase logs
+// above printing wildly out of order (one tick's "X starting" appearing,
+// then several OTHER phases from a DIFFERENT tick starting and finishing,
+// before that same "X done" ever showed up): any tick that happens to run
+// long lets a second tick start on top of it, doubling up every full-file
+// read/write and SQLite access every phase makes. That's a real
+// architectural gap this whole file had, not something any one slow phase
+// (the Gmail poller earlier tonight, or whatever else runs long some other
+// day) should have to individually defend against. A tick that's still
+// running when the next one would fire just skips that firing entirely --
+// the one after picks up on schedule once the current tick finishes.
+let _tickRunning = false;
+async function guardedTick() {
+  if (_tickRunning) { console.error("[scheduler] previous tick still running -- skipping this firing"); return; }
+  _tickRunning = true;
+  try { await tick(); } finally { _tickRunning = false; }
+}
 export function startScheduler() {
-  setInterval(tick, TICK_MS);
+  setInterval(guardedTick, TICK_MS);
   console.log(`[scheduler] started, checking every ${TICK_MS / 1000}s`);
 }
