@@ -1,6 +1,5 @@
 import { readJson, writeJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { getContactMessages } from "./message_index.js";
 import { getComplianceSettings } from "./integrations_backend.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
@@ -50,9 +49,19 @@ export function recheckStopStatus(contactId) {
   const settings = getComplianceSettings();
   if (!settings.stopKeywordsEnabled) return false;
 
-  const log = readJson(MESSAGE_LOG_FILE, []);
-  const latestInbound = log
-    .filter(m => m.contactId === contactId && m.channel === "sms" && m.direction === "inbound")
+  // getContactMessages reads this ONE contact's own small per-contact file
+  // (message_index.js), never the main log -- that used to be
+  // readJson(MESSAGE_LOG_FILE, []), a full parse of a file that has grown
+  // past 12GB, run on EVERY single inbound SMS this whole app receives.
+  // Confirmed live (2026-09-05) as the actual cause of the app freezing
+  // repeatedly all night: container memory metrics peaked at 20.5GB against
+  // a 24GB limit while CPU stayed nowhere near its own limit, which is
+  // exactly what loading a file this size into memory over and over,
+  // concurrently, on ordinary incoming-text traffic looks like -- not a
+  // scheduler job (already ruled out by disabling the whole scheduler and
+  // the freezes continuing) and not CPU-bound at all.
+  const latestInbound = getContactMessages(contactId)
+    .filter(m => m.channel === "sms" && m.direction === "inbound")
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
   if (!latestInbound || !isStopKeyword(latestInbound.body || latestInbound.bodyPreview, settings.stopKeywords)) return false;
 
