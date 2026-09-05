@@ -6,6 +6,7 @@ import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./
 import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
+import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -15,7 +16,7 @@ export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
-  "add_tag", "remove_tag", "add_to_list", "send_conversion_event",
+  "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
 ];
 
 // send_email's Body is a plain textarea, not the block editor's rich HTML --
@@ -347,6 +348,38 @@ async function advanceFlowRun(run, flow) {
         await pushConversionEvent(step.config.eventKey, contact.id).catch(e => console.error("[flows] conversion push failed", e.message));
       }
       run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "add_to_ac") {
+      const cfg = step.config || {};
+      if (contact && (cfg.acListId || cfg.acAutomationId)) {
+        try {
+          const result = await withTimeout(pushContactToAc(contact, cfg), 20000, "add_to_ac");
+          if (result.ok && result.acContactId && !contact.externalIds?.acContactId) {
+            contact.externalIds = { ...(contact.externalIds || {}), acContactId: result.acContactId };
+            saveContact(contact);
+          } else if (!result.ok) {
+            console.error("[flows] add_to_ac failed:", result.reason);
+          }
+        } catch (e) { console.error("[flows] add_to_ac failed", e.message); }
+      }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "add_update_contact_ac") {
+      const cfg = step.config || {};
+      const resolvedEmail = cfg.email ? resolveTemplate(cfg.email, ctx).trim().toLowerCase() : "";
+      if (resolvedEmail) {
+        const fieldValues = Object.entries(cfg.customFields || {})
+          .map(([fieldId, tpl]) => ({ field: fieldId, value: resolveTemplate(tpl, ctx) }))
+          .filter(fv => fv.value);
+        try {
+          await withTimeout(syncContactToAc({
+            email: resolvedEmail,
+            first: cfg.first ? resolveTemplate(cfg.first, ctx) : "",
+            last: cfg.last ? resolveTemplate(cfg.last, ctx) : "",
+            phone: cfg.phone ? resolveTemplate(cfg.phone, ctx) : "",
+            fieldValues,
+          }), 20000, "add_update_contact_ac");
+        } catch (e) { console.error("[flows] add_update_contact_ac failed", e.message); }
+      }
+      run.currentStepId = step.nextStepId || null;
     } else {
       run.currentStepId = step.nextStepId || null;
     }
@@ -591,6 +624,12 @@ export async function handleFlowsRequest(req, res, url) {
 
   if (p === "/api/flows/sheets-status" && req.method === "GET") {
     return sendJson(res, 200, { configured: sheetsConfigured() });
+  }
+
+  if (p === "/api/flows/ac-refs" && req.method === "GET") {
+    if (!acConfigured()) return sendJson(res, 200, { configured: false, lists: [], automations: [], customFields: [] });
+    const [lists, automations, customFields] = await Promise.all([fetchAcListsForPicker(), fetchAcAutomationsForPicker(), fetchAcCustomFieldsForPicker()]);
+    return sendJson(res, 200, { configured: true, lists, automations, customFields });
   }
 
   const flowMatch = p.match(/^\/api\/flows\/([^/]+)$/);

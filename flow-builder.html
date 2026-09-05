@@ -153,6 +153,8 @@
       <button data-type="remove_tag"><svg viewBox="0 0 24 24" fill="none"><path d="M11.5 3.5H19a1 1 0 0 1 1 1v7.5L11 21 3.5 13.5 11.5 3.5Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="8" r="1.3" fill="#fff"/><path d="M10 18h4" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Remove Tag</button>
       <button data-type="add_to_list"><svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="#fff" stroke-width="1.6"/><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Add to List</button>
       <button data-type="send_conversion_event"><svg viewBox="0 0 24 24" fill="none"><path d="M4 19V10M9.5 19V5M15 19v-7M20.5 19V3" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><circle cx="20.5" cy="3" r="1.6" fill="#009bff"/></svg>Send Conversion Event</button>
+      <button data-type="add_to_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.6"/><path d="M8 12h8M12 8v8" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add to ActiveCampaign</button>
+      <button data-type="add_update_contact_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="10" cy="8.5" r="3.5" stroke="#fff" stroke-width="1.6"/><path d="M3.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="17.5" cy="8" r="4" stroke="#009bff" stroke-width="1.6"/><path d="M17.5 6.3v3.4M15.8 8h3.4" stroke="#009bff" stroke-width="1.4" stroke-linecap="round"/></svg>Add/Update Contact (ActiveCampaign)</button>
     </div>
     <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('typePickerModal')">Cancel</button>
   </div>
@@ -188,15 +190,16 @@ function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 
 const flowId = new URLSearchParams(location.search).get('id');
 let flow = null, runCounts = {};
-let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [];
+let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [], allAcLists = [], allAcAutomations = [], allAcCustomFields = [], acIsConfigured = false;
 let saveTimer, editingStepId = null, pendingAddPath = null, pendingAddAfter = null, pendingAddBefore = null;
 let cachedSamples = null;
 
 async function loadRefs() {
-  const [listsRes, tagsRes, statusesRes, formsRes, eventTypesRes, autosRes, wfRes, fieldsRes, sheetsRes, convRes] = await Promise.all([
+  const [listsRes, tagsRes, statusesRes, formsRes, eventTypesRes, autosRes, wfRes, fieldsRes, sheetsRes, convRes, acRes] = await Promise.all([
     fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/forms'),
     fetch('/api/scheduling/admin/event-types'), fetch('/api/automations'), fetch('/api/workflows'),
     fetch('/api/custom-fields?entityType=contact'), fetch('/api/flows/sheets-status'), fetch('/api/conversions/settings'),
+    fetch('/api/flows/ac-refs'),
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
@@ -208,6 +211,7 @@ async function loadRefs() {
   allCustomFields = (await fieldsRes.json()).fields;
   sheetsIsConfigured = sheetsRes.ok ? (await sheetsRes.json()).configured : false;
   allConversionEvents = convRes.ok ? (await convRes.json()).events : [];
+  if (acRes.ok) { const acData = await acRes.json(); acIsConfigured = acData.configured; allAcLists = acData.lists; allAcAutomations = acData.automations; allAcCustomFields = acData.customFields; }
 }
 
 function stepSummary(step) {
@@ -224,9 +228,16 @@ function stepSummary(step) {
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'add_to_list') return `Add to list: ${escapeHtml(allLists.find(l => l.id === c.listId)?.name || '—')}`;
   if (step.type === 'send_conversion_event') return `Send "${escapeHtml(allConversionEvents.find(e => e.key === c.eventKey)?.label || c.eventKey || '—')}" conversion`;
+  if (step.type === 'add_to_ac') {
+    const listName = allAcLists.find(l => String(l.id) === String(c.acListId))?.name;
+    const autoName = allAcAutomations.find(a => String(a.id) === String(c.acAutomationId))?.name;
+    const parts = [listName ? `List: ${escapeHtml(listName)}` : null, autoName ? `Automation: ${escapeHtml(autoName)}` : null].filter(Boolean);
+    return parts.length ? parts.join(', ') : 'Add to ActiveCampaign';
+  }
+  if (step.type === 'add_update_contact_ac') return `Set ${['first', 'last', 'email', 'phone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} AC field(s)`;
   return '';
 }
-const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event' };
+const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)' };
 
 function stepCardHtml(stepId, isLast) {
   const step = flow.steps[stepId];
@@ -543,6 +554,8 @@ function defaultConfig(type) {
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_list') return { listId: '' };
   if (type === 'send_conversion_event') return { eventKey: '' };
+  if (type === 'add_to_ac') return { acListId: '', acAutomationId: '' };
+  if (type === 'add_update_contact_ac') return { first: '', last: '', email: '', phone: '', customFields: {} };
   return {};
 }
 
@@ -575,6 +588,18 @@ function customFieldsGridHtml(customFields) {
   for (let i = 0; i < allCustomFields.length; i += 2) {
     rows.push(`<div class="field-row">${allCustomFields.slice(i, i + 2).map(f => `
       <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" data-cf-field-id="${f.id}" value="${escapeHtml(customFields[f.id] || '')}" placeholder="{{payload.Field Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+    `).join('')}</div>`);
+  }
+  return rows.join('');
+}
+// Same shape as customFieldsGridHtml above, but against ActiveCampaign's own
+// field list (allAcCustomFields) instead of this CRM's -- distinct data
+// attribute so its save handler doesn't collide with the CRM version's.
+function acCustomFieldsGridHtml(customFields) {
+  const rows = [];
+  for (let i = 0; i < allAcCustomFields.length; i += 2) {
+    rows.push(`<div class="field-row">${allAcCustomFields.slice(i, i + 2).map(f => `
+      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" data-ac-cf-field-id="${f.id}" value="${escapeHtml(customFields[f.id] || '')}" placeholder="{{payload.Field Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
     `).join('')}</div>`);
   }
   return rows.join('');
@@ -767,6 +792,24 @@ function openStepConfigModal(step, isNew) {
     body.innerHTML = allConversionEvents.length
       ? `<div class="field"><label class="pra-label">Conversion Event</label><select class="pra-select" id="cfgConversionEvent">${allConversionEvents.map(e => `<option value="${escapeHtml(e.key)}" ${step.config.eventKey === e.key ? 'selected' : ''}>${escapeHtml(e.label)} (${[e.sendToMeta ? 'Meta' : null, e.sendToGoogle ? 'Google' : null].filter(Boolean).join(' + ') || 'not sent anywhere yet'})</option>`).join('')}</select></div>`
       : `<div class="pra-muted" style="font-size:.8rem">No conversion events defined yet -- add one in Settings &rarr; Tracking &rarr; Conversion Tracking first.</div>`;
+  } else if (step.type === 'add_to_ac') {
+    const c = step.config;
+    body.innerHTML = `
+      ${acIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">ActiveCampaign isn\'t connected yet -- add AC_API_KEY to .env. The step still saves and will start working once that\'s set.</div>'}
+      <div class="field"><label class="pra-label">Add to List (optional)</label><select class="pra-select" id="cfgAcList"><option value="">Don't add to a list</option>${allAcLists.map(l => `<option value="${l.id}" ${String(c.acListId) === String(l.id) ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}</select></div>
+      <div class="field"><label class="pra-label">Add to Automation (optional)</label><select class="pra-select" id="cfgAcAutomation"><option value="">Don't add to an automation</option>${allAcAutomations.map(a => `<option value="${a.id}" ${String(c.acAutomationId) === String(a.id) ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>
+    `;
+  } else if (step.type === 'add_update_contact_ac') {
+    const c = step.config;
+    body.innerHTML = `
+      ${acIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">ActiveCampaign isn\'t connected yet -- add AC_API_KEY to .env. The step still saves and will start working once that\'s set.</div>'}
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Creates or updates a contact directly in ActiveCampaign by email -- separate from this CRM's own contact record. Type a value, or start typing to search available fields from the trigger.</div>
+      <div class="field"><label class="pra-label">Email</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcEmail" value="${escapeHtml(c.email || '')}" placeholder="{{payload.Email}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">First name</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcFirst" value="${escapeHtml(c.first || '')}" placeholder="{{payload.First Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Last name</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcLast" value="${escapeHtml(c.last || '')}" placeholder="{{payload.Last Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
+      <div class="field"><label class="pra-label">Phone</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcPhone" value="${escapeHtml(c.phone || '')}" placeholder="{{payload.Phone}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="pra-label" style="margin:12px 0 6px">ActiveCampaign custom fields (optional)</div>
+      ${allAcCustomFields.length ? `<div id="cfgAcCustomFieldRows">${acCustomFieldsGridHtml(c.customFields || {})}</div>` : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields found in ActiveCampaign, or not connected yet.</div>`}
+    `;
   }
   // Wires the "+" token-insert button next to every free-text input/textarea
   // in whatever step-type body was just rendered -- harmless no-op for a
@@ -810,6 +853,19 @@ function openStepConfigModal(step, isNew) {
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
     else if (step.type === 'add_to_list') { step.config.listId = document.getElementById('cfgList').value; }
     else if (step.type === 'send_conversion_event') { const el = document.getElementById('cfgConversionEvent'); if (el) step.config.eventKey = el.value; }
+    else if (step.type === 'add_to_ac') { step.config.acListId = document.getElementById('cfgAcList').value; step.config.acAutomationId = document.getElementById('cfgAcAutomation').value; }
+    else if (step.type === 'add_update_contact_ac') {
+      step.config.email = document.getElementById('cfgAcEmail').value.trim();
+      step.config.first = document.getElementById('cfgAcFirst').value.trim();
+      step.config.last = document.getElementById('cfgAcLast').value.trim();
+      step.config.phone = document.getElementById('cfgAcPhone').value.trim();
+      const acCustomFields = {};
+      document.querySelectorAll('#cfgAcCustomFieldRows [data-ac-cf-field-id]').forEach(inp => {
+        const val = inp.value.trim();
+        if (val) acCustomFields[inp.dataset.acCfFieldId] = val;
+      });
+      step.config.customFields = acCustomFields;
+    }
     if (isNew) attachNewStep(step);
     closeModal('stepConfigModal');
     render(); saveDebounced();

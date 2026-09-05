@@ -18,6 +18,98 @@ const CLOSE_BASE = "https://api.close.com/api/v1";
 
 function acConfigured() { return !!process.env.AC_API_KEY; }
 function closeConfigured() { return !!process.env.CLOSE_API_KEY; }
+export { acConfigured };
+
+// ── Push direction: CRM -> AC (everything else in this file pulls the other
+// way). Used by the Flow builder's "Add to ActiveCampaign" step -- lets a
+// Framer-triggered flow enroll a contact into AC lists/automations directly,
+// as an interim path while this account's own SES sending is still gated on
+// AWS production access.
+export async function fetchAcListsForPicker() {
+  if (!acConfigured()) return [];
+  const lists = [];
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${AC_BASE}/api/3/lists?limit=100&offset=${offset}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+    if (!r.ok) break;
+    const data = await r.json();
+    (data.lists || []).forEach(l => lists.push({ id: l.id, name: l.name }));
+    const total = parseInt(data.meta?.total || "0", 10);
+    offset += 100;
+    if (offset >= total || !(data.lists || []).length) break;
+  }
+  return lists.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function fetchAcAutomationsForPicker() {
+  if (!acConfigured()) return [];
+  const automations = [];
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${AC_BASE}/api/3/automations?limit=100&offset=${offset}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+    if (!r.ok) break;
+    const data = await r.json();
+    (data.automations || []).forEach(a => automations.push({ id: a.id, name: a.name }));
+    const total = parseInt(data.meta?.total || "0", 10);
+    offset += 100;
+    if (offset >= total || !(data.automations || []).length) break;
+  }
+  return automations.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function fetchAcCustomFieldsForPicker() {
+  if (!acConfigured()) return [];
+  const fields = [];
+  let offset = 0;
+  while (true) {
+    const r = await fetch(`${AC_BASE}/api/3/fields?limit=100&offset=${offset}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
+    if (!r.ok) break;
+    const data = await r.json();
+    (data.fields || []).forEach(f => fields.push({ id: f.id, label: f.title }));
+    const total = parseInt(data.meta?.total || "0", 10);
+    offset += 100;
+    if (offset >= total || !(data.fields || []).length) break;
+  }
+  return fields.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// contact/sync is AC's own idempotent create-or-update-by-email endpoint --
+// returns AC's contact id so callers can cache it onto
+// contact.externalIds.acContactId, same field the AC importer already uses.
+// Takes plain resolved values rather than a CRM contact record so the Flow
+// builder's "Add/Update Contact (ActiveCampaign)" step can push whatever it
+// typed/templated -- doesn't require a CRM contact to exist at all.
+export async function syncContactToAc({ email, first, last, phone, fieldValues } = {}) {
+  if (!acConfigured()) return { ok: false, reason: "ac_not_configured" };
+  if (!email) return { ok: false, reason: "no_email" };
+  const headers = { "Api-Token": process.env.AC_API_KEY, "Content-Type": "application/json" };
+  const body = { contact: { email, firstName: first || "", lastName: last || "", phone: phone || "" } };
+  if (fieldValues?.length) body.contact.fieldValues = fieldValues.map(fv => ({ field: fv.field, value: fv.value }));
+  const r = await fetch(`${AC_BASE}/api/3/contact/sync`, { method: "POST", headers, body: JSON.stringify(body) });
+  if (!r.ok) return { ok: false, reason: `ac_sync_error_${r.status}` };
+  const acId = (await r.json()).contact?.id;
+  return acId ? { ok: true, acContactId: String(acId) } : { ok: false, reason: "ac_sync_no_id" };
+}
+
+// Used by the "Add to ActiveCampaign" step (list/automation enrollment) --
+// syncs the CRM's own contact record first so there's something to enroll.
+export async function pushContactToAc(contact, { acListId, acAutomationId } = {}) {
+  if (!contact?.email) return { ok: false, reason: "no_email" };
+  const syncResult = await syncContactToAc({ email: contact.email, first: contact.first, last: contact.last, phone: contact.phone });
+  if (!syncResult.ok) return syncResult;
+  const acId = syncResult.acContactId;
+  const headers = { "Api-Token": process.env.AC_API_KEY, "Content-Type": "application/json" };
+
+  if (acListId) {
+    const r = await fetch(`${AC_BASE}/api/3/contactLists`, { method: "POST", headers, body: JSON.stringify({ contactList: { list: acListId, contact: acId, status: 1 } }) });
+    if (!r.ok) console.error("[ac_push] add to list failed:", await r.text().catch(() => r.status));
+  }
+  if (acAutomationId) {
+    const r = await fetch(`${AC_BASE}/api/3/contactAutomations`, { method: "POST", headers, body: JSON.stringify({ contactAutomation: { contact: acId, automation: acAutomationId } }) });
+    if (!r.ok) console.error("[ac_push] add to automation failed:", await r.text().catch(() => r.status));
+  }
+  return { ok: true, acContactId: acId };
+}
 
 // Confirmed live via Close's own response headers (x-ratelimit-limit:
 // "60, 60;w=1, 100;w=1") that /lead/, /activity/{email,sms,call,note}/,
