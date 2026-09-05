@@ -47,11 +47,7 @@ async function tick() {
     await timedPhase("processAiActiveBatches", processAiActiveBatches);
     await timedPhase("checkMeetingReminders", checkMeetingReminders);
     await timedPhase("sendDueBookingReminders", sendDueBookingReminders);
-    // Off again at Lee's request while he tests page-load speed with it
-    // out of the picture. The real freeze causes (compliance_backend.js's
-    // recheckStopStatus, inbox_backend.js's mark-done -- both full
-    // 12GB+-log reads) are fixed regardless of whether this runs.
-    // await timedPhase("checkGmailInbox", checkGmailInbox);
+    await timedPhase("checkGmailInbox", checkGmailInbox);
     await timedPhase("processCloseAltBackfillBatch", processCloseAltBackfillBatch);
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);

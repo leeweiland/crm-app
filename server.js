@@ -29,6 +29,9 @@ import { handleConversionsRequest } from "./conversions_backend.js";
 import { handleMeetingsRequest } from "./meetings_backend.js";
 import { handleGmailRequest } from "./gmail_backend.js";
 import { startScheduler } from "./scheduler.js";
+import { readJson } from "./auth_backend.js";
+import { CONTACTS_FILE } from "./segments_shared.js";
+import { sqliteInboxAvailable } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Explicit path, not dotenv's default (process.cwd()) -- the preview
@@ -78,6 +81,29 @@ setInterval(() => {
     }
   }
 }, 5000).unref();
+
+// Warms the two caches a fresh container otherwise pays for on the FIRST
+// real request instead of at boot: crm_contacts.json (~190MB -- readJson's
+// own mtime-cache means this is a genuine no-op on every later call, but
+// the very first parse after a deploy has nothing to hit) and the SQLite
+// conversations DB (sqliteInboxAvailable lazily opens the file and runs
+// its schema-check/ALTER TABLE statements on first call). Confirmed live
+// (2026-09-05): this is why the Inbox specifically felt slow for about
+// 30 seconds right after every redeploy, then fine from then on -- a
+// cold OS disk-cache/cold in-process-cache cost, not a bug, just paid by
+// whoever happened to load the page first instead of during startup
+// where it belongs.
+function warmCaches() {
+  const t0 = Date.now();
+  try {
+    readJson(CONTACTS_FILE, []);
+    sqliteInboxAvailable();
+    console.log(`[warmup] caches primed in ${Date.now() - t0}ms`);
+  } catch (e) {
+    console.error("[warmup] failed (non-fatal, first real request will just pay the cost instead):", e.message);
+  }
+}
+warmCaches();
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
