@@ -21,6 +21,25 @@ function getTwilioClient() {
   return twilio(t.accountSid, t.authToken);
 }
 
+// Contact phone numbers in this CRM are stored in whatever format they
+// arrived in (bulk imports, manual entry, form submits) -- confirmed live,
+// ~68% of contacts have no "+" prefix at all. Twilio requires E.164
+// ("to" must start with "+" and a country code) and rejects anything else
+// outright, so an unformatted number failed every time regardless of
+// whether the number itself was actually valid/reachable. Assumes NANP
+// (+1) for bare 10-digit numbers and 11-digit numbers already starting
+// with "1" -- matching the same US-centric assumption findContactByPhone
+// below already makes when matching by last-10-digits. A number that's
+// already "+"-prefixed is trusted as-is and passed through untouched.
+export function normalizePhoneToE164(phone) {
+  const raw = String(phone || "").trim();
+  if (raw.startsWith("+")) return raw;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return "+1" + digits;
+  if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
+  return digits ? "+" + digits : raw;
+}
+
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function findContactByPhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "").slice(-10);
@@ -46,12 +65,13 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   // (source_names.js), matching the el= convention already used everywhere
   // else -- links stay real, direct, recognizable URLs.
   const taggedBody = appendSourceTagToSmsBody(body, `sms-${resolveSendSourceSlug(sourceType, sourceId)}`);
+  const toFormatted = normalizePhoneToE164(to);
   const baseRow = {
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: twilioSettings.fromNumber || null, body: taggedBody || "", bodyPreview: (taggedBody || "").slice(0, 140),
+    to: toFormatted, from: twilioSettings.fromNumber || null, body: taggedBody || "", bodyPreview: (taggedBody || "").slice(0, 140),
   };
 
-  if (!client) { logMessage({ ...baseRow, status: "failed" }); return { ok: false, reason: "twilio_not_configured" }; }
+  if (!client) { logMessage({ ...baseRow, status: "failed", failReason: "twilio_not_configured" }); return { ok: false, reason: "twilio_not_configured" }; }
 
   try {
     // Without this, Twilio has no per-message destination for delivery
@@ -60,7 +80,7 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
     // outbound SMS sat at "queued" forever in our own records no matter
     // what actually happened on the wire.
     const msg = await client.messages.create({
-      to, from: twilioSettings.fromNumber, body: taggedBody,
+      to: toFormatted, from: twilioSettings.fromNumber, body: taggedBody,
       statusCallback: `${getPublicBaseUrl()}/api/webhooks/twilio/status`,
     });
     // Logged once with the final status/sid already known, same reasoning
@@ -68,7 +88,11 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
     logMessage({ ...baseRow, status: msg.status || "sent", providerMessageId: msg.sid });
     return { ok: true, sid: msg.sid };
   } catch (e) {
-    logMessage({ ...baseRow, status: "failed" });
+    // e.message from Twilio's SDK already includes their error code/text
+    // (e.g. "The 'To' number ... is not a valid phone number." or a geo-
+    // permissions message for international sends) -- stored now instead
+    // of discarded, so a failure is diagnosable from the log alone.
+    logMessage({ ...baseRow, status: "failed", failReason: e.message });
     return { ok: false, reason: e.message };
   }
 }
