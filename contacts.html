@@ -518,35 +518,47 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
     </div>
   `).join('') || `<div class="pra-muted">None yet.</div>`;
+  // Lists (not tags/segments) also show how many of their members are
+  // actually subscribed (not opted out) alongside the raw membership total
+  // -- membership alone doesn't tell you who's actually reachable, which is
+  // the whole point of a list.
+  function paintCount(item, total, subscribed) {
+    const el = container.querySelector(`[data-count="${item.id}"]`);
+    if (!el) return;
+    if (kind !== 'list') { el.textContent = typeof total === 'number' ? `${total} contact${total === 1 ? '' : 's'}` : '— contacts'; return; }
+    const totalTxt = typeof total === 'number' ? total : '—';
+    const subTxt = typeof subscribed === 'number' ? subscribed : '—';
+    el.textContent = `${subTxt} subscribed / ${totalTxt} contacts`;
+  }
   if (prefetchedCounts) {
     // Already fetched (up front, for "contact count" sort mode) -- paint
-    // immediately instead of re-fetching the same data per row.
-    items.forEach(item => {
-      const el = container.querySelector(`[data-count="${item.id}"]`);
-      if (!el) return;
-      const c = prefetchedCounts.get(item.id);
-      el.textContent = typeof c === 'number' ? `${c} contact${c === 1 ? '' : 's'}` : '— contacts';
-    });
+    // the total immediately instead of re-fetching the same data per row.
+    items.forEach(item => paintCount(item, prefetchedCounts.get(item.id), null));
+    if (kind === 'list') {
+      runWithConcurrency(items, 6, item =>
+        fetch(`/api/contacts?${cfg.contactsQuery(item)}&emailOptOut=false&limit=1`).then(r => r.ok ? r.json() : null)
+          .then(d => paintCount(item, prefetchedCounts.get(item.id), d?.total)).catch(() => {})
+      );
+    }
   } else {
     // Concurrency-capped, not one fetch per row fired all at once: Tags
     // alone has 3500+ rows in production, and firing that many simultaneous
     // fetches exhausted the browser's connection pool outright
     // (net::ERR_INSUFFICIENT_RESOURCES), which also starved the unrelated
     // main contacts-table fetch running at the same time and made the whole
-    // page look frozen on load, not just this tab.
-    runWithConcurrency(items, 6, item =>
-      fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).then(d => {
-        const el = container.querySelector(`[data-count="${item.id}"]`);
-        if (!el) return;
-        // A failed/error response (e.g. the server was overloaded) still
-        // resolves here as `null`/a body with no `.total` -- show a dash
-        // instead of literally rendering "undefined contacts".
-        el.textContent = typeof d?.total === 'number' ? `${d.total} contact${d.total === 1 ? '' : 's'}` : '— contacts';
-      }).catch(() => {
-        const el = container.querySelector(`[data-count="${item.id}"]`);
-        if (el) el.textContent = '— contacts';
-      })
-    );
+    // page look frozen on load, not just this tab. Lists fire two requests
+    // per row (total + subscribed) instead of one, but there are only a
+    // handful of lists, nowhere near the scale that caused that.
+    runWithConcurrency(items, 6, item => {
+      const totalP = fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).catch(() => null);
+      const subP = kind === 'list'
+        ? fetch(`/api/contacts?${cfg.contactsQuery(item)}&emailOptOut=false&limit=1`).then(r => r.ok ? r.json() : null).catch(() => null)
+        : Promise.resolve(null);
+      // A failed/error response (e.g. the server was overloaded) still
+      // resolves here as `null`/a body with no `.total` -- paintCount shows
+      // a dash instead of literally rendering "undefined contacts".
+      return Promise.all([totalP, subP]).then(([td, sd]) => paintCount(item, td?.total, sd?.total));
+    });
   }
   container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
   container.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });

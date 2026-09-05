@@ -172,6 +172,7 @@ export async function handleContactsRequest(req, res, url) {
     const tag = url.searchParams.get("tag");
     const listId = url.searchParams.get("listId");
     const type = url.searchParams.get("type");
+    const emailOptOutParam = url.searchParams.get("emailOptOut");
     const filterParam = url.searchParams.get("filter");
     let advancedFilter = null;
     if (filterParam) {
@@ -197,6 +198,7 @@ export async function handleContactsRequest(req, res, url) {
     if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
     if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
     if (type) filtered = filtered.filter(c => c.type === type);
+    if (emailOptOutParam !== null) { const want = emailOptOutParam === "true"; filtered = filtered.filter(c => !!c.emailOptOut === want); }
     if (advancedFilter) filtered = filtered.filter(c => matchesSegment(c, advancedFilter));
     const total = filtered.length;
     // Sort/paginate are both opt-in via query params -- other callers
