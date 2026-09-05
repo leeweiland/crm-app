@@ -1490,8 +1490,18 @@ async function selectConversation(c, skipFetch) {
     fetch('/api/inbox/contact/' + c.contactId),
     fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId) + '&status=' + encodeURIComponent(c.contact?.status || '') + '&programType=' + encodeURIComponent(c.contact?.programType || '')),
   ]);
+  // Discard a stale response -- if the user has since clicked a DIFFERENT
+  // conversation while this one's fetch was still in flight, selectedConvo
+  // has already moved on by the time we get here. Without this check, a
+  // slow-to-resolve click (any real latency -- a loaded server, a slow
+  // connection) can win the race against a faster later click and overwrite
+  // the panel with the wrong contact's thread. Confirmed live: this is what
+  // made clicking any name open whichever contact's fetch happened to be
+  // slowest, not the one actually clicked.
+  if (selectedConvo?.key !== c.key) return;
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
+  if (selectedConvo?.key !== c.key) return; // re-check: could have changed again during the json() awaits
   renderThread();
 }
 function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }
