@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
-import { MESSAGE_LOG_FILE } from "./message_log.js";
+import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE } from "./message_log.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { CONVERSATION_META_FILE, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
@@ -210,15 +210,19 @@ export async function handleInboxRequest(req, res, url) {
     const { done } = await readJsonBody(req);
     const value = done !== false;
     if (value) {
-      // The per-contact file already tells us exactly which message ids
-      // need to flip -- patching just those in the main log (byte-level,
-      // via updateJsonArrayRecordsByIds) avoids a full 12GB read+write for
-      // what's normally a handful of unread messages.
+      // markContactMessagesDone patches the per-contact file, the one
+      // place anything actually reads inboxDone status from (the main log
+      // is write-once-append-only -- see updateMessageStatusByProviderId's
+      // comment). This used to ALSO call updateJsonArrayRecordsByIds
+      // against the main log on the mistaken belief that it's a cheap
+      // targeted patch -- it streams its READ of the file but still
+      // rewrites the whole thing every call, which at 12GB+ meant marking
+      // a conversation done paid for a full read+write of the entire log,
+      // for a completely redundant update nothing was ever going to read
+      // back. Confirmed live (2026-09-05) as part of the same freeze
+      // pattern /api/inbox/mark-done had.
       const idsToFlip = getContactMessages(contactId).filter(m => m.direction === "inbound" && !m.inboxDone).map(m => m.id);
-      if (idsToFlip.length) {
-        markContactMessagesDone(contactId);
-        updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, idsToFlip, m => { m.inboxDone = true; return m; });
-      }
+      if (idsToFlip.length) markContactMessagesDone(contactId);
       recomputeConversationSummary(contactId);
     }
     return sendJson(res, 200, { ok: true, meta: setConvoMeta(contactId, { done: value }) });
@@ -358,8 +362,21 @@ export async function handleInboxRequest(req, res, url) {
     const idSet = new Set(ids);
     const value = done !== false;
 
-    const updatedMsgs = updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, ids, m => { m.inboxDone = value; return m; });
-    const touchedContacts = new Set(updatedMsgs.map(m => m.contactId).filter(Boolean));
+    // contactId per id comes from the small id->contactId index (populated
+    // by every logMessage() call), NOT from patching the main log --
+    // updateJsonArrayRecordsByIds streams its READ of the target file, but
+    // still rewrites the WHOLE thing every call (read the lot, write the
+    // lot, rename). crm_message_log.json has grown past 12GB, and this ran
+    // on every single mark-done -- i.e. every time anyone opened a
+    // conversation with an unread message. Confirmed live (2026-09-05) as
+    // a second, separate cause of the Inbox freezing hard on ordinary
+    // clicking, after compliance_backend.js's own full-log read (a
+    // different bug, same underlying mistake) was already fixed. The main
+    // log itself is intentionally write-once-append-only now -- see
+    // updateMessageStatusByProviderId's own comment -- so it was never
+    // meant to be the one getting patched here in the first place.
+    const idIndex = readJson(MESSAGE_ID_INDEX_FILE, {});
+    const touchedContacts = new Set(ids.map(id => idIndex[id]?.contactId).filter(Boolean));
     for (const contactId of touchedContacts) {
       updateContactMessagesByIds(contactId, idSet, m => { m.inboxDone = value; });
       recomputeConversationSummary(contactId);
