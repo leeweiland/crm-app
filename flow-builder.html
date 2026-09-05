@@ -172,6 +172,25 @@
   </div>
 </div>
 
+<!-- Move-runs-before-delete -->
+<div class="modal-backdrop" id="moveRunsModal">
+  <div class="pra-panel modal-box">
+    <div class="pra-h2" style="margin-bottom:16px">Move contacts before deleting</div>
+    <div class="pra-muted" style="font-size:.85rem;margin-bottom:14px" id="moveRunsCountMsg"></div>
+    <div class="field">
+      <label class="pra-label">Move them to</label>
+      <select class="pra-select" id="moveRunsTarget">
+        <option value="">Don't move -- just mark them done</option>
+      </select>
+    </div>
+    <div class="pra-muted" style="font-size:.78rem;margin:10px 0 0">If you pick a step, they'll actually run forward from there right now -- including sending an email or SMS if that's the step type, same as if they'd arrived there normally.</div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="moveRunsConfirmBtn" style="flex:1">Move &amp; Delete Step</button>
+      <button class="pra-btn pra-btn-ghost" onclick="closeModal('moveRunsModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Runs -->
 <div class="modal-backdrop" id="runsModal">
   <div class="pra-panel modal-box">
@@ -246,7 +265,7 @@ function stepCardHtml(stepId, isLast) {
   return `
     <div class="step-card" data-open-step="${stepId}" data-drag-step="${stepId}" draggable="true">
       <div class="step-actions">
-        ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
+        <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
       <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${countLabel}</div>
       <div class="step-summary">${stepSummary(step)}</div>
@@ -560,16 +579,42 @@ function defaultConfig(type) {
 }
 
 function editStep(stepId) { openStepConfigModal(flow.steps[stepId], false); }
-function deleteStep(stepId) {
-  if (!confirm('Delete this step?')) return;
-  if (flow.startStepId === stepId) flow.startStepId = null;
+// Splices stepId out of the graph -- whatever pointed to it now points to
+// whatever IT pointed to, so everything downstream survives intact. An
+// if_then has no single successor (two branches), so deleting one just
+// drops both paths, same as this always worked.
+function spliceStepOut(stepId) {
+  const step = flow.steps[stepId];
+  const replacement = step.type === 'if_then' ? null : (step.nextStepId || null);
+  if (flow.startStepId === stepId) flow.startStepId = replacement;
   Object.values(flow.steps).forEach(s => {
-    if (s.nextStepId === stepId) s.nextStepId = null;
-    if (s.yesStepId === stepId) s.yesStepId = null;
-    if (s.noStepId === stepId) s.noStepId = null;
+    if (s.nextStepId === stepId) s.nextStepId = replacement;
+    if (s.yesStepId === stepId) s.yesStepId = replacement;
+    if (s.noStepId === stepId) s.noStepId = replacement;
   });
   delete flow.steps[stepId];
   render(); saveDebounced();
+}
+async function deleteStep(stepId) {
+  const count = runCounts[stepId] || 0;
+  if (!count) {
+    if (!confirm('Delete this step?')) return;
+    spliceStepOut(stepId);
+    return;
+  }
+  document.getElementById('moveRunsCountMsg').textContent = `${count} contact${count === 1 ? ' is' : 's are'} currently at this step. Where should they go before it's deleted?`;
+  const targetSel = document.getElementById('moveRunsTarget');
+  targetSel.innerHTML = '<option value="">Don\'t move -- just mark them done</option>' +
+    Object.keys(flow.steps).filter(id => id !== stepId).map(id => `<option value="${id}">${escapeHtml(TYPE_LABELS[flow.steps[id].type])} -- ${escapeHtml(stepSummary(flow.steps[id]))}</option>`).join('');
+  document.getElementById('moveRunsConfirmBtn').onclick = async () => {
+    const toStepId = targetSel.value || null;
+    await fetch(`/api/flows/${flow.id}/steps/${stepId}/move-runs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toStepId }),
+    });
+    closeModal('moveRunsModal');
+    spliceStepOut(stepId);
+  };
+  openModal('moveRunsModal');
 }
 
 function sheetColRowHtml(value) {
@@ -1101,6 +1146,7 @@ canvasWrap.addEventListener('touchend', (e) => {
   if (!r.ok) { document.getElementById('flowName').value = 'Flow not found'; return; }
   const d = await r.json();
   flow = d.flow;
+  runCounts = d.stepCounts || {};
   render();
   centerCanvasOnTrigger();
 })();

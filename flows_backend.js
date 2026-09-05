@@ -485,6 +485,16 @@ function runCounts(flowId) {
   const runs = readJson(RUNS_FILE, []).filter(r => r.flowId === flowId);
   return { totalRuns: runs.length, activeRuns: runs.filter(r => r.status === "active").length };
 }
+// Per-step "how many active runs currently sit here" for the builder's step
+// cards -- previously never wired up at all (the frontend's runCounts stayed
+// permanently {}), so every card showed "0 here"/"0 waiting" regardless of
+// real data.
+function stepCounts(flowId) {
+  const runs = readJson(RUNS_FILE, []).filter(r => r.flowId === flowId && r.status === "active");
+  const counts = {};
+  runs.forEach(r => { if (r.currentStepId) counts[r.currentStepId] = (counts[r.currentStepId] || 0) + 1; });
+  return counts;
+}
 
 export async function handleFlowsRequest(req, res, url) {
   const p = url.pathname;
@@ -638,7 +648,7 @@ export async function handleFlowsRequest(req, res, url) {
     const flow = flows.find(f => f.id === flowMatch[1]);
     if (req.method === "GET") {
       if (!flow) return sendJson(res, 404, { error: "Flow not found" });
-      return sendJson(res, 200, { flow, webhookUrlBase: "/api/webhooks/framer/" });
+      return sendJson(res, 200, { flow, webhookUrlBase: "/api/webhooks/framer/", stepCounts: stepCounts(flow.id) });
     }
     if (req.method === "PATCH") {
       if (!flow) return sendJson(res, 404, { error: "Flow not found" });
@@ -668,6 +678,32 @@ export async function handleFlowsRequest(req, res, url) {
       writeJson(RUNS_FILE, readJson(RUNS_FILE, []).filter(r => r.flowId !== flowMatch[1]));
       return sendJson(res, 200, { ok: true });
     }
+  }
+
+  // Relocates every active run currently sitting at the step being deleted --
+  // called by the builder right before it actually deletes that step, so
+  // contacts mid-flow don't just vanish into a dangling currentStepId.
+  // toStepId=null means "no destination", so those runs are simply marked
+  // done instead. Reuses the real advanceFlowRun engine (not a fake state
+  // copy) so a destination step's own side effects (send_email, add_to_ac,
+  // etc.) and pause behavior (delay's waitUntil) work exactly like a normal
+  // arrival, rather than leaving a run "active" with no waitUntil -- which
+  // advanceDueFlowRuns() would never pick up, silently stranding it forever.
+  const moveRunsMatch = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)\/move-runs$/);
+  if (moveRunsMatch && req.method === "POST") {
+    const flows = readJson(FLOWS_FILE, []);
+    const flow = flows.find(f => f.id === moveRunsMatch[1]);
+    if (!flow) return sendJson(res, 404, { error: "Flow not found" });
+    const { toStepId } = await readJsonBody(req);
+    const runs = readJson(RUNS_FILE, []).filter(r => r.flowId === flow.id && r.currentStepId === moveRunsMatch[2] && r.status === "active");
+    for (const run of runs) {
+      if (!toStepId) { completeRun(run); continue; }
+      run.currentStepId = toStepId;
+      run.waitUntil = null;
+      saveRun(run);
+      await advanceFlowRun(run, flow).catch(e => console.error("[flows] move-runs advance failed", e.message));
+    }
+    return sendJson(res, 200, { moved: runs.length });
   }
 
   const activeMatch = p.match(/^\/api\/flows\/([^/]+)\/active$/);
