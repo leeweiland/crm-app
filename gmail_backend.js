@@ -53,6 +53,15 @@ async function exchangeCodeForTokens(code, req) {
   if (!d.refresh_token) throw new Error(d.error_description || d.error || "No refresh token returned");
   return d;
 }
+// Every Gmail/OAuth call the scheduler's tick makes gets a hard timeout --
+// these all used to hang indefinitely on a slow/unresponsive Google
+// endpoint, which (combined with everything being sequential on one
+// shared tick) could stall the poll, and everything queued behind it,
+// for as long as Google felt like taking. 10s is generous for a real
+// Google API call but still bounded.
+const GMAIL_FETCH_TIMEOUT_MS = 10000;
+function gmailFetchTimeout() { return AbortSignal.timeout(GMAIL_FETCH_TIMEOUT_MS); }
+
 async function getAccessToken(refreshToken) {
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -61,6 +70,7 @@ async function getAccessToken(refreshToken) {
       client_id: process.env.GOOGLE_GMAIL_CLIENT_ID, client_secret: process.env.GOOGLE_GMAIL_CLIENT_SECRET,
       refresh_token: refreshToken, grant_type: "refresh_token",
     }),
+    signal: gmailFetchTimeout(),
   });
   const d = await r.json();
   if (!d.access_token) throw new Error("Gmail token refresh failed: " + JSON.stringify(d));
@@ -257,7 +267,7 @@ export async function checkGmailInbox() {
       // INBOX label at all and would be silently missed by that filter.
       // Unfiltered costs nothing extra (same result set in the normal
       // case) and closes that gap.
-      const histRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(user.gmailHistoryId)}&historyTypes=messageAdded`, { headers: auth });
+      const histRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(user.gmailHistoryId)}&historyTypes=messageAdded`, { headers: auth, signal: gmailFetchTimeout() });
       const hist = await histRes.json();
       if (!histRes.ok) {
         // historyId too old (Gmail only retains ~1 week of history) --
@@ -265,7 +275,7 @@ export async function checkGmailInbox() {
         // mail older than that point is simply not backfilled, same as
         // the original connect-time seed already accepted.
         if (hist.error?.code === 404) {
-          const profileRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: auth });
+          const profileRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", { headers: auth, signal: gmailFetchTimeout() });
           const profile = await profileRes.json();
           user.gmailHistoryId = profile.historyId || user.gmailHistoryId;
           usersChanged = true;
@@ -279,9 +289,31 @@ export async function checkGmailInbox() {
       for (const h of hist.history || []) {
         for (const added of h.messagesAdded || []) messageIds.add(added.message.id);
       }
-      for (const messageId of messageIds) {
+      // Hard cap per tick -- each id below costs a real Gmail API round
+      // trip plus a logMessage() write, all sequential and all on the
+      // scheduler's one shared tick. A normal 30s poll sees a handful of
+      // new messages at most; the FIRST poll after enabling outbound
+      // capture (or after historyId was stale) can see a real backlog and
+      // try to process all of it in one go -- confirmed live as a full
+      // server freeze on 2026-09-05, severe enough that even a restart
+      // re-triggered the same backlog on the next tick (historyId hadn't
+      // advanced past it yet). Truncating means a handful of one-time
+      // backlog messages can go uncaptured, which is a far better trade
+      // than repeatedly freezing the entire app.
+      // historyId still advances to the newest value below regardless (not
+      // re-attempted next tick) -- there's no per-message-id memory here to
+      // resume from safely, and retrying the same batch forever is exactly
+      // the freeze-restart-freeze loop this cap exists to prevent. A
+      // dropped one-time backlog message is recoverable by hand; a
+      // permanently wedged server isn't.
+      const MAX_MESSAGES_PER_TICK = 20;
+      const idsToProcess = [...messageIds].slice(0, MAX_MESSAGES_PER_TICK);
+      if (messageIds.size > MAX_MESSAGES_PER_TICK) {
+        console.error(`[gmail] ${messageIds.size} new messages for ${user.gmailEmail} in one poll -- processing first ${MAX_MESSAGES_PER_TICK} only, the rest are being skipped this tick (see comment above)`);
+      }
+      for (const messageId of idsToProcess) {
         try {
-          const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, { headers: auth });
+          const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, { headers: auth, signal: gmailFetchTimeout() });
           const msg = await msgRes.json();
           if (!msgRes.ok) continue;
           const fromHeader = headerValue(msg.payload?.headers, "From");
