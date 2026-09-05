@@ -227,9 +227,9 @@ export async function advanceDueWorkflowEnrollments() {
         });
         // A transient failure here used to be permanent -- marked the whole
         // enrollment "errored" (no automatic retry) and moved straight past
-        // this step regardless. opted_out/twilio_not_configured are genuine
-        // permanent reasons to skip, not failures to retry.
-        if (!result.ok && result.reason !== "twilio_not_configured" && result.reason !== "opted_out") {
+        // this step regardless. opted_out/twilio_not_configured/international
+        // are genuine permanent reasons to skip, not failures to retry.
+        if (!result.ok && result.reason !== "twilio_not_configured" && result.reason !== "opted_out" && result.reason !== "international_number_blocked") {
           const retryCount = (enrollment.stepRetryCount || 0) + 1;
           if (retryCount <= SMS_STEP_MAX_RETRIES) {
             enrollment.stepRetryCount = retryCount;

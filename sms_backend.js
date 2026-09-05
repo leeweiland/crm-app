@@ -57,6 +57,17 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   const contact = contactId ? getContact(contactId) : null;
   if (contact?.smsOptOut) return { ok: false, reason: "opted_out" };
 
+  const toFormatted = normalizePhoneToE164(to);
+  // US/Canada (NANP, +1) only -- international sends fail against this
+  // account's Twilio geo-permissions (confirmed live: a correctly-formatted
+  // +420 number still failed) and this business only serves US leads, so
+  // there's no reason to burn a Twilio call (and log a confusing failure)
+  // on a number already known to be out of scope.
+  if (!/^\+1\d{10}$/.test(toFormatted)) {
+    logMessage({ channel: "sms", direction: "outbound", contactId, sourceType, sourceId, to: toFormatted, from: null, body: "", bodyPreview: "", status: "failed", failReason: "international_number_blocked" });
+    return { ok: false, reason: "international_number_blocked" };
+  }
+
   const client = getTwilioClient();
   const twilioSettings = getTwilioSettings();
   // Tagged before both logging and sending, so the stored body matches
@@ -65,7 +76,6 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   // (source_names.js), matching the el= convention already used everywhere
   // else -- links stay real, direct, recognizable URLs.
   const taggedBody = appendSourceTagToSmsBody(body, `sms-${resolveSendSourceSlug(sourceType, sourceId)}`);
-  const toFormatted = normalizePhoneToE164(to);
   const baseRow = {
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
     to: toFormatted, from: twilioSettings.fromNumber || null, body: taggedBody || "", bodyPreview: (taggedBody || "").slice(0, 140),
