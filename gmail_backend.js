@@ -182,6 +182,20 @@ function extractEmailAddress(headerVal) {
 }
 
 let contactsByEmailCache = null;
+let contactsByEmailCacheBuiltAt = 0;
+// How long the full-contacts-file fallback cache stays valid before a poll
+// is willing to pay for rebuilding it. This USED to be wiped at the start
+// of every single checkGmailInbox() call (see that function's own history)
+// -- meaning any tick that saw a genuinely new sender (common: contacts
+// have altEmails the SQLite fast path below doesn't index) paid for a full
+// synchronous JSON.parse of the ~190MB contacts file, on the live
+// server's one and only thread, every 30 seconds. Confirmed live: this is
+// what froze the entire app repeatedly on 2026-09-05 -- every other
+// request queues up behind that one parse until it finishes. 10 minutes
+// bounds a brand-new contact being briefly unmatched by a poll that
+// happens to land right after they're created, which is a far cheaper
+// mistake than freezing the whole app on a 30-second cadence.
+const CONTACTS_EMAIL_CACHE_TTL_MS = 10 * 60 * 1000;
 function getContactIdByEmail(email) {
   if (!email) return null;
   // Fast path: the sidebar's own SQLite snapshot already has an email
@@ -195,12 +209,13 @@ function getContactIdByEmail(email) {
     const id = findContactIdByEmail(email);
     if (id) return id;
   }
-  if (!contactsByEmailCache) {
+  if (!contactsByEmailCache || Date.now() - contactsByEmailCacheBuiltAt > CONTACTS_EMAIL_CACHE_TTL_MS) {
     contactsByEmailCache = new Map();
     for (const c of readJson(CONTACTS_FILE, [])) {
       if (c.email) contactsByEmailCache.set(c.email.toLowerCase(), c.id);
       for (const alt of c.altEmails || []) contactsByEmailCache.set(alt.toLowerCase(), c.id);
     }
+    contactsByEmailCacheBuiltAt = Date.now();
   }
   return contactsByEmailCache.get(email) || null;
 }
@@ -223,7 +238,9 @@ export async function checkGmailInbox() {
   const allUsers = readJson(USERS_FILE, []);
   const users = allUsers.filter(u => u.gmailRefreshToken);
   if (!users.length) return;
-  contactsByEmailCache = null; // fresh per tick, reused across all messages/users within it
+  // NOT reset per tick anymore -- see getContactIdByEmail's own cache/TTL
+  // comment above for why forcing a rebuild here, every 30 seconds, is
+  // exactly what froze the app.
   let usersChanged = false;
 
   for (const user of users) {
