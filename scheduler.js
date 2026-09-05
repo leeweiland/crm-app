@@ -81,20 +81,16 @@ async function guardedTick() {
   _tickRunning = true;
   try { await tick(); } finally { _tickRunning = false; }
 }
-// EVERYTHING BELOW IS TEMPORARILY DISABLED (2026-09-05). The app has
-// frozen the Inbox hard, repeatedly, all night -- the Gmail poller was
-// one confirmed cause and is already off, but freezes kept happening
-// after that too, and the phase-timing logs meant to pin down which
-// background job is still responsible showed impossible-looking overlap
-// even with a same-tick-can't-overlap guard in place, which needs a
-// clear head to actually resolve, not more live changes under pressure.
-// Cutting the entire background scheduler is the one change guaranteed
-// to stop ANY of these jobs from being the cause tonight, at the cost of
-// campaigns/automations/workflows/reminders/etc. not running until this
-// is re-enabled once actually root-caused. The Inbox, Contacts, sending
-// a message by hand, and everything else a person directly clicks are
-// unaffected -- none of that goes through this file.
+// RE-ENABLED (2026-09-05) -- the scheduler was disabled for a few hours
+// tonight on suspicion of causing the Inbox's repeated freezes, but the
+// real cause turned out to be unrelated to this file entirely:
+// compliance_backend.js's recheckStopStatus() loading the 12GB+ main
+// message log into memory on every single inbound SMS, now fixed. The
+// interleaved phase-timing logs that looked like an impossible overlap
+// were a symptom of that same memory pressure (timers fire unreliably
+// under heavy GC/swap load), not a real bug in the guard below, which
+// stays in place as legitimate protection regardless.
 export function startScheduler() {
-  console.log("[scheduler] DISABLED for tonight -- see comment above startScheduler in scheduler.js");
-  // setInterval(guardedTick, TICK_MS);
+  setInterval(guardedTick, TICK_MS);
+  console.log(`[scheduler] started, checking every ${TICK_MS / 1000}s`);
 }
