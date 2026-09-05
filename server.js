@@ -83,6 +83,13 @@ createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const reqId = ++_reqCounter;
   _inFlightRequests.set(reqId, { method: req.method, url: req.url, startedAt: Date.now() });
+  // Logged the instant the request STARTS, synchronously, before any route
+  // handler runs -- the interval-based watchdog above needs the event loop
+  // to be free to fire, but tonight's freezes are total: it never fires
+  // once, meaning whatever's stuck never yields at all. This line runs
+  // before that point every time, so `railway logs` shows the last request
+  // that started right before a freeze, even when nothing else can log.
+  console.log(`[req-start] #${reqId} ${req.method} ${req.url}`);
   res.on("finish", () => _inFlightRequests.delete(reqId));
   res.on("close", () => _inFlightRequests.delete(reqId));
 
