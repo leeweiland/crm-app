@@ -18,23 +18,35 @@ import { processCloseAltBackfillBatch } from "./import_backend.js";
 // running its own.
 const TICK_MS = 30 * 1000;
 
+// Temporary diagnostic (2026-09-05) -- logs immediately before/after each
+// phase so a stuck tick (holding a SQLite write lock other requests are
+// waiting on, for instance) shows exactly which phase never returned,
+// same reasoning as server.js's req-start log. Remove once the real cause
+// of tonight's freezes is found.
+async function timedPhase(name, fn) {
+  console.log(`[scheduler] ${name} starting`);
+  await fn();
+  console.log(`[scheduler] ${name} done`);
+}
 async function tick() {
   try {
-    const campaigns = readJson(CAMPAIGNS_FILE, []);
-    const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
-    for (const campaign of due) {
-      console.log(`[scheduler] sending due campaign ${campaign.id} (${campaign.name})`);
-      await sendCampaignNow(campaign.id).catch(e => console.error("[scheduler] campaign send failed", campaign.id, e.message));
-    }
-    await advanceDueEnrollments();
-    await advanceDueWorkflowEnrollments();
-    await advanceDueFlowRuns();
-    await recoverStaleFlowRuns();
-    runScheduledDuplicateScan();
-    await syncWritingCacheIfDue();
-    await processAiActiveBatches();
-    await checkMeetingReminders();
-    await sendDueBookingReminders();
+    await timedPhase("campaigns", async () => {
+      const campaigns = readJson(CAMPAIGNS_FILE, []);
+      const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
+      for (const campaign of due) {
+        console.log(`[scheduler] sending due campaign ${campaign.id} (${campaign.name})`);
+        await sendCampaignNow(campaign.id).catch(e => console.error("[scheduler] campaign send failed", campaign.id, e.message));
+      }
+    });
+    await timedPhase("advanceDueEnrollments", advanceDueEnrollments);
+    await timedPhase("advanceDueWorkflowEnrollments", advanceDueWorkflowEnrollments);
+    await timedPhase("advanceDueFlowRuns", advanceDueFlowRuns);
+    await timedPhase("recoverStaleFlowRuns", recoverStaleFlowRuns);
+    await timedPhase("runScheduledDuplicateScan", async () => runScheduledDuplicateScan());
+    await timedPhase("syncWritingCacheIfDue", syncWritingCacheIfDue);
+    await timedPhase("processAiActiveBatches", processAiActiveBatches);
+    await timedPhase("checkMeetingReminders", checkMeetingReminders);
+    await timedPhase("sendDueBookingReminders", sendDueBookingReminders);
     // TEMPORARILY DISABLED (2026-09-05) -- checkGmailInbox has frozen the
     // entire server multiple times tonight (a full-contacts-file cache
     // rebuild every tick, then a backlog of historical messages processed
@@ -45,7 +57,7 @@ async function tick() {
     // while it gets debugged properly, offline. Gmail-connected users will
     // stop seeing new replies auto-captured until this is re-enabled.
     // await checkGmailInbox();
-    await processCloseAltBackfillBatch();
+    await timedPhase("processCloseAltBackfillBatch", processCloseAltBackfillBatch);
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }
