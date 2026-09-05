@@ -47,15 +47,11 @@ async function tick() {
     await timedPhase("processAiActiveBatches", processAiActiveBatches);
     await timedPhase("checkMeetingReminders", checkMeetingReminders);
     await timedPhase("sendDueBookingReminders", sendDueBookingReminders);
-    // RE-ENABLED (2026-09-05) -- was disabled earlier tonight on suspicion
-    // of causing the Inbox freezes; the actual causes turned out to be two
-    // unrelated full-12GB-log reads (compliance_backend.js's
-    // recheckStopStatus on every inbound SMS, and inbox_backend.js's
-    // mark-done), both now fixed. This poller's own earlier bugs (cache
-    // rebuilt every tick; an unbounded backlog processed in one go) were
-    // already fixed separately (10-minute cache TTL, 20-message-per-tick
-    // cap, fetch timeouts) before those two were found.
-    await timedPhase("checkGmailInbox", checkGmailInbox);
+    // Off again at Lee's request while he tests page-load speed with it
+    // out of the picture. The real freeze causes (compliance_backend.js's
+    // recheckStopStatus, inbox_backend.js's mark-done -- both full
+    // 12GB+-log reads) are fixed regardless of whether this runs.
+    // await timedPhase("checkGmailInbox", checkGmailInbox);
     await timedPhase("processCloseAltBackfillBatch", processCloseAltBackfillBatch);
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
