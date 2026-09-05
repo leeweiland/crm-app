@@ -35,7 +35,16 @@ async function tick() {
     await processAiActiveBatches();
     await checkMeetingReminders();
     await sendDueBookingReminders();
-    await checkGmailInbox();
+    // TEMPORARILY DISABLED (2026-09-05) -- checkGmailInbox has frozen the
+    // entire server multiple times tonight (a full-contacts-file cache
+    // rebuild every tick, then a backlog of historical messages processed
+    // in one go, then a repeat even after capping that batch and adding
+    // fetch timeouts). Something about this poller is still wrong in a way
+    // that live-patching under production pressure hasn't actually fixed.
+    // Pulling it out of the scheduler entirely so the app stays stable
+    // while it gets debugged properly, offline. Gmail-connected users will
+    // stop seeing new replies auto-captured until this is re-enabled.
+    // await checkGmailInbox();
     await processCloseAltBackfillBatch();
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
