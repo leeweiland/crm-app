@@ -59,8 +59,32 @@ const MIME = {
   ".ico":  "image/x-icon",
 };
 
+// Temporary diagnostic (2026-09-05): the server has frozen hard multiple
+// times tonight with zero error output and steadily climbing CPU (confirmed
+// live via /proc/<pid>/stat -- not I/O-wait, a genuine runaway synchronous
+// computation), and every fix attempted for the suspected cause (the Gmail
+// poller, since disabled entirely) didn't stop it recurring. This tracks
+// every in-flight request and logs any that's been running more than 3s,
+// checked every 5s -- next time it freezes, this points at the exact
+// request that's stuck instead of guessing from the outside. Remove once
+// the real cause is found and fixed.
+const _inFlightRequests = new Map();
+let _reqCounter = 0;
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, info] of _inFlightRequests) {
+    if (now - info.startedAt > 3000) {
+      console.error(`[watchdog] request #${id} (${info.method} ${info.url}) has been running ${((now - info.startedAt) / 1000).toFixed(1)}s`);
+    }
+  }
+}, 5000).unref();
+
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  const reqId = ++_reqCounter;
+  _inFlightRequests.set(reqId, { method: req.method, url: req.url, startedAt: Date.now() });
+  res.on("finish", () => _inFlightRequests.delete(reqId));
+  res.on("close", () => _inFlightRequests.delete(reqId));
 
   // Feature modules each own their own /api/* route group and return true
   // once they've handled a request — server.js is just the dispatch chain
