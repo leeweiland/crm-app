@@ -54,7 +54,14 @@
   .sheet-search-result:last-child { border-bottom: none; }
   .sheet-search-result:hover { background: rgba(0,155,255,0.08); color: var(--pra-blue); }
   .token-input-wrap { position: relative; }
-  .token-input-wrap > input, .token-input-wrap > textarea { padding-right: 32px; width: 100%; }
+  .token-input-wrap > input, .token-input-wrap > textarea, .token-input-wrap > .token-editor { padding-right: 32px; width: 100%; }
+  .token-editor { min-height: 20px; line-height: 1.5; cursor: text; white-space: pre-wrap; word-break: break-word; }
+  .token-editor[data-multiline="true"] { min-height: 140px; }
+  .token-editor:empty:before { content: attr(data-placeholder); color: #55555f; pointer-events: none; }
+  .token-chip { display: inline-flex; align-items: center; gap: 4px; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 1px 4px 1px 7px; margin: 0 1px; font-size: .78rem; font-family: var(--font-secondary); white-space: nowrap; vertical-align: baseline; }
+  .token-chip-label { pointer-events: none; }
+  .token-chip-x { background: none; border: none; color: var(--pra-blue); cursor: pointer; font-size: .95rem; line-height: 1; padding: 0 1px; opacity: .75; }
+  .token-chip-x:hover { opacity: 1; }
   .token-insert-btn { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .token-insert-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .token-popover { z-index: 700; width: 260px; max-height: 320px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); padding: 4px; }
@@ -618,10 +625,10 @@ async function deleteStep(stepId) {
 }
 
 function sheetColRowHtml(value) {
-  return `<div class="sheet-col-row" data-sheet-col-row><div class="token-input-wrap" style="flex:1"><input class="pra-input" placeholder="{{first}} {{last}}, {{email}}, {{payload.message}}…" value="${escapeHtml(value || '')}" data-sheet-col/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
+  return `<div class="sheet-col-row" data-sheet-col-row><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}} {{last}}, {{email}}, {{payload.message}}…', attrs: 'data-sheet-col' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
 }
 function sheetColHeaderRowHtml(header, value, index) {
-  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><div class="token-input-wrap" style="flex:1"><input class="pra-input" placeholder="{{first}}, static text, …" value="${escapeHtml(value || '')}" data-sheet-col/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>`;
+  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}}, static text, …', attrs: 'data-sheet-col' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>`;
 }
 // Every custom field the account has, shown all at once (two per row, same
 // 50%-width pairing as First/Last etc above) instead of an "add a row, pick
@@ -632,7 +639,7 @@ function customFieldsGridHtml(customFields) {
   const rows = [];
   for (let i = 0; i < allCustomFields.length; i += 2) {
     rows.push(`<div class="field-row">${allCustomFields.slice(i, i + 2).map(f => `
-      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" data-cf-field-id="${f.id}" value="${escapeHtml(customFields[f.id] || '')}" placeholder="{{payload.Field Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap">${tokenEditorHtml(customFields[f.id] || '', { placeholder: '{{payload.Field Name}}', attrs: `data-cf-field-id="${f.id}"` })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
     `).join('')}</div>`);
   }
   return rows.join('');
@@ -644,7 +651,7 @@ function acCustomFieldsGridHtml(customFields) {
   const rows = [];
   for (let i = 0; i < allAcCustomFields.length; i += 2) {
     rows.push(`<div class="field-row">${allAcCustomFields.slice(i, i + 2).map(f => `
-      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" data-ac-cf-field-id="${f.id}" value="${escapeHtml(customFields[f.id] || '')}" placeholder="{{payload.Field Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap">${tokenEditorHtml(customFields[f.id] || '', { placeholder: '{{payload.Field Name}}', attrs: `data-ac-cf-field-id="${f.id}"` })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
     `).join('')}</div>`);
   }
   return rows.join('');
@@ -809,14 +816,14 @@ function openStepConfigModal(step, isNew) {
     const statusOptions = `<option value="">Don't change</option>` + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.statusId === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Every field is optional -- only what you fill in gets set/updated on the contact this run is already attached to. Type a value, or start typing to search available fields from the trigger, same as the Google Sheet step's columns.</div>
-      <div class="field-row"><div class="field"><label class="pra-label">First name</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgFirst" value="${escapeHtml(c.first || '')}" placeholder="{{payload.First Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Last name</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgLast" value="${escapeHtml(c.last || '')}" placeholder="{{payload.Last Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
-      <div class="field-row"><div class="field"><label class="pra-label">Email</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgEmail" value="${escapeHtml(c.email || '')}" placeholder="{{payload.Email}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Phone</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgPhone" value="${escapeHtml(c.phone || '')}" placeholder="{{payload.Phone}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">First name</label><div class="token-input-wrap">${tokenEditorHtml(c.first || '', { placeholder: '{{payload.First Name}}', attrs: 'id="cfgFirst"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Last name</label><div class="token-input-wrap">${tokenEditorHtml(c.last || '', { placeholder: '{{payload.Last Name}}', attrs: 'id="cfgLast"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">Email</label><div class="token-input-wrap">${tokenEditorHtml(c.email || '', { placeholder: '{{payload.Email}}', attrs: 'id="cfgEmail"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Phone</label><div class="token-input-wrap">${tokenEditorHtml(c.phone || '', { placeholder: '{{payload.Phone}}', attrs: 'id="cfgPhone"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
       <div class="field-row">
-        <div class="field"><label class="pra-label">Type</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgProgramType" value="${escapeHtml(c.programType || '')}" placeholder="ONLINE or GYM"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+        <div class="field"><label class="pra-label">Type</label><div class="token-input-wrap">${tokenEditorHtml(c.programType || '', { placeholder: 'ONLINE or GYM', attrs: 'id="cfgProgramType"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
         <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="cfgAucStatus">${statusOptions}</select></div>
       </div>
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
-      <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAltEmail" value="${escapeHtml(c.altEmail || '')}" placeholder="{{payload.Secondary Email}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Extra phone</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAltPhone" value="${escapeHtml(c.altPhone || '')}" placeholder="{{payload.Secondary Phone}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><div class="token-input-wrap">${tokenEditorHtml(c.altEmail || '', { placeholder: '{{payload.Secondary Email}}', attrs: 'id="cfgAltEmail"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Extra phone</label><div class="token-input-wrap">${tokenEditorHtml(c.altPhone || '', { placeholder: '{{payload.Secondary Phone}}', attrs: 'id="cfgAltPhone"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
       <div class="pra-label" style="margin:12px 0 6px">Custom fields (optional)</div>
       ${allCustomFields.length ? `<div id="cfgCustomFieldRows">${customFieldsGridHtml(c.customFields || {})}</div>` : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields defined yet -- add one in Contacts &rarr; manage columns first.</div>`}
     `;
@@ -824,10 +831,10 @@ function openStepConfigModal(step, isNew) {
     const c = step.config;
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Sends a plain email through this business's own sender -- not tied to the contact like Automations' Send Email step, so "To" can be staff addresses (a "new lead" notification), the lead itself via a token, or both. Multiple recipients: separate with commas.</div>
-      <div class="field"><label class="pra-label">To</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgEmailTo" value="${escapeHtml(c.to || '')}" placeholder="lee@pacificrimathletics.com, {{payload.Email}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field"><label class="pra-label">From (optional -- defaults to this business's sender)</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgEmailFrom" value="${escapeHtml(c.from || '')}" placeholder="leave blank to use the default sender"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field"><label class="pra-label">Subject</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgEmailSubject" value="${escapeHtml(c.subject || '')}" placeholder="New {{payload.Program}} lead: {{payload.First Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field"><label class="pra-label">Body</label><div class="token-input-wrap"><textarea class="pra-input" id="cfgEmailBody" rows="6" placeholder="{{payload.First Name}} {{payload.Last Name}}&#10;{{payload.Email}}&#10;{{payload.Phone}}">${escapeHtml(c.body || '')}</textarea><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">To</label><div class="token-input-wrap">${tokenEditorHtml(c.to || '', { placeholder: 'lee@pacificrimathletics.com, {{payload.Email}}', attrs: 'id="cfgEmailTo"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">From (optional -- defaults to this business's sender)</label><div class="token-input-wrap">${tokenEditorHtml(c.from || '', { placeholder: 'leave blank to use the default sender', attrs: 'id="cfgEmailFrom"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">Subject</label><div class="token-input-wrap">${tokenEditorHtml(c.subject || '', { placeholder: 'New {{payload.Program}} lead: {{payload.First Name}}', attrs: 'id="cfgEmailSubject"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">Body</label><div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
     `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
@@ -849,9 +856,9 @@ function openStepConfigModal(step, isNew) {
     body.innerHTML = `
       ${acIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">ActiveCampaign isn\'t connected yet -- add AC_API_KEY to .env. The step still saves and will start working once that\'s set.</div>'}
       <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Creates or updates a contact directly in ActiveCampaign by email -- separate from this CRM's own contact record. Type a value, or start typing to search available fields from the trigger.</div>
-      <div class="field"><label class="pra-label">Email</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcEmail" value="${escapeHtml(c.email || '')}" placeholder="{{payload.Email}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field-row"><div class="field"><label class="pra-label">First name</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcFirst" value="${escapeHtml(c.first || '')}" placeholder="{{payload.First Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Last name</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcLast" value="${escapeHtml(c.last || '')}" placeholder="{{payload.Last Name}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
-      <div class="field"><label class="pra-label">Phone</label><div class="token-input-wrap"><input class="pra-input" autocomplete="off" id="cfgAcPhone" value="${escapeHtml(c.phone || '')}" placeholder="{{payload.Phone}}"/><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field"><label class="pra-label">Email</label><div class="token-input-wrap">${tokenEditorHtml(c.email || '', { placeholder: '{{payload.Email}}', attrs: 'id="cfgAcEmail"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field-row"><div class="field"><label class="pra-label">First name</label><div class="token-input-wrap">${tokenEditorHtml(c.first || '', { placeholder: '{{payload.First Name}}', attrs: 'id="cfgAcFirst"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Last name</label><div class="token-input-wrap">${tokenEditorHtml(c.last || '', { placeholder: '{{payload.Last Name}}', attrs: 'id="cfgAcLast"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
+      <div class="field"><label class="pra-label">Phone</label><div class="token-input-wrap">${tokenEditorHtml(c.phone || '', { placeholder: '{{payload.Phone}}', attrs: 'id="cfgAcPhone"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
       <div class="pra-label" style="margin:12px 0 6px">ActiveCampaign custom fields (optional)</div>
       ${allAcCustomFields.length ? `<div id="cfgAcCustomFieldRows">${acCustomFieldsGridHtml(c.customFields || {})}</div>` : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields found in ActiveCampaign, or not connected yet.</div>`}
     `;
@@ -869,44 +876,44 @@ function openStepConfigModal(step, isNew) {
       step.config.spreadsheetName = sheetPicked.name;
       step.config.sheetName = sheetPicked.tab || 'Sheet1';
       step.config.headers = sheetPicked.headers;
-      step.config.columns = [...document.querySelectorAll('#sheetColRows [data-sheet-col]')].map(el => el.value);
+      step.config.columns = [...document.querySelectorAll('#sheetColRows [data-sheet-col]')].map(el => getTokenEditorValue(el));
     }
     else if (step.type === 'enroll_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
     else if (step.type === 'enroll_workflow') { step.config.workflowId = document.getElementById('cfgWorkflow').value; }
     else if (step.type === 'add_update_contact') {
-      step.config.first = document.getElementById('cfgFirst').value.trim();
-      step.config.last = document.getElementById('cfgLast').value.trim();
-      step.config.email = document.getElementById('cfgEmail').value.trim();
-      step.config.phone = document.getElementById('cfgPhone').value.trim();
-      step.config.programType = document.getElementById('cfgProgramType').value.trim();
+      step.config.first = getTokenEditorValue(document.getElementById('cfgFirst')).trim();
+      step.config.last = getTokenEditorValue(document.getElementById('cfgLast')).trim();
+      step.config.email = getTokenEditorValue(document.getElementById('cfgEmail')).trim();
+      step.config.phone = getTokenEditorValue(document.getElementById('cfgPhone')).trim();
+      step.config.programType = getTokenEditorValue(document.getElementById('cfgProgramType')).trim();
       step.config.statusId = document.getElementById('cfgAucStatus').value;
-      step.config.altEmail = document.getElementById('cfgAltEmail').value.trim();
-      step.config.altPhone = document.getElementById('cfgAltPhone').value.trim();
+      step.config.altEmail = getTokenEditorValue(document.getElementById('cfgAltEmail')).trim();
+      step.config.altPhone = getTokenEditorValue(document.getElementById('cfgAltPhone')).trim();
       const customFields = {};
       document.querySelectorAll('#cfgCustomFieldRows [data-cf-field-id]').forEach(inp => {
-        const val = inp.value.trim();
+        const val = getTokenEditorValue(inp).trim();
         if (val) customFields[inp.dataset.cfFieldId] = val;
       });
       step.config.customFields = customFields;
     }
     else if (step.type === 'send_email') {
-      step.config.to = document.getElementById('cfgEmailTo').value.trim();
-      step.config.from = document.getElementById('cfgEmailFrom').value.trim();
-      step.config.subject = document.getElementById('cfgEmailSubject').value.trim();
-      step.config.body = document.getElementById('cfgEmailBody').value;
+      step.config.to = getTokenEditorValue(document.getElementById('cfgEmailTo')).trim();
+      step.config.from = getTokenEditorValue(document.getElementById('cfgEmailFrom')).trim();
+      step.config.subject = getTokenEditorValue(document.getElementById('cfgEmailSubject')).trim();
+      step.config.body = getTokenEditorValue(document.getElementById('cfgEmailBody'));
     }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
     else if (step.type === 'add_to_list') { step.config.listId = document.getElementById('cfgList').value; }
     else if (step.type === 'send_conversion_event') { const el = document.getElementById('cfgConversionEvent'); if (el) step.config.eventKey = el.value; }
     else if (step.type === 'add_to_ac') { step.config.acListId = document.getElementById('cfgAcList').value; step.config.acAutomationId = document.getElementById('cfgAcAutomation').value; }
     else if (step.type === 'add_update_contact_ac') {
-      step.config.email = document.getElementById('cfgAcEmail').value.trim();
-      step.config.first = document.getElementById('cfgAcFirst').value.trim();
-      step.config.last = document.getElementById('cfgAcLast').value.trim();
-      step.config.phone = document.getElementById('cfgAcPhone').value.trim();
+      step.config.email = getTokenEditorValue(document.getElementById('cfgAcEmail')).trim();
+      step.config.first = getTokenEditorValue(document.getElementById('cfgAcFirst')).trim();
+      step.config.last = getTokenEditorValue(document.getElementById('cfgAcLast')).trim();
+      step.config.phone = getTokenEditorValue(document.getElementById('cfgAcPhone')).trim();
       const acCustomFields = {};
       document.querySelectorAll('#cfgAcCustomFieldRows [data-ac-cf-field-id]').forEach(inp => {
-        const val = inp.value.trim();
+        const val = getTokenEditorValue(inp).trim();
         if (val) acCustomFields[inp.dataset.acCfFieldId] = val;
       });
       step.config.customFields = acCustomFields;
@@ -964,14 +971,139 @@ async function getAvailableTokens() {
   });
   return [...contactFields, ...payloadFields];
 }
-function insertAtCursor(input, text) {
-  const start = input.selectionStart ?? input.value.length;
-  const end = input.selectionEnd ?? input.value.length;
-  input.value = input.value.slice(0, start) + text + input.value.slice(end);
-  const newPos = start + text.length;
-  input.focus();
-  input.setSelectionRange(newPos, newPos);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+// Renders a {{token}} string as a removable pill chip instead of showing
+// the raw {{...}} syntax -- the saved value (see getTokenEditorValue) is
+// still the exact same {{token}} string, this only changes how it's
+// displayed/edited. tokenLabel derives a human label straight from the
+// token itself (no async lookup needed) so chips render synchronously even
+// for a field whose source sample data isn't loaded/available anymore.
+function tokenLabel(raw) {
+  const m = raw.match(/^\{\{(.+)\}\}$/);
+  if (!m) return raw;
+  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured' };
+  if (KNOWN[m[1]]) return KNOWN[m[1]];
+  const pm = m[1].match(/^payload\.(.+)$/);
+  return pm ? pm[1] : m[1];
+}
+function chipHtml(raw) {
+  return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(tokenLabel(raw))}</span><button type="button" class="token-chip-x" tabindex="-1">&times;</button></span>`;
+}
+function tokenEditorContentHtml(value, multiline) {
+  const parts = String(value || '').split(/(\{\{[^}]+\}\})/g);
+  return parts.map(p => {
+    if (!p) return '';
+    if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
+    const esc = escapeHtml(p);
+    return multiline ? esc.replace(/\n/g, '<br>') : esc.replace(/\n/g, ' ');
+  }).join('');
+}
+// Renders the same visual "input" as before (same .pra-input box styling)
+// but as a contenteditable div instead of a real <input>/<textarea>, so
+// {{token}} runs can render as chips inline with free-typed text. Real
+// <input> placeholder text doesn't work on a div, hence data-placeholder +
+// the :empty:before CSS rule instead.
+function tokenEditorHtml(value, { placeholder = '', multiline = false, attrs = '' } = {}) {
+  return `<div class="pra-input token-editor" contenteditable="true" data-token-editor ${multiline ? 'data-multiline="true"' : ''} data-placeholder="${escapeHtml(placeholder)}" ${attrs}>${tokenEditorContentHtml(value, multiline)}</div>`;
+}
+// Inverse of tokenEditorContentHtml -- walks the live DOM back into the raw
+// {{token}}-bearing string that actually gets saved to step.config.
+function getTokenEditorValue(el) {
+  let out = '';
+  el.childNodes.forEach(node => {
+    if (node.nodeType === Node.TEXT_NODE) out += node.textContent;
+    else if (node.nodeType === Node.ELEMENT_NODE) {
+      if (node.classList.contains('token-chip')) out += node.dataset.raw;
+      else if (node.tagName === 'BR') out += '\n';
+      else out += node.textContent;
+    }
+  });
+  return out;
+}
+function wireChipRemovals(root) {
+  root.querySelectorAll('.token-chip-x').forEach(x => {
+    if (x.dataset.wired) return;
+    x.dataset.wired = '1';
+    x.onmousedown = (e) => e.preventDefault(); // don't steal focus/selection from the editor
+    x.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const chip = x.closest('.token-chip');
+      const editor = chip.closest('[data-token-editor]');
+      chip.remove();
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+  });
+}
+function insertChipAtCaret(editor, raw) {
+  editor.focus();
+  const sel = window.getSelection();
+  let range;
+  if (sel.rangeCount && editor.contains(sel.anchorNode)) range = sel.getRangeAt(0);
+  else { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
+  range.deleteContents();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = chipHtml(raw);
+  const chip = tmp.firstElementChild;
+  range.insertNode(chip);
+  wireChipRemovals(editor);
+  range.setStartAfter(chip);
+  range.setEndAfter(chip);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function insertLineBreak(editor) {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+  const br = document.createElement('br');
+  range.insertNode(br);
+  range.setStartAfter(br);
+  range.setEndAfter(br);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+// Enter/paste behavior to keep these editors feeling like the plain
+// <input>/<textarea> they replaced: Enter is a no-op on single-line fields
+// (matching real <input>), a manual <br> insert on the one multiline field
+// (Email step's Body) since contenteditable's default Enter behavior
+// wraps lines in extra <div>s that getTokenEditorValue doesn't understand.
+// Paste is forced to plain text so pasting from Word/Sheets/etc. can't drag
+// in foreign markup or images.
+function wireTokenEditors(root) {
+  wireChipRemovals(root);
+  root.querySelectorAll('[data-token-editor]').forEach(editor => {
+    if (editor.dataset.wired) return;
+    editor.dataset.wired = '1';
+    const multiline = editor.dataset.multiline === 'true';
+    editor.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (multiline) { insertLineBreak(editor); editor.dispatchEvent(new Event('input', { bubbles: true })); }
+    });
+    editor.addEventListener('paste', (e) => {
+      e.preventDefault();
+      let text = (e.clipboardData || window.clipboardData).getData('text/plain');
+      if (!multiline) text = text.replace(/\r?\n/g, ' ');
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      text.split(/\r?\n/).forEach((line, i) => {
+        if (i > 0) { const br = document.createElement('br'); range.insertNode(br); range.setStartAfter(br); range.setEndAfter(br); }
+        if (line) { const tn = document.createTextNode(line); range.insertNode(tn); range.setStartAfter(tn); range.setEndAfter(tn); }
+      });
+      sel.removeAllRanges();
+      sel.addRange(range);
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // Chrome leaves a stray <br> behind once every chip/character is
+    // deleted, which defeats the :empty placeholder rule -- clear it back
+    // to genuinely empty so the placeholder reappears.
+    editor.addEventListener('input', () => {
+      if (editor.innerHTML === '<br>' || editor.innerHTML === '<div><br></div>') editor.innerHTML = '';
+    });
+  });
 }
 let tokenPopoverEl = null;
 function closeTokenPopover() { if (tokenPopoverEl) { tokenPopoverEl.remove(); tokenPopoverEl = null; } }
@@ -994,10 +1126,11 @@ async function openTokenPopover(btn, input) {
   pop.style.left = Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8) + 'px';
   pop.querySelectorAll('[data-token]').forEach(item => {
     item.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected through the click
-    item.onclick = () => { insertAtCursor(input, item.dataset.token); closeTokenPopover(); };
+    item.onclick = () => { insertChipAtCaret(input, item.dataset.token); closeTokenPopover(); };
   });
 }
 function wireTokenButtons(root) {
+  wireTokenEditors(root);
   root.querySelectorAll('[data-token-btn]').forEach(btn => {
     const input = btn.previousElementSibling;
     btn.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected when the button itself is clicked
