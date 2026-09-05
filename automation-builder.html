@@ -518,7 +518,7 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
 });
 function defaultConfig(type) {
   if (type === 'send_email') return { subject: '', previewText: '', blocks: [], theme: { ...orgEmailTheme }, footerTemplateId: null };
-  if (type === 'wait') return { amount: 1, unit: 'hours' };
+  if (type === 'wait') return { amount: 1, unit: 'days' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };
   if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
@@ -790,6 +790,24 @@ window.addEventListener('mousemove', (e) => {
   applyTransform();
 });
 window.addEventListener('mouseup', () => { panning = false; canvasWrap.classList.remove('panning'); });
+
+// Vertical wheel zooms (no modifier key -- an infinite canvas like this has
+// no page scroll to preserve, so plain wheel is free to mean zoom, same as
+// Figma/Miro/etc). preventDefault stops the page itself from scrolling.
+// Zooms toward the cursor position, same focal-point math as the pinch-zoom
+// handler below.
+canvasWrap.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = canvasWrap.getBoundingClientRect();
+  const focalX = e.clientX - rect.left, focalY = e.clientY - rect.top;
+  const contentX = (focalX - panX) / zoom;
+  const contentY = (focalY - panY) / zoom;
+  const newZoom = Math.min(1.5, Math.max(0.4, +(zoom * (1 - e.deltaY * 0.001)).toFixed(2)));
+  panX = focalX - contentX * newZoom;
+  panY = focalY - contentY * newZoom;
+  zoom = newZoom;
+  applyTransform();
+}, { passive: false });
 
 // Touch equivalents -- one finger pans (same math as the mouse drag above),
 // two fingers pinch-zoom around whatever ratio the pinch distance changes
