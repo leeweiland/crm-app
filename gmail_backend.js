@@ -284,17 +284,41 @@ export async function checkGmailInbox() {
           const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, { headers: auth });
           const msg = await msgRes.json();
           if (!msgRes.ok) continue;
-          // Skip anything this same connected account itself sent (shows
-          // up in history as "added to INBOX" for e.g. a self-CC) --
-          // only genuine replies FROM someone else count as inbound.
           const fromHeader = headerValue(msg.payload?.headers, "From");
           const fromEmail = extractEmailAddress(fromHeader);
-          if (!fromEmail || fromEmail === user.gmailEmail?.toLowerCase()) continue;
+          if (!fromEmail) continue;
+          const isFromMe = fromEmail === user.gmailEmail?.toLowerCase();
+
+          // A message the connected account itself sent (a native reply
+          // typed straight into Gmail, not through this app's own Send
+          // Email box) used to be skipped outright -- only genuine inbound
+          // replies got captured, so a coach who replied from their real
+          // Gmail app instead of the CRM's compose panel left their half
+          // of the conversation invisible here, even though the lead's
+          // side of the SAME thread showed up fine. No double-logging risk
+          // against this app's own sendEmail: that goes out through SES,
+          // which never touches the coach's actual Gmail account, so it
+          // never appears in THIS history feed at all -- these are two
+          // genuinely distinct send paths, not two views of the same one.
+          const subject = headerValue(msg.payload?.headers, "Subject");
+          const body = extractBody(msg.payload);
+          if (isFromMe) {
+            const toHeader = headerValue(msg.payload?.headers, "To");
+            const toEmail = extractEmailAddress(toHeader);
+            const contactId = toEmail ? getContactIdByEmail(toEmail) : null;
+            if (!contactId) continue; // sent to someone who isn't a known lead -- not the CRM's concern
+            logMessage({
+              channel: "email", direction: "outbound", contactId,
+              sourceType: "gmail_sent", sourceId: null, providerMessageId: msg.id,
+              to: toHeader, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
+              status: "sent",
+            });
+            continue;
+          }
+
           const contactId = getContactIdByEmail(fromEmail);
           if (!contactId) continue; // not a known lead/contact -- not the CRM's concern (someone's personal inbox has plenty of mail that isn't)
 
-          const subject = headerValue(msg.payload?.headers, "Subject");
-          const body = extractBody(msg.payload);
           logMessage({
             channel: "email", direction: "inbound", contactId,
             sourceType: "inbound", sourceId: null, providerMessageId: msg.id,
