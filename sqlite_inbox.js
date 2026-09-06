@@ -31,6 +31,14 @@ export function sqliteInboxAvailable() {
   if (db) return true;
   if (!existsSync(DB_PATH)) return false;
   db = new DatabaseSync(DB_PATH);
+  // Without this, a write from this connection can throw "database is
+  // locked" immediately whenever anything else (an ad hoc one-off script
+  // opening its own connection to the same file, a concurrent request)
+  // holds the lock for even a moment -- confirmed live tonight running a
+  // side script against this same file while the server was up. 5s is
+  // generous for real contention to clear without hanging a request
+  // indefinitely.
+  db.exec("PRAGMA busy_timeout = 5000;");
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       key TEXT PRIMARY KEY, contact_id TEXT, display_name TEXT, first TEXT, last TEXT, email TEXT,
@@ -237,6 +245,31 @@ export function syncContactFields(contactId, contact) {
 export function renameStatusInSqlite(oldLabel, newLabel) {
   if (!sqliteInboxAvailable()) return;
   db.prepare(`UPDATE conversations SET status = :newLabel WHERE status = :oldLabel`).run({ oldLabel, newLabel });
+}
+
+// One-time repair: a side script resyncing ~29k rows tonight (the STOP
+// status recovery) ran against this same file from a SEPARATE process
+// while the server was up, and "database is locked" from that contention
+// made most of those syncContactFields() calls silently fail (caught,
+// logged, swallowed -- by design, so a sync bug never takes down the
+// actual save it's piggybacking on, but that also means it never retried).
+// This runs from INSIDE the server's own connection instead -- no cross-
+// process contention possible -- and only touches rows still showing the
+// stale "STOP" value, pulling each one's real current status from
+// contacts.json. Safe to call repeatedly; a no-op once nothing's left.
+export function resyncStaleStopRows() {
+  if (!sqliteInboxAvailable()) return;
+  const staleRows = db.prepare("SELECT contact_id FROM conversations WHERE status = 'STOP'").all();
+  if (!staleRows.length) return; // the common case forever after this repair actually finishes
+  const contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
+  let fixed = 0, missing = 0;
+  for (const row of staleRows) {
+    const c = contactsById.get(row.contact_id);
+    if (!c) { missing++; continue; }
+    syncContactFields(c.id, c);
+    fixed++;
+  }
+  console.log(`[sqlite-repair] stale STOP rows: ${staleRows.length}, fixed: ${fixed}, missing contact: ${missing}`);
 }
 
 // last_preview switched from subject-first to body-first (see inbox_

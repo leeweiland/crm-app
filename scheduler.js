@@ -10,6 +10,7 @@ import { checkMeetingReminders } from "./meetings_backend.js";
 import { sendDueBookingReminders } from "./scheduling_backend.js";
 import { checkGmailInbox } from "./gmail_backend.js";
 import { processCloseAltBackfillBatch, processStopStatusRecoveryBatch } from "./import_backend.js";
+import { resyncStaleStopRows } from "./sqlite_inbox.js";
 import { processAcRefFillBatch } from "./ac_sync.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
@@ -51,6 +52,7 @@ async function tick() {
     await timedPhase("checkGmailInbox", checkGmailInbox);
     await timedPhase("processCloseAltBackfillBatch", processCloseAltBackfillBatch);
     await timedPhase("processStopStatusRecoveryBatch", processStopStatusRecoveryBatch);
+    await timedPhase("resyncStaleStopRows", async () => resyncStaleStopRows());
     await timedPhase("processAcRefFillBatch", processAcRefFillBatch);
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
