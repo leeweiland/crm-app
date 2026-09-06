@@ -149,6 +149,23 @@ function newAgent({ name, description }) {
 // -- into a readable timeline. Backed by getContactMessages(contactId),
 // which reads the per-contact shard (msg_by_contact/<id>.json), NOT the
 // main message log -- safe regardless of how large that log grows.
+// bodyPreview/body can still carry raw tags or undecoded HTML entities --
+// some already-stored previews predate gmail_backend.js's plainPreview fix
+// for &#39;-style entities, and m.body itself is often full untouched HTML.
+// Confirmed live: a lead's message stored as literal "don&#39;t" got fed
+// straight into this prompt, and the model's own draft reply copied that
+// exact broken escaping style back ("it&#39;s") -- stripped/decoded here too
+// as a second line of defense, not just at the point content first gets
+// stored.
+function plainJourneyText(s) {
+  return String(s || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/\s+/g, " ").trim();
+}
 export function formatCustomerJourney(contact, journey) {
   if (!contact) return "";
   const lines = journey
@@ -157,7 +174,7 @@ export function formatCustomerJourney(contact, journey) {
       const dir = m.direction === "inbound" ? "FROM LEAD" : m.direction === "outbound" ? "TO LEAD" : m.direction || "";
       const when = (m.createdAt || m.at || "").slice(0, 16);
       const label = m.subject || m.sourceType || m.channel;
-      const body = (m.bodyPreview || m.body || "").slice(0, 300);
+      const body = plainJourneyText(m.bodyPreview || m.body || "").slice(0, 300);
       return `[${when}] ${m.channel}${dir ? " " + dir : ""} — ${label}${body ? ": " + body : ""}`;
     });
   return `\n\n### CUSTOMER JOURNEY — real history for this specific lead (${contact.first || ""} ${contact.last || ""}, ${contact.email || contact.phone || "no contact info"})\nStatus: ${contact.status || "unknown"} · Type: ${contact.programType || "unknown"} · Lead since: ${contact.firstSeenAt || contact.createdAt || "unknown"}\n\n${lines.join("\n") || "(no prior activity on record)"}`;
@@ -320,8 +337,9 @@ function whyNotToGenerate(contact, journey) {
 function buildPromptForState(journey) {
   const last = journey.length ? journey.at(-1) : null;
   if (!last) return { last: null, promptText: "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)" };
-  if (last.direction === "inbound") return { last, promptText: last.body || last.bodyPreview || "" };
-  return { last, promptText: `(The lead hasn't replied since our last message to them: "${last.body || last.bodyPreview || ""}". Draft an appropriate follow-up to re-engage them.)` };
+  const lastText = plainJourneyText(last.body || last.bodyPreview || "");
+  if (last.direction === "inbound") return { last, promptText: lastText };
+  return { last, promptText: `(The lead hasn't replied since our last message to them: "${lastText}". Draft an appropriate follow-up to re-engage them.)` };
 }
 
 function logGeneration(entry) {

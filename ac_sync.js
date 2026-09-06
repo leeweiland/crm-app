@@ -68,7 +68,14 @@ export function acPlainPreview(html, len = 140) {
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<head[\s\S]*?<\/head>/gi, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
+    // Numeric entities (AC's own campaign HTML commonly encodes plain
+    // apostrophes/quotes as &#39;/&#8217;/etc.) before the named ones below --
+    // this used to only cover &nbsp;, same gap fixed in gmail_backend.js's
+    // plainPreview for the same reason.
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, len);

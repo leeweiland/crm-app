@@ -346,7 +346,15 @@ function escapeHtmlText(s) {
 function plainPreview(bodyHtml, len) {
   return String(bodyHtml || "")
     .replace(/<[^>]+>/g, " ")
+    // Numeric entities (a real sender's own HTML commonly encodes plain
+    // apostrophes/quotes as &#39;/&#8217;/etc.) before the named ones below --
+    // this used to only cover &nbsp;/&amp;/&lt;/&gt;, so e.g. "don't" stored
+    // (and then displayed, and once even fed into an AI-drafted reply that
+    // copied the same broken escaping) as the literal text "don&#39;t".
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
     .replace(/&nbsp;/gi, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/\s+/g, " ").trim()
     .slice(0, len);
 }
