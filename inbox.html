@@ -1456,12 +1456,18 @@ function renderThread() {
   // now-fixed backend bug that always reported messages as unread) spun
   // into an infinite select-mark-reload loop.
   const unread = items.filter(i => i.direction === 'inbound' && !i.done);
-  if (unread.length) {
-    markDone(unread.map(i => i.id), true);
-    const inList = conversations.find(x => x.key === c.key);
-    if (inList) inList.unreadCount = 0;
-    renderSidebar();
-  }
+  if (unread.length) markDone(unread.map(i => i.id), true);
+  // Always fire /opened, even with zero local unread items -- a sidebar
+  // badge can be stuck out of sync with the real message data (stale
+  // cache, a phantom row with no messages behind it at all), and that
+  // case has nothing for the markDone call above to flip. /opened
+  // re-derives the true count from the contact's actual messages so the
+  // badge can't stay lit forever just because there was nothing to mark
+  // done.
+  fetch(`/api/inbox/conversations/${c.contactId}/opened`, { method: 'POST' });
+  const inList = conversations.find(x => x.key === c.key);
+  if (inList) inList.unreadCount = 0;
+  renderSidebar();
 }
 async function selectConversation(c, skipFetch) {
   selectedConvo = c;

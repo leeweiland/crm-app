@@ -231,6 +231,20 @@ export async function handleInboxRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, meta: setConvoMeta(contactId, { done: value }) });
   }
 
+  // Fired whenever the sidebar opens a conversation -- distinct from
+  // /done above, which also sets the persistent "done" meta bucket (a
+  // deliberate user action, not implied by just viewing a thread). This
+  // only re-derives unread_count from the contact's actual message file,
+  // so a badge that's stuck out of sync with reality (stale data, or a
+  // phantom row with no real messages behind it -- recomputeConversation
+  // Summary deletes those outright) gets corrected the moment someone
+  // looks at it, even when there's nothing for /mark-done to flip.
+  const openedMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/opened$/);
+  if (openedMatch && req.method === "POST") {
+    recomputeConversationSummary(openedMatch[1]);
+    return sendJson(res, 200, { ok: true });
+  }
+
   // Permanently delete an entire conversation -- every message to/from this
   // contact (or, for a not-yet-confirmed Potential Contact, every message
   // matching that raw address), plus its pin/star/done state. Irreversible,
