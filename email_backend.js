@@ -142,7 +142,7 @@ export function reconstructEmailBody(message) {
   return html;
 }
 
-function resolveFooterHtml(footerTemplateId, contactId) {
+export function resolveFooterHtml(footerTemplateId, contactId) {
   const templates = readJson(FOOTER_TEMPLATES_FILE, []);
   const footer = templates.find(f => f.id === footerTemplateId) || templates.find(f => f.isDefault) || null;
   if (!footer) return "";

@@ -4,6 +4,7 @@ import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
+import { resolveFooterHtml } from "./email_backend.js";
 
 // Per-user Gmail connection -- same idea as Close's "just add it as a
 // user", not a domain-level SES/MX setup: each staff member connects
@@ -105,17 +106,25 @@ function encodeHeaderValue(value) {
 // (renderEmailBody/tagHtmlLinksWithSource/unsubscribe injection) that the
 // SES path uses -- those are template/compliance features built for bulk
 // campaign sends; an ad hoc Inbox reply through a personal Gmail account
-// doesn't carry the CRM's own click-tracking or unsubscribe links today
-// either way, so there's nothing this drops for THAT path specifically.
-export async function sendViaGmail({ user, to, subject, html, contactId, sourceType, sourceId }) {
+// doesn't carry the CRM's own click-tracking today either way, so there's
+// nothing this drops for THAT path specifically. footerTemplateId is the
+// one piece pulled in from that pipeline anyway (resolveFooterHtml) -- same
+// footer the SES path appends, so a sender's signature/footer looks the
+// same regardless of which transport actually sent a given email.
+export async function sendViaGmail({ user, to, subject, html, contactId, sourceType, sourceId, footerTemplateId }) {
   if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
   if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
   const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
   const fromHeader = `${fromName} <${user.gmailEmail}>`;
+  // resolveFooterHtml falls back to whatever footer template is marked
+  // isDefault when footerTemplateId is null -- same fallback the SES path
+  // already relies on, so don't shortcut around it just because this
+  // particular sender never picked one explicitly.
+  const fullHtml = `${html}${resolveFooterHtml(footerTemplateId, contactId)}`;
   // Mirrors email_backend.js's sendEmail contract: logs the attempt itself
   // (sent OR failed) so callers on both paths can just check `.ok`,
   // without needing to know which transport actually handled it.
-  const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: html, bodyPreview: (html || "").replace(/<[^>]+>/g, " ").trim().slice(0, 140) };
+  const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: fullHtml, bodyPreview: (fullHtml || "").replace(/<[^>]+>/g, " ").trim().slice(0, 140) };
   try {
     const accessToken = await getAccessToken(user.gmailRefreshToken);
     const raw = [
@@ -125,7 +134,7 @@ export async function sendViaGmail({ user, to, subject, html, contactId, sourceT
       `MIME-Version: 1.0`,
       `Content-Type: text/html; charset="UTF-8"`,
       ``,
-      html,
+      fullHtml,
     ].join("\r\n");
     const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
@@ -225,6 +234,7 @@ export async function handleGmailRequest(req, res, url) {
       id: u.id, first: u.first, last: u.last, email: u.email,
       connected: !!u.gmailRefreshToken, gmailEmail: u.gmailEmail || null,
       canSend: !!u.gmailScope?.includes("gmail.send"),
+      footerTemplateId: u.footerTemplateId || null,
     }));
     return sendJson(res, 200, { team });
   }
