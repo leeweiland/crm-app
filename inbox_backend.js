@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE } from "./message_log.js";
-import { sendEmail } from "./email_backend.js";
+import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { CONVERSATION_META_FILE, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
 import {
@@ -50,10 +50,19 @@ export async function handleInboxRequest(req, res, url) {
     // a 46GB volume solid). Resolved here, at the one place it's actually
     // displayed, from the small shared store instead -- cheap after the
     // first view of any given campaign (getAcCampaignHtml caches it).
+    // Campaign/automation/workflow sends carry the same kind of reference
+    // instead of a full duplicated body -- see email_backend.js's own
+    // header comment on reconstructEmailBody for why (the exact same
+    // per-recipient-duplication problem AC's import had, just from this
+    // app's own send path instead). Resolved here, same as the AC case,
+    // synchronously (no network call -- the shared template's already on
+    // disk locally, unlike AC's which has to be fetched).
     const messages = await Promise.all(getContactMessages(contactId).map(async m => {
       let body = m.body;
       if (!body && m.acCampaignId && (m.sourceType === "ac_campaign" || m.sourceType === "ac_import")) {
         body = await getAcCampaignHtml(m.acCampaignId);
+      } else if (!body && m.channel === "email") {
+        body = reconstructEmailBody(m) || body;
       }
       return { ...m, body, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone };
     }));

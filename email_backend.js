@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
@@ -72,8 +72,74 @@ async function getSesClient() {
   });
 }
 
-function getContact(contactId) {
+export function getContact(contactId) {
   return readJson(CONTACTS_FILE, []).find(c => c.id === contactId) || null;
+}
+
+// Campaigns/automations/workflows send the exact same block-rendered
+// content to every recipient (merge tags aside) -- storing a full
+// independent copy of it on each recipient's own message record
+// multiplies the same bytes by however many people received it. At real
+// automation volume (discussed live: 1M+ sends/month) that's ongoing,
+// unbounded disk growth, not a one-time historical accident the way AC's
+// import turned out to be (see ac_sync.js's own header comment for that
+// story -- same root cause, different source).
+//
+// The actual SEND in sendEmail() below is completely unaffected by any of
+// this -- `html` is built and transmitted exactly as it always was. This
+// only changes what gets PERSISTED: the template (merge-tag shortcodes
+// still literal, not yet expanded -- see block_editor_shared.js, that's
+// what they're FOR) is cached once per sourceType+sourceId, and
+// reconstructEmailBody re-expands it for one specific message on demand
+// instead of a full copy being stored per recipient. Caching is
+// best-effort and never allowed to affect a real send or lose a body:
+// sendEmail only empties what it stores when the cache write is
+// CONFIRMED to have succeeded (or already existed) -- any failure just
+// falls back to storing that one recipient's full body the old way.
+export const EMAIL_TEMPLATE_CACHE_FILE = "crm_email_template_cache.json";
+const REPEATABLE_EMAIL_SOURCE_TYPES = new Set(["campaign", "automation_step", "workflow_step"]);
+// Not a real contactId (those are UUIDs) -- stands in for "whoever ends up
+// reading this" wherever resolveFooterHtml would otherwise bake one
+// specific contact's unsubscribe link into the template. reconstructEmail
+// Body swaps the real id back in before re-deriving that link, so the
+// final output is identical to what a real per-contact render produces.
+const EMAIL_TEMPLATE_SENTINEL_CID = "__EMAIL_TEMPLATE_SENTINEL__";
+function emailTemplateCacheKey(sourceType, sourceId) { return `${sourceType}:${sourceId}`; }
+
+function ensureEmailTemplateCached({ sourceType, sourceId, blocks, theme, footerTemplateId, previewText }) {
+  if (!REPEATABLE_EMAIL_SOURCE_TYPES.has(sourceType) || !sourceId) return false;
+  try {
+    const key = emailTemplateCacheKey(sourceType, sourceId);
+    if (readJson(EMAIL_TEMPLATE_CACHE_FILE, {})[key] !== undefined) return true; // already cached by an earlier recipient's send
+    let html = buildPreheaderHtml(previewText) + renderEmailBody(blocks, resolveFooterHtml(footerTemplateId, EMAIL_TEMPLATE_SENTINEL_CID), theme);
+    html = absolutizeUploadUrls(html, getPublicBaseUrl());
+    appendToJsonObjectFast(EMAIL_TEMPLATE_CACHE_FILE, key, html);
+    return true;
+  } catch (e) {
+    console.error("[email] template cache write failed (non-fatal, this recipient's body stores in full instead):", e.message);
+    return false;
+  }
+}
+
+// Recreates exactly what one specific recipient's email actually looked
+// like, from the shared cached template plus that message's own stored
+// fields -- the identical final transform chain sendEmail's real send
+// already applies (merge tags, source-link tagging, click-tracking wrap,
+// unsubscribe substitution), just run here at display time instead of at
+// send time. Returns null if nothing's cached for this message's source
+// (a non-repeatable source, or a row written before this existed) --
+// callers fall back to message.body in that case.
+export function reconstructEmailBody(message) {
+  if (!message?.sourceType || !message?.sourceId) return null;
+  const cached = readJson(EMAIL_TEMPLATE_CACHE_FILE, {})[emailTemplateCacheKey(message.sourceType, message.sourceId)];
+  if (cached === undefined) return null;
+  let html = cached.replaceAll(EMAIL_TEMPLATE_SENTINEL_CID, encodeURIComponent(message.contactId || ""));
+  const contact = message.contactId ? getContact(message.contactId) : null;
+  if (contact) html = applyMergeTags(html, contact);
+  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(message.sourceType, message.sourceId)}`);
+  html = wrapLinksForClickTracking(html, message.id);
+  html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(message.contactId || "")}`);
+  return html;
 }
 
 function resolveFooterHtml(footerTemplateId, contactId) {
@@ -219,10 +285,14 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   const fromAddress = from || ses.fromAddress;
 
   const bodyPreview = (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "";
+  // Only ever empties the stored body when the shared template is
+  // CONFIRMED cached (see ensureEmailTemplateCached's own comment) --
+  // `html` itself (what's actually transmitted below) is never touched.
+  const storedBody = ensureEmailTemplateCached({ sourceType, sourceId, blocks, theme, footerTemplateId, previewText }) ? "" : html;
   const baseRow = {
     id: rowId,
     channel: "email", direction: "outbound", contactId, sourceType, sourceId,
-    to, from: fromAddress || null, subject: renderedSubject, body: html, bodyPreview,
+    to, from: fromAddress || null, subject: renderedSubject, body: storedBody, bodyPreview,
   };
 
   if (!client) {
