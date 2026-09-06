@@ -1636,6 +1636,11 @@ async function generateAiContent(channel, btn) {
   if (!selectedConvo?.contactId) return;
   btn.disabled = true;
   btn.classList.add('loading');
+  // Only the success path used to clear this -- it happens to work there
+  // because renderThread() below replaces the whole compose panel (a fresh,
+  // never-disabled button), but every early-return (skip/escalate/error) or
+  // network failure left THIS button disabled and spinning indefinitely,
+  // since nothing else was left to reset it. finally covers every exit.
   try {
     const r = await fetch('/api/ai-agents/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1654,6 +1659,9 @@ async function generateAiContent(channel, btn) {
     if (d.buyingSignal) showToast('🔥 Buying signal detected — consider taking over');
   } catch {
     showToast('Could not generate', true);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('loading');
   }
 }
 async function loadAiSummary(contactId) {
