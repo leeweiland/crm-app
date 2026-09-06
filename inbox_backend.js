@@ -128,7 +128,10 @@ export async function handleInboxRequest(req, res, url) {
         key: g.key, contactId: g.contactId, contact,
         displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
         lastChannel: last.channel, lastDirection: last.direction,
-        lastPreview: last.subject || last.bodyPreview || "",
+        // Body snippet, not the subject line -- "Re: yo" (a real subject
+        // this business's drip templates use) told a coach nothing about
+        // what the lead actually said without opening the thread.
+        lastPreview: last.bodyPreview || last.subject || "",
         lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount,
         pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived, hidden,
         // "Done" only counts once you've actually seen everything -- new

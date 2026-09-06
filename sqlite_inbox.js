@@ -127,7 +127,9 @@ export function syncMessageFields(g) {
     status: contact?.status || null, programType: contact?.programType || null, ownerId: contact?.ownerId || null,
     lastAtMs: toMs(g.last?.createdAt), lastInboundAtMs: toMs(g.lastInboundAt), unreadCount: g.unreadCount || 0,
     lastChannel: g.last?.channel || null, lastDirection: g.last?.direction || null,
-    lastPreview: g.last?.subject || g.last?.bodyPreview || "",
+    // Body snippet, not the subject line -- see inbox_backend.js's JSON-
+    // fallback path for the same fix/reasoning.
+    lastPreview: g.last?.bodyPreview || g.last?.subject || "",
     lastStatus: g.lastMine?.status || null, lastOpened: g.lastMine?.opened ? 1 : 0,
     lastMessageId: g.last?.id || null, lastByChannelJson: JSON.stringify(g.lastByChannel || {}),
   });
@@ -292,7 +294,7 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
       contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id } : null,
       displayName: r.display_name,
       lastChannel: last?.channel || r.last_channel, lastDirection: last?.direction || r.last_direction,
-      lastPreview: last?.subject || last?.bodyPreview || r.last_preview,
+      lastPreview: last?.bodyPreview || last?.subject || r.last_preview,
       lastAt: last?.createdAt || (r.last_at_ms ? new Date(r.last_at_ms).toISOString() : null),
       lastInboundAt: r.last_inbound_at_ms ? new Date(r.last_inbound_at_ms).toISOString() : null,
       lastMessageId: last?.id || r.last_message_id,
