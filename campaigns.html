@@ -17,6 +17,20 @@
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
   th.sortable.sorted .sort-arrow { opacity: 1; }
+  /* Tab bar -- copy-pasted per page in this app (scheduling.html has the
+     original), no shared .tab-btn class in crm-design-system.css yet. */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  /* Preview row -- same click-to-expand/sandboxed-iframe shape as the
+     Inbox's own email bubbles (inbox.html), reused rather than reinvented. */
+  .tpl-preview-row { display: none; }
+  .tpl-preview-row.expanded { display: table-row; }
+  .tpl-preview-row td { padding: 0; }
+  .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
+  .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -31,20 +45,35 @@
           <button class="pra-btn" id="newCampaignBtn">+ New Campaign</button>
         </div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
-        <table class="data-table">
-          <thead><tr>
-            <th class="sortable" data-sort="name">Name</th>
-            <th class="sortable" data-sort="status">Status</th>
-            <th>Subject</th>
-            <th class="sortable" data-sort="sent">Sent</th>
-            <th class="sortable" data-sort="opened">Opened</th>
-            <th class="sortable" data-sort="clicked">Clicked</th>
-            <th class="sortable" data-sort="updatedAt">Last Updated</th>
-            <th></th>
-          </tr></thead>
-          <tbody id="campaignsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
-        </table>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="campaigns">Campaigns</button>
+        <button class="tab-btn" data-tab="external">ActiveCampaign</button>
+      </div>
+      <div class="tab-panel active" id="tab-campaigns">
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr>
+              <th class="sortable" data-sort="name">Name</th>
+              <th class="sortable" data-sort="status">Status</th>
+              <th>Subject</th>
+              <th class="sortable" data-sort="sent">Sent</th>
+              <th class="sortable" data-sort="opened">Opened</th>
+              <th class="sortable" data-sort="clicked">Clicked</th>
+              <th class="sortable" data-sort="updatedAt">Last Updated</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="campaignsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="tab-panel" id="tab-external">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Bulk campaigns ActiveCampaign sent before this CRM existed -- read-only, subject and body only (stats for these aren't available yet). Automation-triggered ones are in Email Automations' own Templates tab instead.</div>
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr><th>Subject</th><th></th></tr></thead>
+            <tbody id="externalCampaignsBody"><tr><td colspan="2" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -80,7 +109,7 @@ function renderCampaignsTable() {
   });
   const body = document.getElementById('campaignsBody');
   if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No campaigns match.</td></tr>'; return; }
-  body.innerHTML = rows.map(c => `
+  body.innerHTML = rows.map((c, idx) => `
     <tr>
       <td class="clickable" onclick="location.href='/campaign-builder.html?id=${c.id}'" style="cursor:pointer">${escapeHtml(c.name)}</td>
       <td><span class="status-pill status-${c.status}">${c.status}</span></td>
@@ -90,12 +119,29 @@ function renderCampaignsTable() {
       <td>${c.stats?.clicked ?? 0}</td>
       <td class="pra-muted">${fmtDate(c.updatedAt)}</td>
       <td style="white-space:nowrap">
+        <button class="tpl-expand-btn" data-expand="${idx}" onclick="event.stopPropagation()">Preview</button>
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/campaign-report.html?id=${c.id}" onclick="event.stopPropagation()">View Report</a>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${c.id}">Copy</button>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${c.id}">Delete</button>
       </td>
     </tr>
+    <tr class="tpl-preview-row" id="camp-preview-${idx}"><td colspan="8"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
   `).join('');
+  body.querySelectorAll('[data-expand]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    const idx = btn.dataset.expand;
+    const row = document.getElementById(`camp-preview-${idx}`);
+    const iframe = row.querySelector('iframe');
+    const nowExpanded = !row.classList.contains('expanded');
+    row.classList.toggle('expanded', nowExpanded);
+    btn.textContent = nowExpanded ? 'Hide' : 'Preview';
+    if (nowExpanded && iframe.dataset.loaded === '0') {
+      iframe.dataset.loaded = '1';
+      const r = await fetch(`/api/campaigns/${rows[idx].id}/body`);
+      const d = r.ok ? await r.json() : null;
+      iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">${escapeHtml(d?.note || 'No preview available.')}</p>`;
+    }
+  });
   document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async (e) => {
     e.stopPropagation();
     const r = await fetch(`/api/campaigns/${btn.dataset.dup}/duplicate`, { method: 'POST' });
@@ -142,6 +188,42 @@ document.getElementById('newCampaignBtn').onclick = async () => {
   const d = await r.json();
   if (r.ok) location.href = '/campaign-builder.html?id=' + d.campaign.id;
 };
+
+// ── ActiveCampaign tab ───────────────────────────────────────────────────
+let externalLoaded = false;
+async function loadExternalCampaigns() {
+  const r = await fetch('/api/campaigns/external');
+  const body = document.getElementById('externalCampaignsBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="2" class="pra-muted">Could not load.</td></tr>'; return; }
+  const { campaigns } = await r.json();
+  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="2" class="pra-muted">None found.</td></tr>'; return; }
+  body.innerHTML = campaigns.map((c, idx) => `
+    <tr>
+      <td>${escapeHtml(c.subject || '(no subject)')}</td>
+      <td><button class="tpl-expand-btn" data-ext-expand="${idx}">Preview</button></td>
+    </tr>
+    <tr class="tpl-preview-row" id="ext-preview-${idx}"><td colspan="2"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
+  `).join('');
+  body.querySelectorAll('[data-ext-expand]').forEach(btn => btn.onclick = async () => {
+    const idx = btn.dataset.extExpand;
+    const row = document.getElementById(`ext-preview-${idx}`);
+    const iframe = row.querySelector('iframe');
+    const nowExpanded = !row.classList.contains('expanded');
+    row.classList.toggle('expanded', nowExpanded);
+    btn.textContent = nowExpanded ? 'Hide' : 'Preview';
+    if (nowExpanded && iframe.dataset.loaded === '0') {
+      iframe.dataset.loaded = '1';
+      const r2 = await fetch(`/api/campaigns/external/${campaigns[idx].id}/body`);
+      const d = r2.ok ? await r2.json() : null;
+      iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">No content available.</p>`;
+    }
+  });
+}
+document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`));
+  if (btn.dataset.tab === 'external' && !externalLoaded) { externalLoaded = true; loadExternalCampaigns(); }
+});
 
 (async function init() {
   await loadSortPreference();

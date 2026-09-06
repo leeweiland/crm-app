@@ -1,11 +1,13 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE, matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
-import { sendEmail } from "./email_backend.js";
+import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
+import { getMessagesForSource } from "./message_log.js";
+import { AC_CAMPAIGN_META_FILE, getAcCampaignHtml } from "./ac_sync.js";
 
 // Which booking a step's %EVENTNAME%/%WHEN%/etc tokens refer to: the exact
 // booking that triggered enrollment when there is one (booking_created
@@ -299,6 +301,78 @@ export async function handleAutomationsRequest(req, res, url) {
   if (!p.startsWith("/api/automations")) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // Template library -- every distinct email an automation step (or an
+  // ActiveCampaign automation) can send, one row each, not one row per
+  // recipient. Native steps already carry their own subject/blocks in
+  // step.config regardless of whether they've ever actually fired, so
+  // there's nothing to "backfill" for them -- they're just read straight
+  // off the automation record. AC-sourced entries come from ac_sync.js's
+  // own metadata store (populated as a side effect of the ongoing
+  // reference-fill batch, see AC_CAMPAIGN_META_FILE's own comment) and
+  // are flagged isAutomation there (AC's own automation-vs-bulk-campaign
+  // distinction) rather than duplicated into a second, competing store.
+  //
+  // Per-step stats reuse the exact same status-bucket rollup campaigns_
+  // backend.js already applies to campaigns, just keyed by this step's
+  // own composite sourceId instead of a campaign id -- see email_backend.
+  // js's own comment for why automation_step's sourceId is
+  // "<automationId>:<stepId>".
+  //
+  // AC-sourced rows deliberately have stats: null for now -- getting a
+  // real per-campaign count means a proper incremental counter (message
+  // records don't carry a queryable sourceId for AC sends the way native
+  // ones do), and bolting that onto the reference-fill batch that's
+  // already mid-run tonight is its own separate piece of work, not
+  // something to rush in alongside it.
+  if (p === "/api/automations/email-templates" && req.method === "GET") {
+    const automations = readJson(AUTOMATIONS_FILE, []);
+    const native = automations.flatMap(a =>
+      Object.values(a.steps || {})
+        .filter(s => s.type === "send_email")
+        .map(s => {
+          const sourceId = `${a.id}:${s.id}`;
+          const messages = getMessagesForSource("automation_step", sourceId);
+          const stats = { sent: 0, opened: 0, clicked: 0 };
+          for (const m of messages) {
+            if (["sent", "delivered", "opened", "clicked"].includes(m.status)) stats.sent++;
+            if (["opened", "clicked"].includes(m.status)) stats.opened++;
+            if (m.status === "clicked") stats.clicked++;
+          }
+          return {
+            id: `native:${sourceId}`, source: "native",
+            automationId: a.id, automationName: a.name, stepId: s.id, sourceId,
+            subject: s.config?.subject || "(no subject)",
+            bodyPreview: (s.config?.blocks || []).find(b => b.type === "text")?.html?.replace(/<[^>]+>/g, " ").trim().slice(0, 140) || "",
+            stats,
+          };
+        })
+    );
+    const acMeta = readJson(AC_CAMPAIGN_META_FILE, {});
+    const acAutomation = Object.entries(acMeta)
+      .filter(([, meta]) => meta.isAutomation)
+      .map(([campaignId, meta]) => ({
+        id: `ac:${campaignId}`, source: "activecampaign", campaignId,
+        subject: meta.subject || meta.name || "(no subject)",
+        bodyPreview: null, stats: null,
+      }));
+    return sendJson(res, 200, { templates: [...native, ...acAutomation] });
+  }
+  // Full HTML for one template-library row, fetched separately (not
+  // inlined into the list above) since it can be tens of KB per row and
+  // the list view never needs more than the preview snippet.
+  const templateBodyMatch = p.match(/^\/api\/automations\/email-templates\/(native|ac):([^/]+)\/body$/);
+  if (templateBodyMatch && req.method === "GET") {
+    const [, source, rawId] = templateBodyMatch;
+    if (source === "ac") {
+      const html = await getAcCampaignHtml(rawId);
+      return sendJson(res, 200, { html: html || null });
+    }
+    // Native: rawId is "<automationId>:<stepId>" (URL-encoded colon
+    // preserved since the id itself already contains one).
+    const html = reconstructEmailBody({ sourceType: "automation_step", sourceId: rawId, contactId: null, id: null });
+    return sendJson(res, 200, { html, note: html ? null : "No preview available yet -- this step hasn't sent a real email to reconstruct from." });
+  }
 
   if (p === "/api/automations" && req.method === "GET") {
     const automations = readJson(AUTOMATIONS_FILE, []);

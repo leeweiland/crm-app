@@ -44,6 +44,20 @@ export const AC_CAMPAIGN_BODIES_FILE = "crm_ac_campaign_bodies.json";
 // AC_CAMPAIGN_BODIES_FILE (appendToJsonObjectFast has no dedup of its
 // own, same as its other caller PROVIDER_ID_INDEX_FILE relies on the
 // check-before-append pattern to avoid).
+// Sidecar to AC_CAMPAIGN_BODIES_FILE -- same one-fetch-per-campaign work
+// already happening in getAcCampaignHtml below, just also keeping the
+// subject and automation-vs-bulk flag around. Kept as a SEPARATE file
+// (not folded into the bodies store) so getAcCampaignHtml's existing
+// return contract (a plain html string) never has to change for its
+// current callers, including the ref-fill batch that's mid-run as this
+// is being added -- this is purely additive alongside it, never read by
+// anything that isn't explicitly asking for this metadata. Prep for
+// surfacing these as real entries in the Campaigns/Automations UI
+// (matching the same idea another session is building for SES-sent
+// templates) -- not wired to a UI yet, deliberately, until that shared
+// shape exists to fit into instead of building a second, competing one.
+export const AC_CAMPAIGN_META_FILE = "crm_ac_campaign_meta.json";
+
 const inFlight = new Map();
 export async function getAcCampaignHtml(campaignId) {
   const stored = readJson(AC_CAMPAIGN_BODIES_FILE, {})[campaignId];
@@ -59,10 +73,29 @@ export async function getAcCampaignHtml(campaignId) {
       // (and, via guardedTick, potentially the whole scheduler too when
       // called from the batch instead).
       const cr = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers, signal: AbortSignal.timeout(10000) });
-      const messageId = cr.ok ? (await cr.json()).campaign?.message_id : null;
+      const campaign = cr.ok ? (await cr.json()).campaign : null;
+      const messageId = campaign?.message_id;
+      let subject = null;
       if (messageId) {
         const mr = await fetch(`${AC_BASE}/api/3/messages/${messageId}`, { headers, signal: AbortSignal.timeout(10000) });
-        if (mr.ok) html = (await mr.json()).message?.html || "";
+        if (mr.ok) {
+          const message = (await mr.json()).message;
+          html = message?.html || "";
+          subject = message?.subject || null;
+        }
+      }
+      if (campaign) {
+        appendToJsonObjectFast(AC_CAMPAIGN_META_FILE, campaignId, {
+          subject, name: campaign.name || null,
+          // AC's own signal for "this campaign belongs to an automation"
+          // rather than a one-off bulk send -- non-null `automation` is
+          // the same distinction fetchAcOneToOneCampaigns' name-pattern
+          // match approximates from the OTHER direction (only catches
+          // single-recipient automation sends specifically named "1:1 →
+          // ..."); this covers every automation-linked campaign, bulk or
+          // not.
+          isAutomation: campaign.automation != null,
+        });
       }
     } catch (e) {
       console.error("[ac_sync] fetching campaign HTML failed for", campaignId, e.message);

@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, CONTACTS_FILE, SEGMENTS_FILE } from "./contacts_backend.js";
-import { sendEmail } from "./email_backend.js";
+import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { getMessagesForSource } from "./message_log.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
+import { AC_CAMPAIGN_META_FILE, getAcCampaignHtml } from "./ac_sync.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
@@ -79,6 +80,34 @@ export async function handleCampaignsRequest(req, res, url) {
   if (p === "/api/campaigns" && req.method === "GET") {
     const campaigns = readJson(CAMPAIGNS_FILE, []).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     return sendJson(res, 200, { campaigns });
+  }
+  // Full HTML for one native campaign, fetched separately from the list
+  // (which never needs more than name/subject/stats) -- placed ahead of
+  // the generic /api/campaigns/:id match below so this literal path wins.
+  const campaignBodyMatch = p.match(/^\/api\/campaigns\/([^/]+)\/body$/);
+  if (campaignBodyMatch && req.method === "GET") {
+    const html = reconstructEmailBody({ sourceType: "campaign", sourceId: campaignBodyMatch[1], contactId: null, id: null });
+    return sendJson(res, 200, { html, note: html ? null : "No preview available yet -- this campaign hasn't sent a real email to reconstruct from." });
+  }
+  // Read-only ActiveCampaign-sourced bulk campaigns (not automation-
+  // triggered -- those live in automations.html's own Templates tab
+  // instead, see automations_backend.js's identical split) -- a separate
+  // list/endpoint rather than merged into the native campaigns above:
+  // clicking a native row navigates to campaign-builder.html to EDIT it,
+  // which makes no sense for a campaign that only ever existed in AC.
+  if (p === "/api/campaigns/external" && req.method === "GET") {
+    const acMeta = readJson(AC_CAMPAIGN_META_FILE, {});
+    const external = Object.entries(acMeta)
+      .filter(([, meta]) => !meta.isAutomation)
+      .map(([campaignId, meta]) => ({
+        id: campaignId, subject: meta.subject || meta.name || "(no subject)",
+      }));
+    return sendJson(res, 200, { campaigns: external });
+  }
+  const externalBodyMatch = p.match(/^\/api\/campaigns\/external\/([^/]+)\/body$/);
+  if (externalBodyMatch && req.method === "GET") {
+    const html = await getAcCampaignHtml(externalBodyMatch[1]);
+    return sendJson(res, 200, { html: html || null });
   }
   if (p === "/api/campaigns" && req.method === "POST") {
     const { name } = await readJsonBody(req);

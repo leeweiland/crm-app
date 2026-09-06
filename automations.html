@@ -21,6 +21,25 @@
   .row-item:last-child { border-bottom: none; }
   .row-item button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 4px; }
   .row-item button:hover { color: var(--pra-red); }
+  /* Tab bar -- copy-pasted per page in this app (scheduling.html has the
+     original), no shared .tab-btn class in crm-design-system.css yet. */
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  /* Template-library preview row -- same click-to-expand/sandboxed-iframe
+     shape as the Inbox's own email bubbles (inbox.html), reused here
+     rather than reinvented since it's already the proven safe pattern
+     for showing arbitrary stored HTML. */
+  .tpl-source-badge { font-size: .68rem; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+  .tpl-source-native { background: var(--pra-blue-dim); color: var(--pra-blue); }
+  .tpl-source-activecampaign { background: rgba(255,159,10,.12); color: #ff9f0a; }
+  .tpl-preview-row { display: none; }
+  .tpl-preview-row.expanded { display: table-row; }
+  .tpl-preview-row td { padding: 0; }
+  .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
+  .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -34,20 +53,44 @@
           <button class="pra-btn" id="newAutomationBtn">+ New Automation</button>
         </div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
-        <table class="data-table">
-          <thead><tr>
-            <th class="sortable" data-sort="name">Name</th>
-            <th class="sortable" data-sort="trigger">Trigger</th>
-            <th class="sortable" data-sort="active">Active</th>
-            <th class="sortable" data-sort="totalEmails">Total Emails</th>
-            <th class="sortable" data-sort="enrolledCount">Currently Enrolled</th>
-            <th class="sortable" data-sort="totalEnrolled">Total Enrolled</th>
-            <th class="sortable" data-sort="updatedAt">Last Edited</th>
-            <th></th>
-          </tr></thead>
-          <tbody id="automationsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
-        </table>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="automations">Automations</button>
+        <button class="tab-btn" data-tab="templates">Templates</button>
+      </div>
+      <div class="tab-panel active" id="tab-automations">
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr>
+              <th class="sortable" data-sort="name">Name</th>
+              <th class="sortable" data-sort="trigger">Trigger</th>
+              <th class="sortable" data-sort="active">Active</th>
+              <th class="sortable" data-sort="totalEmails">Total Emails</th>
+              <th class="sortable" data-sort="enrolledCount">Currently Enrolled</th>
+              <th class="sortable" data-sort="totalEnrolled">Total Enrolled</th>
+              <th class="sortable" data-sort="updatedAt">Last Edited</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="automationsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="tab-panel" id="tab-templates">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Every email an automation step can send, one row per template rather than per recipient -- including ones ActiveCampaign automations sent before this CRM existed. Stats for ActiveCampaign-sourced rows aren't available yet.</div>
+        <div class="pra-panel" style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr>
+              <th>Source</th>
+              <th>Automation</th>
+              <th>Subject</th>
+              <th>Preview</th>
+              <th>Sent</th>
+              <th>Opened</th>
+              <th>Clicked</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="templatesBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -192,6 +235,58 @@ document.getElementById('newAutomationBtn').onclick = async () => {
   const d = await r.json();
   if (r.ok) location.href = '/automation-builder.html?id=' + d.automation.id;
 };
+// ── Templates tab ────────────────────────────────────────────────────────
+let templatesLoaded = false;
+function templateRowHtml(t, idx) {
+  const badgeClass = t.source === 'native' ? 'tpl-source-native' : 'tpl-source-activecampaign';
+  const badgeLabel = t.source === 'native' ? 'Native' : 'ActiveCampaign';
+  const statCell = v => v == null ? '<span class="pra-muted">—</span>' : v;
+  return `
+    <tr>
+      <td><span class="tpl-source-badge ${badgeClass}">${badgeLabel}</span></td>
+      <td class="pra-muted">${escapeHtml(t.automationName || '')}</td>
+      <td>${escapeHtml(t.subject || '(no subject)')}</td>
+      <td class="pra-muted">${escapeHtml(t.bodyPreview || '')}</td>
+      <td>${statCell(t.stats?.sent)}</td>
+      <td>${statCell(t.stats?.opened)}</td>
+      <td>${statCell(t.stats?.clicked)}</td>
+      <td><button class="tpl-expand-btn" data-expand="${idx}">Preview</button></td>
+    </tr>
+    <tr class="tpl-preview-row" id="tpl-preview-${idx}"><td colspan="8"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
+  `;
+}
+async function renderTemplatesTable(templates) {
+  const body = document.getElementById('templatesBody');
+  if (!templates.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No email templates yet.</td></tr>'; return; }
+  body.innerHTML = templates.map((t, idx) => templateRowHtml(t, idx)).join('');
+  body.querySelectorAll('[data-expand]').forEach(btn => btn.onclick = async () => {
+    const idx = btn.dataset.expand;
+    const row = document.getElementById(`tpl-preview-${idx}`);
+    const iframe = row.querySelector('iframe');
+    const nowExpanded = !row.classList.contains('expanded');
+    row.classList.toggle('expanded', nowExpanded);
+    btn.textContent = nowExpanded ? 'Hide' : 'Preview';
+    if (nowExpanded && iframe.dataset.loaded === '0') {
+      iframe.dataset.loaded = '1';
+      const t = templates[idx];
+      const r = await fetch(`/api/automations/email-templates/${t.id}/body`);
+      const d = r.ok ? await r.json() : null;
+      iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">${escapeHtml(d?.note || 'No preview available.')}</p>`;
+    }
+  });
+}
+async function loadTemplates() {
+  const r = await fetch('/api/automations/email-templates');
+  if (!r.ok) { document.getElementById('templatesBody').innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load.</td></tr>'; return; }
+  const { templates } = await r.json();
+  renderTemplatesTable(templates);
+}
+document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`));
+  if (btn.dataset.tab === 'templates' && !templatesLoaded) { templatesLoaded = true; loadTemplates(); }
+});
+
 (async function init() {
   await loadSortPreference();
   loadAutomations();
