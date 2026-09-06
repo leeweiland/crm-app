@@ -499,6 +499,19 @@ function formatExtraAnswers(questions, answers) {
     .filter(q => !CORE_QUESTION_TYPES.includes(q.type) && (answers || {})[q.id] !== undefined && (answers || {})[q.id] !== "")
     .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n");
 }
+// The OUTER form's answers when this calendar is embedded inside a
+// multi-step form (see book.html's prefillFormAnswersJson) -- distinct
+// from formatExtraAnswers above, which only covers questions defined on
+// THIS event type itself. An event type with no long_text question (e.g.
+// Body Mastery Call, which only asks name/email/phone) has nowhere for
+// the outer form's answers to land in `notes`, so they'd otherwise never
+// reach the booking notification or the calendar event at all.
+function formatFormAnswers(formAnswers) {
+  if (!formAnswers || typeof formAnswers !== "object") return "";
+  return Object.entries(formAnswers)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([label, v]) => `${label}: ${v}`).join("\n");
+}
 // Same rule as forms_backend.js's validateAnswers -- a required question
 // with no answer blocks the booking, checked server-side since the public
 // booking form is unauthenticated and easy to hit directly. Email is
@@ -835,8 +848,10 @@ async function sendInternalBookingNotification(booking, eventType, contact) {
   if (!recipients.length) return;
   const start = new Date(booking.startAt);
   const when = start.toLocaleString("en-US", { timeZone: booking.timezone || "America/Anchorage", dateStyle: "full", timeStyle: "short" });
+  const formAnswersText = formatFormAnswers(booking.formAnswers);
   const html = `<p><b>${escapeHtml(booking.name)}</b> just booked <b>${escapeHtml(eventType.name)}</b>.</p>
     <p><b>When:</b> ${when}<br/><b>Email:</b> ${escapeHtml(booking.email)}${booking.phone ? `<br/><b>Phone:</b> ${escapeHtml(booking.phone)}` : ""}</p>
+    ${formAnswersText ? `<p><b>Form answers:</b><br/>${escapeHtml(formAnswersText).replace(/\n/g, "<br/>")}</p>` : ""}
     ${booking.notes ? `<p><b>Application &amp; booking answers:</b><br/>${escapeHtml(booking.notes).replace(/\n/g, "<br/>")}</p>` : ""}`;
   await Promise.all(recipients.map(to => sendEmail({
     to, subject: `New booking: ${booking.name} — ${eventType.name}`,
@@ -934,10 +949,15 @@ export async function handleSchedulingRequest(req, res, url) {
         // name/email/phone left this description with nothing but "Booked
         // via CRM scheduling." -- restating identity here too so the staff
         // calendar event always carries the same details as the internal
-        // notification email, not just whatever's left over after that
-        // filter.
+        // notification email. formAnswers (the outer form's own Q&A, e.g.
+        // an "ONLINE BOOKING" lead form embedding this "Body Mastery Call"
+        // calendar) is a separate merge -- see formatFormAnswers -- since
+        // an event type with no long_text question has no other way to
+        // carry those answers through at all.
         const calendarDescriptionLines = [`Name: ${name}`, `Email: ${email}`];
         if (phone) calendarDescriptionLines.push(`Phone: ${phone}`);
+        const formAnswersText = formatFormAnswers(formAnswers);
+        if (formAnswersText) calendarDescriptionLines.push("", formAnswersText);
         if (notes) calendarDescriptionLines.push("", notes);
         calendarDescriptionLines.push("", "Booked via CRM scheduling.");
         const created = await createCalendarEvent({
