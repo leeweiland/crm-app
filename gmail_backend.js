@@ -145,7 +145,13 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
   // Mirrors email_backend.js's sendEmail contract: logs the attempt itself
   // (sent OR failed) so callers on both paths can just check `.ok`,
   // without needing to know which transport actually handled it.
-  const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: fullHtml, bodyPreview: (fullHtml || "").replace(/<[^>]+>/g, " ").trim().slice(0, 140) };
+  // plainPreview, not an ad hoc tag-strip -- that used to skip entity
+  // decoding entirely, so any literal &#39; etc. already in fullHtml (a
+  // sender's own typed text, or an AI-drafted reply that picked up the same
+  // broken escaping from stored history -- see ai_agents_backend.js's
+  // formatCustomerJourney/buildPromptForState) carried straight into the
+  // stored preview too.
+  const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: fullHtml, bodyPreview: plainPreview(fullHtml, 140) };
   try {
     const accessToken = await getAccessToken(user.gmailRefreshToken);
     const raw = [

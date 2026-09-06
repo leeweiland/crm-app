@@ -201,6 +201,19 @@ function buildPreheaderHtml(previewText) {
 function escapeHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+// Mirrors gmail_backend.js's plainPreview -- strips tags AND decodes
+// entities (not just &nbsp;/&amp;/&lt;/&gt;, since a sender's own HTML
+// commonly encodes plain apostrophes/quotes as &#39;/&quot;/etc.).
+function plainTextPreview(html, len) {
+  return String(html || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/\s+/g, " ").trim()
+    .slice(0, len);
+}
 
 // Uploaded images are stored/rendered as root-relative paths ("/uploads/..")
 // -- correct for the in-app editor preview (resolves against the CRM's own
@@ -290,7 +303,11 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
   const fromAddress = from || ses.fromAddress;
 
-  const bodyPreview = (blocks || []).find(b => b.type === "text")?.html?.slice(0, 140) || "";
+  // Stripped and entity-decoded now, not a raw HTML slice -- the inbox
+  // reply path's own text block can carry a literal &#39; etc. (see
+  // gmail_backend.js's plainPreview, fixed for the same reason), and a raw
+  // slice also risked truncating mid-tag for anything with real markup.
+  const bodyPreview = plainTextPreview((blocks || []).find(b => b.type === "text")?.html || "", 140);
   // Only ever empties the stored body when the shared template is
   // CONFIRMED cached (see ensureEmailTemplateCached's own comment) --
   // `html` itself (what's actually transmitted below) is never touched.
