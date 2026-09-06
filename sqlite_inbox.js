@@ -261,23 +261,49 @@ export function renameStatusInSqlite(oldLabel, newLabel) {
 // app -- confirmed live tonight that an unbounded version of this (every
 // stale row, one call) could run long enough to stall the whole tick
 // behind it under real write contention on this same table.
-const STALE_STOP_REPAIR_BATCH_MS = 8000;
-const STALE_STOP_REPAIR_LIMIT = 300;
-export function resyncStaleStopRows() {
+const STALE_ROW_REPAIR_BATCH_MS = 8000;
+const STALE_ROW_REPAIR_LIMIT = 300;
+// Shared by every "bulk status reassignment happened in contacts.json,
+// SQLite's denormalized copy needs to catch up" repair -- takes whichever
+// OLD label(s) are now stale and fixes rows still showing one of them,
+// batched/time-budgeted for the same reason as every other scheduler job
+// here (see resyncStaleStopRows's own history: an unbounded version of
+// this stalled a whole tick under real write contention).
+function resyncRowsWithStaleStatus(staleLabels, logTag, includeNull) {
   if (!sqliteInboxAvailable()) return;
-  const staleRows = db.prepare(`SELECT contact_id FROM conversations WHERE status = 'STOP' LIMIT ${STALE_STOP_REPAIR_LIMIT}`).all();
+  const placeholders = staleLabels.map(() => "?").join(",");
+  // syncContactFields writes `contact.status || null` -- a blank
+  // contact.status ("") lands in this column as NULL, not "", so matching
+  // blank-status rows needs an explicit IS NULL, not just IN (...).
+  const nullClause = includeNull ? " OR status IS NULL" : "";
+  const staleRows = db.prepare(`SELECT contact_id FROM conversations WHERE status IN (${placeholders})${nullClause} LIMIT ${STALE_ROW_REPAIR_LIMIT}`).all(...staleLabels);
   if (!staleRows.length) return; // the common case forever after this repair actually finishes
   const contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
   const t0 = Date.now();
   let fixed = 0, missing = 0;
   for (const row of staleRows) {
-    if (Date.now() - t0 > STALE_STOP_REPAIR_BATCH_MS) break;
+    if (Date.now() - t0 > STALE_ROW_REPAIR_BATCH_MS) break;
     const c = contactsById.get(row.contact_id);
     if (!c) { missing++; continue; }
     syncContactFields(c.id, c);
     fixed++;
   }
-  console.log(`[sqlite-repair] this batch: ${staleRows.length} fetched, fixed: ${fixed}, missing contact: ${missing}`);
+  console.log(`[sqlite-repair:${logTag}] this batch: ${staleRows.length} fetched, fixed: ${fixed}, missing contact: ${missing}`);
+}
+export function resyncStaleStopRows() { resyncRowsWithStaleStatus(["STOP"], "stop", false); }
+// The other legacy Close labels that were never real status definitions
+// (SMS WE SENT LAST, SMS THEY REPLIED, POTENTIAL RE-ADD, a couple of
+// date-stamped one-off campaign markers, TINY KIDS, a stray "Customer",
+// and blank) -- reassigned in contacts.json to BLACKLIST (the "BAD FIT /
+// BLACKLIST" ones) or POTENTIAL (everything else), same cascade gap as
+// every other status cleanup tonight if this denormalized copy weren't
+// also fixed.
+export function resyncStaleLegacyLabelRows() {
+  resyncRowsWithStaleStatus(
+    ["BAD FIT / BLACKLIST", "SMS WE SENT LAST", "SMS THEY REPLIED", "POTENTIAL RE-ADD",
+      "2ND TEXT SENT 2021-10-8", "TINY KIDS", "1st TEXT SENT b", "Customer"],
+    "legacy-labels", true
+  );
 }
 
 // last_preview switched from subject-first to body-first (see inbox_
