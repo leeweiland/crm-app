@@ -3,6 +3,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
+import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
 
 // Per-user Gmail connection -- same idea as Close's "just add it as a
 // user", not a domain-level SES/MX setup: each staff member connects
@@ -273,6 +274,31 @@ function b64urlDecode(s) {
 // "plain text preferred, HTML stripped as fallback" shape chat-app's own
 // inbound handling would need, kept simple since Inbox bubbles are plain
 // text either way -- see noteBubbleHtml/smsBubbleHtml in inbox.html).
+// item.body ends up set directly as an <iframe>'s srcdoc (see inbox.html's
+// email bubble expand handler) -- i.e. whatever this returns is rendered
+// AS HTML, not as plain text. A bare newline does nothing in HTML unless
+// it's an actual <br>, so returning the plain-text part's raw text
+// verbatim (real \n's, no escaping) rendered as one long collapsed wall of
+// text with no paragraph breaks at all -- confirmed live on a real quoted-
+// reply chain, exactly the kind of message most likely to actually HAVE
+// meaningful line breaks worth preserving. Escaping first (so a literal
+// "<" or "&" in someone's quoted text can't be mistaken for markup) then
+// converting \n to <br> keeps this a plain-text-only rendering (same
+// design as smsBubbleHtml/noteBubbleHtml -- see this function's own
+// header comment) while actually preserving its line structure.
+function escapeHtmlText(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+// bodyPreview is rendered as plain text everywhere it's shown (the
+// sidebar's own escapeHtml(), the email bubble's own tag-stripping) --
+// those callers already escape, so handing them extractBody's escaped-
+// for-iframe HTML would double-escape every &/</> in the snippet (a
+// literal "&" showing up as the text "&amp;"). Undoes exactly the
+// transform extractBody applies, back to plain text, for preview
+// purposes only.
+function plainPreview(bodyHtml, len) {
+  return String(bodyHtml || "").replace(/<br\s*\/?>/gi, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").slice(0, len);
+}
 function extractBody(payload) {
   let plain = null, html = null;
   function walk(part) {
@@ -282,7 +308,7 @@ function extractBody(payload) {
     (part.parts || []).forEach(walk);
   }
   walk(payload);
-  if (plain) return plain.trim();
+  if (plain) return escapeHtmlText(plain.trim()).replace(/\n/g, "<br>");
   if (html) return html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   return "";
 }
@@ -366,7 +392,7 @@ async function processGmailMessage(user, msg) {
     logMessage({
       channel: "email", direction: "outbound", contactId,
       sourceType: "gmail_sent", sourceId: null, providerMessageId: msg.id,
-      to: toHeader, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
+      to: toHeader, from: fromHeader, subject, body, bodyPreview: plainPreview(body, 140),
       status: "sent", createdAt,
     });
     return;
@@ -377,10 +403,14 @@ async function processGmailMessage(user, msg) {
   logMessage({
     channel: "email", direction: "inbound", contactId,
     sourceType: "inbound", sourceId: null, providerMessageId: msg.id,
-    to: user.gmailEmail, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
+    to: user.gmailEmail, from: fromHeader, subject, body, bodyPreview: plainPreview(body, 140),
     status: "received", createdAt,
   });
   checkConversionGoal("incoming_email", contactId);
+  // A reply is unambiguous proof they read whatever they're replying to --
+  // see markPriorOutboundEmailsOpenedByReply's own comment for why that
+  // makes it more trustworthy than the tracking pixel itself.
+  markPriorOutboundEmailsOpenedByReply(contactId, createdAt || new Date().toISOString());
 }
 
 // Re-derives truth straight from a Gmail search instead of trusting

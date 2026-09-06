@@ -169,6 +169,32 @@ export function markContactMessagesDone(contactId) {
   messages.forEach(m => { if (m.direction === "inbound" && !m.inboxDone) { m.inboxDone = true; changed = true; } });
   if (changed) writeJson(contactFile(contactId), messages);
 }
+// Pixel/link-based open tracking (SES's own, same as a self-hosted pixel
+// would be) can only ever prove a positive -- it physically cannot fire
+// if the client never fetches the tracking image, which plenty of real
+// clients (confirmed live: Yahoo Mail's iPhone app) don't do by default
+// regardless of whether a human actually read the email. A reply is
+// unambiguous proof they did, so when one arrives, retroactively credit
+// whatever prior outbound emails in this conversation never got a real
+// open/click event -- otherwise the badge stays wrong forever even though
+// the conversation itself disproves it. `inferred: true` on the synthetic
+// entry keeps this distinguishable from a real tracked open if that ever
+// matters later.
+export function markPriorOutboundEmailsOpenedByReply(contactId, replyAt) {
+  if (!contactId) return;
+  const messages = getContactMessages(contactId);
+  let changed = false;
+  const replyMs = new Date(replyAt).getTime();
+  messages.forEach(m => {
+    if (m.channel !== "email" || m.direction !== "outbound") return;
+    if (new Date(m.createdAt).getTime() >= replyMs) return;
+    const alreadyOpened = (m.statusHistory || []).some(h => h.status === "opened" || h.status === "clicked");
+    if (alreadyOpened) return;
+    m.statusHistory = [...(m.statusHistory || []), { status: "opened", at: replyAt, inferred: true }];
+    changed = true;
+  });
+  if (changed) writeJson(contactFile(contactId), messages);
+}
 // Per-contact files are small (one contact's own history, not millions of
 // records), so a bulk update within one is just a plain read+forEach+write
 // -- no need for the main log's byte-level tricks at this size.
