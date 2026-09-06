@@ -1228,7 +1228,15 @@ function emailBubbleHtml(item, idx) {
           ${item.from ? `<span class="email-bubble-from" title="${escapeHtml(item.direction === 'outbound' ? 'From' : 'To')}: ${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}">${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}</span>` : ''}
         </div>
         <div class="email-bubble-preview">${escapeHtml((item.bodyPreview || '').replace(/<[^>]+>/g, ' ')).trim()}</div>
-        <div class="email-bubble-body"><iframe data-src="${idx}"></iframe></div>
+        <!-- sandbox="" (no allow-* tokens) -- item.body is a real sender's
+             actual email HTML now (see gmail_backend.js's extractBody:
+             prefers the HTML part over a flattened plain-text one for
+             proper formatting), i.e. genuinely untrusted third-party
+             markup, not something this app authored. The empty sandbox
+             blocks script execution/forms/top-navigation/popups while
+             still rendering visual HTML fine (text, images, inline
+             styles) -- everything an email preview actually needs. -->
+        <div class="email-bubble-body"><iframe data-src="${idx}" sandbox=""></iframe></div>
         <div class="email-bubble-meta">
           <span>${fmtDate(item.at)}</span>
           <span>${item.status || ''}</span>
