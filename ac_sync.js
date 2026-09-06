@@ -63,7 +63,15 @@ export const AC_CAMPAIGN_META_FILE = "crm_ac_campaign_meta.json";
 // snippet, not the raw HTML), duplicated rather than shared since it's
 // one regex and pulling in a whole other module isn't worth it.
 export function acPlainPreview(html, len = 140) {
-  return String(html || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim().slice(0, len);
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<head[\s\S]*?<\/head>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, len);
 }
 
 const inFlight = new Map();

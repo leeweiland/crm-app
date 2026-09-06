@@ -268,6 +268,7 @@ async function renderTemplatesTable(templates) {
     btn.textContent = nowExpanded ? 'Hide' : 'Preview';
     if (nowExpanded && iframe.dataset.loaded === '0') {
       iframe.dataset.loaded = '1';
+      iframe.srcdoc = '<p style="font-family:sans-serif;color:#888;padding:16px">Loading preview...</p>';
       const t = templates[idx];
       const r = await fetch(`/api/automations/email-templates/${t.id}/body`);
       const d = r.ok ? await r.json() : null;

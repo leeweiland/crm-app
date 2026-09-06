@@ -137,6 +137,7 @@ function renderCampaignsTable() {
     btn.textContent = nowExpanded ? 'Hide' : 'Preview';
     if (nowExpanded && iframe.dataset.loaded === '0') {
       iframe.dataset.loaded = '1';
+      iframe.srcdoc = '<p style="font-family:sans-serif;color:#888;padding:16px">Loading preview...</p>';
       const r = await fetch(`/api/campaigns/${rows[idx].id}/body`);
       const d = r.ok ? await r.json() : null;
       iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">${escapeHtml(d?.note || 'No preview available.')}</p>`;
@@ -218,6 +219,7 @@ async function loadExternalCampaigns() {
     btn.textContent = nowExpanded ? 'Hide' : 'Preview';
     if (nowExpanded && iframe.dataset.loaded === '0') {
       iframe.dataset.loaded = '1';
+      iframe.srcdoc = '<p style="font-family:sans-serif;color:#888;padding:16px">Loading preview...</p>';
       const r2 = await fetch(`/api/campaigns/external/${campaigns[idx].id}/body`);
       const d = r2.ok ? await r2.json() : null;
       iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">No content available.</p>`;
