@@ -12,6 +12,7 @@ import {
 } from "./message_index.js";
 import { queryConversationsSqlite } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
+import { syncAcEngagementForContact, syncAcEngagementForRecentContacts } from "./ac_sync.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -30,7 +31,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -250,7 +251,31 @@ export async function handleInboxRequest(req, res, url) {
     // open, and without sweeping all ~176k contacts to find the gap.
     // No-ops instantly if nobody's connected Gmail.
     reconcileRecentGmailForContact(openedMatch[1]).catch(e => console.error("[gmail] on-open reconcile failed:", e.message));
+    // Same fire-and-forget, on-open reasoning, for ActiveCampaign engagement
+    // -- see ac_sync.js's own header comment for why AC is the only real
+    // source of opens/clicks right now.
+    syncAcEngagementForContact(openedMatch[1]).catch(e => console.error("[ac_sync] on-open sync failed:", e.message));
     return sendJson(res, 200, { ok: true });
+  }
+
+  // Manual catch-up for AC sends nobody's reopened the conversation for
+  // yet (e.g. a campaign that went out minutes ago). Deliberately scoped
+  // to contacts with real recent activity in THIS crm already (bounded,
+  // already-indexed), NOT every AC-linked contact -- that's 160,623 of
+  // them, checked live, which would mean one real AC API call each,
+  // sequentially -- an hours-long sweep for what's supposed to be a
+  // same-day catch-up. See ac_sync.js's own comment.
+  if (p === "/api/inbox/ac-sync-recent" && (req.method === "POST" || req.method === "GET")) {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const hours = Number(url.searchParams.get("hours")) || 24;
+    try {
+      const result = await syncAcEngagementForRecentContacts(Date.now() - hours * 3600 * 1000);
+      return sendJson(res, 200, { ok: true, ...result });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
   }
 
   // Permanently delete an entire conversation -- every message to/from this

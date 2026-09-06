@@ -543,7 +543,7 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex, p
 // a dedicated trackingLogs resource (turned out to be website page-visit
 // tracking, unrelated), and every linked sub-resource on the campaign
 // object itself. Confirmed absent, not just unfound.
-async function fetchAcContactActivities(acContactId) {
+export async function fetchAcContactActivities(acContactId) {
   const r = await fetch(`${AC_BASE}/api/3/activities?contact=${acContactId}&limit=100`, { headers: { "Api-Token": process.env.AC_API_KEY } });
   if (!r.ok) return { logs: [], linkData: [] };
   const d = await r.json();
@@ -564,7 +564,7 @@ export async function preloadAcCampaignNames() {
   for (const [id, name] of map) acCampaignNameCache.set(id, name || `Campaign ${id}`);
   return acCampaignNameCache.size;
 }
-async function acCampaignName(campaignId) {
+export async function acCampaignName(campaignId) {
   if (acCampaignNameCache.has(campaignId)) return acCampaignNameCache.get(campaignId);
   const r = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers: { "Api-Token": process.env.AC_API_KEY } });
   const name = r.ok ? (await r.json()).campaign?.name : null;

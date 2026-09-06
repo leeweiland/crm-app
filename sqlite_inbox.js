@@ -165,6 +165,15 @@ export function findContactIdByEmail(email) {
   return row?.contact_id || null;
 }
 
+// Bounded "who's actually been active recently" lookup -- used by
+// ac_sync.js's catch-up instead of iterating every AC-linked contact
+// (160,623 of them, checked live) to find who a recent send would
+// plausibly have touched.
+export function getRecentlyActiveContactIds(sinceMs) {
+  if (!sqliteInboxAvailable()) return [];
+  return db.prepare("SELECT contact_id FROM conversations WHERE contact_id IS NOT NULL AND last_at_ms > ?").all(sinceMs).map(r => r.contact_id);
+}
+
 export function deleteConversationRow(key) {
   if (!sqliteInboxAvailable()) return;
   db.prepare("DELETE FROM conversations WHERE key = ?").run(key);
