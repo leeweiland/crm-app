@@ -9,6 +9,7 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_backend.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -335,6 +336,13 @@ function upsertContactFromSubmission(form, answers) {
   (form.settings.addListIds || []).forEach(listId => { if (!contact.listIds.includes(listId)) contact.listIds.push(listId); });
   contact.updatedAt = new Date().toISOString();
   writeJson(CONTACTS_FILE, contacts);
+  // Without this, a form-created (or form-updated) contact's real status/
+  // name/etc. never reaches the Inbox sidebar's SQLite snapshot until
+  // something else happens to touch this contact -- confirmed live: a
+  // brand-new form submission showed up with a blank "Set status..." row
+  // even though the contact record itself already had a real status from
+  // form.settings.defaultStatus.
+  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
 
   // Same "only fire for genuinely new membership" rule contacts_backend.js
   // uses for its PATCH handler, so a repeat form submission from an already

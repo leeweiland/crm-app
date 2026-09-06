@@ -1312,6 +1312,7 @@ function renderThread() {
           c.contact?.firstSeenAt ? `<span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : '',
         ].filter(Boolean).join(' · ')}</div>
       </div>
+      ${c.contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${c.done ? 'Mark Not Done' : 'Mark Done'}</button>` : ''}
     </div>
     <div class="chat-panel-actions">
       <div class="chat-panel-task-btn">
@@ -1447,6 +1448,16 @@ function renderThread() {
   if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
   wireOwnerFields(panel, (contactId, ownerId) => { if (c.contact) c.contact.ownerId = ownerId; applyOwnerChangeToConvoState(contactId, ownerId); });
   if (c.contactId) {
+    document.getElementById('chatMarkDoneBtn').onclick = async () => {
+      const nextDone = !c.done;
+      await fetch(`/api/inbox/conversations/${c.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) });
+      c.done = nextDone;
+      const inList = conversations.find(x => x.key === c.key);
+      if (inList) inList.done = nextDone;
+      showToast(nextDone ? 'Marked done' : 'Marked not done');
+      renderThread();
+      loadConversations();
+    };
     wireInlineEditClick(document.getElementById('chatPanelTypeBadge'), {
       field: 'programType',
       contactId: c.contactId,
@@ -1477,26 +1488,23 @@ function renderThread() {
     await loadConversations();
   });
 
-  // Selecting a conversation is as close as this Inbox gets to "read" --
-  // clear its unread badge the same way opening the old detail modal did.
-  // Updates local state + re-renders just the sidebar rather than
-  // reloading and re-selecting the conversation -- doing the latter here
-  // re-triggers this same code path on every load, which (combined with a
-  // now-fixed backend bug that always reported messages as unread) spun
-  // into an infinite select-mark-reload loop.
-  const unread = items.filter(i => i.direction === 'inbound' && !i.done);
-  if (unread.length) markDone(unread.map(i => i.id), true);
-  // Always fire /opened, even with zero local unread items -- a sidebar
-  // badge can be stuck out of sync with the real message data (stale
-  // cache, a phantom row with no messages behind it at all), and that
-  // case has nothing for the markDone call above to flip. /opened
-  // re-derives the true count from the contact's actual messages so the
-  // badge can't stay lit forever just because there was nothing to mark
-  // done.
+  // Just VIEWING a thread is deliberately NOT the same as responding to it
+  // -- staff opening a conversation to read it must not silently move it
+  // out of Unresponded, since nothing has actually been answered yet.
+  // This used to also call markDone() here (the same effect as opening the
+  // old detail modal), but that's wrong: a lead can sit read-but-unanswered
+  // for a while, and Unresponded needs to keep surfacing it the whole time,
+  // not just until someone happens to click on it. Marking done now only
+  // ever happens two ways: a real reply going out (see sendComposeMessage)
+  // or the explicit "Mark done" action.
+  //
+  // /opened still fires on every view, though -- it's a repair call, not a
+  // mark-done one: it re-derives unread_count from the contact's actual
+  // messages so a badge that's stuck out of sync with reality (stale
+  // cache, a phantom row with no real messages behind it) self-corrects
+  // the moment someone looks at it, without changing anything for a
+  // genuinely-unanswered thread.
   fetch(`/api/inbox/conversations/${c.contactId}/opened`, { method: 'POST' });
-  const inList = conversations.find(x => x.key === c.key);
-  if (inList) inList.unreadCount = 0;
-  renderSidebar();
 }
 async function selectConversation(c, skipFetch) {
   selectedConvo = c;
@@ -1599,6 +1607,11 @@ async function sendComposeMessage() {
   btn.disabled = false; btn.textContent = 'Send';
   if (!r.ok) { showToast(d.error || 'Send failed', true); return; }
   showToast('Sent');
+  // A real reply just went out -- THIS is what actually counts as
+  // responding, not merely having opened the thread earlier (see
+  // selectConversation's comment). Marks every prior unread inbound
+  // message done and moves the conversation out of Unresponded.
+  await fetch(`/api/inbox/conversations/${selectedConvo.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
   const threadRes = await fetch('/api/inbox/contact/' + selectedConvo.contactId);
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   renderThread();

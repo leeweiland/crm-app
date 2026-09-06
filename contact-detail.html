@@ -528,9 +528,9 @@ function renderConvoPanel() {
 
   wrap.querySelectorAll('.compose-channel-toggle button').forEach(btn => btn.onclick = () => { composeChannel = btn.dataset.ch; renderConvoPanel(); });
   document.getElementById('composeSendBtn').onclick = sendComposeMessage;
-
-  const unread = items.filter(i => i.direction === 'inbound' && !i.done);
-  if (unread.length) fetch('/api/inbox/mark-done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: unread.map(i => i.id), done: true }) });
+  // Viewing this page is deliberately NOT the same as responding -- see
+  // inbox.html's selectConversation for the full reasoning. Marking done
+  // now only happens on an actual reply, in sendComposeMessage below.
 }
 async function loadThread() {
   const r = await fetch('/api/inbox/contact/' + contactId);
@@ -578,6 +578,10 @@ async function sendComposeMessage() {
   btn.disabled = false; btn.textContent = 'Send';
   if (!r.ok) { showToast(d.error || 'Send failed', true); return; }
   showToast('Sent');
+  // A real reply just went out -- see inbox.html's sendComposeMessage for
+  // why this is the only thing that should move the conversation out of
+  // Unresponded, not merely having viewed this page.
+  await fetch(`/api/inbox/conversations/${contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
   await loadThread();
 }
 </script>
