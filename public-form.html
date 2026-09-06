@@ -581,7 +581,10 @@ function renderStep() {
   if (stepIndex > 0) document.getElementById('pfBack').onclick = () => { stepIndex--; renderStep(); };
   document.getElementById('pfNext').onclick = async () => {
     const redirect = matchingRule(fields, 'redirect');
-    if (redirect) { location.href = redirect.redirectUrl; return; }
+    // top, not location -- this form is commonly embedded (see pf-embedded
+    // above); a plain location.href would navigate only this iframe, leaving
+    // the redirect target stranded inside the still-showing host page.
+    if (redirect) { top.location.href = redirect.redirectUrl; return; }
     if (matchingRule(fields, 'hide_next')) return; // safety net -- button should already be hidden
     if (!validateStep(fields)) return;
     const calendarField = fields.find(f => f.type === 'calendar' && f.eventTypeSlug);
@@ -615,7 +618,9 @@ async function submit() {
     // the contact id to the parent instead; track.js (running on the
     // Framer page) listens for this and sets the identity cookie itself.
     if (d.contactId) window.parent.postMessage({ type: 'pf-identify', contactId: d.contactId }, '*');
-    if (d.redirectUrl) { location.href = d.redirectUrl; return; }
+    // top, not location -- same reasoning as above: this redirect needs to
+    // navigate the actual browser tab, not just this iframe.
+    if (d.redirectUrl) { top.location.href = d.redirectUrl; return; }
     document.getElementById('pfCard').innerHTML = `<div class="pf-confirm"><div class="big">${CHECK_ICON}</div><div>${escapeHtml(d.confirmationMessage || 'Thanks!')}</div></div>`;
   } catch {
     btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit';

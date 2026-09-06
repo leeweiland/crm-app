@@ -488,7 +488,11 @@ async function submitBooking() {
   if (redirectUrl) {
     const u = new URL(redirectUrl, location.origin);
     u.searchParams.set('name', name); u.searchParams.set('email', email); u.searchParams.set('event_start', d.booking.startAt);
-    location.href = u.toString();
+    // top, not location -- when this widget is embedded directly (not via
+    // public-form.html's formEmbed path above), a plain location.href here
+    // would navigate only this iframe, stranding the visitor's "thank you"
+    // page nested inside the still-showing embed on the host site.
+    top.location.href = u.toString();
     return;
   }
   renderConfirmed(d);
