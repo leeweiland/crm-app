@@ -28,7 +28,6 @@
   .chart-bar.delivered { background: var(--pra-blue); }
   .chart-bar.received { background: var(--pra-green); }
   .chart-bar.failed { background: var(--pra-red); }
-  .chart-bar.international { background: var(--pra-dim); }
   .chart-date { font-size: .62rem; color: var(--pra-dim); writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
   .chart-legend { display: flex; gap: 16px; margin-top: 14px; font-size: .78rem; color: var(--pra-dim); flex-wrap: wrap; }
   .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -262,7 +261,7 @@ document.getElementById('updateReportBtn').onclick = applyPeriod;
 
 const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
 const EMAIL_OVERVIEW_LABELS = { sent: 'Sent', opened: 'Opened', clicked: 'Clicked' };
-const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed', international: 'International' };
+const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed' };
 function grid(el, labels, data, cardCls) {
   document.getElementById(el).innerHTML = Object.entries(labels).map(([key, label]) => `
     <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
@@ -309,7 +308,7 @@ async function loadSmsReport() {
   if (!r.ok) return;
   const d = await r.json();
   grid('smsTotalsGrid', SMS_LABELS, d.totals);
-  renderChart('smsChart', d.days, ['sent', 'received', 'failed', 'international']);
+  renderChart('smsChart', d.days, ['sent', 'received', 'failed']);
 }
 
 // ── Ads ──────────────────────────────────────────────────────────────────
