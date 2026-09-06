@@ -392,7 +392,21 @@ document.querySelectorAll('#tab-attribution th.sortable').forEach(th => th.addEv
   if (attributionSort.field === th.dataset.sort) attributionSort.dir *= -1;
   else attributionSort = { field: th.dataset.sort, dir: th.dataset.sort === 'el' ? 1 : -1 };
   renderAttributionTable();
+  saveSortPreference();
 }));
+// Persisted server-side (not localStorage) so it follows the user across
+// devices, same pattern as workflows.html/automations.html/campaigns.html.
+async function loadSortPreference() {
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const saved = (await r.json()).user?.preferences?.attributionSort;
+    if (saved?.field) attributionSort = saved;
+  } catch {}
+}
+function saveSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ attributionSort }) });
+}
 const STAGE_LABELS = { optIns: 'Opt-Ins', bookings: 'Bookings', enrolled: 'Enrolled' };
 async function openAttributionDrilldown(el, stage) {
   document.getElementById('attributionDrilldownTitle').textContent = `${STAGE_LABELS[stage] || stage} — ${el}`;
@@ -458,6 +472,7 @@ async function openJourney(contactId) {
 }
 
 (async function init() {
+  await loadSortPreference();
   await initPeriodSelector();
   applyPeriod();
 })();
