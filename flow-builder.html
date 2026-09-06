@@ -586,6 +586,25 @@ function defaultConfig(type) {
 }
 
 function editStep(stepId) { openStepConfigModal(flow.steps[stepId], false); }
+// Same traversal shape as renderChainHtml -- main chain in order, then (for
+// an if_then) the whole YES branch fully before the whole NO branch -- so
+// the move-runs destination list reads top-to-bottom like the canvas does,
+// instead of flow.steps' arbitrary object-key order.
+function getOrderedStepIds(startId) {
+  const ids = [];
+  function walk(id) {
+    let cur = id;
+    while (cur && !ids.includes(cur)) {
+      ids.push(cur);
+      const step = flow.steps[cur];
+      if (!step) break;
+      if (step.type === 'if_then') { walk(step.yesStepId); walk(step.noStepId); return; }
+      cur = step.nextStepId || null;
+    }
+  }
+  walk(startId);
+  return ids;
+}
 // Splices stepId out of the graph -- whatever pointed to it now points to
 // whatever IT pointed to, so everything downstream survives intact. An
 // if_then has no single successor (two branches), so deleting one just
@@ -611,8 +630,11 @@ async function deleteStep(stepId) {
   }
   document.getElementById('moveRunsCountMsg').textContent = `${count} contact${count === 1 ? ' is' : 's are'} currently at this step. Where should they go before it's deleted?`;
   const targetSel = document.getElementById('moveRunsTarget');
+  const deletedStep = flow.steps[stepId];
+  const naturalNext = deletedStep.type !== 'if_then' ? (deletedStep.nextStepId || null) : null;
+  const orderedIds = getOrderedStepIds(flow.startStepId).filter(id => id !== stepId);
   targetSel.innerHTML = '<option value="">Don\'t move -- just mark them done</option>' +
-    Object.keys(flow.steps).filter(id => id !== stepId).map(id => `<option value="${id}">${escapeHtml(TYPE_LABELS[flow.steps[id].type])} -- ${escapeHtml(stepSummary(flow.steps[id]))}</option>`).join('');
+    orderedIds.map(id => `<option value="${id}" ${id === naturalNext ? 'selected' : ''}>${escapeHtml(TYPE_LABELS[flow.steps[id].type])} -- ${escapeHtml(stepSummary(flow.steps[id]))}</option>`).join('');
   document.getElementById('moveRunsConfirmBtn').onclick = async () => {
     const toStepId = targetSel.value || null;
     await fetch(`/api/flows/${flow.id}/steps/${stepId}/move-runs`, {
