@@ -47,7 +47,7 @@
       </div>
       <div class="tabs">
         <button class="tab-btn active" data-tab="campaigns">Campaigns</button>
-        <button class="tab-btn" data-tab="external">ActiveCampaign</button>
+        <button class="tab-btn" data-tab="external">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-campaigns">
         <div class="pra-panel" style="overflow-x:auto">
@@ -67,11 +67,11 @@
         </div>
       </div>
       <div class="tab-panel" id="tab-external">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Bulk campaigns ActiveCampaign sent before this CRM existed -- read-only, subject and body only (stats for these aren't available yet). Automation-triggered ones are in Email Automations' own Templates tab instead.</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Bulk campaigns ActiveCampaign sent before this CRM existed -- read-only. Automation-triggered ones are in Email Automations' own Templates tab instead. Stats fill in gradually as the background sync reaches each campaign's messages.</div>
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th>Subject</th><th></th></tr></thead>
-            <tbody id="externalCampaignsBody"><tr><td colspan="2" class="pra-muted">Loading…</td></tr></tbody>
+            <thead><tr><th>Subject</th><th>Preview</th><th>Sent</th><th>Opened</th><th>Clicked</th><th></th></tr></thead>
+            <tbody id="externalCampaignsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -189,20 +189,25 @@ document.getElementById('newCampaignBtn').onclick = async () => {
   if (r.ok) location.href = '/campaign-builder.html?id=' + d.campaign.id;
 };
 
-// ── ActiveCampaign tab ───────────────────────────────────────────────────
+// ── Templates tab (ActiveCampaign-sourced bulk campaigns) ────────────────
 let externalLoaded = false;
 async function loadExternalCampaigns() {
   const r = await fetch('/api/campaigns/external');
   const body = document.getElementById('externalCampaignsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="2" class="pra-muted">Could not load.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load.</td></tr>'; return; }
   const { campaigns } = await r.json();
-  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="2" class="pra-muted">None found.</td></tr>'; return; }
+  if (!campaigns.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">None found.</td></tr>'; return; }
+  const statCell = v => v == null ? '<span class="pra-muted">—</span>' : v;
   body.innerHTML = campaigns.map((c, idx) => `
     <tr>
       <td>${escapeHtml(c.subject || '(no subject)')}</td>
+      <td class="pra-muted">${escapeHtml(c.bodyPreview || '')}</td>
+      <td>${statCell(c.stats?.sent)}</td>
+      <td>${statCell(c.stats?.opened)}</td>
+      <td>${statCell(c.stats?.clicked)}</td>
       <td><button class="tpl-expand-btn" data-ext-expand="${idx}">Preview</button></td>
     </tr>
-    <tr class="tpl-preview-row" id="ext-preview-${idx}"><td colspan="2"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
+    <tr class="tpl-preview-row" id="ext-preview-${idx}"><td colspan="6"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
   `).join('');
   body.querySelectorAll('[data-ext-expand]').forEach(btn => btn.onclick = async () => {
     const idx = btn.dataset.extExpand;

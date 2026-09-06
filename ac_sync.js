@@ -58,6 +58,14 @@ export const AC_CAMPAIGN_BODIES_FILE = "crm_ac_campaign_bodies.json";
 // shape exists to fit into instead of building a second, competing one.
 export const AC_CAMPAIGN_META_FILE = "crm_ac_campaign_meta.json";
 
+// Plain-text teaser for a template-library row -- same reasoning as
+// gmail_backend.js's own plainPreview (a list row needs a stripped
+// snippet, not the raw HTML), duplicated rather than shared since it's
+// one regex and pulling in a whole other module isn't worth it.
+export function acPlainPreview(html, len = 140) {
+  return String(html || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim().slice(0, len);
+}
+
 const inFlight = new Map();
 export async function getAcCampaignHtml(campaignId) {
   const stored = readJson(AC_CAMPAIGN_BODIES_FILE, {})[campaignId];
@@ -321,21 +329,31 @@ async function getAllContactActivitiesPaged(acContactId) {
   return { logs, linkData };
 }
 
+function bumpAcStat(statsAcc, campaignId, status) {
+  const s = statsAcc.get(campaignId) || { sent: 0, opened: 0, clicked: 0 };
+  if (["sent", "opened", "clicked"].includes(status)) s.sent++;
+  if (["opened", "clicked"].includes(status)) s.opened++;
+  if (status === "clicked") s.clicked++;
+  statsAcc.set(campaignId, s);
+}
+
 // Processes one file -- pulled out of the loop below so a whole SLICE of
 // files can run concurrently instead of one network round trip at a
-// time. Returns true if it changed anything (caller only writes the file
-// back when it did).
-async function processOneAcRefFile(dir, f, acContactIdByContactId, state) {
+// time. Tallies stats for EVERY ac_campaign/ac_import message in the
+// file (not just ones needing a new reference) into statsAcc -- a
+// message that already has acCampaignId from an earlier pass still needs
+// to be counted, just doesn't need any new API calls to do it.
+async function processOneAcRefFile(dir, f, acContactIdByContactId, state, statsAcc) {
   const contactId = f.replace(/\.json$/, "");
   const path = join(dir, f);
   let msgs;
   try { msgs = JSON.parse(readFileSync(path, "utf8")); } catch { return; }
-  const needsRef = msgs.filter(m => (m.sourceType === "ac_campaign" || m.sourceType === "ac_import") && !m.acCampaignId);
-  if (!needsRef.length) return;
+  const acMsgs = msgs.filter(m => m.sourceType === "ac_campaign" || m.sourceType === "ac_import");
+  if (!acMsgs.length) return;
   let activityMap = null;
   let changed = false;
-  for (const m of needsRef) {
-    let campaignId = m.providerMessageId?.startsWith("ac_1to1:") ? m.providerMessageId.slice("ac_1to1:".length) : null;
+  for (const m of acMsgs) {
+    let campaignId = m.acCampaignId || (m.providerMessageId?.startsWith("ac_1to1:") ? m.providerMessageId.slice("ac_1to1:".length) : null);
     if (!campaignId) {
       const activityKey = m.acActivityId || m.providerMessageId;
       if (!activityKey) continue;
@@ -352,11 +370,14 @@ async function processOneAcRefFile(dir, f, acContactIdByContactId, state) {
       campaignId = activityMap.get(activityKey);
       if (!campaignId) continue;
     }
-    m.acCampaignId = campaignId;
-    if (m.body) m.body = ""; // reclaim an already-duplicated body from before the dedup fix existed
-    changed = true;
-    state.refsAttached++;
-    await getAcCampaignHtml(campaignId); // warms the shared store in the same pass
+    if (!m.acCampaignId) {
+      m.acCampaignId = campaignId;
+      if (m.body) m.body = ""; // reclaim an already-duplicated body from before the dedup fix existed
+      changed = true;
+      state.refsAttached++;
+      await getAcCampaignHtml(campaignId); // warms the shared store in the same pass
+    }
+    bumpAcStat(statsAcc, campaignId, m.status);
   }
   if (changed) writeFileSync(path, JSON.stringify(msgs));
 }
@@ -372,6 +393,28 @@ async function processOneAcRefFile(dir, f, acContactIdByContactId, state) {
 // that slice redo real work.
 const AC_REF_FILL_CONCURRENCY = 10;
 const AC_REF_FILL_SLICE_SIZE = 100;
+
+// Per-campaign sent/opened/clicked -- accumulated here as this same
+// batch scans every AC-sourced message anyway (see processOneAcRefFile),
+// so tallying stats costs nothing extra beyond what the reference-fill
+// was already going to read. Flushed once per batch call (not per file)
+// via a merge into the persisted file, not a replace -- a later batch
+// re-scanning the same already-counted file would otherwise double-count
+// it every time this runs.
+export const AC_CAMPAIGN_STATS_FILE = "crm_ac_campaign_stats.json";
+function flushAcStats(statsAcc) {
+  if (!statsAcc.size) return;
+  // ADDS to whatever's already persisted, never replaces -- one campaign's
+  // messages are spread across many files, almost always split across
+  // more than one batch call, so overwriting would lose every earlier
+  // batch's count for that same campaign instead of accumulating them.
+  const persisted = readJson(AC_CAMPAIGN_STATS_FILE, {});
+  for (const [campaignId, s] of statsAcc) {
+    const existing = persisted[campaignId] || { sent: 0, opened: 0, clicked: 0 };
+    persisted[campaignId] = { sent: existing.sent + s.sent, opened: existing.opened + s.opened, clicked: existing.clicked + s.clicked };
+  }
+  writeJson(AC_CAMPAIGN_STATS_FILE, persisted);
+}
 
 export async function processAcRefFillBatch() {
   if (!acConfigured()) return;
@@ -393,6 +436,12 @@ export async function processAcRefFillBatch() {
   // than a snapshot that could go stale across a run spanning many ticks.
   const contacts = readJson(CONTACTS_FILE, []);
   const acContactIdByContactId = new Map(contacts.map(c => [c.id, c.externalIds?.acContactId]).filter(([, v]) => v));
+  // Per-CAMPAIGN counts (not per-file), so a campaign spanning multiple
+  // files in this same batch (the overwhelmingly common case -- one
+  // campaign, many recipients) accumulates correctly before the single
+  // flush at the end, instead of each file's partial count overwriting
+  // the last.
+  const statsAcc = new Map();
 
   const t0 = Date.now();
   const startIndex = state.nextIndex;
@@ -402,12 +451,13 @@ export async function processAcRefFillBatch() {
     await Promise.all(Array.from({ length: AC_REF_FILL_CONCURRENCY }, async () => {
       while (next < slice.length) {
         const f = slice[next++];
-        await processOneAcRefFile(dir, f, acContactIdByContactId, state);
+        await processOneAcRefFile(dir, f, acContactIdByContactId, state, statsAcc);
         state.filesScanned++;
       }
     }));
     state.nextIndex += slice.length;
   }
+  flushAcStats(statsAcc);
   writeJson(AC_REF_FILL_STATE_FILE, state);
-  console.log(`[ac-ref-fill] ${state.nextIndex}/${files.length} scanned (+${state.nextIndex - startIndex} this batch), ${state.refsAttached} refs attached so far`);
+  console.log(`[ac-ref-fill] ${state.nextIndex}/${files.length} scanned (+${state.nextIndex - startIndex} this batch), ${state.refsAttached} refs attached so far, ${statsAcc.size} campaigns' stats updated this batch`);
 }

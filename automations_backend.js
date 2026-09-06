@@ -7,7 +7,7 @@ import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_share
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 import { getMessagesForSource } from "./message_log.js";
-import { AC_CAMPAIGN_META_FILE, getAcCampaignHtml } from "./ac_sync.js";
+import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
 
 // Which booking a step's %EVENTNAME%/%WHEN%/etc tokens refer to: the exact
 // booking that triggered enrollment when there is one (booking_created
@@ -349,12 +349,22 @@ export async function handleAutomationsRequest(req, res, url) {
         })
     );
     const acMeta = readJson(AC_CAMPAIGN_META_FILE, {});
+    const acBodies = readJson(AC_CAMPAIGN_BODIES_FILE, {});
+    const acStats = readJson(AC_CAMPAIGN_STATS_FILE, {});
     const acAutomation = Object.entries(acMeta)
       .filter(([, meta]) => meta.isAutomation)
       .map(([campaignId, meta]) => ({
         id: `ac:${campaignId}`, source: "activecampaign", campaignId,
         subject: meta.subject || meta.name || "(no subject)",
-        bodyPreview: null, stats: null,
+        // Cheap -- the content's already sitting in the shared store from
+        // getAcCampaignHtml's own fetch, this just reads and strips it,
+        // no extra AC API call. Empty until the reference-fill batch
+        // (still running tonight) reaches this particular campaign.
+        bodyPreview: acPlainPreview(acBodies[campaignId], 140),
+        // Tallied incrementally by the same reference-fill batch (see
+        // ac_sync.js's flushAcStats) -- also empty until that batch
+        // reaches this campaign's messages.
+        stats: acStats[campaignId] || null,
       }));
     return sendJson(res, 200, { templates: [...native, ...acAutomation] });
   }

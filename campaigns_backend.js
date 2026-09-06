@@ -5,7 +5,7 @@ import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { getMessagesForSource } from "./message_log.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
-import { AC_CAMPAIGN_META_FILE, getAcCampaignHtml } from "./ac_sync.js";
+import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
@@ -97,10 +97,17 @@ export async function handleCampaignsRequest(req, res, url) {
   // which makes no sense for a campaign that only ever existed in AC.
   if (p === "/api/campaigns/external" && req.method === "GET") {
     const acMeta = readJson(AC_CAMPAIGN_META_FILE, {});
+    const acBodies = readJson(AC_CAMPAIGN_BODIES_FILE, {});
+    const acStats = readJson(AC_CAMPAIGN_STATS_FILE, {});
     const external = Object.entries(acMeta)
       .filter(([, meta]) => !meta.isAutomation)
       .map(([campaignId, meta]) => ({
         id: campaignId, subject: meta.subject || meta.name || "(no subject)",
+        // Cheap -- already sitting in the shared store from getAcCampaignHtml's
+        // own fetch, just read and stripped here, no extra AC API call.
+        bodyPreview: acPlainPreview(acBodies[campaignId], 140),
+        // Tallied incrementally by ac_sync.js's reference-fill batch.
+        stats: acStats[campaignId] || null,
       }));
     return sendJson(res, 200, { campaigns: external });
   }
