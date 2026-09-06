@@ -12,7 +12,7 @@ import {
 } from "./message_index.js";
 import { queryConversationsSqlite } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
-import { syncAcEngagementForContact, syncAcEngagementForRecentContacts } from "./ac_sync.js";
+import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -44,7 +44,19 @@ export async function handleInboxRequest(req, res, url) {
   const contactActivityMatch = p.match(/^\/api\/inbox\/contact\/([^/]+)$/);
   if (contactActivityMatch && req.method === "GET") {
     const contactId = contactActivityMatch[1];
-    const messages = getContactMessages(contactId).map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }));
+    // AC-sourced messages carry a reference (acCampaignId), not the body
+    // itself -- see ac_sync.js's own header comment for why (the same
+    // campaign's HTML duplicated onto every recipient's own record filled
+    // a 46GB volume solid). Resolved here, at the one place it's actually
+    // displayed, from the small shared store instead -- cheap after the
+    // first view of any given campaign (getAcCampaignHtml caches it).
+    const messages = await Promise.all(getContactMessages(contactId).map(async m => {
+      let body = m.body;
+      if (!body && m.acCampaignId && (m.sourceType === "ac_campaign" || m.sourceType === "ac_import")) {
+        body = await getAcCampaignHtml(m.acCampaignId);
+      }
+      return { ...m, body, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone };
+    }));
     const calls = readJson(CALLS_FILE, []).filter(c => c.contactId === contactId).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).filter(t => t.contactId === contactId).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
     const notes = readJson(NOTES_FILE, []).filter(n => n.contactId === contactId).map(n => ({ ...n, itemType: "note", at: n.createdAt }));

@@ -34,7 +34,7 @@ export const MESSAGE_ID_INDEX_FILE = "crm_message_id_index.json";
 // anywhere in the file) -- see email_backend.js/sms_backend.js, which no
 // longer call updateMessageById at all for their own just-created row on
 // the send path, logging once with the final status instead.
-export function logMessage({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status, failReason, createdAt }) {
+export function logMessage({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status, failReason, createdAt, extra }) {
   const row = {
     // Accepts a pre-generated id -- email_backend.js's click-tracking link
     // wrapping needs the row's id baked into the email body BEFORE the send
@@ -57,6 +57,14 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
     // the thread instead of jumping to the top as if it just arrived.
     createdAt: createdAt || new Date().toISOString(),
     inboxDone: false,
+    // Optional caller-specific fields merged in as-is (e.g. ac_sync.js's
+    // acCampaignId, a reference into its own shared content store rather
+    // than duplicating a campaign's full HTML onto every recipient's own
+    // record -- confirmed live that duplicating it filled a 46GB volume
+    // solid). Never read/interpreted by logMessage itself, purely a
+    // passthrough so callers with their own bolt-on metadata don't need
+    // logMessage's core shape to know about every one of them.
+    ...(extra || {}),
   };
   appendJsonRecordFast(MESSAGE_LOG_FILE, row);
   appendContactMessage(row);
