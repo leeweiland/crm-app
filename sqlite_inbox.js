@@ -21,6 +21,7 @@
 // backup) -- not part of normal operation anymore.
 import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "fs";
+import * as fsPromises from "fs/promises";
 import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
@@ -206,6 +207,59 @@ export function syncContactFields(contactId, contact) {
 export function renameStatusInSqlite(oldLabel, newLabel) {
   if (!sqliteInboxAvailable()) return;
   db.prepare(`UPDATE conversations SET status = :newLabel WHERE status = :oldLabel`).run({ oldLabel, newLabel });
+}
+
+// One-time backfill (2026-09-06): last_preview switched from
+// subject-first to body-first (see inbox_backend.js's own comment), but
+// existing rows keep whatever was already stored until their next real
+// message. Run from INSIDE this process specifically -- a separate script
+// opening its own connection to this same file kept losing the write lock
+// race against this server's own live traffic and made zero progress for
+// over a minute straight. Using the app's own long-lived `db` handle means
+// there's no second writer to contend with at all. Call once, then this
+// export can be deleted.
+// Async + concurrent reads (not the synchronous one-at-a-time loop a
+// standalone script used first) for two reasons: called fire-and-forget
+// from server.js right after listen() starts, so a purely synchronous
+// version would freeze the event loop -- and therefore every real
+// request -- for the ~53s this many small file reads takes; and unlike a
+// writer/reads happen off this process's own event loop turn by turn, so
+// real traffic gets to interleave between them instead of queuing behind
+// the whole thing.
+export async function backfillPreviewText() {
+  if (!sqliteInboxAvailable()) return;
+  const SIDEBAR_CHANNELS = new Set(["email", "sms", "form", "booking", "activity", "meeting"]);
+  const rows = db.prepare("SELECT contact_id, last_preview FROM conversations WHERE contact_id IS NOT NULL").all();
+  const t0 = Date.now();
+  const toFix = [];
+  let idx = 0;
+  async function worker() {
+    while (idx < rows.length) {
+      const row = rows[idx++];
+      let msgs;
+      try { msgs = JSON.parse(await fsPromises.readFile(join(DATA_DIR, "msg_by_contact", row.contact_id + ".json"), "utf8")); } catch (e) { continue; }
+      const sidebarMsgs = msgs.filter((m) => SIDEBAR_CHANNELS.has(m.channel));
+      if (!sidebarMsgs.length) continue;
+      const last = sidebarMsgs.reduce((a, b) => (new Date(b.createdAt) > new Date(a.createdAt) ? b : a));
+      const correctPreview = last.bodyPreview || last.subject || "";
+      if (correctPreview !== row.last_preview) toFix.push({ contactId: row.contact_id, preview: correctPreview });
+    }
+  }
+  await Promise.all(Array.from({ length: 100 }, worker));
+
+  // Writes happen on THIS process's own connection (no second writer to
+  // lose a lock race against), still chunked with a yield between so a
+  // real request queued behind an open transaction never waits long.
+  const upd = db.prepare("UPDATE conversations SET last_preview = :lastPreview WHERE contact_id = :contactId");
+  const CHUNK = 500;
+  for (let i = 0; i < toFix.length; i += CHUNK) {
+    const chunk = toFix.slice(i, i + CHUNK);
+    db.exec("BEGIN");
+    for (const f of chunk) upd.run({ lastPreview: f.preview, contactId: f.contactId });
+    db.exec("COMMIT");
+    await new Promise((r) => setImmediate(r));
+  }
+  console.log(`[backfill] preview text: checked ${rows.length}, fixed ${toFix.length}, took ${Date.now() - t0}ms`);
 }
 
 // Mirrors GET /api/inbox/conversations' filter/sort/pagination contract in

@@ -31,7 +31,7 @@ import { handleGmailRequest } from "./gmail_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { readJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { sqliteInboxAvailable } from "./sqlite_inbox.js";
+import { sqliteInboxAvailable, backfillPreviewText } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Explicit path, not dotenv's default (process.cwd()) -- the preview
@@ -167,3 +167,11 @@ createServer(async (req, res) => {
 }).listen(PORT, () => console.log(`crm-app running on port ${PORT}`));
 
 startScheduler();
+
+// One-time (2026-09-06): see backfillPreviewText's own comment (sqlite_
+// inbox.js) for why this runs from in-process instead of a standalone
+// script. Fire-and-forget, AFTER listen() -- real traffic starts flowing
+// immediately, this just fills in old rows' preview text as its own
+// concurrent background work. Remove this call (and the export) once it's
+// run successfully once.
+backfillPreviewText().catch((e) => console.error("[backfill] preview text failed:", e.message));
