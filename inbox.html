@@ -214,6 +214,8 @@
   .email-bubble-icon { flex-shrink: 0; }
   .email-bubble-subject { font-weight: 700; font-size: .85rem; color: var(--pra-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .email-bubble-from { font-size: .7rem; font-weight: 400; color: var(--pra-dim); opacity: .7; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .email-bubble-reply-btn { flex-shrink: 0; font-family: var(--font-primary); font-weight: 700; font-size: .7rem; color: var(--pra-blue); background: var(--pra-blue-dim); border: 1px solid rgba(0,155,255,0.35); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+  .email-bubble-reply-btn:hover { background: rgba(0,155,255,0.22); }
   .email-bubble-preview { font-size: .8rem; font-weight: 400; color: var(--pra-dim); padding: 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .email-bubble.expanded .email-bubble-preview { display: none; }
   .email-bubble-body { display: none; background: #fff; }
@@ -256,7 +258,9 @@
   .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; }
   .compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
   .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
+  .compose-channel-toggle button.active.reply-mode { background: rgba(57,255,20,0.12); color: var(--pra-green); }
   .compose-row { display: flex; gap: 8px; align-items: flex-end; }
+  #composeSendBtn.reply-mode { background: var(--pra-green); color: #06210a; }
   .compose-row textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; }
   .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
   /* Shows who a reply sends as -- the sender is always the logged-in user
@@ -532,6 +536,7 @@ let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
 let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
+let composeReplyTo = null; // set by an email bubble's Reply button; { subject, quoted } | null
 let currentUser = null, teamUsers = [];
 let convoFilter = 'unresponded', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', convoOwner = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
@@ -1217,6 +1222,20 @@ function extractEmailAddr(raw) {
   const m = String(raw || '').match(/<([^>]+)>/);
   return (m ? m[1] : raw || '').trim();
 }
+// For quoting an inbound email's HTML body into a plain-text reply --
+// preserves paragraph/line breaks (unlike a plain tag-strip) so the quoted
+// text still reads naturally under "> " prefixes.
+function stripHtmlToPlainText(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<head[\s\S]*?<\/head>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
 function emailBubbleHtml(item, idx) {
   const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
   // A click can't happen without an open first -- pixel-based open tracking
@@ -1231,6 +1250,7 @@ function emailBubbleHtml(item, idx) {
           <span class="email-bubble-icon">📧</span>
           <span class="email-bubble-subject">${escapeHtml(item.subject || '(no subject)')}</span>
           ${item.from ? `<span class="email-bubble-from" title="${escapeHtml(item.direction === 'outbound' ? 'From' : 'To')}: ${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}">${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}</span>` : ''}
+          ${item.direction !== 'outbound' ? `<button type="button" class="email-bubble-reply-btn" data-reply-idx="${idx}" title="Reply">↩ Reply</button>` : ''}
         </div>
         <div class="email-bubble-preview">${escapeHtml((item.bodyPreview || '').replace(/<[^>]+>/g, ' ')).trim()}</div>
         <!-- sandbox="" (no allow-* tokens) -- item.body is a real sender's
@@ -1388,7 +1408,7 @@ function renderThread() {
           ` : ''}
           <div class="compose-channel-toggle">
             <span class="compose-tab-group">
-              <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''}">Send Email</button>
+              <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''} ${composeView === 'compose' && composeChannel === 'email' && composeReplyTo ? 'reply-mode' : ''}">${composeView === 'compose' && composeChannel === 'email' && composeReplyTo ? 'Reply To Email' : 'Send Email'}</button>
               ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
             </span>
             <span class="compose-tab-group">
@@ -1405,7 +1425,7 @@ function renderThread() {
         ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
         <div class="compose-row">
           <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
-          <button class="pra-btn" id="composeSendBtn">Send</button>
+          <button class="pra-btn ${composeChannel === 'email' && composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${composeChannel === 'email' && composeReplyTo ? 'Reply' : 'Send'}</button>
         </div>
         ${composeChannel === 'email' && !emailOk ? '<div class="compose-hint">This contact has no email on file.</div>' : ''}
         ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
@@ -1427,10 +1447,28 @@ function renderThread() {
       if (iframe && !iframe.srcdoc) iframe.srcdoc = `<style>body,*{font-family:Arial,Helvetica,sans-serif!important;}</style>${item.body || '<p style="color:#888">(no content stored)</p>'}`;
     }
   });
+  threadEl.querySelectorAll('[data-reply-idx]').forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    const item = items[Number(el.dataset.replyIdx)];
+    const fromAddr = extractEmailAddr(item.from) || (c.contact ? `${c.contact.first || ''} ${c.contact.last || ''}`.trim() : '') || 'they';
+    const quoted = stripHtmlToPlainText(item.body || item.bodyPreview || '').split('\n').map(l => '> ' + l).join('\n');
+    composeReplyTo = {
+      subject: /^re:/i.test(item.subject || '') ? item.subject : `Re: ${item.subject || ''}`,
+      quoted: `\n\nOn ${fmtDate(item.at)}, ${fromAddr} wrote:\n${quoted}`,
+    };
+    composeChannel = 'email';
+    composeView = 'compose';
+    renderThread();
+    const subjEl = document.getElementById('composeSubject');
+    const bodyEl = document.getElementById('composeBody');
+    if (subjEl) subjEl.value = composeReplyTo.subject;
+    if (bodyEl) { bodyEl.value = composeReplyTo.quoted; bodyEl.setSelectionRange(0, 0); bodyEl.focus(); }
+  });
   threadEl.scrollTop = threadEl.scrollHeight;
 
   if (currentTab === 'primary') {
     panel.querySelectorAll('.compose-channel-toggle [data-ch]').forEach(btn => btn.onclick = () => {
+      composeReplyTo = null; // manually switching tabs exits reply mode
       if (btn.dataset.ch === 'summary') composeView = 'summary';
       else { composeChannel = btn.dataset.ch; composeView = 'compose'; }
       renderThread();
@@ -1517,6 +1555,7 @@ async function selectConversation(c, skipFetch) {
   selectedConvo = c;
   document.querySelectorAll('.convo-row').forEach(r => r.classList.toggle('selected', r.dataset.convo === c.key));
   document.getElementById('chatView').classList.add('thread-open'); // mobile: swap to the chat panel
+  composeReplyTo = null; // switching contacts always exits reply mode
   if (!c.contactId) { aiAssistAvailable = false; return; }
   composeView = 'compose';
   // The AI icons next to Send Email/Send SMS only show up at all if some
@@ -1572,6 +1611,7 @@ async function generateAiContent(channel, btn) {
     if (!r.ok) { showToast(d.error || 'Could not generate', true); return; }
     if (d.status === 'skip') { showToast(d.reason || 'No response needed right now'); return; }
     if (d.status === 'escalate') { showToast('⚠️ ' + d.reason, true); return; }
+    composeReplyTo = null;
     composeChannel = channel;
     composeView = 'compose';
     renderThread();
@@ -1611,9 +1651,10 @@ async function sendComposeMessage() {
     body: JSON.stringify({ contactId: selectedConvo.contactId, channel: composeChannel, subject, body, fromUserId }),
   });
   const d = await r.json();
-  btn.disabled = false; btn.textContent = 'Send';
+  btn.disabled = false; btn.textContent = composeChannel === 'email' && composeReplyTo ? 'Reply' : 'Send';
   if (!r.ok) { showToast(d.error || 'Send failed', true); return; }
   showToast('Sent');
+  composeReplyTo = null;
   // A real reply just went out -- THIS is what actually counts as
   // responding, not merely having opened the thread earlier (see
   // selectConversation's comment). Marks every prior unread inbound
