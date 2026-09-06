@@ -1508,10 +1508,32 @@ function renderThread() {
       await fetch(`/api/inbox/conversations/${c.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) });
       c.done = nextDone;
       const inList = conversations.find(x => x.key === c.key);
-      if (inList) inList.done = nextDone;
+      if (inList) {
+        inList.done = nextDone;
+        // Marking done clears every unread inbound message for this contact,
+        // synchronously, server-side -- predictable enough to reflect right
+        // here instead of waiting on it. The conversation-index rebuild that
+        // actually recomputes unread_count is batched up to 5s out (see
+        // message_index.js's recomputeConversationSummary/FLUSH_DELAY_MS),
+        // so the immediate loadConversations() below would otherwise still
+        // see the OLD count and the row would look like Mark Done had no
+        // effect, even though it did.
+        if (nextDone) inList.unreadCount = 0;
+        // Unresponded is unread_count > 0 (see sqlite_inbox.js) -- once
+        // that's 0, this row doesn't belong in the list currently on
+        // screen. Drop it now rather than let the stale refetch below keep
+        // showing it for up to 5 more seconds.
+        if (convoFilter === 'unresponded' && inList.unreadCount === 0) {
+          conversations = conversations.filter(x => x.key !== c.key);
+        }
+      }
       showToast(nextDone ? 'Marked done' : 'Marked not done');
       renderThread();
-      loadConversations();
+      renderSidebar();
+      // Delayed past the conversation-index's own batched flush window so
+      // this reconciles with the server's now-actually-updated unread_count
+      // instead of the stale one an immediate refetch would still see.
+      setTimeout(loadConversations, 5500);
     };
     wireInlineEditClick(document.getElementById('chatPanelTypeBadge'), {
       field: 'programType',
