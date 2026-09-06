@@ -53,6 +53,14 @@
   .sheet-search-result { padding: 8px 12px; font-size: .84rem; cursor: pointer; border-bottom: 1px solid var(--pra-border); }
   .sheet-search-result:last-child { border-bottom: none; }
   .sheet-search-result:hover { background: rgba(0,155,255,0.08); color: var(--pra-blue); }
+  .move-runs-options { max-height: 280px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 8px; }
+  .move-runs-option { padding: 8px 12px; font-size: .84rem; cursor: pointer; border-bottom: 1px solid var(--pra-border); border-left: 3px solid transparent; }
+  .move-runs-option:last-child { border-bottom: none; }
+  .move-runs-option:hover { background: rgba(255,255,255,0.06); }
+  /* Persistent -- stays blue regardless of where the mouse is, so hovering
+     other rows never makes it look like the recommended step "unselected". */
+  .move-runs-option.selected { background: rgba(0,155,255,0.18); color: var(--pra-blue); border-left-color: var(--pra-blue); }
+  .move-runs-option.selected:hover { background: rgba(0,155,255,0.26); }
   .token-input-wrap { position: relative; }
   .token-input-wrap > input, .token-input-wrap > textarea, .token-input-wrap > .token-editor { padding-right: 32px; width: 100%; }
   .token-editor { min-height: 20px; line-height: 1.5; cursor: text; white-space: pre-wrap; word-break: break-word; }
@@ -186,9 +194,7 @@
     <div class="pra-muted" style="font-size:.85rem;margin-bottom:14px" id="moveRunsCountMsg"></div>
     <div class="field">
       <label class="pra-label">Move them to</label>
-      <select class="pra-select" id="moveRunsTarget">
-        <option value="">Don't move -- just mark them done</option>
-      </select>
+      <div class="move-runs-options" id="moveRunsOptions"></div>
     </div>
     <div class="pra-muted" style="font-size:.78rem;margin:10px 0 0">If you pick a step, they'll actually run forward from there right now -- including sending an email or SMS if that's the step type, same as if they'd arrived there normally.</div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
@@ -629,14 +635,31 @@ async function deleteStep(stepId) {
     return;
   }
   document.getElementById('moveRunsCountMsg').textContent = `${count} contact${count === 1 ? ' is' : 's are'} currently at this step. Where should they go before it's deleted?`;
-  const targetSel = document.getElementById('moveRunsTarget');
   const deletedStep = flow.steps[stepId];
   const naturalNext = deletedStep.type !== 'if_then' ? (deletedStep.nextStepId || null) : null;
   const orderedIds = getOrderedStepIds(flow.startStepId).filter(id => id !== stepId);
-  targetSel.innerHTML = '<option value="">Don\'t move -- just mark them done</option>' +
-    orderedIds.map(id => `<option value="${id}" ${id === naturalNext ? 'selected' : ''}>${id === naturalNext ? '→ ' : ''}${escapeHtml(TYPE_LABELS[flow.steps[id].type])} -- ${escapeHtml(stepSummary(flow.steps[id]))}${id === naturalNext ? ' (next step)' : ''}</option>`).join('');
+  let moveRunsSelected = naturalNext || '';
+
+  // Custom row list, not a native <select> -- a native select's open dropdown
+  // highlights whatever's under the cursor, which stomps any persistent
+  // "this is the recommended one" styling the instant the mouse moves. These
+  // rows keep the .selected style regardless of hover, since hover and
+  // selected are two separate classes here, not one native highlight state.
+  const optionsEl = document.getElementById('moveRunsOptions');
+  function renderMoveRunsOptions() {
+    const rows = [{ id: '', label: "Don't move -- just mark them done" }, ...orderedIds.map(id => ({
+      id, label: `${TYPE_LABELS[flow.steps[id].type]} -- ${stepSummary(flow.steps[id])}${id === naturalNext ? ' (next step)' : ''}`,
+    }))];
+    optionsEl.innerHTML = rows.map(r => `<div class="move-runs-option${r.id === moveRunsSelected ? ' selected' : ''}" data-value="${r.id}">${escapeHtml(r.label)}</div>`).join('');
+    optionsEl.querySelectorAll('[data-value]').forEach(row => row.onclick = () => {
+      moveRunsSelected = row.dataset.value;
+      renderMoveRunsOptions();
+    });
+  }
+  renderMoveRunsOptions();
+
   document.getElementById('moveRunsConfirmBtn').onclick = async () => {
-    const toStepId = targetSel.value || null;
+    const toStepId = moveRunsSelected || null;
     await fetch(`/api/flows/${flow.id}/steps/${stepId}/move-runs`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ toStepId }),
     });
