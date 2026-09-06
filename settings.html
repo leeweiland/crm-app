@@ -29,7 +29,6 @@
           <button class="tab-btn active" data-tab="general">General</button>
           <button class="tab-btn" data-tab="statuses">Statuses</button>
           <button class="tab-btn" data-tab="customfields">Custom Fields</button>
-          <button class="tab-btn" data-tab="footers">Email Footers</button>
           <button class="tab-btn" data-tab="emailtheme">Email Theme</button>
           <button class="tab-btn" data-tab="ses">SMTP / SES</button>
           <button class="tab-btn" data-tab="twilio">Twilio</button>
@@ -76,15 +75,6 @@
         <div class="add-row">
           <input class="pra-input" id="newFieldLabel" placeholder="New field label..."/>
           <button class="pra-btn" id="addFieldBtn">Add</button>
-        </div>
-      </div>
-
-      <div class="tab-panel" id="tab-footers">
-        <div class="pra-panel" style="padding:22px">
-          <div class="pra-h2" style="margin-bottom:6px">Footer Templates</div>
-          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Reusable footer/signature blocks, built with the same drag-and-drop editor as campaigns and automations — pick one per email instead of setting it every time.</div>
-          <div id="footersList"></div>
-          <button class="pra-btn" id="newFooterBtn" style="margin-top:14px">+ New Footer Template</button>
         </div>
       </div>
 
@@ -289,34 +279,7 @@
   </div>
 </div>
 
-<!-- Footer template editor -- same cb-layout two-column shape and same
-     embedded BlockEditor as campaign-builder.html / automation-builder.html's
-     email step, so footers get the exact same drag-and-drop editing UX. -->
-<div class="modal-backdrop" id="footerModal">
-  <div class="pra-panel modal-box eb-fullscreen">
-    <div class="pra-h2" style="margin-bottom:16px">Edit Footer Template</div>
-    <div class="cb-layout">
-      <div>
-        <div id="footerEditorRoot"></div>
-      </div>
-      <div class="cb-sidebar">
-        <div class="pra-panel">
-          <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="footerName"/></div>
-          <div class="field"><label class="pra-label">Physical address (CAN-SPAM)</label><input class="pra-input" id="footerAddress"/></div>
-          <div class="field"><label class="pra-label">Unsubscribe link text</label><input class="pra-input" id="footerUnsubText" value="Unsubscribe"/></div>
-        </div>
-        <div class="pra-panel">
-          <button class="pra-btn" id="saveFooterBtn" style="width:100%;margin-bottom:8px">Save</button>
-          <button class="pra-btn pra-btn-ghost" id="setDefaultFooterBtn" style="width:100%;margin-bottom:8px">Make Default</button>
-          <button class="pra-btn pra-btn-ghost" style="width:100%" onclick="closeModal('footerModal')">Close</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script src="/crm-nav.js"></script>
-<script src="/block-editor-client.js"></script>
 <script>
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
@@ -871,67 +834,6 @@ document.getElementById('saveAdsBtn').onclick = async () => {
   if (r.ok) loadAdsSettings();
 };
 
-// ── Email footer templates ──────────────────────────────────────────────
-let allFooters = [], editingFooterId = null, footerEditor = null;
-async function loadFooters() {
-  const r = await fetch('/api/footer-templates');
-  allFooters = (await r.json()).templates;
-  document.getElementById('footersList').innerHTML = allFooters.map(f => `
-    <div class="row-item" style="cursor:pointer" data-open-footer="${f.id}">
-      <span style="flex:1">${escapeHtml(f.name)} ${f.isDefault ? '<span class="pra-badge">Default</span>' : ''}</span>
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del-footer="${f.id}">Delete</button>
-    </div>
-  `).join('') || '<div class="pra-muted">No footer templates yet.</div>';
-  document.querySelectorAll('[data-open-footer]').forEach(el => el.addEventListener('click', (e) => {
-    if (e.target.closest('[data-del-footer]')) return;
-    openFooterEditor(el.dataset.openFooter);
-  }));
-  document.querySelectorAll('[data-del-footer]').forEach(btn => btn.onclick = async (e) => {
-    e.stopPropagation();
-    await fetch('/api/footer-templates/' + btn.dataset.delFooter, { method: 'DELETE' });
-    loadFooters();
-  });
-}
-function openFooterEditor(id) {
-  const f = allFooters.find(x => x.id === id);
-  if (!f) return;
-  editingFooterId = id;
-  document.getElementById('footerModal').classList.add('show');
-  document.getElementById('footerName').value = f.name;
-  document.getElementById('footerAddress').value = f.physicalAddress || '';
-  document.getElementById('footerUnsubText').value = f.unsubscribeLinkText || 'Unsubscribe';
-  const state = { blocks: f.blocks || [], theme: f.theme || {} };
-  if (!footerEditor) footerEditor = BlockEditor.init(document.getElementById('footerEditorRoot'), state, () => {});
-  else footerEditor.setState(state);
-}
-document.getElementById('newFooterBtn').onclick = async () => {
-  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Footer' }) });
-  const d = await r.json();
-  await loadFooters();
-  if (r.ok) openFooterEditor(d.template.id);
-};
-document.getElementById('saveFooterBtn').onclick = async () => {
-  if (!editingFooterId || !footerEditor) return;
-  const state = footerEditor.getState ? footerEditor.getState() : { blocks: [], theme: {} };
-  const body = {
-    name: document.getElementById('footerName').value.trim(),
-    blocks: state.blocks, theme: state.theme,
-    physicalAddress: document.getElementById('footerAddress').value.trim(),
-    unsubscribeLinkText: document.getElementById('footerUnsubText').value.trim(),
-  };
-  const r = await fetch('/api/footer-templates/' + editingFooterId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) { showToast('Could not save', true); return; }
-  showToast('Saved');
-  loadFooters();
-};
-document.getElementById('setDefaultFooterBtn').onclick = async () => {
-  if (!editingFooterId) return;
-  await fetch('/api/footer-templates/' + editingFooterId + '/set-default', { method: 'POST' });
-  showToast('Set as default');
-  loadFooters();
-};
-
-
 // ── My Account ───────────────────────────────────────────────────────────
 // Gmail connection lives on its own page now (connect-email.html) -- its
 // own nav item, so it can be granted to non-admin roles independently of
@@ -1000,7 +902,6 @@ loadStatuses();
 loadFields();
 loadUsers();
 loadNavPermissions();
-loadFooters();
 loadEmailTheme();
 loadSesSettings();
 loadTwilioSettings();

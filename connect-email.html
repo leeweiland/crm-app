@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Connect Email — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .team-member-card { border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px 18px; margin-top: 14px; }
+  .team-member-card-name { font-weight: 700; font-size: .95rem; margin-bottom: 8px; }
+  .team-member-card-row { display: flex; gap: 8px; font-size: .82rem; padding: 3px 0; }
+  .team-member-card-row .label { color: var(--pra-dim); flex-shrink: 0; width: 110px; }
+  .team-member-card-footer-name { font-size: .78rem; color: var(--pra-dim); margin-top: 10px; }
+</style>
 </head>
 <body>
 <div class="pra-root">
@@ -22,22 +29,65 @@
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="gmailDisconnectBtn" style="display:none">Disconnect</button>
       </div>
 
+      <div class="pra-panel" style="padding:22px;max-width:460px;margin-top:20px">
+        <div class="pra-h2" style="margin-bottom:6px">My Email Footer</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Your own signature/footer, appended to every email you send from the Inbox -- whether it goes out through your connected Gmail or the shared sender.</div>
+        <div class="team-member-card-footer-name" id="myFooterName" style="margin-top:0">Loading…</div>
+        <button class="pra-btn pra-btn-sm" id="editMyFooterBtn" style="margin-top:10px" disabled>Edit My Footer</button>
+      </div>
+
       <div class="pra-panel" style="padding:22px;max-width:620px;margin-top:20px;display:none" id="teamPanel">
         <div class="pra-h2" style="margin-bottom:6px">Team</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, and which address.</div>
-        <div style="overflow-x:auto">
-          <table class="data-table" id="teamTable">
-            <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Can Send</th></tr></thead>
-            <tbody id="teamBody"></tbody>
-          </table>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, which address, and their own footer -- each person's own signature, editable right here.</div>
+        <div id="teamCards"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Footer template editor -- same cb-layout two-column shape and same
+     embedded BlockEditor as campaign-builder.html / automation-builder.html's
+     email step (and settings.html used to, before this moved here), so
+     footers get the exact same drag-and-drop editing UX. Reused for
+     whichever footer is currently being edited -- your own, or (admin only)
+     any teammate's, via openFooterEditor(footerTemplateId, ownerLabel). -->
+<div class="modal-backdrop" id="footerModal">
+  <div class="pra-panel modal-box eb-fullscreen">
+    <div class="pra-h2" style="margin-bottom:16px">Edit Footer <span class="pra-muted" id="footerEditorOwnerLabel" style="font-size:.8rem;font-weight:400"></span></div>
+    <div class="cb-layout">
+      <div>
+        <div id="footerEditorRoot"></div>
+      </div>
+      <div class="cb-sidebar">
+        <div class="pra-panel">
+          <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="footerName"/></div>
+          <div class="field"><label class="pra-label">Physical address (CAN-SPAM)</label><input class="pra-input" id="footerAddress"/></div>
+          <div class="field"><label class="pra-label">Unsubscribe link text</label><input class="pra-input" id="footerUnsubText" value="Unsubscribe"/></div>
+        </div>
+        <div class="pra-panel">
+          <button class="pra-btn" id="saveFooterBtn" style="width:100%;margin-bottom:8px">Save</button>
+          <button class="pra-btn pra-btn-ghost" style="width:100%" onclick="closeModal('footerModal')">Close</button>
         </div>
       </div>
     </div>
   </div>
 </div>
+
 <script src="/crm-nav.js"></script>
+<script src="/block-editor-client.js"></script>
 <script>
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+function showToast(msg, isError) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = `position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:${isError ? 'var(--pra-red)' : 'var(--pra-blue)'};color:#fff;padding:10px 18px;border-radius:8px;font-family:var(--font-primary);font-weight:700;font-size:.85rem;z-index:9999`;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+let currentUser = null, allFooters = [], editingFooterId = null, footerEditor = null;
+
 async function loadGmailStatus() {
   const r = await fetch('/api/auth/gmail/status');
   const status = document.getElementById('gmailStatus');
@@ -50,20 +100,103 @@ async function loadGmailStatus() {
   document.getElementById('gmailReconnectBtn').style.display = (d.connected && !d.canSend) ? 'inline-block' : 'none';
   document.getElementById('gmailDisconnectBtn').style.display = d.connected ? 'inline-block' : 'none';
 }
+
+async function loadFooters() {
+  const r = await fetch('/api/footer-templates');
+  allFooters = r.ok ? (await r.json()).templates : [];
+}
+
+function footerNameFor(footerTemplateId) {
+  const f = allFooters.find(x => x.id === footerTemplateId);
+  return f ? f.name : '(no footer set up yet)';
+}
+
+async function ensureOwnFooter() {
+  // Legacy accounts created before every new user auto-got one via
+  // createFooterForUser -- self-provision on first visit instead of leaving
+  // them stuck with nothing to edit.
+  if (currentUser.footerTemplateId) return currentUser.footerTemplateId;
+  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${currentUser.first} ${currentUser.last} Footer` }) });
+  const d = await r.json();
+  if (!r.ok) { showToast('Could not set up your footer', true); return null; }
+  await fetch(`/api/auth/users/${currentUser.id}/footer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ footerTemplateId: d.template.id }) });
+  currentUser.footerTemplateId = d.template.id;
+  await loadFooters();
+  return d.template.id;
+}
+
+async function loadMyFooter() {
+  await loadFooters();
+  document.getElementById('myFooterName').textContent = currentUser.footerTemplateId ? `Footer: ${footerNameFor(currentUser.footerTemplateId)}` : 'No footer set up yet.';
+  const btn = document.getElementById('editMyFooterBtn');
+  btn.disabled = false;
+  btn.onclick = async () => {
+    const id = await ensureOwnFooter();
+    if (id) openFooterEditor(id, '(mine)');
+  };
+}
+
 async function loadTeamStatus() {
   const r = await fetch('/api/auth/gmail/team-status');
   if (!r.ok) return; // not an admin -- panel stays hidden
   const { team } = await r.json();
   document.getElementById('teamPanel').style.display = 'block';
-  document.getElementById('teamBody').innerHTML = team.map(u => `
-    <tr>
-      <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
-      <td>${escapeHtml(u.email)}</td>
-      <td>${u.connected ? escapeHtml(u.gmailEmail || 'Connected') : '<span class="pra-muted">Not connected</span>'}</td>
-      <td>${!u.connected ? '<span class="pra-muted">—</span>' : u.canSend ? 'Yes' : '<span class="pra-muted">No -- needs to reconnect</span>'}</td>
-    </tr>
+  document.getElementById('teamCards').innerHTML = team.map(u => `
+    <div class="team-member-card">
+      <div class="team-member-card-name">${escapeHtml(u.first)} ${escapeHtml(u.last)}</div>
+      <div class="team-member-card-row"><span class="label">Login Email</span><span>${escapeHtml(u.email)}</span></div>
+      <div class="team-member-card-row"><span class="label">Gmail</span><span>${u.connected ? escapeHtml(u.gmailEmail || 'Connected') : '<span class="pra-muted">Not connected</span>'}</span></div>
+      <div class="team-member-card-row"><span class="label">Can Send</span><span>${!u.connected ? '<span class="pra-muted">—</span>' : u.canSend ? 'Yes' : '<span class="pra-muted">No -- needs to reconnect</span>'}</span></div>
+      <div class="team-member-card-footer-name">${u.footerTemplateId ? `Footer: ${escapeHtml(footerNameFor(u.footerTemplateId))}` : 'No footer set up yet.'}</div>
+      <button class="pra-btn pra-btn-sm" style="margin-top:10px" data-edit-footer="${u.id}" data-footer-id="${u.footerTemplateId || ''}" data-name="${escapeHtml(u.first)} ${escapeHtml(u.last)}">Edit Footer</button>
+    </div>
   `).join('');
+  document.querySelectorAll('[data-edit-footer]').forEach(btn => btn.onclick = async () => {
+    let id = btn.dataset.footerId;
+    if (!id) {
+      // Same self-provisioning as ensureOwnFooter, just targeting the
+      // teammate being edited instead of the logged-in admin.
+      const r2 = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${btn.dataset.name} Footer` }) });
+      const d2 = await r2.json();
+      if (!r2.ok) { showToast('Could not set up a footer for them', true); return; }
+      await fetch(`/api/auth/users/${btn.dataset.editFooter}/footer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ footerTemplateId: d2.template.id }) });
+      await loadFooters();
+      id = d2.template.id;
+    }
+    openFooterEditor(id, `(${btn.dataset.name})`);
+  });
 }
+
+function openFooterEditor(id, ownerLabel) {
+  const f = allFooters.find(x => x.id === id);
+  if (!f) return;
+  editingFooterId = id;
+  document.getElementById('footerEditorOwnerLabel').textContent = ownerLabel || '';
+  document.getElementById('footerModal').classList.add('show');
+  document.getElementById('footerName').value = f.name;
+  document.getElementById('footerAddress').value = f.physicalAddress || '';
+  document.getElementById('footerUnsubText').value = f.unsubscribeLinkText || 'Unsubscribe';
+  const state = { blocks: f.blocks || [], theme: f.theme || {} };
+  if (!footerEditor) footerEditor = BlockEditor.init(document.getElementById('footerEditorRoot'), state, () => {});
+  else footerEditor.setState(state);
+}
+document.getElementById('saveFooterBtn').onclick = async () => {
+  if (!editingFooterId || !footerEditor) return;
+  const state = footerEditor.getState ? footerEditor.getState() : { blocks: [], theme: {} };
+  const body = {
+    name: document.getElementById('footerName').value.trim(),
+    blocks: state.blocks, theme: state.theme,
+    physicalAddress: document.getElementById('footerAddress').value.trim(),
+    unsubscribeLinkText: document.getElementById('footerUnsubText').value.trim(),
+  };
+  const r = await fetch('/api/footer-templates/' + editingFooterId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { showToast('Could not save', true); return; }
+  showToast('Saved');
+  await loadFooters();
+  document.getElementById('myFooterName').textContent = currentUser.footerTemplateId ? `Footer: ${footerNameFor(currentUser.footerTemplateId)}` : 'No footer set up yet.';
+  loadTeamStatus();
+};
+
 document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailReconnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailDisconnectBtn').onclick = async () => {
@@ -71,8 +204,14 @@ document.getElementById('gmailDisconnectBtn').onclick = async () => {
   await fetch('/api/auth/gmail/disconnect', { method: 'POST' });
   loadGmailStatus();
 };
-loadGmailStatus();
-loadTeamStatus();
+
+(async function init() {
+  const meRes = await fetch('/api/auth/me');
+  if (meRes.ok) currentUser = (await meRes.json()).user;
+  loadGmailStatus();
+  if (currentUser) await loadMyFooter();
+  loadTeamStatus();
+})();
 </script>
 </body>
 </html>

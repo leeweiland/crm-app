@@ -1032,7 +1032,13 @@ export async function handleAuthRequest(req, res, url) {
   const footerMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/footer$/);
   if (footerMatch && req.method === "POST") {
     const me = getSessionUser(req);
-    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    // Admins can set anyone's; a non-admin can only ever self-link their own
+    // (e.g. a legacy account from before every new user auto-got a footer
+    // via createFooterForUser -- lets them fix that themselves instead of
+    // being stuck waiting on an admin for something that's just their own
+    // signature).
+    if (!isAdmin(me) && me.id !== footerMatch[1]) return sendJson(res, 403, { error: "Admins only" });
     const { footerTemplateId } = await readJsonBody(req);
     const users = readJson(USERS_FILE, []);
     const target = users.find(u => u.id === footerMatch[1]);
