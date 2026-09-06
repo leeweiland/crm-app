@@ -255,7 +255,10 @@
   /* Shows who a reply sends as -- the sender is always the logged-in user
      (see inbox_backend.js, not client-controlled), this is display-only so
      teammates are visible but never look clickable. */
-  .compose-from-select { font-size: .78rem; padding: 5px 10px; margin-bottom: 8px; max-width: 320px; }
+  .compose-from-select { font-size: .78rem; padding: 5px 10px; max-width: 200px; }
+  .compose-subject-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .compose-subject-row .pra-input { flex: 1; margin-bottom: 0; }
+  .compose-from-email { font-size: .76rem; color: var(--pra-dim); white-space: nowrap; }
 
   /* Native date/time pickers render a black-on-black calendar icon on a
      dark background otherwise -- color-scheme flips both to the light
@@ -1348,6 +1351,11 @@ function renderThread() {
     <div class="compose-bar">
       ${currentTab === 'primary' ? `
         <div class="compose-channel-toggle">
+          ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
+            <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
+              ${teamUsers.map(u => `<option value="${u.id}" data-email="${escapeHtml(u.email)}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}
+            </select>
+          ` : ''}
           <span class="compose-tab-group">
             <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''}">Send Email</button>
             ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
@@ -1362,12 +1370,14 @@ function renderThread() {
       ${composeView === 'summary' ? `
         <div class="ai-summary-panel" id="aiSummaryPanel"><div class="pra-muted">Loading summary…</div></div>
       ` : `
-        ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
-          <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
-            ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)} &lt;${escapeHtml(u.email)}&gt;</option>`).join('')}
-          </select>
+        ${composeChannel === 'email' ? `
+          <div class="compose-subject-row">
+            <input class="pra-input" id="composeSubject" placeholder="Subject"/>
+            <span class="compose-from-email" id="composeFromEmail">${escapeHtml(
+              (teamUsers.length > 1 && currentUser?.role === 'admin' ? teamUsers.find(u => u.id === currentUser?.id) : currentUser)?.email || ''
+            )}</span>
+          </div>
         ` : ''}
-        ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
         <div class="compose-row">
           <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
           <button class="pra-btn" id="composeSendBtn">Send</button>
@@ -1402,6 +1412,11 @@ function renderThread() {
     });
     panel.querySelectorAll('.ai-gen-btn').forEach(btn => btn.onclick = () => generateAiContent(btn.dataset.aiCh, btn));
   }
+  const fromSelect = document.getElementById('composeFromUserId');
+  if (fromSelect) fromSelect.onchange = () => {
+    const emailEl = document.getElementById('composeFromEmail');
+    if (emailEl) emailEl.textContent = fromSelect.selectedOptions[0]?.dataset.email || '';
+  };
   if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
   else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;

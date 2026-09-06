@@ -34,7 +34,7 @@ export const MESSAGE_ID_INDEX_FILE = "crm_message_id_index.json";
 // anywhere in the file) -- see email_backend.js/sms_backend.js, which no
 // longer call updateMessageById at all for their own just-created row on
 // the send path, logging once with the final status instead.
-export function logMessage({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status, failReason }) {
+export function logMessage({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, status, failReason, createdAt }) {
   const row = {
     // Accepts a pre-generated id -- email_backend.js's click-tracking link
     // wrapping needs the row's id baked into the email body BEFORE the send
@@ -48,9 +48,14 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
     body: body || "", bodyPreview: bodyPreview || "",
     status: status || "queued",
     failReason: failReason || null,
-    statusHistory: [{ status: status || "queued", at: new Date().toISOString() }],
-    sentAt: status === "sent" ? new Date().toISOString() : null,
-    createdAt: new Date().toISOString(),
+    statusHistory: [{ status: status || "queued", at: createdAt || new Date().toISOString() }],
+    sentAt: status === "sent" ? (createdAt || new Date().toISOString()) : null,
+    // Real messages always log at the moment they happen, so `createdAt`
+    // is never passed -- the override only exists for gmail_backend.js's
+    // reconciliation path, which discovers a message well after Gmail
+    // itself sent/received it and needs it to sort into its true place in
+    // the thread instead of jumping to the top as if it just arrived.
+    createdAt: createdAt || new Date().toISOString(),
     inboxDone: false,
   };
   appendJsonRecordFast(MESSAGE_LOG_FILE, row);

@@ -11,6 +11,7 @@ import {
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
 import { queryConversationsSqlite } from "./sqlite_inbox.js";
+import { reconcileRecentGmailForContact } from "./gmail_backend.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -242,6 +243,13 @@ export async function handleInboxRequest(req, res, url) {
   const openedMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/opened$/);
   if (openedMatch && req.method === "POST") {
     recomputeConversationSummary(openedMatch[1]);
+    // Fire-and-forget: catches anything the 30s Gmail poller's history
+    // diff missed for THIS contact specifically (a paused poller, a
+    // capped backlog -- see gmail_backend.js's MAX_MESSAGES_PER_TICK)
+    // without adding a real Gmail API round trip to every conversation
+    // open, and without sweeping all ~176k contacts to find the gap.
+    // No-ops instantly if nobody's connected Gmail.
+    reconcileRecentGmailForContact(openedMatch[1]).catch(e => console.error("[gmail] on-open reconcile failed:", e.message));
     return sendJson(res, 200, { ok: true });
   }
 

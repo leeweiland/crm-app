@@ -1,6 +1,6 @@
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { logMessage } from "./message_log.js";
+import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 
@@ -230,6 +230,128 @@ function getContactIdByEmail(email) {
   return contactsByEmailCache.get(email) || null;
 }
 
+// Shared by the 30s poll tick below AND the two on-demand reconciliation
+// entry points further down (reconcileRecentGmailForContact/
+// reconcileRecentOutboundGmail) -- those don't go through the historyId
+// diff at all (they re-derive truth straight from a Gmail search instead,
+// since historyId is exactly what silently dropped messages when the
+// poller was paused/capped -- see MAX_MESSAGES_PER_TICK's own comment), so
+// the same message can genuinely be handed to this function twice by two
+// different callers. providerMessageId is Gmail's own message id, globally
+// unique per mailbox, so it's the one thing safe to dedupe against
+// regardless of which path found it.
+async function processGmailMessage(user, msg) {
+  if (readJson(PROVIDER_ID_INDEX_FILE, {})[msg.id]) return; // already logged, by this path or another
+  const fromHeader = headerValue(msg.payload?.headers, "From");
+  const fromEmail = extractEmailAddress(fromHeader);
+  if (!fromEmail) return;
+  const isFromMe = fromEmail === user.gmailEmail?.toLowerCase();
+  const subject = headerValue(msg.payload?.headers, "Subject");
+  const body = extractBody(msg.payload);
+  // Gmail's own record of when the message actually landed/was sent, not
+  // whenever this happens to run -- load-bearing for reconciliation, which
+  // can discover a message hours after the fact and needs it to sort into
+  // its true place in the thread instead of jumping to the top.
+  const createdAt = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : undefined;
+
+  if (isFromMe) {
+    const toHeader = headerValue(msg.payload?.headers, "To");
+    const toEmail = extractEmailAddress(toHeader);
+    const contactId = toEmail ? getContactIdByEmail(toEmail) : null;
+    if (!contactId) return; // sent to someone who isn't a known lead -- not the CRM's concern
+    logMessage({
+      channel: "email", direction: "outbound", contactId,
+      sourceType: "gmail_sent", sourceId: null, providerMessageId: msg.id,
+      to: toHeader, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
+      status: "sent", createdAt,
+    });
+    return;
+  }
+
+  const contactId = getContactIdByEmail(fromEmail);
+  if (!contactId) return; // not a known lead/contact -- not the CRM's concern
+  logMessage({
+    channel: "email", direction: "inbound", contactId,
+    sourceType: "inbound", sourceId: null, providerMessageId: msg.id,
+    to: user.gmailEmail, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
+    status: "received", createdAt,
+  });
+  checkConversionGoal("incoming_email", contactId);
+}
+
+// Re-derives truth straight from a Gmail search instead of trusting
+// historyId -- used both by the one-time last-24h catch-up (see
+// reconcileRecentOutboundGmail) and by the per-contact on-open check
+// below. `q` is a normal Gmail search query string.
+async function fetchAndProcessGmailQuery(user, accessToken, q) {
+  const auth = { Authorization: `Bearer ${accessToken}` };
+  const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=100`, { headers: auth, signal: gmailFetchTimeout() });
+  const list = await listRes.json();
+  if (!listRes.ok || !list.messages?.length) return 0;
+  let found = 0;
+  for (const { id } of list.messages) {
+    try {
+      const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: auth, signal: gmailFetchTimeout() });
+      const msg = await msgRes.json();
+      if (!msgRes.ok) continue;
+      const already = readJson(PROVIDER_ID_INDEX_FILE, {})[msg.id];
+      await processGmailMessage(user, msg);
+      if (!already) found++;
+    } catch (e) {
+      console.error(`[gmail] reconcile: processing message ${id} failed:`, e.message);
+    }
+  }
+  return found;
+}
+
+// On-demand, single-contact reconciliation -- fired (fire-and-forget, see
+// inbox_backend.js's /opened route) every time someone actually opens a
+// conversation, instead of a scheduled sweep across all ~176k contacts.
+// A contact nobody looks at costs nothing; one that's open gets checked
+// against every connected mailbox for anything the 30s poll's historyId
+// diff might have missed (a paused poller, a capped backlog -- see
+// MAX_MESSAGES_PER_TICK) at the moment someone would actually notice a gap.
+export async function reconcileRecentGmailForContact(contactId, windowDays = 14) {
+  const contact = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+  const emails = [contact?.email, ...(contact?.altEmails || [])].filter(Boolean);
+  if (!emails.length) return;
+  const users = readJson(USERS_FILE, []).filter(u => u.gmailRefreshToken);
+  if (!users.length) return;
+  const participantQ = `(${emails.map(e => `to:${e} OR from:${e}`).join(" OR ")}) newer_than:${windowDays}d`;
+  for (const user of users) {
+    try {
+      const accessToken = await getAccessToken(user.gmailRefreshToken);
+      await fetchAndProcessGmailQuery(user, accessToken, participantQ);
+    } catch (e) {
+      console.error(`[gmail] per-contact reconcile failed for ${user.gmailEmail || user.id}:`, e.message);
+    }
+  }
+}
+
+// One-time (2026-09-06) catch-up: recovers whatever the 30s poller dropped
+// while it was being repeatedly paused/resumed for load testing tonight --
+// historyId already advanced past the gap (see MAX_MESSAGES_PER_TICK's own
+// comment on why that's permanent for the diff path), so this re-derives
+// straight from each connected mailbox's own Sent folder instead of
+// trusting that watermark. Scoped to the last day and to Sent only
+// (the reported gap is specifically missing outbound replies), not a
+// history-of-everything trawl.
+export async function reconcileRecentOutboundGmail(hours = 24) {
+  const users = readJson(USERS_FILE, []).filter(u => u.gmailRefreshToken);
+  const results = [];
+  for (const user of users) {
+    try {
+      const accessToken = await getAccessToken(user.gmailRefreshToken);
+      const days = Math.max(1, Math.ceil(hours / 24));
+      const found = await fetchAndProcessGmailQuery(user, accessToken, `in:sent newer_than:${days}d`);
+      results.push({ user: user.gmailEmail || user.email, recovered: found });
+    } catch (e) {
+      results.push({ user: user.gmailEmail || user.email, error: e.message });
+    }
+  }
+  return results;
+}
+
 // ── Poll (scheduler tick) ────────────────────────────────────────────────
 // Gmail's history API is incremental (only what changed since a watermark
 // historyId), same "never re-scan everything" principle as this app's own
@@ -311,53 +433,26 @@ export async function checkGmailInbox() {
       if (messageIds.size > MAX_MESSAGES_PER_TICK) {
         console.error(`[gmail] ${messageIds.size} new messages for ${user.gmailEmail} in one poll -- processing first ${MAX_MESSAGES_PER_TICK} only, the rest are being skipped this tick (see comment above)`);
       }
+      // A message the connected account itself sent (a native reply typed
+      // straight into Gmail, not through this app's own Send Email box)
+      // is captured too, not just genuine inbound replies -- otherwise a
+      // coach who replied from their real Gmail app instead of the CRM's
+      // compose panel left their half of the conversation invisible here,
+      // even though the lead's side of the SAME thread showed up fine. No
+      // double-logging risk against this app's own sendEmail: that goes
+      // out through SES, which never touches the coach's actual Gmail
+      // account, so it never appears in THIS history feed at all -- these
+      // are two genuinely distinct send paths, not two views of the same
+      // one. (See processGmailMessage above -- shared with the on-demand
+      // reconciliation paths below, which is also why it dedupes by
+      // providerMessageId even though this diff-based path alone would
+      // never hand it the same id twice.)
       for (const messageId of idsToProcess) {
         try {
           const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`, { headers: auth, signal: gmailFetchTimeout() });
           const msg = await msgRes.json();
           if (!msgRes.ok) continue;
-          const fromHeader = headerValue(msg.payload?.headers, "From");
-          const fromEmail = extractEmailAddress(fromHeader);
-          if (!fromEmail) continue;
-          const isFromMe = fromEmail === user.gmailEmail?.toLowerCase();
-
-          // A message the connected account itself sent (a native reply
-          // typed straight into Gmail, not through this app's own Send
-          // Email box) used to be skipped outright -- only genuine inbound
-          // replies got captured, so a coach who replied from their real
-          // Gmail app instead of the CRM's compose panel left their half
-          // of the conversation invisible here, even though the lead's
-          // side of the SAME thread showed up fine. No double-logging risk
-          // against this app's own sendEmail: that goes out through SES,
-          // which never touches the coach's actual Gmail account, so it
-          // never appears in THIS history feed at all -- these are two
-          // genuinely distinct send paths, not two views of the same one.
-          const subject = headerValue(msg.payload?.headers, "Subject");
-          const body = extractBody(msg.payload);
-          if (isFromMe) {
-            const toHeader = headerValue(msg.payload?.headers, "To");
-            const toEmail = extractEmailAddress(toHeader);
-            const contactId = toEmail ? getContactIdByEmail(toEmail) : null;
-            if (!contactId) continue; // sent to someone who isn't a known lead -- not the CRM's concern
-            logMessage({
-              channel: "email", direction: "outbound", contactId,
-              sourceType: "gmail_sent", sourceId: null, providerMessageId: msg.id,
-              to: toHeader, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
-              status: "sent",
-            });
-            continue;
-          }
-
-          const contactId = getContactIdByEmail(fromEmail);
-          if (!contactId) continue; // not a known lead/contact -- not the CRM's concern (someone's personal inbox has plenty of mail that isn't)
-
-          logMessage({
-            channel: "email", direction: "inbound", contactId,
-            sourceType: "inbound", sourceId: null, providerMessageId: msg.id,
-            to: user.gmailEmail, from: fromHeader, subject, body, bodyPreview: body.slice(0, 140),
-            status: "received",
-          });
-          checkConversionGoal("incoming_email", contactId);
+          await processGmailMessage(user, msg);
         } catch (e) {
           console.error(`[gmail] processing message ${messageId} failed:`, e.message);
         }
