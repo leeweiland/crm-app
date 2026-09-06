@@ -36,10 +36,20 @@
   .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s; }
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
+  /* .trigger-group's own width is exactly .trigger-row's (the cards) --
+     .add-trigger-btn is absolutely positioned off to the side, so it
+     contributes nothing to that width. That's what lets .trigger-group
+     center correctly against the step chain below via the canvas's own
+     align-items:center, matching every step-card's centering exactly.
+     A plain flex row containing both the cards AND the button centers
+     their COMBINED width instead, which drags the actual trigger card(s)
+     off true-center by roughly half the button's width -- confirmed live,
+     this was the real bug behind "the trigger isn't centered." */
+  .trigger-group { position: relative; display: inline-flex; }
   .trigger-row { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center; gap: 12px; }
   .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 260px; text-align: center; position: relative; cursor: pointer; }
   .trigger-card .step-actions { position: absolute; top: 6px; right: 8px; }
-  .add-trigger-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 10px; padding: 14px 18px; min-width: 180px; cursor: pointer; font-size: .82rem; }
+  .add-trigger-btn { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); margin-left: 12px; white-space: nowrap; background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 10px; padding: 14px 18px; min-width: 180px; cursor: pointer; font-size: .82rem; }
   .add-trigger-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; }
   .step-card:hover { border-color: var(--pra-blue); }
@@ -408,8 +418,10 @@ function render() {
   // below it. Confirmed live -- this was the actual cause of "the trigger
   // isn't centered," not a centering rule that needed writing from scratch.
   canvas.innerHTML = `
-    <div class="trigger-row">
-      ${triggerCardsHtml}
+    <div class="trigger-group">
+      <div class="trigger-row">
+        ${triggerCardsHtml}
+      </div>
       ${triggers.length ? '<button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>' : ''}
     </div>
     ${automation.goal ? arrowHtml(false, '', '') : ''}
