@@ -855,6 +855,15 @@ export function publicUser(u) {
   return rest;
 }
 
+// Shared by every endpoint that lists team members (Settings > Users table,
+// the Inbox compose panel's "send as" dropdown, "assigned to" pickers, etc.)
+// so they all show the same, predictable order instead of each falling back
+// to USERS_FILE's own array order (effectively creation order, which meant
+// whoever signed up first always led every list regardless of name).
+function sortByName(users) {
+  return [...users].sort((a, b) => `${a.first} ${a.last}`.localeCompare(`${b.first} ${b.last}`));
+}
+
 // ── Roles ────────────────────────────────────────────────────────────────
 // Three flat roles, no per-permission matrix for v1 — matches the "Admin /
 // Super User / User" system roles seen in Close's Roles & Permissions
@@ -981,7 +990,7 @@ export async function handleAuthRequest(req, res, url) {
     const me = getSessionUser(req);
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
     const users = readJson(USERS_FILE, []);
-    return sendJson(res, 200, { users: users.map(publicUser) });
+    return sendJson(res, 200, { users: sortByName(users).map(publicUser) });
   }
   if (p === "/api/auth/users" && req.method === "POST") {
     const me = getSessionUser(req);
@@ -1105,7 +1114,7 @@ export async function handleAuthRequest(req, res, url) {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const users = readJson(USERS_FILE, []).filter(u => !u.archived);
-    return sendJson(res, 200, { users: users.map(u => ({ id: u.id, first: u.first, last: u.last, email: u.email })) });
+    return sendJson(res, 200, { users: sortByName(users).map(u => ({ id: u.id, first: u.first, last: u.last, email: u.email })) });
   }
 
   return false;
