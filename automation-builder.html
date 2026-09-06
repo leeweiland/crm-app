@@ -86,6 +86,7 @@
     <div class="pra-h2" style="margin-bottom:16px">Start Automation When...</div>
     <div class="field"><label class="pra-label">Trigger</label>
       <select class="pra-select" id="triggerType">
+        <option value="">None (only enrolled via a Flow or manually)</option>
         <option value="list_subscribe">Contact subscribes to a list</option>
         <option value="tag_added">Tag is added</option>
         <option value="email_opened">Any tracked email is opened</option>
@@ -338,6 +339,7 @@ function render() {
   const canvas = document.getElementById('canvas');
   const trig = automation.trigger || { type: 'list_subscribe', config: {} };
   const trigLabelMap = {
+    '': 'No automatic trigger — enrolled via a Flow step or manually',
     list_subscribe: trig.config?.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === trig.config.listId)?.name || '—')}"` : 'Contact subscribes to any list',
     tag_added: trig.config?.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === trig.config.tagId)?.name || '—')}" is added` : 'Any tag is added',
     email_opened: 'Email is opened', email_clicked: 'Email link is clicked',
