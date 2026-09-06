@@ -373,7 +373,7 @@ function renderCanvas() {
     ${stepHtml}
     <button class="add-step-btn" id="addStepBtn">+ Add Step</button>
   `;
-  document.getElementById('triggerCardBtn').onclick = () => openModal('triggerModal');
+  document.getElementById('triggerCardBtn').onclick = () => openTriggerModalSynced();
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalsModal;
   document.getElementById('addStepBtn').onclick = () => { pendingInsertDelay = undefined; openModal('typePickerModal'); };
@@ -485,7 +485,16 @@ function updateTriggerTargetField() {
   document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
 }
 document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
-document.getElementById('triggerMenuBtn').onclick = () => {
+// Shared by both ways of opening this modal (the "Trigger" tab button and
+// the canvas card itself) -- the canvas card used to have its own onclick
+// that skipped this sync entirely and just called openModal() directly,
+// so it always showed whatever the form's last leftover state happened to
+// be (the select's default/first option on a fresh page load) instead of
+// the workflow's actual saved trigger. Confirmed live: adding the new
+// blank "None" option as the first <option> made this bug way more
+// obvious (every card-click opened showing "None" regardless of the real
+// trigger) even though the underlying bug predates that change.
+function openTriggerModalSynced() {
   document.getElementById('triggerType').value = workflow.trigger.type;
   updateTriggerTargetField();
   if (workflow.trigger.type === 'list_subscribe') document.getElementById('triggerTarget').value = workflow.trigger.config.listId || '';
@@ -493,7 +502,8 @@ document.getElementById('triggerMenuBtn').onclick = () => {
   if (workflow.trigger.type === 'page_visit') document.getElementById('triggerPath').value = workflow.trigger.config.urlContains || '';
   if (workflow.trigger.type === 'booking_created') document.getElementById('triggerTarget').value = workflow.trigger.config.eventTypeId || '';
   openModal('triggerModal');
-};
+}
+document.getElementById('triggerMenuBtn').onclick = openTriggerModalSynced;
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
