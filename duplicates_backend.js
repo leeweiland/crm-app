@@ -5,6 +5,8 @@ import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
 import { CONVERSATION_META_FILE } from "./conversation_meta.js";
 import { PAGE_VISITS_FILE, claimVisitorHistory } from "./tracking_backend.js";
+import { recomputeConversationSummary, removeConversationSummary } from "./message_index.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 
 export const POSSIBLE_DUPLICATES_FILE = "crm_possible_duplicates.json";
 
@@ -207,6 +209,18 @@ export function mergeContacts(keepId, mergeId) {
   // combine two archived/done states.
   const meta = readJson(CONVERSATION_META_FILE, []);
   writeJson(CONVERSATION_META_FILE, meta.filter(m => m.contactId !== mergeId));
+
+  // Without these three, the Inbox sidebar's SQLite snapshot goes stale in
+  // two ways: the surviving contact's own row (email/phone/firstSeenAt may
+  // have just changed above) never updates until something else happens to
+  // touch it, and the merged contact's row becomes an orphaned ghost --
+  // every message that pointed to it just got reassigned to keepId above,
+  // but its OWN conversation row (keyed by the now-nonexistent mergeId)
+  // was never cleaned up, and the survivor's row was never recomputed to
+  // reflect the messages that just moved into it.
+  try { syncContactFields(keepId, keep); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+  recomputeConversationSummary(keepId);
+  removeConversationSummary(mergeId);
 
   return { ok: true };
 }

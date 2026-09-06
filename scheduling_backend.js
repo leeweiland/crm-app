@@ -8,6 +8,7 @@ import { STATUSES_FILE } from "./statuses_backend.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { applyMergeTags } from "./block_editor_shared.js";
@@ -624,6 +625,11 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
     contacts.push(contact);
   }
   writeJson(CONTACTS_FILE, contacts);
+  // Without this, a booking's real status/name/email change (new contact
+  // or existing one advanced via applyAdvancingStatus) never reaches the
+  // Inbox sidebar's SQLite snapshot until something else happens to touch
+  // this contact -- same gap as forms_backend.js had.
+  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }
 

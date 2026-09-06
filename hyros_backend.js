@@ -3,6 +3,7 @@ import { readJson, writeJson } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch, markFirstSeen, digitsOnly } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { getOrCreateTag } from "./contacts_backend.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 
 // Base URL confirmed by live testing, not just docs -- the published
 // api-docs.hyros.com spec omits the server URL entirely; the real base
@@ -98,6 +99,7 @@ export function upsertFromHyros(hyrosLead, defaultStatus) {
     };
   }
   writeJson(CONTACTS_FILE, contacts);
+  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }
 

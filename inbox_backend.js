@@ -10,7 +10,7 @@ import {
   markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
-import { queryConversationsSqlite } from "./sqlite_inbox.js";
+import { queryConversationsSqlite, syncContactFields } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 
@@ -512,6 +512,11 @@ export async function handleInboxRequest(req, res, url) {
       contacts.push(contact);
     }
     writeJson(CONTACTS_FILE, contacts);
+    // Without this, the real name/email/phone just entered here doesn't
+    // reach the Inbox sidebar's SQLite snapshot until something else
+    // happens to touch this contact -- same gap forms_backend.js/
+    // scheduling_backend.js had.
+    try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
 
     let logChanged = false;
     const migrated = [];

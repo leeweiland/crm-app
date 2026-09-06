@@ -452,7 +452,11 @@ async function searchCloseLeadByIdentity(email, phone) {
 function persistContact(contact) {
   const contacts = readJson(CONTACTS_FILE, []);
   const stored = contacts.find(c => c.id === contact.id);
-  if (stored) { Object.assign(stored, contact); writeJson(CONTACTS_FILE, contacts); }
+  if (stored) {
+    Object.assign(stored, contact);
+    writeJson(CONTACTS_FILE, contacts);
+    try { syncContactFields(stored.id, stored); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+  }
 }
 function applyFallbackStatus(contact, status) {
   contact.status = status;
@@ -737,6 +741,7 @@ export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
   }
   if (tagMap && listMap) await enrichAcContact(contact, acContact.id, tagMap, listMap);
   writeJson(CONTACTS_FILE, contacts);
+  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }
 
@@ -796,6 +801,7 @@ export function upsertFromCloseLead(lead, defaultStatus) {
     touched.push(contact);
   });
   writeJson(CONTACTS_FILE, contacts);
+  for (const c of touched) { try { syncContactFields(c.id, c); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
   return { count, contacts: touched };
 }
 
@@ -1125,6 +1131,7 @@ export async function importCloseSegment(query, limit) {
           markFirstSeen(stored, acContact.cdate);
           await enrichAcContact(stored, acContact.id, tagMap, listMap);
           writeJson(CONTACTS_FILE, all);
+          try { syncContactFields(stored.id, stored); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
           mergeAcCampaigns(stored, oneToOneCampaigns);
           await mergeAcContactActivities(stored, acContact.id);
         }
@@ -1142,6 +1149,7 @@ export async function importCloseSegment(query, limit) {
             if (tag && !stored.tags.includes(tag.id)) stored.tags.push(tag.id);
           });
           writeJson(CONTACTS_FILE, all);
+          try { syncContactFields(stored.id, stored); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
           mergeHyrosActivity(stored, hyrosLead);
         }
       }
@@ -1361,6 +1369,7 @@ export async function handleImportRequest(req, res, url) {
     const contacts = readJson(CONTACTS_FILE, []);
     let imported = 0, skipped = 0;
     const errors = [];
+    const touched = [];
     records.forEach((r, i) => {
       try {
         const email = (r.email || "").trim().toLowerCase();
@@ -1386,10 +1395,12 @@ export async function handleImportRequest(req, res, url) {
           };
           contacts.push(contact);
         }
+        touched.push(contact);
         imported++;
       } catch (e) { errors.push({ row: i, message: e.message }); }
     });
     writeJson(CONTACTS_FILE, contacts);
+    for (const c of touched) { try { syncContactFields(c.id, c); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
     return sendJson(res, 200, { ok: true, imported, skipped, errors });
   }
 
