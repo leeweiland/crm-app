@@ -27,7 +27,7 @@ function resolveTokenBooking(contactId, bookingId) {
 export const AUTOMATIONS_FILE = "crm_automations.json";
 export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
 export const AUTOMATION_VERSIONS_FILE = "crm_automation_versions.json";
-const VERSIONED_FIELDS = ["name", "trigger", "steps", "startStepId", "goal"];
+const VERSIONED_FIELDS = ["name", "triggers", "steps", "startStepId", "goal"];
 // A send_email step's failure retries up to this many times, waiting this
 // long between attempts, before giving up and moving on -- see
 // advanceEnrollment's send_email branch.
@@ -91,20 +91,32 @@ export function checkAutomationGoal(trigger, contactId, statusValue) {
 // and email_backend.js (SES open/click webhook + click-tracking redirect).
 // This is the ONE place any future event source (Framer webhook, Twilio
 // inbound SMS) needs to call into to enroll contacts. ─────────────────
+// An automation can have several OR'd start triggers (e.g. "any email
+// open" OR "any email click" OR "visits any page" all doing the same
+// thing) -- mirrors ActiveCampaign's multi-trigger automations, where a
+// single fired event only needs to satisfy ONE of the automation's
+// triggers of the matching type, not all of them.
+function triggerMatches(trig, type, { listId, tagId, path, formId, eventTypeId }) {
+  if (trig.type !== type) return false;
+  const cfg = trig.config || {};
+  if (type === "list_subscribe" && cfg.listId) return cfg.listId === listId;
+  if (type === "tag_added" && cfg.tagId) return cfg.tagId === tagId;
+  if (type === "page_visit" && cfg.urlContains) return String(path || "").includes(cfg.urlContains);
+  if (type === "form_submitted" && cfg.formId) return cfg.formId === formId;
+  if (type === "booking_created" && cfg.eventTypeId) return cfg.eventTypeId === eventTypeId;
+  // email_opened / email_clicked: any tracked email counts for v1 -- no
+  // per-campaign trigger scoping yet. Also the no-scoping-config fallback
+  // for the other types above (any list/tag/form/event type).
+  return true;
+}
 export function fireTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId, bookingId }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
-  const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && a.trigger?.type === type);
+  const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active);
   for (const automation of automations) {
-    const cfg = automation.trigger.config || {};
-    let matches = true;
-    if (type === "list_subscribe" && cfg.listId) matches = cfg.listId === listId;
-    if (type === "tag_added" && cfg.tagId) matches = cfg.tagId === tagId;
-    if (type === "page_visit" && cfg.urlContains) matches = String(path || "").includes(cfg.urlContains);
-    if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
-    if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
-    // email_opened / email_clicked: any tracked email counts for v1 -- no
-    // per-campaign trigger scoping yet.
-    if (matches) enrollContact(automation, contactId, { bookingId });
+    const triggers = automation.triggers || [];
+    if (triggers.some(t => triggerMatches(t, type, { listId, tagId, path, formId, eventTypeId }))) {
+      enrollContact(automation, contactId, { bookingId });
+    }
   }
 }
 
@@ -290,7 +302,7 @@ export async function handleAutomationsRequest(req, res, url) {
       id: randomUUID(), name: name || "Untitled Automation", active: false,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       versions: [],
-      trigger: { type: "list_subscribe", config: {} },
+      triggers: [{ type: "list_subscribe", config: {} }],
       steps: {}, startStepId: null,
     };
     automations.push(automation);
@@ -307,7 +319,7 @@ export async function handleAutomationsRequest(req, res, url) {
       id: randomUUID(), name: `Copy of ${source.name}`, active: false,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       versions: [],
-      trigger: JSON.parse(JSON.stringify(source.trigger)),
+      triggers: JSON.parse(JSON.stringify(source.triggers || [])),
       steps: JSON.parse(JSON.stringify(source.steps)),
       startStepId: source.startStepId,
     };

@@ -29,7 +29,11 @@
   .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s; }
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
-  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; text-align: center; }
+  .trigger-row { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center; gap: 12px; }
+  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 260px; text-align: center; position: relative; cursor: pointer; }
+  .trigger-card .step-actions { position: absolute; top: 6px; right: 8px; }
+  .add-trigger-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 10px; padding: 14px 18px; min-width: 180px; cursor: pointer; font-size: .82rem; }
+  .add-trigger-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; }
   .step-card:hover { border-color: var(--pra-blue); }
   .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
@@ -86,7 +90,6 @@
     <div class="pra-h2" style="margin-bottom:16px">Start Automation When...</div>
     <div class="field"><label class="pra-label">Trigger</label>
       <select class="pra-select" id="triggerType">
-        <option value="">None (only enrolled via a Flow or manually)</option>
         <option value="list_subscribe">Contact subscribes to a list</option>
         <option value="tag_added">Tag is added</option>
         <option value="email_opened">Any tracked email is opened</option>
@@ -108,6 +111,7 @@
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
+      <button class="pra-btn pra-btn-danger" id="deleteTriggerBtn" style="display:none">Remove</button>
     </div>
   </div>
 </div>
@@ -337,16 +341,18 @@ function render() {
   document.getElementById('activeLabel').textContent = automation.active ? 'Active' : 'Inactive';
 
   const canvas = document.getElementById('canvas');
-  const trig = automation.trigger || { type: 'list_subscribe', config: {} };
-  const trigLabelMap = {
-    '': 'No automatic trigger — enrolled via a Flow step or manually',
-    list_subscribe: trig.config?.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === trig.config.listId)?.name || '—')}"` : 'Contact subscribes to any list',
-    tag_added: trig.config?.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === trig.config.tagId)?.name || '—')}" is added` : 'Any tag is added',
-    email_opened: 'Email is opened', email_clicked: 'Email link is clicked',
-    page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page',
-    form_submitted: trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted',
-    booking_created: trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created',
-  };
+  function triggerLabel(trig) {
+    const map = {
+      list_subscribe: trig.config?.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === trig.config.listId)?.name || '—')}"` : 'Contact subscribes to any list',
+      tag_added: trig.config?.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === trig.config.tagId)?.name || '—')}" is added` : 'Any tag is added',
+      email_opened: 'Email is opened', email_clicked: 'Email link is clicked',
+      page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page',
+      form_submitted: trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted',
+      booking_created: trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created',
+    };
+    return map[trig.type] || trig.type;
+  }
+  const triggers = automation.triggers || [];
   // Not part of automation.steps -- a goal can fire at any point during
   // enrollment, not at a fixed position in the chain -- so it's a fixed
   // card right after Trigger rather than something spliced into the chain.
@@ -362,17 +368,39 @@ function render() {
   // after the trigger itself. That's the one that gets the insert-step
   // affordance, gated on there actually being an existing first step to
   // insert ahead of.
+  const triggerCardsHtml = triggers.length
+    ? triggers.map((t, i) => `
+      <div class="trigger-card" data-trigger-idx="${i}">
+        <div class="pra-label">Start automation when</div>
+        <div style="margin-top:4px">${triggerLabel(t)}</div>
+        <div class="step-actions"><button data-remove-trigger="${i}" title="Remove this trigger">&times;</button></div>
+      </div>
+    `).join('')
+    : `<div class="trigger-card" data-trigger-idx="new" style="border-style:dashed;color:var(--pra-dim)">
+        <div class="pra-label">Add a start trigger</div>
+        <div style="margin-top:4px;font-size:.8rem">No automatic trigger yet — enrolled via a Flow step, "jump to automation," or manually</div>
+      </div>`;
   canvas.innerHTML = `
-    <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
-      <div class="pra-label">Start automation when</div>
-      <div style="margin-top:4px">${trigLabelMap[trig.type]}</div>
+    <div class="trigger-row">
+      ${triggerCardsHtml}
+      <button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>
     </div>
     ${automation.goal ? arrowHtml(false, '', '') : ''}
     ${goalHtml}
     ${arrowHtml(!!automation.startStepId, 'root', '__start__')}
     ${renderChainHtml(automation.startStepId, 'root')}
   `;
-  document.getElementById('triggerCardBtn').onclick = openTriggerModal;
+  canvas.querySelectorAll('[data-trigger-idx]').forEach(card => card.addEventListener('click', (e) => {
+    if (e.target.closest('[data-remove-trigger]')) return;
+    const idx = card.dataset.triggerIdx;
+    openTriggerModal(idx === 'new' ? null : Number(idx));
+  }));
+  canvas.querySelectorAll('[data-remove-trigger]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    automation.triggers.splice(Number(btn.dataset.removeTrigger), 1);
+    render(); saveDebounced();
+  }));
+  document.getElementById('addTriggerBtn').onclick = () => openTriggerModal(null);
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalModal;
   canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {
@@ -394,7 +422,7 @@ function saveDebounced() {
 async function saveAutomation(opts) {
   const r = await fetch('/api/automations/' + automation.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: automation.name, trigger: automation.trigger, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal }),
+    body: JSON.stringify({ name: automation.name, triggers: automation.triggers, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (r.ok && !opts?.keepalive) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
@@ -422,8 +450,12 @@ document.getElementById('activeToggle').onclick = async () => {
 };
 
 // ── Trigger modal ─────────────────────────────────────────────────────────
-function openTriggerModal() {
-  const trig = automation.trigger || { type: 'list_subscribe', config: {} };
+// null editingTriggerIndex means "adding a new trigger"; a number means
+// editing (and can be removed via) that entry in automation.triggers.
+let editingTriggerIndex = null;
+function openTriggerModal(index) {
+  editingTriggerIndex = (index === null || index === undefined) ? null : index;
+  const trig = (editingTriggerIndex !== null && automation.triggers[editingTriggerIndex]) || { type: 'list_subscribe', config: {} };
   document.getElementById('triggerType').value = trig.type;
   updateTriggerTargetField();
   if (trig.type === 'list_subscribe') document.getElementById('triggerTarget').value = trig.config.listId || '';
@@ -431,8 +463,14 @@ function openTriggerModal() {
   if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
   if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
+  document.getElementById('deleteTriggerBtn').style.display = editingTriggerIndex !== null ? 'block' : 'none';
   openModal('triggerModal');
 }
+document.getElementById('deleteTriggerBtn').onclick = () => {
+  if (editingTriggerIndex !== null) automation.triggers.splice(editingTriggerIndex, 1);
+  closeModal('triggerModal');
+  render(); saveDebounced();
+};
 function updateTriggerTargetField() {
   const type = document.getElementById('triggerType').value;
   const field = document.getElementById('triggerTargetField');
@@ -481,7 +519,9 @@ document.getElementById('saveTriggerBtn').onclick = () => {
     : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
     : type === 'form_submitted' ? { formId: target || null }
     : type === 'booking_created' ? { eventTypeId: target || null } : {};
-  automation.trigger = { type, config };
+  if (!automation.triggers) automation.triggers = [];
+  if (editingTriggerIndex !== null) automation.triggers[editingTriggerIndex] = { type, config };
+  else automation.triggers.push({ type, config });
   closeModal('triggerModal');
   render(); saveDebounced();
 };

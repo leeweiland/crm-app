@@ -67,7 +67,15 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
-const TRIGGER_LABELS = { list_subscribe: 'Subscribes to list', tag_added: 'Tag added', email_opened: 'Email opened', email_clicked: 'Email link clicked' };
+const TRIGGER_LABELS = { list_subscribe: 'Subscribes to list', tag_added: 'Tag added', email_opened: 'Email opened', email_clicked: 'Email link clicked', page_visit: 'Page visited', form_submitted: 'Form submitted', booking_created: 'Booking created' };
+// An automation can have several OR'd triggers -- summarize for the list
+// view as "first label + N more" rather than just showing/sorting on one.
+function triggerSummary(a) {
+  const triggers = a.triggers || [];
+  if (!triggers.length) return '';
+  const first = TRIGGER_LABELS[triggers[0].type] || triggers[0].type;
+  return triggers.length > 1 ? `${first} +${triggers.length - 1} more` : first;
+}
 
 let allAutomations = [];
 let automationSort = { field: 'updatedAt', dir: -1 };
@@ -75,7 +83,7 @@ function renderAutomationsTable() {
   const { field, dir } = automationSort;
   const rows = [...allAutomations].sort((a, b) => {
     let av, bv;
-    if (field === 'trigger') { av = TRIGGER_LABELS[a.trigger?.type] || ''; bv = TRIGGER_LABELS[b.trigger?.type] || ''; }
+    if (field === 'trigger') { av = triggerSummary(a); bv = triggerSummary(b); }
     else if (field === 'active') { av = a.active ? 1 : 0; bv = b.active ? 1 : 0; }
     else if (field === 'totalEmails') { av = Object.values(a.steps || {}).filter(s => s.type === 'send_email').length; bv = Object.values(b.steps || {}).filter(s => s.type === 'send_email').length; }
     else if (field === 'enrolledCount' || field === 'totalEnrolled') { av = a[field] || 0; bv = b[field] || 0; }
@@ -93,7 +101,7 @@ function renderAutomationsTable() {
   body.innerHTML = rows.map(a => `
     <tr>
       <td class="clickable" onclick="location.href='/automation-builder.html?id=${a.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(a.name)}</td>
-      <td class="pra-muted">${TRIGGER_LABELS[a.trigger?.type] || ''}</td>
+      <td class="pra-muted">${escapeHtml(triggerSummary(a))}</td>
       <td><button class="active-toggle${a.active ? ' on' : ''}" data-id="${a.id}" data-active="${a.active}"></button></td>
       <td>${Object.values(a.steps || {}).filter(s => s.type === 'send_email').length}</td>
       <td class="enrolled-count-cell" data-enrolled="${a.id}" data-name="${escapeHtml(a.name)}">${a.enrolledCount}</td>
