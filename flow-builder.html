@@ -280,7 +280,7 @@ function stepCardHtml(stepId, isLast) {
       <div class="step-actions">
         <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
-      <div class="step-type">${TYPE_LABELS[step.type]} &middot; <span style="color:#009bff">${countLabel}</span></div>
+      <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${count > 0 ? `<span style="color:#009bff">${countLabel}</span>` : countLabel}</div>
       <div class="step-summary">${stepSummary(step)}</div>
     </div>
   `;
