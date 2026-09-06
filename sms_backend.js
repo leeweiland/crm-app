@@ -31,11 +31,27 @@ function getTwilioClient() {
 // with "1" -- matching the same US-centric assumption findContactByPhone
 // below already makes when matching by last-10-digits. A number that's
 // already "+"-prefixed is trusted as-is and passed through untouched.
+// Confirmed live (2026-09-05): blindly treating every bare 10-digit number
+// as NANP silently broke real international leads. This "Online" program
+// has real UK/Australian/etc. clients, and their local-format mobile
+// numbers (e.g. Australia's 04XXXXXXXX) are ALSO exactly 10 digits --
+// gaining a false "+1" turned them into something that still matched the
+// international_number_blocked check's own /^\+1\d{10}$/ shape, so instead
+// of being cleanly recognized as international they looked like a normal
+// (if undeliverable) US number, silently burned real Twilio attempts and
+// retries, and ended up permanently stuck "errored" -- the lead never
+// getting a real send attempt OR a clean, honest "this is international"
+// skip. Every valid NANP area code AND exchange code starts 2-9 (a real
+// rule of the numbering plan, never 0 or 1), so a bare 10-digit number
+// starting with 0 or 1 cannot actually be NANP -- falls through to the
+// generic "+"+digits branch instead, which correctly fails the +1-only
+// check below and gets skipped as international instead of misfired at
+// Twilio as if it were domestic.
 export function normalizePhoneToE164(phone) {
   const raw = String(phone || "").trim();
   if (raw.startsWith("+")) return raw;
   const digits = raw.replace(/\D/g, "");
-  if (digits.length === 10) return "+1" + digits;
+  if (digits.length === 10 && /^[2-9]/.test(digits)) return "+1" + digits;
   if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
   return digits ? "+" + digits : raw;
 }
