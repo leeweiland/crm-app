@@ -112,10 +112,30 @@ export function sqliteInboxAvailable() {
   if (!existingCols.has("last_seen_at_ms")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN last_seen_at_ms INTEGER`);
   }
+  // Per-user now (was a single shared last_seen_at_ms) -- {userId: ms} as
+  // JSON, since a whole team seeing one shared "opened" flag meant the
+  // glow cleared for everyone the instant ANY one person looked, not just
+  // whoever actually opened it. last_seen_at_ms itself is left in place,
+  // unused, rather than dropped -- SQLite can't cheaply drop a column on
+  // older versions, and there's nothing else still reading it.
+  if (!existingCols.has("last_seen_by_json")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN last_seen_by_json TEXT`);
+  }
   return true;
 }
 
 const toMs = (s) => { const t = s ? new Date(s).getTime() : NaN; return Number.isFinite(t) ? t : null; };
+// Per-user "seen" lookup for the row's last_seen_by_json blob -- null (never
+// seen by THIS user) whenever currentUserId is missing, unparseable, or
+// simply has no entry yet, all of which correctly fall through to "treat as
+// unseen" in the hasUnseen check below.
+function lastSeenByMeMs(row, currentUserId) {
+  if (!currentUserId) return null;
+  try {
+    const byUser = JSON.parse(row.last_seen_by_json || "{}");
+    return toMs(byUser[currentUserId]);
+  } catch { return null; }
+}
 
 // message_index.js calls this with the same `g` group object it just wrote
 // to crm_conversation_index.json (upsert or recompute) -- key/contactId/
@@ -208,13 +228,13 @@ export function deleteConversationRow(key) {
 export function syncMetaFields(contactId, meta) {
   if (!sqliteInboxAvailable()) return;
   db.prepare(`
-    UPDATE conversations SET pinned = :pinned, starred = :starred, archived = :archived, done = :done, hidden = :hidden, last_seen_at_ms = :lastSeenAtMs
+    UPDATE conversations SET pinned = :pinned, starred = :starred, archived = :archived, done = :done, hidden = :hidden, last_seen_by_json = :lastSeenByJson
     WHERE contact_id = :contactId
   `).run({
     contactId,
     pinned: meta.pinned ? 1 : 0, starred: meta.starred ? 1 : 0,
     archived: meta.archived ? 1 : 0, done: meta.done ? 1 : 0, hidden: meta.hidden ? 1 : 0,
-    lastSeenAtMs: toMs(meta.lastSeenAt),
+    lastSeenByJson: JSON.stringify(meta.lastSeenBy || {}),
   });
 }
 
@@ -329,7 +349,7 @@ function computeLastPreview(contactId) {
 // inbox_backend.js -- see that handler for what each param means. Returns
 // the same {conversations, total, hasMore} shape so the frontend needs zero
 // changes to consume either path.
-export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset }) {
+export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset, currentUserId }) {
   if (!sqliteInboxAvailable()) return null;
 
   const where = [];
@@ -423,6 +443,7 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
     if (channel) {
       try { last = JSON.parse(r.last_by_channel_json || "{}")[channel]; } catch { last = null; }
     }
+    const lastSeenMs = lastSeenByMeMs(r, currentUserId);
     return {
       key: r.key, contactId: r.contact_id,
       contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id } : null,
@@ -437,12 +458,14 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
       // matching JSON-fallback path.
       unreadCount: r.hidden ? 0 : r.unread_count,
       // Separate from unreadCount/done -- drives just the per-row visual
-      // badge/glow, cleared the moment the conversation is opened
-      // (inbox.html's /opened call stamps last_seen_at_ms), whether or not
-      // it's actually been responded to. true whenever there's a real
-      // inbound message that showed up at or after the last time someone
-      // looked (or it's never been looked at at all).
-      hasUnseen: !r.hidden && !!r.last_inbound_at_ms && (r.last_seen_at_ms == null || r.last_inbound_at_ms > r.last_seen_at_ms),
+      // badge/glow, cleared the moment THIS user opens the conversation
+      // (inbox.html's /opened call stamps last_seen_by_json[currentUserId]),
+      // whether or not it's actually been responded to, and independent of
+      // whether some OTHER teammate has already looked at it -- each
+      // person's own glow only clears for themselves. true whenever there's
+      // a real inbound message that showed up at or after the last time
+      // THIS user looked (or they've never looked at all).
+      hasUnseen: !r.hidden && !!r.last_inbound_at_ms && (lastSeenMs == null || r.last_inbound_at_ms > lastSeenMs),
       pinned: !!r.pinned, starred: !!r.starred, archived: !!r.archived, done: !!r.done,
       lastStatus: r.last_status, lastOpened: !!r.last_opened,
     };

@@ -26,7 +26,11 @@ export function getConvoMetaMap() {
 export function setConvoMeta(contactId, patch) {
   const all = readJson(CONVERSATION_META_FILE, []);
   let row = all.find(m => m.contactId === contactId);
-  if (!row) { row = { contactId, pinned: false, starred: false, done: false, archived: false, hidden: false, lastSeenAt: null }; all.push(row); }
+  // lastSeenBy: {userId: isoString} -- per-user now, not one shared
+  // timestamp (see inbox_backend.js's /opened handler and sqlite_inbox.js's
+  // hasUnseen for why: a single shared value meant the whole team's unread
+  // glow cleared the instant ANY one person opened a conversation).
+  if (!row) { row = { contactId, pinned: false, starred: false, done: false, archived: false, hidden: false, lastSeenBy: {} }; all.push(row); }
   Object.assign(row, patch);
   writeJson(CONVERSATION_META_FILE, all);
   // Best-effort, same reasoning as message_index.js's safeSqliteSync -- a

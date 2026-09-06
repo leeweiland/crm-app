@@ -4,7 +4,7 @@ import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE } from "./message_log.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
-import { CONVERSATION_META_FILE, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
+import { CONVERSATION_META_FILE, getConvoMeta, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
 import {
   getContactMessages, appendContactMessage, updateContactMessagesByIds, deleteContactMessageFile,
   markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
@@ -106,7 +106,7 @@ export async function handleInboxRequest(req, res, url) {
     // against or to recover from a bad sync without waiting on a redeploy.
     if (url.searchParams.get("_sqlite") !== "0") {
       const t0 = Date.now();
-      const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset });
+      const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset, currentUserId: me.id });
       if (result) return sendJson(res, 200, { ...result, _queryMs: Date.now() - t0, _engine: "sqlite" });
     }
     const _t0 = Date.now();
@@ -151,8 +151,9 @@ export async function handleInboxRequest(req, res, url) {
       const unreadCount = hidden ? 0 : g.unreadCount;
       // Mirrors sqlite_inbox.js's queryConversationsSqlite hasUnseen exactly
       // -- see its comment for why this has to be a separate flag from
-      // unreadCount/done.
-      const lastSeenAtMs = meta?.lastSeenAt ? new Date(meta.lastSeenAt).getTime() : null;
+      // unreadCount/done, and per-user (THIS session's user, not whichever
+      // teammate happened to look at it last).
+      const lastSeenAtMs = meta?.lastSeenBy?.[me.id] ? new Date(meta.lastSeenBy[me.id]).getTime() : null;
       const lastInboundAtMs = g.lastInboundAt ? new Date(g.lastInboundAt).getTime() : null;
       const hasUnseen = !hidden && !!lastInboundAtMs && (lastSeenAtMs == null || lastInboundAtMs > lastSeenAtMs);
       return {
@@ -270,15 +271,19 @@ export async function handleInboxRequest(req, res, url) {
   // row with no real messages behind it -- recomputeConversationSummary
   // deletes those outright) gets corrected the moment someone looks at it,
   // even when there's nothing for /mark-done to flip. It also stamps
-  // lastSeenAt, which clears the per-row unseen glow (hasUnseen, see
-  // sqlite_inbox.js) WITHOUT touching done/unread_count -- opening a
-  // thread means you've SEEN it, not that you've responded to it, and
-  // those two states must stay independent (see inbox.html's
+  // lastSeenBy[me.id], which clears just THIS user's per-row unseen glow
+  // (hasUnseen, see sqlite_inbox.js) WITHOUT touching done/unread_count --
+  // opening a thread means you've SEEN it, not that you've responded to
+  // it, and those two states must stay independent (see inbox.html's
   // selectConversation comment for why this used to be one flag, wrongly).
+  // Per-user, not a single shared timestamp -- a teammate opening this same
+  // conversation must not clear the glow for anyone else who hasn't looked
+  // at it themselves yet.
   const openedMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/opened$/);
   if (openedMatch && req.method === "POST") {
     recomputeConversationSummary(openedMatch[1]);
-    setConvoMeta(openedMatch[1], { lastSeenAt: new Date().toISOString() });
+    const existingMeta = getConvoMeta(openedMatch[1]);
+    setConvoMeta(openedMatch[1], { lastSeenBy: { ...(existingMeta?.lastSeenBy || {}), [me.id]: new Date().toISOString() } });
     // Fire-and-forget: catches anything the 30s Gmail poller's history
     // diff missed for THIS contact specifically (a paused poller, a
     // capped backlog -- see gmail_backend.js's MAX_MESSAGES_PER_TICK)
