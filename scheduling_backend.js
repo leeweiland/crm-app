@@ -929,9 +929,20 @@ export async function handleSchedulingRequest(req, res, url) {
     let calendarEventId = null;
     if (calendarConfigured()) {
       try {
+        // formatExtraAnswers (-> notes) deliberately excludes the core
+        // identity fields, so a form with no custom questions beyond
+        // name/email/phone left this description with nothing but "Booked
+        // via CRM scheduling." -- restating identity here too so the staff
+        // calendar event always carries the same details as the internal
+        // notification email, not just whatever's left over after that
+        // filter.
+        const calendarDescriptionLines = [`Name: ${name}`, `Email: ${email}`];
+        if (phone) calendarDescriptionLines.push(`Phone: ${phone}`);
+        if (notes) calendarDescriptionLines.push("", notes);
+        calendarDescriptionLines.push("", "Booked via CRM scheduling.");
         const created = await createCalendarEvent({
           summary: `${et.name} — ${name}`,
-          description: `${notes}\n\nBooked via CRM scheduling.`.trim(),
+          description: calendarDescriptionLines.join("\n"),
           startISO: start.toISOString(), durationMinutes: et.durationMinutes,
           attendees: [{ email, name }], timezone: timezone || calendar.availability.timezone,
           calendarId,
