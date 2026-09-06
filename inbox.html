@@ -384,7 +384,7 @@
           <div class="chat-sidebar-filters">
             <select class="pra-select" id="convoFilterSelect">
               <option value="all">All</option>
-              <option value="unresponded">Unresponded</option>
+              <option value="unresponded" selected>Unresponded</option>
               <option value="done">Done</option>
               <option value="favorites">Favorites</option>
               <option value="archived">Archived</option>
@@ -533,7 +533,7 @@ let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
 let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
 let currentUser = null, teamUsers = [];
-let convoFilter = 'all', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', convoOwner = '', ctxMenuConvo = null, longPressTimer = null;
+let convoFilter = 'unresponded', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', convoOwner = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
 // rows at a time (filtered/sorted server-side first, see inbox_backend.js)
 // instead of loading the entire conversation list up front; scrolling near
