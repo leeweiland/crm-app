@@ -210,7 +210,7 @@ function escapeHtml(s) {
 // app actually serves uploads from, not relative links generally (a block's
 // own link field pointing at, say, "/some-page" on the marketing site is
 // left alone -- that's a different domain than this CRM app's own).
-function absolutizeUploadUrls(html, baseUrl) {
+export function absolutizeUploadUrls(html, baseUrl) {
   if (!baseUrl) return html;
   return html.replace(/src="\/uploads\//g, `src="${baseUrl}/uploads/`);
 }
@@ -244,7 +244,7 @@ function wrapLinksForClickTracking(html, rowId) {
 // Requires the sending domain (not just one address) to be SES-verified;
 // SES rejects an unverified individual address the same way it already
 // degrades when nothing is configured at all -- see the catch below.
-export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from }) {
+export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from, trailingHtml }) {
   const client = await getSesClient();
   const ses = getSesSettings();
   const contact = contactId ? getContact(contactId) : null;
@@ -281,6 +281,12 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // a matching contact to opt out), so test sends get a working, clickable
   // link too instead of the literal, non-functional string "%unsubscribe%".
   html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`);
+  // Appended after the footer, not folded into `blocks` by the caller (see
+  // inbox_backend.js's Reply handling) -- a quoted older message shouldn't
+  // be click-tracking-wrapped or %UNSUBSCRIBE%-substituted like the caller's
+  // own new content, and the footer belongs right after that new content,
+  // not after the whole quoted thread underneath it.
+  if (trailingHtml) html += trailingHtml;
   const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
   const fromAddress = from || ses.fromAddress;
 

@@ -4,7 +4,8 @@ import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
-import { resolveFooterHtml } from "./email_backend.js";
+import { resolveFooterHtml, absolutizeUploadUrls } from "./email_backend.js";
+import { getPublicBaseUrl } from "./integrations_backend.js";
 
 // Per-user Gmail connection -- same idea as Close's "just add it as a
 // user", not a domain-level SES/MX setup: each staff member connects
@@ -111,7 +112,11 @@ function encodeHeaderValue(value) {
 // one piece pulled in from that pipeline anyway (resolveFooterHtml) -- same
 // footer the SES path appends, so a sender's signature/footer looks the
 // same regardless of which transport actually sent a given email.
-export async function sendViaGmail({ user, to, subject, html, contactId, sourceType, sourceId, footerTemplateId }) {
+// trailingHtml (the Reply button's quoted original message, if any) is
+// appended AFTER the footer, not folded into `html` by the caller -- the
+// footer belongs right after the NEW reply, not after the whole quoted
+// thread underneath it.
+export async function sendViaGmail({ user, to, subject, html, contactId, sourceType, sourceId, footerTemplateId, trailingHtml }) {
   if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
   if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
   const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
@@ -120,7 +125,13 @@ export async function sendViaGmail({ user, to, subject, html, contactId, sourceT
   // isDefault when footerTemplateId is null -- same fallback the SES path
   // already relies on, so don't shortcut around it just because this
   // particular sender never picked one explicitly.
-  const fullHtml = `${html}${resolveFooterHtml(footerTemplateId, contactId)}`;
+  // absolutizeUploadUrls -- the SES path (email_backend.js's sendEmail)
+  // already does this for every send; without it here too, a footer's own
+  // signature photo (uploaded to this CRM, referenced by a plain /uploads/
+  // path) shows up as a broken image once it lands in an actual inbox,
+  // which has no notion of this app's own origin to resolve a relative
+  // path against.
+  const fullHtml = absolutizeUploadUrls(`${html}${resolveFooterHtml(footerTemplateId, contactId)}${trailingHtml || ""}`, getPublicBaseUrl());
   // Mirrors email_backend.js's sendEmail contract: logs the attempt itself
   // (sent OR failed) so callers on both paths can just check `.ok`,
   // without needing to know which transport actually handled it.

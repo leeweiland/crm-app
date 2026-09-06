@@ -373,25 +373,30 @@ export async function handleInboxRequest(req, res, url) {
       // the AWS console, i.e. nearly every real lead. Falls back to SES
       // for anyone who hasn't (re)connected Gmail with the send scope yet
       // rather than hard-failing their send.
-      const userHtml = body.replace(/\n/g, "<br/>");
+      const html = body.replace(/\n/g, "<br/>");
       // Reply button (inbox.html) sends the original message's real HTML
       // back verbatim so the recipient sees a properly formatted quoted
       // thread, not a plain-text-mangled copy -- same reasoning as why the
       // email bubble itself renders item.body through an iframe instead of
-      // stripping it.
-      const html = quotedHtml
+      // stripping it. Kept OUT of `html` itself and passed as its own
+      // trailingHtml instead -- both send paths append the sender's footer
+      // right after `html`, so folding the quote in there too would push
+      // the footer down after the whole quoted thread instead of right
+      // after the new reply.
+      const trailingHtml = quotedHtml
         // Real visible whitespace, not just a couple of <br/>s -- margin-top
         // on the quote block so it reads as clearly separate from the new
-        // reply above it instead of looking bunched up against it.
-        ? `<div>${userHtml}</div><div style="border-left:3px solid #ccc;margin:28px 0 0 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
-        : userHtml;
+        // reply (and the footer between them) instead of looking bunched up.
+        ? `<div style="border-left:3px solid #ccc;margin:28px 0 0 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
+        : undefined;
       const result = (sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
-        ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", html, contactId, sourceType: "inbox", sourceId: sender.id, footerTemplateId: sender.footerTemplateId || null })
+        ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", html, contactId, sourceType: "inbox", sourceId: sender.id, footerTemplateId: sender.footerTemplateId || null, trailingHtml })
         : await sendEmail({
             to: contact.email, subject: subject || "(no subject)",
             blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: sender.footerTemplateId || null,
             contactId, sourceType: "inbox", sourceId: sender.id,
             from: `${sender.first} ${sender.last} <${sender.email}>`,
+            trailingHtml,
           });
       if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
       return sendJson(res, 200, { ok: true });
