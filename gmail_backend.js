@@ -6,6 +6,7 @@ import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
 import { resolveFooterHtml, absolutizeUploadUrls } from "./email_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
+import { renderEmailBody } from "./block_editor_shared.js";
 
 // Per-user Gmail connection -- same idea as Close's "just add it as a
 // user", not a domain-level SES/MX setup: each staff member connects
@@ -103,20 +104,23 @@ function encodeHeaderValue(value) {
 // email genuinely comes from the connected account's real mailbox --
 // identical to that person hitting reply in Gmail themselves, including
 // landing in their own Sent folder and threading correctly against any
-// reply. NOT wired through the shared campaign rendering pipeline
-// (renderEmailBody/tagHtmlLinksWithSource/unsubscribe injection) that the
-// SES path uses -- those are template/compliance features built for bulk
-// campaign sends; an ad hoc Inbox reply through a personal Gmail account
-// doesn't carry the CRM's own click-tracking today either way, so there's
-// nothing this drops for THAT path specifically. footerTemplateId is the
-// one piece pulled in from that pipeline anyway (resolveFooterHtml) -- same
-// footer the SES path appends, so a sender's signature/footer looks the
-// same regardless of which transport actually sent a given email.
+// reply. Skips the click-tracking-specific half of the shared campaign
+// pipeline (tagHtmlLinksWithSource/wrapLinksForClickTracking) -- an ad hoc
+// Inbox reply through a personal Gmail account doesn't carry the CRM's own
+// click-tracking today either way, so there's nothing this drops for THAT
+// path specifically. Everything else -- renderEmailBody (footer placement,
+// auto-linkifying bare emails with the theme's own link color instead of
+// leaving Gmail's client to auto-linkify them in ITS default blue,
+// %UNSUBSCRIBE% resolution, absolutizeUploadUrls) IS shared with the SES
+// path now, via the exact same renderEmailBody call sendEmail makes --
+// confirmed live that skipping any of these left the footer's own
+// mailto/unsubscribe links unstyled and its %UNSUBSCRIBE% merge tag
+// literally unresolved (dead link), since none of that ran before.
 // trailingHtml (the Reply button's quoted original message, if any) is
-// appended AFTER the footer, not folded into `html` by the caller -- the
-// footer belongs right after the NEW reply, not after the whole quoted
-// thread underneath it.
-export async function sendViaGmail({ user, to, subject, html, contactId, sourceType, sourceId, footerTemplateId, trailingHtml }) {
+// appended after everything above, not folded into `blocks` by the caller
+// -- the footer belongs right after the NEW reply, not after the whole
+// quoted thread underneath it.
+export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml }) {
   if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
   if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
   const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
@@ -125,13 +129,19 @@ export async function sendViaGmail({ user, to, subject, html, contactId, sourceT
   // isDefault when footerTemplateId is null -- same fallback the SES path
   // already relies on, so don't shortcut around it just because this
   // particular sender never picked one explicitly.
+  let fullHtml = renderEmailBody(blocks, resolveFooterHtml(footerTemplateId, contactId), theme || {});
   // absolutizeUploadUrls -- the SES path (email_backend.js's sendEmail)
   // already does this for every send; without it here too, a footer's own
   // signature photo (uploaded to this CRM, referenced by a plain /uploads/
   // path) shows up as a broken image once it lands in an actual inbox,
   // which has no notion of this app's own origin to resolve a relative
   // path against.
-  const fullHtml = absolutizeUploadUrls(`${html}${resolveFooterHtml(footerTemplateId, contactId)}${trailingHtml || ""}`, getPublicBaseUrl());
+  fullHtml = absolutizeUploadUrls(fullHtml, getPublicBaseUrl());
+  // A footer's own typed "unsubscribe" line goes through the %UNSUBSCRIBE%
+  // merge tag same as everywhere else in the app -- literal and inert until
+  // this substitution actually runs.
+  fullHtml = fullHtml.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`);
+  if (trailingHtml) fullHtml += trailingHtml;
   // Mirrors email_backend.js's sendEmail contract: logs the attempt itself
   // (sent OR failed) so callers on both paths can just check `.ok`,
   // without needing to know which transport actually handled it.
