@@ -7,6 +7,7 @@ import { recheckStopStatus, isStopKeyword, BLACKLIST_STATUS_LABEL } from "./comp
 import { getComplianceSettings } from "./integrations_backend.js";
 import { getOrCreateTag, getOrCreateList, getOrCreateCustomField } from "./contacts_backend.js";
 import { hyrosConfigured, fetchHyrosLeadsPage, upsertFromHyros, mergeHyrosActivity, searchHyrosLeadByIdentity } from "./hyros_backend.js";
+import { syncContactFields } from "./sqlite_inbox.js";
 
 export const IMPORT_JOBS_FILE = "crm_import_jobs.json";
 
@@ -342,6 +343,98 @@ export async function processCloseAltBackfillBatch() {
   writeJson(CLOSE_ALT_BACKFILL_STATE_FILE, state);
   console.log(`[close-alt-backfill] ${state.nextIndex}/${targets.length} processed (+${i - startIndex} this tick), ${state.updated} updated so far`);
 }
+// One-time data recovery: every "STOP" contact's real pipeline stage
+// (POTENTIAL/APPLICATION/ENROLLED/etc) got clobbered the moment they
+// opted out of SMS, since status is a single free-standing field, not a
+// history -- confirmed live via Close's own Activity API, which DOES keep
+// a LeadStatusChange record of exactly what a lead's status was right
+// before it flipped to STOP. Since smsOptOut is separate from status and
+// already true for all of these, restoring the real status can't
+// accidentally start texting anyone again.
+//
+// Was a standalone nohup'd script (same shape as the alt-email/phone
+// backfill originally was) -- moved here for the exact same reason that
+// one was: it died every time the container restarted (four times in one
+// night, independent of anything this script did) and needed babysitting
+// to relaunch and resume by hand each time. Scheduler-driven means the
+// server's own normal boot sequence continues it automatically, no one
+// watching required. Shares its checkpoint file with whatever the
+// standalone runs already wrote, so no progress is lost switching over.
+export const STOP_STATUS_RECOVERY_STATE_FILE = "crm_stop_status_recovery_state.json";
+const STOP_STATUS_RECOVERY_BATCH_MS = 20000; // leaves headroom inside the 30s tick
+
+async function fetchPrevStatusBeforeStop(leadId) {
+  const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
+  const r = await closeFetch(
+    `${CLOSE_BASE}/activity/?lead_id=${leadId}&_type=LeadStatusChange&_fields=old_status_label,new_status_label,date_created`,
+    { headers: { Authorization: auth } }
+  );
+  if (!r.ok) throw new Error(`Close API error ${r.status}`);
+  const d = await r.json();
+  const toStop = (d.data || [])
+    .filter(a => a.new_status_label === "STOP")
+    .sort((a, b) => new Date(b.date_created) - new Date(a.date_created));
+  return toStop[0]?.old_status_label || null;
+}
+
+export async function processStopStatusRecoveryBatch() {
+  if (!closeConfigured()) return;
+  const state = readJson(STOP_STATUS_RECOVERY_STATE_FILE, { results: {}, applied: false });
+  if (state.applied) return;
+
+  const contacts = readJson(CONTACTS_FILE, []);
+  const targets = contacts.filter(c => c.status === "STOP" && c.externalIds?.closeLeadId);
+  const todo = targets.filter(c => !(c.id in state.results));
+
+  // Every lookup is resolved -- apply once, in a single pass, then never
+  // run again (state.applied gates the top of this function).
+  if (!todo.length) {
+    let changed = 0;
+    for (const c of contacts) {
+      const r = state.results[c.id];
+      if (r?.prevStatus && r.prevStatus !== "STOP" && c.status === "STOP") {
+        c.status = r.prevStatus;
+        c.updatedAt = new Date().toISOString();
+        changed++;
+      }
+    }
+    if (changed) {
+      writeJson(CONTACTS_FILE, contacts);
+      for (const c of contacts) {
+        const r = state.results[c.id];
+        if (r?.prevStatus && r.prevStatus !== "STOP") {
+          try { syncContactFields(c.id, c); } catch (e) { console.error("[stop-recovery] sqlite sync failed for", c.id, e.message); }
+        }
+      }
+    }
+    state.applied = true;
+    writeJson(STOP_STATUS_RECOVERY_STATE_FILE, state);
+    const noHistory = Object.values(state.results).filter(r => !r.prevStatus && !r.error).length;
+    const errors = Object.values(state.results).filter(r => r.error).length;
+    console.log(`[stop-recovery] APPLIED -- ${changed} contacts restored to their pre-STOP status, ${noHistory} had no recoverable history, ${errors} errors`);
+    return;
+  }
+
+  const t0 = Date.now();
+  let idx = 0;
+  async function worker() {
+    while (idx < todo.length && Date.now() - t0 < STOP_STATUS_RECOVERY_BATCH_MS) {
+      const c = todo[idx++];
+      try {
+        state.results[c.id] = { prevStatus: await fetchPrevStatusBeforeStop(c.externalIds.closeLeadId) };
+      } catch (e) {
+        state.results[c.id] = { prevStatus: null, error: e.message };
+      }
+    }
+  }
+  // closeLimiter (see closeFetch above) already caps the real outbound
+  // rate app-wide -- this concurrency is just how many lookups can be
+  // in-flight waiting on that shared limiter at once, not a second limit.
+  await Promise.all(Array.from({ length: 10 }, worker));
+  writeJson(STOP_STATUS_RECOVERY_STATE_FILE, state);
+  console.log(`[stop-recovery] ${Object.keys(state.results).length}/${targets.length} resolved`);
+}
+
 async function searchCloseLeadByIdentity(email, phone) {
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   for (const [field, value] of [["email", email], ["phone", phone]]) {
