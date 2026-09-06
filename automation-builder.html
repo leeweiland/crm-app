@@ -399,10 +399,18 @@ function render() {
         <div class="pra-label">Add a start trigger</div>
         <div style="margin-top:4px;font-size:.8rem">No automatic trigger yet — enrolled via a Flow step, "jump to automation," or manually</div>
       </div>`;
+  // The "add another" button only shows once there's a real trigger to add
+  // alongside -- with zero triggers, the lone dashed placeholder card
+  // already opens the same modal on click, so a second button next to it
+  // was redundant AND threw off centering: .trigger-row centers the whole
+  // flex line as a unit, so the button's width pushed the single card
+  // off-center relative to the (separately, correctly centered) step chain
+  // below it. Confirmed live -- this was the actual cause of "the trigger
+  // isn't centered," not a centering rule that needed writing from scratch.
   canvas.innerHTML = `
     <div class="trigger-row">
       ${triggerCardsHtml}
-      <button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>
+      ${triggers.length ? '<button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>' : ''}
     </div>
     ${automation.goal ? arrowHtml(false, '', '') : ''}
     ${goalHtml}
@@ -419,7 +427,8 @@ function render() {
     automation.triggers.splice(Number(btn.dataset.removeTrigger), 1);
     render(); saveDebounced();
   }));
-  document.getElementById('addTriggerBtn').onclick = () => openTriggerModal(null);
+  const addTriggerBtn = document.getElementById('addTriggerBtn');
+  if (addTriggerBtn) addTriggerBtn.onclick = () => openTriggerModal(null);
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalModal;
   canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {

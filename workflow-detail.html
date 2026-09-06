@@ -136,6 +136,7 @@
         <option value="email_opened">Any tracked email is opened</option>
         <option value="email_clicked">Any tracked email link is clicked</option>
         <option value="page_visit">Contact visits a page</option>
+        <option value="form_submitted">Form is submitted</option>
         <option value="booking_created">Booking is created</option>
       </select>
     </div>
@@ -236,7 +237,7 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function uid() { return 'wst' + Math.random().toString(36).slice(2, 10); }
 
 const workflowId = new URLSearchParams(location.search).get('id');
-let workflow = null, allLists = [], allTags = [], allEventTypes = [];
+let workflow = null, allLists = [], allTags = [], allEventTypes = [], allForms = [];
 let saveTimer, pendingInsertDelay;
 
 // Contacts are NOT preloaded here -- the full list is 176k+ rows (a ~13MB
@@ -246,12 +247,13 @@ let saveTimer, pendingInsertDelay;
 // searches on demand instead (see below), same as the type-ahead pattern
 // inbox.html's Potential Contacts flow already switched to for the same reason.
 async function loadRefs() {
-  const [listsRes, tagsRes, eventTypesRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/scheduling/admin/event-types')
+  const [listsRes, tagsRes, eventTypesRes, formsRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/scheduling/admin/event-types'), fetch('/api/forms')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
   allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes : [];
+  allForms = formsRes.ok ? (await formsRes.json()).forms : [];
 }
 
 let manualEnrollContactId = null, manualEnrollSearchTimer = null;
@@ -297,6 +299,7 @@ function trigLabel(trig) {
   if (trig.type === 'list_subscribe') return cfg.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === cfg.listId)?.name || '—')}"` : 'Contact subscribes to any list';
   if (trig.type === 'tag_added') return cfg.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === cfg.tagId)?.name || '—')}" is added` : 'Any tag is added';
   if (trig.type === 'page_visit') return cfg.urlContains ? `Contact visits page containing "${escapeHtml(cfg.urlContains)}"` : 'Contact visits any page';
+  if (trig.type === 'form_submitted') return cfg.formId ? `Form "${escapeHtml(allForms.find(f => f.id === cfg.formId)?.name || '—')}" is submitted` : 'Any form is submitted';
   if (trig.type === 'booking_created') return cfg.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === cfg.eventTypeId)?.name || '—')}" is created` : 'Any booking is created';
   if (trig.type === 'email_opened') return 'Email is opened';
   if (trig.type === 'email_clicked') return 'Email link is clicked';
@@ -402,10 +405,17 @@ function renderCanvas() {
         <div class="pra-label">Add a start trigger</div>
         <div style="margin-top:4px;font-size:.8rem">No automatic trigger yet — enrolled via a Flow step or manually</div>
       </div>`;
+  // The "add another" button only shows once there's a real trigger to add
+  // alongside -- with zero triggers, the lone dashed placeholder card
+  // already opens the same modal on click, so a second button next to it
+  // was redundant AND threw off centering: .trigger-row centers the whole
+  // flex line as a unit, so the button's width pushed the single card
+  // off-center relative to the (separately, correctly centered) step chain
+  // below it.
   canvas.innerHTML = `
     <div class="trigger-row">
       ${triggerCardsHtml}
-      <button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>
+      ${triggers.length ? '<button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>' : ''}
     </div>
     ${!goalHtml && sorted.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
     ${goalHtml}
@@ -422,7 +432,8 @@ function renderCanvas() {
     workflow.triggers.splice(Number(btn.dataset.removeTrigger), 1);
     renderCanvas(); saveDebounced();
   }));
-  document.getElementById('addTriggerBtn').onclick = () => openTriggerModal(null);
+  const addTriggerBtn = document.getElementById('addTriggerBtn');
+  if (addTriggerBtn) addTriggerBtn.onclick = () => openTriggerModal(null);
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalsModal;
   document.getElementById('addStepBtn').onclick = () => { pendingInsertDelay = undefined; openModal('typePickerModal'); };
@@ -530,6 +541,7 @@ function updateTriggerTargetField() {
   if (type === 'list_subscribe') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'List (any if blank)'; select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join(''); }
   else if (type === 'tag_added') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Tag (any if blank)'; select.innerHTML = '<option value="">Any tag</option>' + allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join(''); }
   else if (type === 'booking_created') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Event type (any if blank)'; select.innerHTML = '<option value="">Any event type</option>' + allEventTypes.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join(''); }
+  else if (type === 'form_submitted') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Form (any if blank)'; select.innerHTML = '<option value="">Any form</option>' + allForms.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join(''); }
   else field.style.display = 'none';
   document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
 }
@@ -547,6 +559,7 @@ function openTriggerModal(index) {
   if (trig.type === 'tag_added') document.getElementById('triggerTarget').value = trig.config.tagId || '';
   if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
+  if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
   document.getElementById('deleteTriggerBtn').style.display = editingTriggerIndex !== null ? 'block' : 'none';
   openModal('triggerModal');
 }
@@ -560,7 +573,8 @@ document.getElementById('saveTriggerBtn').onclick = () => {
   const target = document.getElementById('triggerTarget').value;
   const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
     : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
-    : type === 'booking_created' ? { eventTypeId: target || null } : {};
+    : type === 'booking_created' ? { eventTypeId: target || null }
+    : type === 'form_submitted' ? { formId: target || null } : {};
   if (!workflow.triggers) workflow.triggers = [];
   if (editingTriggerIndex !== null) workflow.triggers[editingTriggerIndex] = { type, config };
   else workflow.triggers.push({ type, config });
