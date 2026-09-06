@@ -288,6 +288,58 @@ async function getAllContactActivitiesPaged(acContactId) {
   return { logs, linkData };
 }
 
+// Processes one file -- pulled out of the loop below so a whole SLICE of
+// files can run concurrently instead of one network round trip at a
+// time. Returns true if it changed anything (caller only writes the file
+// back when it did).
+async function processOneAcRefFile(dir, f, acContactIdByContactId, state) {
+  const contactId = f.replace(/\.json$/, "");
+  const path = join(dir, f);
+  let msgs;
+  try { msgs = JSON.parse(readFileSync(path, "utf8")); } catch { return; }
+  const needsRef = msgs.filter(m => (m.sourceType === "ac_campaign" || m.sourceType === "ac_import") && !m.acCampaignId);
+  if (!needsRef.length) return;
+  let activityMap = null;
+  let changed = false;
+  for (const m of needsRef) {
+    let campaignId = m.providerMessageId?.startsWith("ac_1to1:") ? m.providerMessageId.slice("ac_1to1:".length) : null;
+    if (!campaignId) {
+      const activityKey = m.acActivityId || m.providerMessageId;
+      if (!activityKey) continue;
+      if (!activityMap) {
+        const acContactId = acContactIdByContactId.get(contactId);
+        if (!acContactId) { activityMap = new Map(); }
+        else {
+          const { logs, linkData } = await getAllContactActivitiesPaged(acContactId);
+          activityMap = new Map();
+          for (const l of logs) activityMap.set(`ac_send:${l.id}`, l.campaign);
+          for (const c of linkData) activityMap.set(`ac_click:${c.id}`, c.campaign);
+        }
+      }
+      campaignId = activityMap.get(activityKey);
+      if (!campaignId) continue;
+    }
+    m.acCampaignId = campaignId;
+    if (m.body) m.body = ""; // reclaim an already-duplicated body from before the dedup fix existed
+    changed = true;
+    state.refsAttached++;
+    await getAcCampaignHtml(campaignId); // warms the shared store in the same pass
+  }
+  if (changed) writeFileSync(path, JSON.stringify(msgs));
+}
+
+// Concurrency within a batch, not just across ticks -- sequential (one
+// file, one activity fetch, awaited before starting the next) confirmed
+// live at ~1 file/sec, a ~2-DAY runtime for the full 173,680. A slice
+// processed with several requests in flight at once is still exactly as
+// resumable: nextIndex only advances past a slice once the WHOLE slice's
+// Promise.all resolves, so a mid-slice crash just re-processes that slice
+// on the next tick -- cheap, since every file already fixed short-circuits
+// instantly via needsRef.length, only the genuinely-unfinished ones in
+// that slice redo real work.
+const AC_REF_FILL_CONCURRENCY = 10;
+const AC_REF_FILL_SLICE_SIZE = 100;
+
 export async function processAcRefFillBatch() {
   if (!acConfigured()) return;
   const state = readJson(AC_REF_FILL_STATE_FILE, { nextIndex: 0, filesScanned: 0, refsAttached: 0, done: false });
@@ -311,46 +363,18 @@ export async function processAcRefFillBatch() {
 
   const t0 = Date.now();
   const startIndex = state.nextIndex;
-  let i = startIndex;
-  for (; i < files.length && Date.now() - t0 < AC_REF_FILL_BATCH_MS; i++) {
-    const f = files[i];
-    const contactId = f.replace(/\.json$/, "");
-    const path = join(dir, f);
-    let msgs;
-    try { msgs = JSON.parse(readFileSync(path, "utf8")); } catch { continue; }
-    const needsRef = msgs.filter(m => (m.sourceType === "ac_campaign" || m.sourceType === "ac_import") && !m.acCampaignId);
-    if (needsRef.length) {
-      let activityMap = null;
-      let changed = false;
-      for (const m of needsRef) {
-        let campaignId = m.providerMessageId?.startsWith("ac_1to1:") ? m.providerMessageId.slice("ac_1to1:".length) : null;
-        if (!campaignId) {
-          const activityKey = m.acActivityId || m.providerMessageId;
-          if (!activityKey) continue;
-          if (!activityMap) {
-            const acContactId = acContactIdByContactId.get(contactId);
-            if (!acContactId) { activityMap = new Map(); }
-            else {
-              const { logs, linkData } = await getAllContactActivitiesPaged(acContactId);
-              activityMap = new Map();
-              for (const l of logs) activityMap.set(`ac_send:${l.id}`, l.campaign);
-              for (const c of linkData) activityMap.set(`ac_click:${c.id}`, c.campaign);
-            }
-          }
-          campaignId = activityMap.get(activityKey);
-          if (!campaignId) continue;
-        }
-        m.acCampaignId = campaignId;
-        if (m.body) m.body = ""; // reclaim an already-duplicated body from before the dedup fix existed
-        changed = true;
-        state.refsAttached++;
-        await getAcCampaignHtml(campaignId); // warms the shared store in the same pass
+  while (state.nextIndex < files.length && Date.now() - t0 < AC_REF_FILL_BATCH_MS) {
+    const slice = files.slice(state.nextIndex, state.nextIndex + AC_REF_FILL_SLICE_SIZE);
+    let next = 0;
+    await Promise.all(Array.from({ length: AC_REF_FILL_CONCURRENCY }, async () => {
+      while (next < slice.length) {
+        const f = slice[next++];
+        await processOneAcRefFile(dir, f, acContactIdByContactId, state);
+        state.filesScanned++;
       }
-      if (changed) writeFileSync(path, JSON.stringify(msgs));
-    }
-    state.filesScanned++;
+    }));
+    state.nextIndex += slice.length;
   }
-  state.nextIndex = i;
   writeJson(AC_REF_FILL_STATE_FILE, state);
-  console.log(`[ac-ref-fill] ${state.nextIndex}/${files.length} scanned (+${i - startIndex} this batch), ${state.refsAttached} refs attached so far`);
+  console.log(`[ac-ref-fill] ${state.nextIndex}/${files.length} scanned (+${state.nextIndex - startIndex} this batch), ${state.refsAttached} refs attached so far`);
 }
