@@ -11,7 +11,9 @@
 // etc.), so a function here that inbox_backend.js needs to call would
 // otherwise create a genuine A<->B cycle between those two files instead
 // of a clean line.
-import { readJson, appendToJsonObjectFast } from "./auth_backend.js";
+import { readFileSync, writeFileSync, readdirSync } from "fs";
+import { join } from "path";
+import { readJson, writeJson, appendToJsonObjectFast, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
@@ -216,4 +218,126 @@ export async function syncAcEngagementForRecentContacts(sinceMs) {
     catch (e) { console.error("[ac_sync] failed for contact", contactId, e.message); }
   }
   return { checked, contacts: contactIds.length };
+}
+
+// ── Full account-wide reference fill, batched across scheduler ticks ────
+// A one-off `railway ssh` script doing this same sweep died TWICE tonight
+// mid-run -- once from hitting AC's rate limit, once from an unrelated
+// deploy (this app is being worked on by more than one session right
+// now) restarting the container, which wipes /tmp and kills anything
+// running outside the app's own process with it. Neither this app's own
+// process nor its state survives a restart by accident -- but its STATE
+// is persisted to /data (survives) and its CODE is deployed with the app
+// (comes back up automatically) and its SCHEDULE resumes on its own the
+// next tick after any restart, deploy, or crash, the exact same proven
+// shape as processCloseAltBackfillBatch in import_backend.js. No separate
+// process, no watchdog, no /tmp -- it just can't get "fucked up" by a
+// restart the way the standalone script did, because there's nothing
+// living outside the app for a restart to wipe.
+export const AC_REF_FILL_STATE_FILE = "crm_ac_ref_fill_state.json";
+const AC_REF_FILL_BATCH_MS = 20000; // leaves headroom inside the 30s tick
+const MSG_BY_CONTACT_DIR = "msg_by_contact";
+
+async function fetchAcWithRetry(url) {
+  const headers = { "Api-Token": process.env.AC_API_KEY };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let r;
+    try { r = await fetch(url, { headers }); }
+    catch { await new Promise(res => setTimeout(res, 500 * (attempt + 1))); continue; }
+    if (r.ok) return r;
+    if (r.status === 429 || r.status >= 500) {
+      const retryAfter = Number(r.headers.get("retry-after")) || (1 + attempt);
+      await new Promise(res => setTimeout(res, retryAfter * 1000));
+      continue;
+    }
+    return r; // genuine 4xx -- not retryable
+  }
+  return null;
+}
+// Full pagination, not a single page -- a contact's own activity history
+// can run past what one page returns (confirmed live: a contact with 377
+// total activities, the one this repair needed was on page 4), which is
+// exactly what a repair pass is most likely to need since it's chasing
+// OLD records by definition.
+async function getAllContactActivitiesPaged(acContactId) {
+  let offset = 0, logs = [], linkData = [], total = Infinity;
+  while (offset < total) {
+    const r = await fetchAcWithRetry(`${AC_BASE}/api/3/activities?contact=${acContactId}&limit=100&offset=${offset}`);
+    if (!r || !r.ok) break;
+    const d = await r.json();
+    logs.push(...(d.logs || []));
+    linkData.push(...(d.linkData || []));
+    total = Number(d.meta?.total) || 0;
+    const got = (d.logs || []).length + (d.linkData || []).length;
+    if (got === 0) break;
+    offset += got;
+  }
+  return { logs, linkData };
+}
+
+export async function processAcRefFillBatch() {
+  if (!acConfigured()) return;
+  const state = readJson(AC_REF_FILL_STATE_FILE, { nextIndex: 0, filesScanned: 0, refsAttached: 0, done: false });
+  if (state.done) return;
+
+  const dir = join(DATA_DIR, MSG_BY_CONTACT_DIR);
+  let files;
+  try { files = readdirSync(dir); } catch { return; }
+  if (state.nextIndex >= files.length) {
+    state.done = true;
+    writeJson(AC_REF_FILL_STATE_FILE, state);
+    console.log(`[ac-ref-fill] done -- ${state.filesScanned} files scanned, ${state.refsAttached} refs attached`);
+    return;
+  }
+
+  // Rebuilt every batch (not persisted across batches) -- cheap (readJson
+  // is mtime-cached) and always reflects the current contacts file rather
+  // than a snapshot that could go stale across a run spanning many ticks.
+  const contacts = readJson(CONTACTS_FILE, []);
+  const acContactIdByContactId = new Map(contacts.map(c => [c.id, c.externalIds?.acContactId]).filter(([, v]) => v));
+
+  const t0 = Date.now();
+  const startIndex = state.nextIndex;
+  let i = startIndex;
+  for (; i < files.length && Date.now() - t0 < AC_REF_FILL_BATCH_MS; i++) {
+    const f = files[i];
+    const contactId = f.replace(/\.json$/, "");
+    const path = join(dir, f);
+    let msgs;
+    try { msgs = JSON.parse(readFileSync(path, "utf8")); } catch { continue; }
+    const needsRef = msgs.filter(m => (m.sourceType === "ac_campaign" || m.sourceType === "ac_import") && !m.acCampaignId);
+    if (needsRef.length) {
+      let activityMap = null;
+      let changed = false;
+      for (const m of needsRef) {
+        let campaignId = m.providerMessageId?.startsWith("ac_1to1:") ? m.providerMessageId.slice("ac_1to1:".length) : null;
+        if (!campaignId) {
+          const activityKey = m.acActivityId || m.providerMessageId;
+          if (!activityKey) continue;
+          if (!activityMap) {
+            const acContactId = acContactIdByContactId.get(contactId);
+            if (!acContactId) { activityMap = new Map(); }
+            else {
+              const { logs, linkData } = await getAllContactActivitiesPaged(acContactId);
+              activityMap = new Map();
+              for (const l of logs) activityMap.set(`ac_send:${l.id}`, l.campaign);
+              for (const c of linkData) activityMap.set(`ac_click:${c.id}`, c.campaign);
+            }
+          }
+          campaignId = activityMap.get(activityKey);
+          if (!campaignId) continue;
+        }
+        m.acCampaignId = campaignId;
+        if (m.body) m.body = ""; // reclaim an already-duplicated body from before the dedup fix existed
+        changed = true;
+        state.refsAttached++;
+        await getAcCampaignHtml(campaignId); // warms the shared store in the same pass
+      }
+      if (changed) writeFileSync(path, JSON.stringify(msgs));
+    }
+    state.filesScanned++;
+  }
+  state.nextIndex = i;
+  writeJson(AC_REF_FILL_STATE_FILE, state);
+  console.log(`[ac-ref-fill] ${state.nextIndex}/${files.length} scanned (+${i - startIndex} this batch), ${state.refsAttached} refs attached so far`);
 }
