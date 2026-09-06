@@ -95,7 +95,16 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   // there's no reason to burn a Twilio call (and log a confusing failure)
   // on a number already known to be out of scope.
   if (!/^\+1\d{10}$/.test(toFormatted) || FOREIGN_NANP_AREA_CODES.has(toFormatted.slice(2, 5))) {
-    logMessage({ channel: "sms", direction: "outbound", contactId, sourceType, sourceId, to: toFormatted, from: null, body: "", bodyPreview: "", status: "failed", failReason: "international_number_blocked" });
+    // A DIFFERENT status than "failed" -- confirmed live (2026-09-06) that
+    // sharing "failed" here meant every real international lead (a
+    // meaningful chunk of this "Online" program's actual audience)
+    // permanently inflated the SMS dashboard's Failed tile even after both
+    // underlying misclassification bugs were fixed, since this is a clean,
+    // correct, un-retried skip -- not a delivery failure -- and reporting
+    // has no way to tell the two apart once they're both just "failed".
+    // reporting_backend.js's smsStatsFromByStatus/sms-daily give this its
+    // own "international" tile instead of folding it into Failed.
+    logMessage({ channel: "sms", direction: "outbound", contactId, sourceType, sourceId, to: toFormatted, from: null, body: "", bodyPreview: "", status: "international_blocked", failReason: "international_number_blocked" });
     return { ok: false, reason: "international_number_blocked" };
   }
 

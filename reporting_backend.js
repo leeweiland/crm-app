@@ -57,7 +57,13 @@ function statsFromByStatus(byStatus) {
 }
 function smsStatsFromByStatus(byStatus, receivedCount) {
   const c = (statuses) => statuses.reduce((sum, s) => sum + (byStatus[s] || 0), 0);
-  return { sent: c(["queued", "sent", "delivered"]), delivered: c(["delivered"]), failed: c(["failed"]), received: receivedCount || 0 };
+  // "international_blocked" is its own status (not "failed") specifically
+  // so it gets its own tile here -- a real international lead correctly
+  // and cleanly skipped (this account's Twilio can't reach them) is not
+  // the same thing as a genuine delivery failure, and folding the two
+  // together permanently inflated Failed with numbers that were never
+  // actually attempted or retryable. See sms_backend.js's sendSms.
+  return { sent: c(["queued", "sent", "delivered"]), delivered: c(["delivered"]), failed: c(["failed"]), international: c(["international_blocked"]), received: receivedCount || 0 };
 }
 function sumByStatus(days, key) {
   return days.reduce((acc, d) => { for (const [s, n] of Object.entries(d[key] || {})) acc[s] = (acc[s] || 0) + n; return acc; }, {});
@@ -223,7 +229,7 @@ export async function handleReportingRequest(req, res, url) {
     const days = getDailyStatsInRange(startMs, endMs);
     const dayRows = days.map(d => {
       const c = (statuses) => statuses.reduce((sum, s) => sum + (d.smsOut[s] || 0), 0);
-      return { date: d.date, sent: c(["queued", "sent", "delivered"]), delivered: c(["delivered"]), received: d.smsInCount || 0, failed: c(["failed"]) };
+      return { date: d.date, sent: c(["queued", "sent", "delivered"]), delivered: c(["delivered"]), received: d.smsInCount || 0, failed: c(["failed"]), international: c(["international_blocked"]) };
     });
     const totalSmsIn = days.reduce((sum, d) => sum + (d.smsInCount || 0), 0);
     return sendJson(res, 200, { days: dayRows, totals: smsStatsFromByStatus(sumByStatus(days, "smsOut"), totalSmsIn) });
