@@ -257,19 +257,27 @@ export function renameStatusInSqlite(oldLabel, newLabel) {
 // process contention possible -- and only touches rows still showing the
 // stale "STOP" value, pulling each one's real current status from
 // contacts.json. Safe to call repeatedly; a no-op once nothing's left.
+// Time-budgeted, same reasoning as every other scheduler batch job in this
+// app -- confirmed live tonight that an unbounded version of this (every
+// stale row, one call) could run long enough to stall the whole tick
+// behind it under real write contention on this same table.
+const STALE_STOP_REPAIR_BATCH_MS = 8000;
+const STALE_STOP_REPAIR_LIMIT = 300;
 export function resyncStaleStopRows() {
   if (!sqliteInboxAvailable()) return;
-  const staleRows = db.prepare("SELECT contact_id FROM conversations WHERE status = 'STOP'").all();
+  const staleRows = db.prepare(`SELECT contact_id FROM conversations WHERE status = 'STOP' LIMIT ${STALE_STOP_REPAIR_LIMIT}`).all();
   if (!staleRows.length) return; // the common case forever after this repair actually finishes
   const contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
+  const t0 = Date.now();
   let fixed = 0, missing = 0;
   for (const row of staleRows) {
+    if (Date.now() - t0 > STALE_STOP_REPAIR_BATCH_MS) break;
     const c = contactsById.get(row.contact_id);
     if (!c) { missing++; continue; }
     syncContactFields(c.id, c);
     fixed++;
   }
-  console.log(`[sqlite-repair] stale STOP rows: ${staleRows.length}, fixed: ${fixed}, missing contact: ${missing}`);
+  console.log(`[sqlite-repair] this batch: ${staleRows.length} fetched, fixed: ${fixed}, missing contact: ${missing}`);
 }
 
 // last_preview switched from subject-first to body-first (see inbox_
