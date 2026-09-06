@@ -1241,7 +1241,7 @@ function emailBubbleHtml(item, idx) {
         <div class="email-bubble-head">
           <span class="email-bubble-icon">📧</span>
           <span class="email-bubble-subject">${escapeHtml(item.subject || '(no subject)')}</span>
-          ${item.from ? `<span class="email-bubble-from" title="${escapeHtml(item.direction === 'outbound' ? 'From' : 'To')}: ${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}">${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}</span>` : ''}
+          ${item.from ? `<span class="email-bubble-from">${escapeHtml(item.direction === 'outbound' ? 'From' : 'To')}: ${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}</span>` : ''}
           ${item.direction !== 'outbound' ? `<button type="button" class="email-bubble-reply-btn" data-reply-idx="${idx}" title="Reply">↩ Reply</button>` : ''}
         </div>
         <div class="email-bubble-preview">${escapeHtml((item.bodyPreview || '').replace(/<[^>]+>/g, ' ')).trim()}</div>
