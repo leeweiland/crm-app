@@ -2,6 +2,7 @@ import { createServer } from "http";
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, extname } from "path";
 import { fileURLToPath } from "url";
+import { Worker } from "worker_threads";
 import dotenv from "dotenv";
 import { handleAuthRequest } from "./auth_backend.js";
 import { handleContactsRequest } from "./contacts_backend.js";
@@ -29,7 +30,7 @@ import { handleConversionsRequest } from "./conversions_backend.js";
 import { handleMeetingsRequest } from "./meetings_backend.js";
 import { handleGmailRequest } from "./gmail_backend.js";
 import { startScheduler } from "./scheduler.js";
-import { readJson } from "./auth_backend.js";
+import { readJson, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { sqliteInboxAvailable } from "./sqlite_inbox.js";
 
@@ -164,3 +165,14 @@ createServer(async (req, res) => {
 }).listen(PORT, () => console.log(`crm-app running on port ${PORT}`));
 
 startScheduler();
+
+// Warms the SQLite DB file's OS page cache on its own thread -- see
+// warmup_worker.js's own comment for why this (not the query-level
+// attempt it replaces) is the version that actually can't block the main
+// thread: worker_threads runs on a real separate OS thread, so however
+// long the cold disk read takes, this thread alone pays it. By the time a
+// real user opens the Inbox (rarely within seconds of a redeploy), the
+// file's pages are already resident and the main thread's own later
+// synchronous query hits warm cache instead of cold disk.
+new Worker(join(__dirname, "warmup_worker.js"), { workerData: { dbPath: join(DATA_DIR, "crm_prototype.db") } })
+  .on("error", (e) => console.error("[warmup-worker] crashed:", e.message));
