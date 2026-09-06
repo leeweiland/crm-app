@@ -56,6 +56,21 @@ export function normalizePhoneToE164(phone) {
   return digits ? "+" + digits : raw;
 }
 
+// NANP (the +1 country code) isn't exclusively US/Canada -- several
+// Caribbean nations and Bermuda share it, so a real foreign number in one
+// of these area codes passes the "+1 plus 10 digits" shape check exactly
+// like a real US number, even though this account's Twilio geo-permissions
+// still can't reach it. Confirmed live (2026-09-06): a real Trinidad (868)
+// lead sat "errored" after retries for this exact reason -- structurally
+// indistinguishable from domestic, so it skipped the international check
+// entirely and wasted real Twilio attempts the same way the bare-digit
+// misclassification bug did before it was fixed. US territories (Puerto
+// Rico 787/939, Guam 671, USVI 340, etc.) are deliberately NOT listed here
+// -- those are still domestic US destinations this account can reach.
+const FOREIGN_NANP_AREA_CODES = new Set([
+  "242", "246", "264", "268", "284", "345", "441", "473", "649", "658",
+  "664", "721", "758", "767", "784", "809", "829", "849", "868", "869", "876",
+]);
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function findContactByPhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "").slice(-10);
@@ -79,7 +94,7 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   // +420 number still failed) and this business only serves US leads, so
   // there's no reason to burn a Twilio call (and log a confusing failure)
   // on a number already known to be out of scope.
-  if (!/^\+1\d{10}$/.test(toFormatted)) {
+  if (!/^\+1\d{10}$/.test(toFormatted) || FOREIGN_NANP_AREA_CODES.has(toFormatted.slice(2, 5))) {
     logMessage({ channel: "sms", direction: "outbound", contactId, sourceType, sourceId, to: toFormatted, from: null, body: "", bodyPreview: "", status: "failed", failReason: "international_number_blocked" });
     return { ok: false, reason: "international_number_blocked" };
   }
