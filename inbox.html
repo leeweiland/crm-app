@@ -213,6 +213,7 @@
   .email-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); }
   .email-bubble-icon { flex-shrink: 0; }
   .email-bubble-subject { font-weight: 700; font-size: .85rem; color: var(--pra-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .email-bubble-from { font-size: .7rem; font-weight: 400; color: var(--pra-dim); opacity: .7; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .email-bubble-preview { font-size: .8rem; font-weight: 400; color: var(--pra-dim); padding: 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .email-bubble.expanded .email-bubble-preview { display: none; }
   .email-bubble-body { display: none; background: #fff; }
@@ -262,13 +263,6 @@
      (see inbox_backend.js, not client-controlled), this is display-only so
      teammates are visible but never look clickable. */
   .compose-from-select { font-size: .78rem; padding: 5px 10px; max-width: 200px; }
-  .compose-subject-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-  /* min-width:0 is load-bearing -- .pra-input's own width:100% otherwise
-     fights flex:1 (a flex item's default min-width is its content size,
-     not 0), so the input refused to shrink and pushed the email label
-     past the panel's right edge instead of sitting right next to it. */
-  .compose-subject-row .pra-input { flex: 1; min-width: 0; margin-bottom: 0; }
-  .compose-from-email { font-size: .76rem; color: var(--pra-dim); white-space: nowrap; flex-shrink: 0; }
 
   /* Native date/time pickers render a black-on-black calendar icon on a
      dark background otherwise -- color-scheme flips both to the light
@@ -1210,6 +1204,14 @@ document.getElementById('saveConfirmBtn').onclick = async () => {
 };
 
 // ── Chat: thread panel ────────────────────────────────────────────────────
+// "Coach Lee <lee@pacificrimathletics.com>" -> "lee@pacificrimathletics.com"
+// -- item.from is a raw header string for Gmail-captured sends (gmail_
+// backend.js) but a plain address for SES sends (email_backend.js), same
+// two shapes that server-side extractEmailAddress already handles.
+function extractEmailAddr(raw) {
+  const m = String(raw || '').match(/<([^>]+)>/);
+  return (m ? m[1] : raw || '').trim();
+}
 function emailBubbleHtml(item, idx) {
   const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
   // A click can't happen without an open first -- pixel-based open tracking
@@ -1220,7 +1222,11 @@ function emailBubbleHtml(item, idx) {
   return `
     <div class="bubble-row ${item.direction}">
       <div class="email-bubble" data-email-toggle="${idx}">
-        <div class="email-bubble-head"><span class="email-bubble-icon">📧</span><span class="email-bubble-subject">${escapeHtml(item.subject || '(no subject)')}</span></div>
+        <div class="email-bubble-head">
+          <span class="email-bubble-icon">📧</span>
+          <span class="email-bubble-subject">${escapeHtml(item.subject || '(no subject)')}</span>
+          ${item.from ? `<span class="email-bubble-from" title="${escapeHtml(item.direction === 'outbound' ? 'From' : 'To')}: ${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}">${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}</span>` : ''}
+        </div>
         <div class="email-bubble-preview">${escapeHtml((item.bodyPreview || '').replace(/<[^>]+>/g, ' ')).trim()}</div>
         <div class="email-bubble-body"><iframe data-src="${idx}"></iframe></div>
         <div class="email-bubble-meta">
@@ -1363,7 +1369,7 @@ function renderThread() {
         <div class="compose-toolbar-row">
           ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
             <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
-              ${teamUsers.map(u => `<option value="${u.id}" data-email="${escapeHtml(u.email)}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}
+              ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}
             </select>
           ` : ''}
           <div class="compose-channel-toggle">
@@ -1382,14 +1388,7 @@ function renderThread() {
       ${composeView === 'summary' ? `
         <div class="ai-summary-panel" id="aiSummaryPanel"><div class="pra-muted">Loading summary…</div></div>
       ` : `
-        ${composeChannel === 'email' ? `
-          <div class="compose-subject-row">
-            <input class="pra-input" id="composeSubject" placeholder="Subject"/>
-            <span class="compose-from-email" id="composeFromEmail">${escapeHtml(
-              (teamUsers.length > 1 && currentUser?.role === 'admin' ? teamUsers.find(u => u.id === currentUser?.id) : currentUser)?.email || ''
-            )}</span>
-          </div>
-        ` : ''}
+        ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
         <div class="compose-row">
           <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
           <button class="pra-btn" id="composeSendBtn">Send</button>
@@ -1424,11 +1423,6 @@ function renderThread() {
     });
     panel.querySelectorAll('.ai-gen-btn').forEach(btn => btn.onclick = () => generateAiContent(btn.dataset.aiCh, btn));
   }
-  const fromSelect = document.getElementById('composeFromUserId');
-  if (fromSelect) fromSelect.onchange = () => {
-    const emailEl = document.getElementById('composeFromEmail');
-    if (emailEl) emailEl.textContent = fromSelect.selectedOptions[0]?.dataset.email || '';
-  };
   if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
   else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;
