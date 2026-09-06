@@ -13,7 +13,7 @@ export const IMPORT_JOBS_FILE = "crm_import_jobs.json";
 // Account-specific base URL, same convention already established elsewhere
 // in this business's other apps (build_campaign_cache.js etc) -- not a
 // secret, doesn't belong in .env.
-const AC_BASE = "https://pacificrimathletics.api-us1.com";
+export const AC_BASE = "https://pacificrimathletics.api-us1.com";
 const CLOSE_BASE = "https://api.close.com/api/v1";
 
 function acConfigured() { return !!process.env.AC_API_KEY; }

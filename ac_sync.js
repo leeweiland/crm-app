@@ -14,8 +14,42 @@
 import { readJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
-import { acConfigured, fetchAcOneToOneCampaigns, fetchAcContactActivities, acCampaignName } from "./import_backend.js";
+import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
+import { acConfigured, fetchAcOneToOneCampaigns, fetchAcContactActivities, acCampaignName, AC_BASE } from "./import_backend.js";
 import { getRecentlyActiveContactIds } from "./sqlite_inbox.js";
+
+// AC's /campaigns collection never carries the actual sent HTML -- only
+// stats/metadata (confirmed by inspecting a real campaign object's own
+// field list). The real content lives on a separate `message` resource,
+// reachable via the campaign's own message_id. Cached by campaign id
+// (not message id) since callers only ever have the campaign id in hand,
+// and the same campaign is shared across every contact who received it --
+// one real fetch per campaign, not one per contact.
+const campaignHtmlCache = new Map();
+async function getAcCampaignHtml(campaignId) {
+  if (campaignHtmlCache.has(campaignId)) return campaignHtmlCache.get(campaignId);
+  let html = "";
+  try {
+    const headers = { "Api-Token": process.env.AC_API_KEY };
+    const cr = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers });
+    const messageId = cr.ok ? (await cr.json()).campaign?.message_id : null;
+    if (messageId) {
+      const mr = await fetch(`${AC_BASE}/api/3/messages/${messageId}`, { headers });
+      if (mr.ok) html = (await mr.json()).message?.html || "";
+    }
+  } catch (e) {
+    console.error("[ac_sync] fetching campaign HTML failed for", campaignId, e.message);
+  }
+  campaignHtmlCache.set(campaignId, html);
+  return html;
+}
+// bodyPreview needs plain text -- same reasoning as gmail_backend.js's own
+// plainPreview (renderers here already escape/strip, so a raw <br>-free
+// plain-text snippet is what they expect), duplicated rather than shared
+// since pulling in a whole other module for one regex isn't worth it.
+function plainPreviewFromHtml(html, len) {
+  return String(html || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim().slice(0, len);
+}
 
 // fetchAcOneToOneCampaigns is a full paginated account sweep (see its own
 // comment) -- fine once, wasteful to repeat on every single contact-open.
@@ -50,11 +84,12 @@ export async function syncAcEngagementForContact(contactId) {
   for (const c of oneToOne.filter(x => x.email === email)) {
     const pid = `ac_1to1:${c.id}`;
     if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
+    const html = await getAcCampaignHtml(c.id);
     logMessage({
       channel: "email", direction: "outbound", contactId,
       sourceType: "ac_campaign", sourceId: null, providerMessageId: pid,
       to: contact.email, from: null, subject: c.subject || "(no subject)",
-      body: "", bodyPreview: c.subject || "",
+      body: html, bodyPreview: html ? plainPreviewFromHtml(html, 140) : (c.subject || ""),
       status: c.clicks > 0 ? "clicked" : c.opens > 0 ? "opened" : "sent",
       createdAt: c.sdate,
     });
@@ -68,25 +103,67 @@ export async function syncAcEngagementForContact(contactId) {
   for (const l of logs) {
     const pid = `ac_send:${l.id}`;
     if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
-    const name = await acCampaignName(l.campaign);
+    const [name, html] = await Promise.all([acCampaignName(l.campaign), getAcCampaignHtml(l.campaign)]);
     logMessage({
       channel: "email", direction: "outbound", contactId,
       sourceType: "ac_campaign", sourceId: null, providerMessageId: pid,
-      to: contact.email, from: null, subject: name, body: "", bodyPreview: name,
+      to: contact.email, from: null, subject: name,
+      body: html, bodyPreview: html ? plainPreviewFromHtml(html, 140) : name,
       status: "sent", createdAt: l.tstamp,
     });
   }
   for (const c of linkData) {
     const pid = `ac_click:${c.id}`;
     if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
-    const name = await acCampaignName(c.campaign);
+    const [name, html] = await Promise.all([acCampaignName(c.campaign), getAcCampaignHtml(c.campaign)]);
     logMessage({
       channel: "email", direction: "outbound", contactId,
       sourceType: "ac_campaign", sourceId: null, providerMessageId: pid,
       to: contact.email, from: null, subject: name,
-      body: `Clicked a link (${c.times || 1}x)`, bodyPreview: name,
+      body: html, bodyPreview: html ? plainPreviewFromHtml(html, 140) : name,
       status: "clicked", createdAt: c.tstamp,
     });
+  }
+
+  // Repairs empty-body AC-sourced records -- both this sync's own
+  // ("ac_campaign", created before this fetch existed) AND the original
+  // week-long historical import's ("ac_import", import_backend.js's
+  // mergeAcCampaigns/mergeAcContactActivities, which never fetched real
+  // content either -- same underlying AC API gap, not a flaw specific to
+  // either import path). Only ever fills in body/bodyPreview on a record
+  // that already exists with those fields empty -- never touches anything
+  // else on it, never creates or removes a record.
+  //
+  // logs/linkData (already fetched above) map each activity id straight
+  // to its campaign id, which is exactly what's missing from a record's
+  // own id field alone. The old import stored this as acCampaignId/
+  // acActivityId (not providerMessageId) -- this sync's own records use
+  // providerMessageId instead, but in the identical `ac_send:<activity
+  // id>`/`ac_click:<activity id>` shape, so the same lookup covers both.
+  const activityCampaignId = new Map();
+  for (const l of logs) activityCampaignId.set(`ac_send:${l.id}`, l.campaign);
+  for (const c of linkData) activityCampaignId.set(`ac_click:${c.id}`, c.campaign);
+  const resolveCampaignId = (m) => {
+    if (m.acCampaignId) return m.acCampaignId; // old import: 1:1 campaign row
+    if (m.acActivityId) return activityCampaignId.get(m.acActivityId); // old import: send/click row
+    if (m.providerMessageId?.startsWith("ac_1to1:")) return m.providerMessageId.slice("ac_1to1:".length);
+    return activityCampaignId.get(m.providerMessageId); // this sync's own send/click rows
+  };
+  const existing = getContactMessages(contactId).filter(m => (m.sourceType === "ac_campaign" || m.sourceType === "ac_import") && !m.body);
+  if (existing.length) {
+    const repairs = new Map(); // message id -> html
+    for (const m of existing) {
+      const campaignId = resolveCampaignId(m);
+      if (!campaignId) continue; // e.g. a campaign AC has since deleted -- confirmed live (campaign 3457, 404) that this is unrecoverable, not a bug
+      const html = await getAcCampaignHtml(campaignId);
+      if (html) repairs.set(m.id, html);
+    }
+    if (repairs.size) {
+      updateContactMessagesByIds(contactId, new Set(repairs.keys()), m => {
+        m.body = repairs.get(m.id);
+        m.bodyPreview = plainPreviewFromHtml(m.body, 140);
+      });
+    }
   }
 }
 
