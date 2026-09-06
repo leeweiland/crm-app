@@ -14,6 +14,7 @@ import { sendSms } from "./sms_backend.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { claimVisitorHistory } from "./tracking_backend.js";
+import { getPublicBaseUrl } from "./integrations_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -849,10 +850,16 @@ async function sendInternalBookingNotification(booking, eventType, contact) {
   const start = new Date(booking.startAt);
   const when = start.toLocaleString("en-US", { timeZone: booking.timezone || "America/Anchorage", dateStyle: "full", timeStyle: "short" });
   const formAnswersText = formatFormAnswers(booking.formAnswers);
+  // Same public cancel link handed to the lead in their own confirmation
+  // (book.html's "Need to cancel?") and to the staff calendar event's own
+  // description -- lets whoever's on this notify list cancel straight from
+  // their inbox without opening the CRM.
+  const manageUrl = `${getPublicBaseUrl()}/book/${eventType.slug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
   const html = `<p><b>${escapeHtml(booking.name)}</b> just booked <b>${escapeHtml(eventType.name)}</b>.</p>
     <p><b>When:</b> ${when}<br/><b>Email:</b> ${escapeHtml(booking.email)}${booking.phone ? `<br/><b>Phone:</b> ${escapeHtml(booking.phone)}` : ""}</p>
     ${formAnswersText ? `<p><b>Form answers:</b><br/>${escapeHtml(formAnswersText).replace(/\n/g, "<br/>")}</p>` : ""}
-    ${booking.notes ? `<p><b>Application &amp; booking answers:</b><br/>${escapeHtml(booking.notes).replace(/\n/g, "<br/>")}</p>` : ""}`;
+    ${booking.notes ? `<p><b>Application &amp; booking answers:</b><br/>${escapeHtml(booking.notes).replace(/\n/g, "<br/>")}</p>` : ""}
+    <p><a href="${manageUrl}">Need to cancel this booking?</a></p>`;
   await Promise.all(recipients.map(to => sendEmail({
     to, subject: `New booking: ${booking.name} — ${eventType.name}`,
     blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
@@ -940,6 +947,15 @@ export async function handleSchedulingRequest(req, res, url) {
     const start = new Date(startAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
     const calendarId = calendar.email || getCalendarId();
+    // Generated up front (not inline in the booking object below) so the
+    // same id/token can also go into the staff calendar event's description
+    // -- staff needs a way to cancel from the calendar/notification email
+    // without opening the CRM, and this is the same public cancel link the
+    // lead's own confirmation already uses (see book.html's "Need to
+    // cancel?" link), just handed to staff instead.
+    const bookingId = randomUUID();
+    const cancelToken = randomBytes(24).toString("hex");
+    const manageUrl = `${getPublicBaseUrl()}/book/${et.slug}/manage?booking=${bookingId}&token=${cancelToken}`;
 
     let calendarEventId = null;
     if (calendarConfigured()) {
@@ -960,6 +976,8 @@ export async function handleSchedulingRequest(req, res, url) {
         if (formAnswersText) calendarDescriptionLines.push("", formAnswersText);
         if (notes) calendarDescriptionLines.push("", notes);
         calendarDescriptionLines.push("", "Booked via CRM scheduling.");
+        // Staff-only -- the lead never sees this event or its description.
+        calendarDescriptionLines.push("", `Need to cancel? ${manageUrl}`);
         const created = await createCalendarEvent({
           summary: `${et.name} — ${name}`,
           description: calendarDescriptionLines.join("\n"),
@@ -972,7 +990,7 @@ export async function handleSchedulingRequest(req, res, url) {
     }
 
     const booking = {
-      id: randomUUID(), eventTypeId: et.id, contactId: contact.id,
+      id: bookingId, eventTypeId: et.id, contactId: contact.id,
       name, email: String(email).trim().toLowerCase(), phone: phone || "", notes,
       answers: answers || {},
       // Persisted (not just passed straight into the trigger payload below)
@@ -984,7 +1002,7 @@ export async function handleSchedulingRequest(req, res, url) {
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || calendar.availability.timezone,
       status: "confirmed", calendarEventId, calendarId,
-      cancelToken: randomBytes(24).toString("hex"),
+      cancelToken,
       remindersSent: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
     };
