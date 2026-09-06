@@ -15,6 +15,7 @@ import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
+function escapeHtmlBasic(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
 export const CALLS_FILE = "crm_calls.json";
 export const TASKS_FILE = "crm_tasks.json";
@@ -347,7 +348,7 @@ export async function handleInboxRequest(req, res, url) {
   // logged-in staff member's own address (see email_backend.js's `from`
   // override), not the single shared campaign sender.
   if (p === "/api/inbox/send" && req.method === "POST") {
-    const { contactId, channel, subject, body, fromUserId } = await readJsonBody(req);
+    const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta } = await readJsonBody(req);
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find(c => c.id === contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
@@ -372,7 +373,15 @@ export async function handleInboxRequest(req, res, url) {
       // the AWS console, i.e. nearly every real lead. Falls back to SES
       // for anyone who hasn't (re)connected Gmail with the send scope yet
       // rather than hard-failing their send.
-      const html = body.replace(/\n/g, "<br/>");
+      const userHtml = body.replace(/\n/g, "<br/>");
+      // Reply button (inbox.html) sends the original message's real HTML
+      // back verbatim so the recipient sees a properly formatted quoted
+      // thread, not a plain-text-mangled copy -- same reasoning as why the
+      // email bubble itself renders item.body through an iframe instead of
+      // stripping it.
+      const html = quotedHtml
+        ? `${userHtml}<br/><br/><div style="border-left:3px solid #ccc;margin:8px 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
+        : userHtml;
       const result = (sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
         ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", html, contactId, sourceType: "inbox", sourceId: sender.id })
         : await sendEmail({

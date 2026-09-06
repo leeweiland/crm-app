@@ -262,6 +262,12 @@
   .compose-row { display: flex; gap: 8px; align-items: flex-end; }
   #composeSendBtn.reply-mode { background: var(--pra-green); color: #06210a; }
   .compose-row textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; }
+  .compose-quote-preview { border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
+  .compose-quote-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--pra-panel-2); font-size: .72rem; color: var(--pra-dim); }
+  .compose-quote-preview-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .compose-quote-preview-head button { flex-shrink: 0; background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .9rem; padding: 0 4px; line-height: 1; }
+  .compose-quote-preview-head button:hover { color: var(--pra-white); }
+  #composeQuoteFrame { display: block; width: 100%; height: 160px; border: none; background: #fff; }
   .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
   /* Shows who a reply sends as -- the sender is always the logged-in user
      (see inbox_backend.js, not client-controlled), this is display-only so
@@ -536,7 +542,7 @@ let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
 let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
-let composeReplyTo = null; // set by an email bubble's Reply button; { subject, quoted } | null
+let composeReplyTo = null; // set by an email bubble's Reply button; { subject, quotedHtml, quotedMeta } | null
 let currentUser = null, teamUsers = [];
 let convoFilter = 'unresponded', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', convoOwner = '', ctxMenuConvo = null, longPressTimer = null;
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
@@ -1222,20 +1228,6 @@ function extractEmailAddr(raw) {
   const m = String(raw || '').match(/<([^>]+)>/);
   return (m ? m[1] : raw || '').trim();
 }
-// For quoting an inbound email's HTML body into a plain-text reply --
-// preserves paragraph/line breaks (unlike a plain tag-strip) so the quoted
-// text still reads naturally under "> " prefixes.
-function stripHtmlToPlainText(html) {
-  return String(html || '')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<head[\s\S]*?<\/head>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
-    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-}
 function emailBubbleHtml(item, idx) {
   const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
   // A click can't happen without an open first -- pixel-based open tracking
@@ -1427,6 +1419,15 @@ function renderThread() {
           <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
           <button class="pra-btn ${composeChannel === 'email' && composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${composeChannel === 'email' && composeReplyTo ? 'Reply' : 'Send'}</button>
         </div>
+        ${composeChannel === 'email' && composeReplyTo ? `
+          <div class="compose-quote-preview">
+            <div class="compose-quote-preview-head">
+              <span title="${escapeHtml(composeReplyTo.quotedMeta)}">${escapeHtml(composeReplyTo.quotedMeta)}</span>
+              <button type="button" id="composeQuoteRemoveBtn" title="Remove quoted text">✕</button>
+            </div>
+            <iframe id="composeQuoteFrame" sandbox=""></iframe>
+          </div>
+        ` : ''}
         ${composeChannel === 'email' && !emailOk ? '<div class="compose-hint">This contact has no email on file.</div>' : ''}
         ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
       `}
@@ -1451,10 +1452,15 @@ function renderThread() {
     e.stopPropagation();
     const item = items[Number(el.dataset.replyIdx)];
     const fromAddr = extractEmailAddr(item.from) || (c.contact ? `${c.contact.first || ''} ${c.contact.last || ''}`.trim() : '') || 'they';
-    const quoted = stripHtmlToPlainText(item.body || item.bodyPreview || '').split('\n').map(l => '> ' + l).join('\n');
     composeReplyTo = {
       subject: /^re:/i.test(item.subject || '') ? item.subject : `Re: ${item.subject || ''}`,
-      quoted: `\n\nOn ${fmtDate(item.at)}, ${fromAddr} wrote:\n${quoted}`,
+      // The real HTML, not a plain-text strip -- rendered read-only below
+      // the compose box (see the compose-quote-preview iframe) and sent
+      // through to the recipient verbatim on Send, same reasoning as why
+      // the email bubble itself renders item.body through an iframe
+      // instead of flattening it.
+      quotedHtml: item.body || `<p style="color:#888">${escapeHtml(item.bodyPreview || '(no content stored)')}</p>`,
+      quotedMeta: `On ${fmtDate(item.at)}, ${fromAddr} wrote:`,
     };
     composeChannel = 'email';
     composeView = 'compose';
@@ -1462,7 +1468,7 @@ function renderThread() {
     const subjEl = document.getElementById('composeSubject');
     const bodyEl = document.getElementById('composeBody');
     if (subjEl) subjEl.value = composeReplyTo.subject;
-    if (bodyEl) { bodyEl.value = composeReplyTo.quoted; bodyEl.setSelectionRange(0, 0); bodyEl.focus(); }
+    if (bodyEl) { bodyEl.value = ''; bodyEl.focus(); }
   });
   threadEl.scrollTop = threadEl.scrollHeight;
 
@@ -1474,6 +1480,12 @@ function renderThread() {
       renderThread();
     });
     panel.querySelectorAll('.ai-gen-btn').forEach(btn => btn.onclick = () => generateAiContent(btn.dataset.aiCh, btn));
+  }
+  if (composeChannel === 'email' && composeReplyTo) {
+    const quoteFrame = document.getElementById('composeQuoteFrame');
+    if (quoteFrame) quoteFrame.srcdoc = `<style>body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:8px;color:#333}</style>${composeReplyTo.quotedHtml}`;
+    const quoteRemoveBtn = document.getElementById('composeQuoteRemoveBtn');
+    if (quoteRemoveBtn) quoteRemoveBtn.onclick = () => { composeReplyTo = null; renderThread(); };
   }
   if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
   else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
@@ -1646,9 +1658,14 @@ async function sendComposeMessage() {
   const fromUserId = composeChannel === 'email' ? document.getElementById('composeFromUserId')?.value : undefined;
   const btn = document.getElementById('composeSendBtn');
   btn.disabled = true; btn.textContent = 'Sending…';
+  const isReply = composeChannel === 'email' && composeReplyTo;
   const r = await fetch('/api/inbox/send', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contactId: selectedConvo.contactId, channel: composeChannel, subject, body, fromUserId }),
+    body: JSON.stringify({
+      contactId: selectedConvo.contactId, channel: composeChannel, subject, body, fromUserId,
+      quotedHtml: isReply ? composeReplyTo.quotedHtml : undefined,
+      quotedMeta: isReply ? composeReplyTo.quotedMeta : undefined,
+    }),
   });
   const d = await r.json();
   btn.disabled = false; btn.textContent = composeChannel === 'email' && composeReplyTo ? 'Reply' : 'Send';
