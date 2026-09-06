@@ -31,7 +31,7 @@ import { handleGmailRequest } from "./gmail_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { readJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { sqliteInboxAvailable, queryConversationsSqlite } from "./sqlite_inbox.js";
+import { sqliteInboxAvailable } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Explicit path, not dotenv's default (process.cwd()) -- the preview
@@ -85,27 +85,16 @@ setInterval(() => {
 // Warms what a fresh container otherwise pays for on the FIRST real
 // request instead of at boot: crm_contacts.json (~190MB -- readJson's own
 // mtime-cache means this is a genuine no-op on every later call, but the
-// very first parse after a deploy has nothing to hit), opening the SQLite
-// conversations DB (sqliteInboxAvailable's schema-check/ALTER TABLE
-// statements), and -- the part that turned out to still be missing --
-// actually running the sidebar's own default query through it. Opening a
-// SQLite connection doesn't pull its index pages into the OS's disk
-// cache; only a real query touching those B-tree pages does, and a fresh
-// container's page cache is just as cold as its in-process one. Confirmed
-// live (2026-09-06): after adding the first two warmups, the Inbox was
-// STILL taking 30-40s on the first load after every redeploy -- this
-// query is what that gap was actually paying for. Same params
-// inbox_backend.js's GET /api/inbox/conversations uses with no filters
-// applied (the sidebar's real default view), including its lazy preview-
-// text fix-on-read (see queryConversationsSqlite) -- so those page-scoped
-// writes land here too, not on whoever's request happens to be first.
+// very first parse after a deploy has nothing to hit) and opening the
+// SQLite conversations DB (sqliteInboxAvailable's schema-check/ALTER
+// TABLE statements). Both cheap (a few seconds), so worth paying BEFORE
+// .listen() -- the server isn't reachable at all yet regardless, so this
+// adds no real downtime.
 function warmCaches() {
   const t0 = Date.now();
   try {
     readJson(CONTACTS_FILE, []);
-    if (sqliteInboxAvailable()) {
-      queryConversationsSqlite({ channel: null, statusFilter: "", typeFilter: "", ownerFilter: "", bucket: "all", sortDir: "newest", search: "", limit: 40, offset: 0 });
-    }
+    sqliteInboxAvailable();
     console.log(`[warmup] caches primed in ${Date.now() - t0}ms`);
   } catch (e) {
     console.error("[warmup] failed (non-fatal, first real request will just pay the cost instead):", e.message);
