@@ -53,10 +53,15 @@ export async function getAcCampaignHtml(campaignId) {
     let html = "";
     try {
       const headers = { "Api-Token": process.env.AC_API_KEY };
-      const cr = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers });
+      // Timeout matters even more here than in the scheduler batch below --
+      // this is also called live from inbox_backend.js's contact-activity
+      // endpoint, so a hung AC response would otherwise hang that request
+      // (and, via guardedTick, potentially the whole scheduler too when
+      // called from the batch instead).
+      const cr = await fetch(`${AC_BASE}/api/3/campaigns/${campaignId}`, { headers, signal: AbortSignal.timeout(10000) });
       const messageId = cr.ok ? (await cr.json()).campaign?.message_id : null;
       if (messageId) {
-        const mr = await fetch(`${AC_BASE}/api/3/messages/${messageId}`, { headers });
+        const mr = await fetch(`${AC_BASE}/api/3/messages/${messageId}`, { headers, signal: AbortSignal.timeout(10000) });
         if (mr.ok) html = (await mr.json()).message?.html || "";
       }
     } catch (e) {
@@ -238,11 +243,19 @@ export const AC_REF_FILL_STATE_FILE = "crm_ac_ref_fill_state.json";
 const AC_REF_FILL_BATCH_MS = 20000; // leaves headroom inside the 30s tick
 const MSG_BY_CONTACT_DIR = "msg_by_contact";
 
+// A hung (not erroring, just never responding) AC request would otherwise
+// block this call forever -- and since this runs inside the scheduler's
+// own guardedTick, a tick that never returns means _tickRunning never
+// clears, which skips every OTHER scheduled phase (Gmail polling,
+// campaign sends, etc.) right along with it. Same fix gmail_backend.js's
+// gmailFetchTimeout already applies to its own calls, for the identical
+// reason.
+function acFetchTimeout() { return AbortSignal.timeout(10000); }
 async function fetchAcWithRetry(url) {
   const headers = { "Api-Token": process.env.AC_API_KEY };
   for (let attempt = 0; attempt < 5; attempt++) {
     let r;
-    try { r = await fetch(url, { headers }); }
+    try { r = await fetch(url, { headers, signal: acFetchTimeout() }); }
     catch { await new Promise(res => setTimeout(res, 500 * (attempt + 1))); continue; }
     if (r.ok) return r;
     if (r.status === 429 || r.status >= 500) {
