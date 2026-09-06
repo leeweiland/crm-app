@@ -27,8 +27,22 @@
   .wf-submenu { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--pra-border); flex-wrap: wrap; }
   .wf-submenu button { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .84rem; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
   .wf-submenu button:hover { color: var(--pra-white); }
-  .wf-canvas { display: flex; flex-direction: column; align-items: center; gap: 0; }
-  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; max-width: 100%; text-align: center; cursor: pointer; margin-bottom: 4px; }
+  /* Pan/zoom canvas -- identical mechanics to automation-builder.html's,
+     ported wholesale so Email Automations and SMS Sequences behave and
+     look the same. */
+  .ab-canvas-wrap { position: relative; overflow: hidden; padding: 20px 0; height: 68vh; border: 1px solid var(--pra-border); border-radius: 10px; background-image: radial-gradient(var(--pra-border) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
+  .ab-canvas-wrap.panning { cursor: grabbing; }
+  .ab-canvas-zoom-layer { transform-origin: 0 0; }
+  .wf-canvas { display: flex; flex-direction: column; align-items: center; min-width: 600px; width: max-content; padding: 0 40vw; }
+  .ab-zoom-controls { position: absolute; left: 14px; bottom: 14px; display: flex; align-items: center; gap: 6px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 4px 6px; }
+  .ab-zoom-controls button { background: none; border: none; color: #fff; width: 24px; height: 24px; cursor: pointer; font-size: 1rem; border-radius: 4px; }
+  .ab-zoom-controls button:hover { background: rgba(255,255,255,0.08); }
+  .ab-zoom-controls span { font-size: .74rem; color: var(--pra-dim); min-width: 34px; text-align: center; }
+  .trigger-row { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center; gap: 12px; }
+  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 260px; text-align: center; position: relative; cursor: pointer; }
+  .trigger-card .step-actions { position: absolute; top: 6px; right: 8px; }
+  .add-trigger-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 10px; padding: 14px 18px; min-width: 180px; cursor: pointer; font-size: .82rem; }
+  .add-trigger-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .chain-arrow { color: var(--pra-dim); font-size: 1.1rem; line-height: 1; }
   /* Same insert-between-steps affordance as automation-builder.html's
      canvas, for visual/interaction parity between the two step editors. */
@@ -97,7 +111,17 @@
         <button id="enrolledMenuBtn">Enrolled Contacts</button>
       </div>
 
-      <div class="wf-canvas" id="wfCanvas"></div>
+      <div class="ab-canvas-wrap" id="canvasWrap">
+        <div class="ab-canvas-zoom-layer" id="zoomLayer">
+          <div class="wf-canvas" id="wfCanvas"></div>
+        </div>
+        <div class="ab-zoom-controls">
+          <button type="button" id="zoomOutBtn">&minus;</button>
+          <span id="zoomPct">100%</span>
+          <button type="button" id="zoomInBtn">+</button>
+          <button type="button" id="zoomResetBtn" title="Reset view">&#8690;</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -107,7 +131,6 @@
     <div class="pra-h2" style="margin-bottom:16px">Start Sequence When...</div>
     <div class="field"><label class="pra-label">Trigger</label>
       <select class="pra-select" id="triggerType">
-        <option value="">None (only enrolled via a Flow or manually)</option>
         <option value="list_subscribe">Contact subscribes to a list</option>
         <option value="tag_added">Tag is added</option>
         <option value="email_opened">Any tracked email is opened</option>
@@ -137,6 +160,7 @@
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
+      <button class="pra-btn pra-btn-danger" id="deleteTriggerBtn" style="display:none">Remove</button>
     </div>
   </div>
 </div>
@@ -270,7 +294,6 @@ function renderOverview() {
 function trigLabel(trig) {
   trig = trig || {};
   const cfg = trig.config || {};
-  if (!trig.type) return 'No automatic trigger — enrolled via a Flow step or manually';
   if (trig.type === 'list_subscribe') return cfg.listId ? `Contact subscribes to "${escapeHtml(allLists.find(l => l.id === cfg.listId)?.name || '—')}"` : 'Contact subscribes to any list';
   if (trig.type === 'tag_added') return cfg.tagId ? `Tag "${escapeHtml(allTags.find(t => t.id === cfg.tagId)?.name || '—')}" is added` : 'Any tag is added';
   if (trig.type === 'page_visit') return cfg.urlContains ? `Contact visits page containing "${escapeHtml(cfg.urlContains)}"` : 'Contact visits any page';
@@ -362,17 +385,44 @@ function renderCanvas() {
     </div>
     <div class="chain-arrow">&darr;</div>
   ` : '';
+  // Same centered, side-by-side-when-multiple layout as automation-builder.html's
+  // trigger-row -- a single trigger centers on its own (flex justify-content:
+  // center with only one child), several lay out side by side, still centered
+  // as a group.
+  const triggers = workflow.triggers || [];
+  const triggerCardsHtml = triggers.length
+    ? triggers.map((t, i) => `
+      <div class="trigger-card" data-trigger-idx="${i}">
+        <div class="pra-label">Start sequence when</div>
+        <div style="margin-top:4px">${trigLabel(t)}</div>
+        <div class="step-actions"><button data-remove-trigger="${i}" title="Remove this trigger">&times;</button></div>
+      </div>
+    `).join('')
+    : `<div class="trigger-card" data-trigger-idx="new" style="border-style:dashed;color:var(--pra-dim)">
+        <div class="pra-label">Add a start trigger</div>
+        <div style="margin-top:4px;font-size:.8rem">No automatic trigger yet — enrolled via a Flow step or manually</div>
+      </div>`;
   canvas.innerHTML = `
-    <div class="trigger-card" id="triggerCardBtn">
-      <div class="pra-label">Start sequence when</div>
-      <div style="margin-top:4px">${trigLabel(workflow.trigger)}</div>
+    <div class="trigger-row">
+      ${triggerCardsHtml}
+      <button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>
     </div>
     ${!goalHtml && sorted.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
     ${goalHtml}
     ${stepHtml}
     <button class="add-step-btn" id="addStepBtn">+ Add Step</button>
   `;
-  document.getElementById('triggerCardBtn').onclick = () => openTriggerModalSynced();
+  canvas.querySelectorAll('[data-trigger-idx]').forEach(card => card.addEventListener('click', (e) => {
+    if (e.target.closest('[data-remove-trigger]')) return;
+    const idx = card.dataset.triggerIdx;
+    openTriggerModal(idx === 'new' ? null : Number(idx));
+  }));
+  canvas.querySelectorAll('[data-remove-trigger]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    workflow.triggers.splice(Number(btn.dataset.removeTrigger), 1);
+    renderCanvas(); saveDebounced();
+  }));
+  document.getElementById('addTriggerBtn').onclick = () => openTriggerModal(null);
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalsModal;
   document.getElementById('addStepBtn').onclick = () => { pendingInsertDelay = undefined; openModal('typePickerModal'); };
@@ -459,7 +509,7 @@ function saveDebounced() { clearTimeout(saveTimer); saveTimer = setTimeout(saveW
 async function saveWorkflow() {
   const r = await fetch('/api/workflows/' + workflow.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: workflow.name, trigger: workflow.trigger, steps: workflow.steps, conversionGoals: workflow.conversionGoals, recipientSettings: workflow.recipientSettings }),
+    body: JSON.stringify({ name: workflow.name, triggers: workflow.triggers, steps: workflow.steps, conversionGoals: workflow.conversionGoals, recipientSettings: workflow.recipientSettings }),
   });
   if (r.ok) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
 }
@@ -484,33 +534,36 @@ function updateTriggerTargetField() {
   document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
 }
 document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
-// Shared by both ways of opening this modal (the "Trigger" tab button and
-// the canvas card itself) -- the canvas card used to have its own onclick
-// that skipped this sync entirely and just called openModal() directly,
-// so it always showed whatever the form's last leftover state happened to
-// be (the select's default/first option on a fresh page load) instead of
-// the workflow's actual saved trigger. Confirmed live: adding the new
-// blank "None" option as the first <option> made this bug way more
-// obvious (every card-click opened showing "None" regardless of the real
-// trigger) even though the underlying bug predates that change.
-function openTriggerModalSynced() {
-  document.getElementById('triggerType').value = workflow.trigger.type;
+// null editingTriggerIndex means "adding a new trigger"; a number means
+// editing (and can be removed via) that entry in workflow.triggers -- same
+// multi-trigger model as automation-builder.html's.
+let editingTriggerIndex = null;
+function openTriggerModal(index) {
+  editingTriggerIndex = (index === null || index === undefined) ? null : index;
+  const trig = (editingTriggerIndex !== null && workflow.triggers[editingTriggerIndex]) || { type: 'list_subscribe', config: {} };
+  document.getElementById('triggerType').value = trig.type;
   updateTriggerTargetField();
-  if (workflow.trigger.type === 'list_subscribe') document.getElementById('triggerTarget').value = workflow.trigger.config.listId || '';
-  if (workflow.trigger.type === 'tag_added') document.getElementById('triggerTarget').value = workflow.trigger.config.tagId || '';
-  if (workflow.trigger.type === 'page_visit') document.getElementById('triggerPath').value = workflow.trigger.config.urlContains || '';
-  if (workflow.trigger.type === 'booking_created') document.getElementById('triggerTarget').value = workflow.trigger.config.eventTypeId || '';
+  if (trig.type === 'list_subscribe') document.getElementById('triggerTarget').value = trig.config.listId || '';
+  if (trig.type === 'tag_added') document.getElementById('triggerTarget').value = trig.config.tagId || '';
+  if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
+  if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
+  document.getElementById('deleteTriggerBtn').style.display = editingTriggerIndex !== null ? 'block' : 'none';
   openModal('triggerModal');
 }
-// The canvas trigger card (triggerCardBtn, wired in renderCanvas) is now
-// the only way to open this modal -- the redundant "Trigger" tab button
-// that used to sit next to Recipients/Enrolled Contacts was removed.
+document.getElementById('deleteTriggerBtn').onclick = () => {
+  if (editingTriggerIndex !== null) workflow.triggers.splice(editingTriggerIndex, 1);
+  closeModal('triggerModal');
+  renderCanvas(); saveDebounced();
+};
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
-  workflow.trigger = { type, config: type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
+  const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
     : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
-    : type === 'booking_created' ? { eventTypeId: target || null } : {} };
+    : type === 'booking_created' ? { eventTypeId: target || null } : {};
+  if (!workflow.triggers) workflow.triggers = [];
+  if (editingTriggerIndex !== null) workflow.triggers[editingTriggerIndex] = { type, config };
+  else workflow.triggers.push({ type, config });
   closeModal('triggerModal');
   renderCanvas(); saveDebounced();
   showToast('Trigger saved');
@@ -586,6 +639,146 @@ document.getElementById('enrolledMenuBtn').onclick = async () => {
   openModal('enrolledModal');
 };
 
+// ── Zoom / pan -- identical mechanics to automation-builder.html's ─────────
+let zoom = 1, panX = 0, panY = 0;
+function applyTransform() {
+  document.getElementById('zoomLayer').style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  document.getElementById('zoomPct').textContent = Math.round(zoom * 100) + '%';
+}
+document.getElementById('zoomInBtn').onclick = () => { zoom = Math.min(1.5, +(zoom + 0.1).toFixed(2)); applyTransform(); };
+document.getElementById('zoomOutBtn').onclick = () => { zoom = Math.max(0.4, +(zoom - 0.1).toFixed(2)); applyTransform(); };
+document.getElementById('zoomResetBtn').onclick = () => fitToScreen();
+
+// Centers the whole flow in the visible canvas at whatever zoom level (down
+// to 0.4x, never zoomed in past 100%) fits it without needing to pan --
+// .wf-canvas carries large left/right padding (40vw) as pan slack, which
+// would throw off a naive "measure the canvas element" fit, so this measures
+// the actual rendered cards/rows instead of the padded wrapper around them.
+function fitToScreen() {
+  const wrap = document.getElementById('canvasWrap');
+  const canvas = document.getElementById('wfCanvas');
+  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card')];
+  if (!cards.length) { zoom = 1; panX = 0; panY = 0; applyTransform(); return; }
+  const zoomLayer = document.getElementById('zoomLayer');
+  const prevTransform = zoomLayer.style.transform;
+  zoomLayer.style.transform = 'none'; // measure at true 1:1 scale, restored via applyTransform() below
+  const canvasRect = canvas.getBoundingClientRect();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  cards.forEach(el => {
+    const r = el.getBoundingClientRect();
+    minX = Math.min(minX, r.left - canvasRect.left); maxX = Math.max(maxX, r.right - canvasRect.left);
+    minY = Math.min(minY, r.top - canvasRect.top); maxY = Math.max(maxY, r.bottom - canvasRect.top);
+  });
+  zoomLayer.style.transform = prevTransform;
+  const wrapRect = wrap.getBoundingClientRect();
+  const contentWidth = maxX - minX, contentHeight = maxY - minY;
+  const margin = 40;
+  zoom = Math.max(0.4, Math.min(1, (wrapRect.width - margin * 2) / contentWidth, (wrapRect.height - margin * 2) / contentHeight));
+  panX = wrapRect.width / 2 - ((minX + maxX) / 2) * zoom;
+  panY = margin - minY * zoom; // top-anchored, not vertically centered -- a flow reads top-down, so it should start at the top of the view, not float in the middle
+  applyTransform();
+}
+// Re-fit on load and on resize -- NOT after every in-place render() (adding
+// a step, editing a card), which would yank away a pan/zoom the user just
+// set up mid-edit. Debounced so a window drag-resize doesn't recompute the
+// (layout-reading) fit on every intermediate frame.
+let fitResizeTimer;
+window.addEventListener('resize', () => { clearTimeout(fitResizeTimer); fitResizeTimer = setTimeout(fitToScreen, 150); });
+
+const canvasWrap = document.getElementById('canvasWrap');
+let panning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
+canvasWrap.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.step-card, .trigger-card, .add-step-btn, .ab-zoom-controls')) return;
+  panning = true; canvasWrap.classList.add('panning');
+  panStartX = e.clientX; panStartY = e.clientY; panOrigX = panX; panOrigY = panY;
+});
+window.addEventListener('mousemove', (e) => {
+  if (!panning) return;
+  panX = panOrigX + (e.clientX - panStartX);
+  panY = panOrigY + (e.clientY - panStartY);
+  applyTransform();
+});
+window.addEventListener('mouseup', () => { panning = false; canvasWrap.classList.remove('panning'); });
+
+// Vertical wheel zooms (no modifier key -- an infinite canvas like this has
+// no page scroll to preserve, so plain wheel is free to mean zoom, same as
+// Figma/Miro/etc). preventDefault stops the page itself from scrolling.
+// Zooms toward the cursor position, same focal-point math as the pinch-zoom
+// handler below.
+canvasWrap.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = canvasWrap.getBoundingClientRect();
+  const focalX = e.clientX - rect.left, focalY = e.clientY - rect.top;
+  const contentX = (focalX - panX) / zoom;
+  const contentY = (focalY - panY) / zoom;
+  const newZoom = Math.min(1.5, Math.max(0.4, +(zoom * (1 - e.deltaY * 0.001)).toFixed(2)));
+  panX = focalX - contentX * newZoom;
+  panY = focalY - contentY * newZoom;
+  zoom = newZoom;
+  applyTransform();
+}, { passive: false });
+
+// Touch equivalents -- one finger pans (same math as the mouse drag above),
+// two fingers pinch-zoom around whatever ratio the pinch distance changes
+// by. Mouse-only pan/zoom left the canvas completely unusable on phones/
+// tablets: no drag, no pinch. preventDefault on touchmove stops the whole
+// PAGE from scrolling/zooming while a finger is on the canvas -- without
+// it the browser's own touch handling fights with this custom one.
+let pinchStartDist = 0, pinchStartZoom = 1, touchMoved = false;
+function touchDist(t0, t1) { return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY); }
+canvasWrap.addEventListener('touchstart', (e) => {
+  // Cards fill nearly the whole canvas width on mobile, so excluding
+  // them from panning (like the mouse handler does) would make almost
+  // none of the canvas pannable. Instead let a touch starting on a card
+  // still arm panning -- touchmove below only commits to it past a small
+  // move threshold, so a plain tap (no threshold crossed) still reaches
+  // the card's own click handler and opens it as before.
+  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, [data-delete], [data-day-for], [data-unit-for], [data-body-for], [data-personalize-for]')) return;
+  if (e.touches.length === 1) {
+    panning = true; touchMoved = false; canvasWrap.classList.add('panning');
+    panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY; panOrigX = panX; panOrigY = panY;
+  } else if (e.touches.length === 2) {
+    panning = false; canvasWrap.classList.remove('panning');
+    pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+    pinchStartZoom = zoom;
+  }
+}, { passive: false });
+canvasWrap.addEventListener('touchmove', (e) => {
+  if (e.touches.length === 1 && panning) {
+    const dx = e.touches[0].clientX - panStartX, dy = e.touches[0].clientY - panStartY;
+    if (!touchMoved && Math.hypot(dx, dy) < 10) return; // still might be a tap on a card -- don't pan/preventDefault yet
+    touchMoved = true;
+    e.preventDefault();
+    panX = panOrigX + dx;
+    panY = panOrigY + dy;
+    applyTransform();
+  } else if (e.touches.length === 2 && pinchStartDist) {
+    e.preventDefault();
+    const dist = touchDist(e.touches[0], e.touches[1]);
+    const newZoom = Math.min(1.5, Math.max(0.4, +(pinchStartZoom * (dist / pinchStartDist)).toFixed(2)));
+    // Zoom around the pinch's midpoint, not the canvas's fixed
+    // transform-origin (0,0) -- without this the content visibly slides
+    // toward the top-left corner on every pinch instead of staying under
+    // your fingers. Standard "zoom toward a point" math: find what content
+    // coordinate is currently under the focal point, then solve for the
+    // pan that keeps that same content coordinate under the focal point
+    // at the new zoom level.
+    const rect = canvasWrap.getBoundingClientRect();
+    const focalX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+    const focalY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+    const contentX = (focalX - panX) / zoom;
+    const contentY = (focalY - panY) / zoom;
+    panX = focalX - contentX * newZoom;
+    panY = focalY - contentY * newZoom;
+    zoom = newZoom;
+    applyTransform();
+  }
+}, { passive: false });
+canvasWrap.addEventListener('touchend', (e) => {
+  panning = false; canvasWrap.classList.remove('panning');
+  if (e.touches.length < 2) pinchStartDist = 0;
+});
+
 (async function init() {
   if (!workflowId) { document.getElementById('wfName').value = 'No workflow selected'; return; }
   await loadRefs();
@@ -600,6 +793,7 @@ document.getElementById('enrolledMenuBtn').onclick = async () => {
   document.getElementById('activeLabel').textContent = workflow.active ? 'Active' : 'Inactive';
   renderOverview();
   renderCanvas();
+  fitToScreen();
 })();
 </script>
 </body>

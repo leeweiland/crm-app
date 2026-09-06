@@ -168,18 +168,36 @@ export function enrollContactInWorkflow(workflow, contactId, context) {
   writeJson(WF_ENROLLMENTS_FILE, enrollments);
 }
 
+// A sequence can have several OR'd start triggers (e.g. "any email open"
+// OR "any email click" both enrolling the same way) -- mirrors
+// automations_backend.js's fireTrigger/triggerMatches exactly.
+//
+// getWorkflowTriggers/workflow.triggers (array) is the current shape;
+// workflow.trigger (singular) is what every workflow stored before this
+// was migrated to the array model -- read here as a one-item array rather
+// than rewritten on every read, so existing sequences keep firing without
+// a one-time data migration script touching production.
+export function getWorkflowTriggers(workflow) {
+  if (Array.isArray(workflow.triggers)) return workflow.triggers;
+  return workflow.trigger ? [workflow.trigger] : [];
+}
+function triggerMatches(trig, type, { listId, tagId, path, formId, eventTypeId }) {
+  if (trig.type !== type) return false;
+  const cfg = trig.config || {};
+  if (type === "list_subscribe" && cfg.listId) return cfg.listId === listId;
+  if (type === "tag_added" && cfg.tagId) return cfg.tagId === tagId;
+  if (type === "page_visit" && cfg.urlContains) return String(path || "").includes(cfg.urlContains);
+  if (type === "form_submitted" && cfg.formId) return cfg.formId === formId;
+  if (type === "booking_created" && cfg.eventTypeId) return cfg.eventTypeId === eventTypeId;
+  return true;
+}
 export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, formId, eventTypeId, bookingId }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
-  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && w.trigger?.type === type);
+  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active);
   for (const workflow of workflows) {
-    const cfg = workflow.trigger.config || {};
-    let matches = true;
-    if (type === "list_subscribe" && cfg.listId) matches = cfg.listId === listId;
-    if (type === "tag_added" && cfg.tagId) matches = cfg.tagId === tagId;
-    if (type === "page_visit" && cfg.urlContains) matches = String(path || "").includes(cfg.urlContains);
-    if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
-    if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
-    if (matches) enrollContactInWorkflow(workflow, contactId, { bookingId });
+    if (getWorkflowTriggers(workflow).some(t => triggerMatches(t, type, { listId, tagId, path, formId, eventTypeId }))) {
+      enrollContactInWorkflow(workflow, contactId, { bookingId });
+    }
   }
 }
 
@@ -287,14 +305,14 @@ export async function handleWorkflowsRequest(req, res, url) {
 
   if (p === "/api/workflows" && req.method === "GET") {
     const workflows = readJson(WORKFLOWS_FILE, []);
-    return sendJson(res, 200, { workflows: workflows.map(w => ({ ...w, stats: workflowStats(w.id) })) });
+    return sendJson(res, 200, { workflows: workflows.map(w => ({ ...w, triggers: getWorkflowTriggers(w), stats: workflowStats(w.id) })) });
   }
   if (p === "/api/workflows" && req.method === "POST") {
     const { name } = await readJsonBody(req);
     const workflows = readJson(WORKFLOWS_FILE, []);
     const workflow = {
       id: randomUUID(), name: name || "Untitled Workflow", active: false,
-      trigger: { type: "tag_added", config: {} },
+      triggers: [{ type: "tag_added", config: {} }],
       steps: [], conversionGoals: [],
       recipientSettings: { runMode: "once", sendingDays: ["mon", "tue", "wed", "thu", "fri"], sendingWindow: { start: "09:00", end: "18:00" }, timezone: "America/Anchorage", blackoutDates: [] },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -311,7 +329,7 @@ export async function handleWorkflowsRequest(req, res, url) {
     if (!source) return sendJson(res, 404, { error: "Not found" });
     const copy = {
       id: randomUUID(), name: `Copy of ${source.name}`, active: false,
-      trigger: JSON.parse(JSON.stringify(source.trigger)),
+      triggers: JSON.parse(JSON.stringify(getWorkflowTriggers(source))),
       steps: JSON.parse(JSON.stringify(source.steps)),
       conversionGoals: JSON.parse(JSON.stringify(source.conversionGoals)),
       recipientSettings: JSON.parse(JSON.stringify(source.recipientSettings)),
@@ -328,12 +346,16 @@ export async function handleWorkflowsRequest(req, res, url) {
     const workflow = workflows.find(w => w.id === workflowMatch[1]);
     if (req.method === "GET") {
       if (!workflow) return sendJson(res, 404, { error: "Not found" });
-      return sendJson(res, 200, { workflow, stats: workflowStats(workflow.id), stepCounts: workflowStepCounts(workflow.id) });
+      return sendJson(res, 200, { workflow: { ...workflow, triggers: getWorkflowTriggers(workflow) }, stats: workflowStats(workflow.id), stepCounts: workflowStepCounts(workflow.id) });
     }
     if (req.method === "PATCH") {
       if (!workflow) return sendJson(res, 404, { error: "Not found" });
       const body = await readJsonBody(req);
-      for (const k of ["name", "trigger", "steps", "conversionGoals", "recipientSettings"]) if (k in body) workflow[k] = body[k];
+      // "trigger" (singular) no longer written -- kept accepted here only so
+      // an old cached client mid-edit during this deploy doesn't lose data;
+      // remove once confirmed nothing sends it anymore.
+      if ("trigger" in body && !("triggers" in body)) { workflow.triggers = [body.trigger]; delete workflow.trigger; }
+      for (const k of ["name", "triggers", "steps", "conversionGoals", "recipientSettings"]) if (k in body) workflow[k] = body[k];
       workflow.updatedAt = new Date().toISOString();
       writeJson(WORKFLOWS_FILE, workflows);
       return sendJson(res, 200, { ok: true, workflow });
