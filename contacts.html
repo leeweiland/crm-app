@@ -461,14 +461,32 @@ async function loadAndRenderKind(kind, rawItems, containerId, barId, sortSelectI
   const sel = document.getElementById(sortSelectId);
   if (sel) sel.value = mode;
   let items = rawItems, prefetchedCounts = null;
+  if (kind === 'tag') {
+    // One bulk fetch (one pass over every contact, server-side) instead of
+    // one request PER TAG -- at 3500+ tags in production, the old
+    // per-row/per-sort fetchCount pattern below fired that many separate
+    // full-contacts-array filters, confirmed live as the actual cause of
+    // the Contacts tab's 10+ second load. Covers both alpha (the default)
+    // and count sort modes, and renderManagedList's own prefetched-counts
+    // branch already skips any further per-row fetch once this is set.
+    try {
+      const r = await fetch('/api/tags/counts');
+      if (r.ok) {
+        const { counts } = await r.json();
+        prefetchedCounts = new Map(rawItems.map(item => [item.id, counts[item.id] ?? 0]));
+      }
+    } catch {}
+  }
   if (mode === 'manual') {
     items = [...rawItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   } else if (mode === 'alpha') {
     items = [...rawItems].sort((a, b) => a.name.localeCompare(b.name));
   } else if (mode === 'count') {
-    const counts = new Array(rawItems.length);
-    await runWithConcurrency(rawItems.map((item, i) => ({ item, i })), 6, async ({ item, i }) => { counts[i] = await fetchCount(kind, item); });
-    prefetchedCounts = new Map(rawItems.map((item, i) => [item.id, counts[i]]));
+    if (!prefetchedCounts) {
+      const counts = new Array(rawItems.length);
+      await runWithConcurrency(rawItems.map((item, i) => ({ item, i })), 6, async ({ item, i }) => { counts[i] = await fetchCount(kind, item); });
+      prefetchedCounts = new Map(rawItems.map((item, i) => [item.id, counts[i]]));
+    }
     items = [...rawItems].sort((a, b) => (prefetchedCounts.get(b.id) ?? -1) - (prefetchedCounts.get(a.id) ?? -1));
   }
   renderManagedList(kind, items, containerId, barId, nameHtmlFn, mode, prefetchedCounts);
@@ -856,7 +874,12 @@ function loadColumnPreferences() {
     const prefs = window.crmMe?.preferences?.contactsColumns;
     if (prefs?.visible) visibleColumns = prefs.visible;
     if (prefs?.order) columnOrder = prefs.order;
+    const sortPref = window.crmMe?.preferences?.contactsSort;
+    if (sortPref?.field) contactSort = sortPref;
   } catch {}
+}
+function saveContactSortPreference() {
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactsSort: contactSort }) });
 }
 function saveColumnPreferences() {
   fetch('/api/auth/me/preferences', {
@@ -961,6 +984,7 @@ function renderContactsTable() {
     else contactSort = { field: th.dataset.sort, dir: 1 };
     contactsPage = 1;
     loadContacts();
+    saveContactSortPreference();
   });
   wireColumnDrag();
 

@@ -396,6 +396,20 @@ export async function handleContactsRequest(req, res, url) {
   if (p === "/api/tags" && req.method === "GET") {
     return sendJson(res, 200, { tags: readJson(TAGS_FILE, []) });
   }
+  // One pass over every contact, one count per tag -- replaces the
+  // Contacts page's old per-tag `GET /api/contacts?tag=X&limit=1`, fired
+  // once per tag (3500+ of them in production) to paint the Tags panel's
+  // counts. Each of those repeated its OWN full 176K-contact filter;
+  // confirmed live as the actual cause of the Contacts tab's 10+ second
+  // load (not related to tonight's other changes despite the timing --
+  // this N+1 pattern predates them). One read + one loop here does the
+  // exact same total work in a single pass instead of 3500+ of them.
+  if (p === "/api/tags/counts" && req.method === "GET") {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const counts = {};
+    for (const c of contacts) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
+    return sendJson(res, 200, { counts });
+  }
   if (p === "/api/tags" && req.method === "POST") {
     const { name, color } = await readJsonBody(req);
     if (!name) return sendJson(res, 400, { error: "name is required" });
