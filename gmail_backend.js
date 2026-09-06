@@ -166,7 +166,7 @@ export async function handleGmailRequest(req, res, url) {
   // race against this server's live traffic every time (confirmed live
   // twice already tonight, see sqlite_inbox.js's backfillPreviewText
   // comment for the first).
-  if (p === "/api/auth/gmail/reconcile-recent" && req.method === "POST") {
+  if (p === "/api/auth/gmail/reconcile-recent" && (req.method === "POST" || req.method === "GET")) {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
