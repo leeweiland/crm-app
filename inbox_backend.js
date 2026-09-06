@@ -380,7 +380,10 @@ export async function handleInboxRequest(req, res, url) {
       // email bubble itself renders item.body through an iframe instead of
       // stripping it.
       const html = quotedHtml
-        ? `${userHtml}<br/><br/><div style="border-left:3px solid #ccc;margin:8px 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
+        // Real visible whitespace, not just a couple of <br/>s -- margin-top
+        // on the quote block so it reads as clearly separate from the new
+        // reply above it instead of looking bunched up against it.
+        ? `<div>${userHtml}</div><div style="border-left:3px solid #ccc;margin:28px 0 0 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
         : userHtml;
       const result = (sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
         ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", html, contactId, sourceType: "inbox", sourceId: sender.id })
