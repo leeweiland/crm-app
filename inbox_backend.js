@@ -138,6 +138,12 @@ export async function handleInboxRequest(req, res, url) {
       // inbound messages never count toward the unread badge or the
       // Unresponded filter, in the Hidden tab or anywhere else.
       const unreadCount = hidden ? 0 : g.unreadCount;
+      // Mirrors sqlite_inbox.js's queryConversationsSqlite hasUnseen exactly
+      // -- see its comment for why this has to be a separate flag from
+      // unreadCount/done.
+      const lastSeenAtMs = meta?.lastSeenAt ? new Date(meta.lastSeenAt).getTime() : null;
+      const lastInboundAtMs = g.lastInboundAt ? new Date(g.lastInboundAt).getTime() : null;
+      const hasUnseen = !hidden && !!lastInboundAtMs && (lastSeenAtMs == null || lastInboundAtMs > lastSeenAtMs);
       return {
         key: g.key, contactId: g.contactId, contact,
         displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
@@ -146,7 +152,7 @@ export async function handleInboxRequest(req, res, url) {
         // this business's drip templates use) told a coach nothing about
         // what the lead actually said without opening the thread.
         lastPreview: last.bodyPreview || last.subject || "",
-        lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount,
+        lastAt: last.createdAt, lastInboundAt: g.lastInboundAt || null, lastMessageId: last.id, unreadCount, hasUnseen,
         pinned: !!meta?.pinned, starred: !!meta?.starred, archived: !!meta?.archived, hidden,
         // "Done" only counts once you've actually seen everything -- new
         // inbound activity after being marked done drops unreadCount back
@@ -248,14 +254,20 @@ export async function handleInboxRequest(req, res, url) {
   // Fired whenever the sidebar opens a conversation -- distinct from
   // /done above, which also sets the persistent "done" meta bucket (a
   // deliberate user action, not implied by just viewing a thread). This
-  // only re-derives unread_count from the contact's actual message file,
-  // so a badge that's stuck out of sync with reality (stale data, or a
-  // phantom row with no real messages behind it -- recomputeConversation
-  // Summary deletes those outright) gets corrected the moment someone
-  // looks at it, even when there's nothing for /mark-done to flip.
+  // re-derives unread_count from the contact's actual message file, so a
+  // badge that's stuck out of sync with reality (stale data, or a phantom
+  // row with no real messages behind it -- recomputeConversationSummary
+  // deletes those outright) gets corrected the moment someone looks at it,
+  // even when there's nothing for /mark-done to flip. It also stamps
+  // lastSeenAt, which clears the per-row unseen glow (hasUnseen, see
+  // sqlite_inbox.js) WITHOUT touching done/unread_count -- opening a
+  // thread means you've SEEN it, not that you've responded to it, and
+  // those two states must stay independent (see inbox.html's
+  // selectConversation comment for why this used to be one flag, wrongly).
   const openedMatch = p.match(/^\/api\/inbox\/conversations\/([^/]+)\/opened$/);
   if (openedMatch && req.method === "POST") {
     recomputeConversationSummary(openedMatch[1]);
+    setConvoMeta(openedMatch[1], { lastSeenAt: new Date().toISOString() });
     // Fire-and-forget: catches anything the 30s Gmail poller's history
     // diff missed for THIS contact specifically (a paused poller, a
     // capped backlog -- see gmail_backend.js's MAX_MESSAGES_PER_TICK)

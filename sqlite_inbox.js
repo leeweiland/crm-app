@@ -93,6 +93,17 @@ export function sqliteInboxAvailable() {
   if (!existingCols.has("preview_fixed")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN preview_fixed INTEGER DEFAULT 0`);
   }
+  // Deliberately separate from `done`/unread_count -- viewing a thread and
+  // responding to it are two different things (see inbox.html's
+  // selectConversation comment): opening it should clear the per-row
+  // unread badge/glow immediately, but must NOT move the conversation out
+  // of Unresponded on its own, only an actual reply or explicit "Mark
+  // Done" does that. NULL means never viewed (or viewed before any
+  // inbound message existed) -- treated as "has something unseen" below
+  // whenever there's a real inbound message, same as a fresh unread badge.
+  if (!existingCols.has("last_seen_at_ms")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN last_seen_at_ms INTEGER`);
+  }
   return true;
 }
 
@@ -189,12 +200,13 @@ export function deleteConversationRow(key) {
 export function syncMetaFields(contactId, meta) {
   if (!sqliteInboxAvailable()) return;
   db.prepare(`
-    UPDATE conversations SET pinned = :pinned, starred = :starred, archived = :archived, done = :done, hidden = :hidden
+    UPDATE conversations SET pinned = :pinned, starred = :starred, archived = :archived, done = :done, hidden = :hidden, last_seen_at_ms = :lastSeenAtMs
     WHERE contact_id = :contactId
   `).run({
     contactId,
     pinned: meta.pinned ? 1 : 0, starred: meta.starred ? 1 : 0,
     archived: meta.archived ? 1 : 0, done: meta.done ? 1 : 0, hidden: meta.hidden ? 1 : 0,
+    lastSeenAtMs: toMs(meta.lastSeenAt),
   });
 }
 
@@ -357,6 +369,13 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
       // see the "hidden" bucket comment above and inbox_backend.js's
       // matching JSON-fallback path.
       unreadCount: r.hidden ? 0 : r.unread_count,
+      // Separate from unreadCount/done -- drives just the per-row visual
+      // badge/glow, cleared the moment the conversation is opened
+      // (inbox.html's /opened call stamps last_seen_at_ms), whether or not
+      // it's actually been responded to. true whenever there's a real
+      // inbound message that showed up at or after the last time someone
+      // looked (or it's never been looked at at all).
+      hasUnseen: !r.hidden && !!r.last_inbound_at_ms && (r.last_seen_at_ms == null || r.last_inbound_at_ms > r.last_seen_at_ms),
       pinned: !!r.pinned, starred: !!r.starred, archived: !!r.archived, done: !!r.done,
       lastStatus: r.last_status, lastOpened: !!r.last_opened,
     };

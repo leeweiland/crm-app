@@ -26,7 +26,7 @@ export function getConvoMetaMap() {
 export function setConvoMeta(contactId, patch) {
   const all = readJson(CONVERSATION_META_FILE, []);
   let row = all.find(m => m.contactId === contactId);
-  if (!row) { row = { contactId, pinned: false, starred: false, done: false, archived: false, hidden: false }; all.push(row); }
+  if (!row) { row = { contactId, pinned: false, starred: false, done: false, archived: false, hidden: false, lastSeenAt: null }; all.push(row); }
   Object.assign(row, patch);
   writeJson(CONVERSATION_META_FILE, all);
   // Best-effort, same reasoning as message_index.js's safeSqliteSync -- a

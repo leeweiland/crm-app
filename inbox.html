@@ -754,7 +754,12 @@ function convoStatusFieldHtml(c) {
   </select>`;
 }
 function convoRowHtml(c) {
-  const hasUnread = c.unreadCount > 0;
+  // hasUnseen (cleared just by opening the thread) drives the row's visual
+  // glow/badge; unreadCount (cleared only by an actual reply or explicit
+  // Mark Done) drives the Unresponded filter and the number shown inside
+  // that badge while it's up -- deliberately different things, see
+  // selectConversation's comment.
+  const hasUnread = !!c.hasUnseen;
   const showTicks = !hasUnread && c.lastDirection === 'outbound' && c.lastStatus;
   const previewTicks = showTicks ? readReceiptTicksHtml(c.lastStatus, c.lastOpened) : '';
   // Historical Close-import sequence-subscription rows carry their raw
@@ -1498,13 +1503,15 @@ function renderThread() {
   // ever happens two ways: a real reply going out (see sendComposeMessage)
   // or the explicit "Mark done" action.
   //
-  // /opened still fires on every view, though -- it's a repair call, not a
-  // mark-done one: it re-derives unread_count from the contact's actual
-  // messages so a badge that's stuck out of sync with reality (stale
-  // cache, a phantom row with no real messages behind it) self-corrects
-  // the moment someone looks at it, without changing anything for a
-  // genuinely-unanswered thread.
+  // /opened still fires on every view, though, and DOES clear the row's
+  // visual glow immediately -- hasUnseen is a separate flag from
+  // unreadCount/done (see sqlite_inbox.js's queryConversationsSqlite), so
+  // this is safe to clear optimistically the instant a thread is opened
+  // without affecting whether it's still sitting in Unresponded.
   fetch(`/api/inbox/conversations/${c.contactId}/opened`, { method: 'POST' });
+  const inList = conversations.find(x => x.key === c.key);
+  if (inList) inList.hasUnseen = false;
+  renderSidebar();
 }
 async function selectConversation(c, skipFetch) {
   selectedConvo = c;
