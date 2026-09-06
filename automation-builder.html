@@ -10,6 +10,13 @@
   .ab-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; min-width: 120px; border-bottom: 1px solid transparent; }
   .ab-name-input:focus { border-bottom-color: var(--pra-blue); }
   .ab-savedmsg { font-size: .76rem; color: var(--pra-dim); margin-bottom: 18px; }
+  .wf-stats { display: grid; grid-template-columns: repeat(auto-fit,minmax(130px,1fr)); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 900px) {
+    .wf-stats { display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 8px; }
+    .wf-stats .pra-card { flex-shrink: 0; width: 104px; padding: 10px 12px !important; }
+    .wf-stats .pra-label { font-size: .6rem; }
+    .wf-stats .pra-h1 { font-size: 1.25rem; }
+  }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
   .row-item:last-child { border-bottom: none; }
   .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
@@ -68,6 +75,8 @@
         <span id="savedMsg">&nbsp;</span>
         <a class="pra-link" id="historyBtn" style="margin-left:8px;font-size:.76rem" title="Version history">&#8635; History</a>
       </div>
+
+      <div class="wf-stats" id="statsGrid"></div>
 
       <div class="ab-canvas-wrap" id="canvasWrap">
         <div class="ab-canvas-zoom-layer" id="zoomLayer">
@@ -335,6 +344,16 @@ function renderChainHtml(startId, path) {
   return html;
 }
 
+// Mirrors workflow-detail.html's renderOverview -- automations don't track
+// bounced/errored enrollment states (see automations_backend.js's
+// automationStats), so this shows the labels that actually apply here.
+function renderOverview(stats) {
+  const r = stats || {};
+  const labels = { active: 'Active', enrolled: 'Enrolled', completed: 'Completed', goalMet: 'Goal Met', cancelled: 'Cancelled' };
+  document.getElementById('statsGrid').innerHTML = Object.entries(labels).map(([k, l]) => `
+    <div class="pra-card" style="padding:16px"><div class="pra-label">${l}</div><div class="pra-h1">${r[k] ?? 0}</div></div>
+  `).join('');
+}
 function render() {
   document.getElementById('autoName').value = automation.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (automation.active ? ' on' : '');
@@ -946,6 +965,7 @@ document.getElementById('historyBtn').onclick = async () => {
   const d = await r.json();
   automation = d.automation;
   stepCounts = d.stepCounts;
+  renderOverview(d.stats);
   const reportRes = await fetch('/api/reporting/automations/' + automationId);
   if (reportRes.ok) {
     const { stepStats } = await reportRes.json();

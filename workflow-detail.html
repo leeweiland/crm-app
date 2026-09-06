@@ -93,7 +93,6 @@
       <div class="wf-stats" id="statsGrid"></div>
 
       <div class="wf-submenu">
-        <button id="triggerMenuBtn">Trigger</button>
         <button id="recipientsMenuBtn">Recipients &amp; Schedule</button>
         <button id="enrolledMenuBtn">Enrolled Contacts</button>
       </div>
@@ -503,7 +502,9 @@ function openTriggerModalSynced() {
   if (workflow.trigger.type === 'booking_created') document.getElementById('triggerTarget').value = workflow.trigger.config.eventTypeId || '';
   openModal('triggerModal');
 }
-document.getElementById('triggerMenuBtn').onclick = openTriggerModalSynced;
+// The canvas trigger card (triggerCardBtn, wired in renderCanvas) is now
+// the only way to open this modal -- the redundant "Trigger" tab button
+// that used to sit next to Recipients/Enrolled Contacts was removed.
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;

@@ -279,6 +279,21 @@ function stepCounts(automationId) {
   return counts;
 }
 
+// Mirrors workflows_backend.js's workflowStats -- automations don't track
+// "bounced" or "errored" enrollment states (those are SMS-delivery-specific,
+// only set by workflows_backend.js's own send step), so this only reports
+// the statuses that actually occur here: active/completed/goal_met/cancelled.
+function automationStats(automationId) {
+  const enrollments = readJson(ENROLLMENTS_FILE, []).filter(e => e.automationId === automationId);
+  return {
+    active: enrollments.filter(e => e.status === "active").length,
+    enrolled: enrollments.length,
+    completed: enrollments.filter(e => e.status === "completed").length,
+    goalMet: enrollments.filter(e => e.status === "goal_met").length,
+    cancelled: enrollments.filter(e => e.status === "cancelled").length,
+  };
+}
+
 export async function handleAutomationsRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/automations")) return false;
@@ -334,7 +349,7 @@ export async function handleAutomationsRequest(req, res, url) {
     const automation = automations.find(a => a.id === automationMatch[1]);
     if (req.method === "GET") {
       if (!automation) return sendJson(res, 404, { error: "Not found" });
-      return sendJson(res, 200, { automation, stepCounts: stepCounts(automation.id) });
+      return sendJson(res, 200, { automation, stepCounts: stepCounts(automation.id), stats: automationStats(automation.id) });
     }
     if (req.method === "PATCH") {
       if (!automation) return sendJson(res, 404, { error: "Not found" });
