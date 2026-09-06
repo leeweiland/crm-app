@@ -246,7 +246,13 @@
   .ai-summary-row { margin-bottom: 10px; }
   .ai-summary-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 2px; }
   .ai-summary-takeover { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.4); color: #ff9f0a; font-weight: 700; font-size: .82rem; }
-  .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+  /* Sender picker sits BESIDE the toggle pill, not inside it -- the pill's
+     own border/overflow:hidden is styling meant for its own buttons only,
+     nesting an unrelated <select> in there boxed-within-boxed and made it
+     look bulky/mismatched instead of like a second, equally compact
+     control on the same row. */
+  .compose-toolbar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; }
   .compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
   .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
   .compose-row { display: flex; gap: 8px; align-items: flex-end; }
@@ -257,8 +263,12 @@
      teammates are visible but never look clickable. */
   .compose-from-select { font-size: .78rem; padding: 5px 10px; max-width: 200px; }
   .compose-subject-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-  .compose-subject-row .pra-input { flex: 1; margin-bottom: 0; }
-  .compose-from-email { font-size: .76rem; color: var(--pra-dim); white-space: nowrap; }
+  /* min-width:0 is load-bearing -- .pra-input's own width:100% otherwise
+     fights flex:1 (a flex item's default min-width is its content size,
+     not 0), so the input refused to shrink and pushed the email label
+     past the panel's right edge instead of sitting right next to it. */
+  .compose-subject-row .pra-input { flex: 1; min-width: 0; margin-bottom: 0; }
+  .compose-from-email { font-size: .76rem; color: var(--pra-dim); white-space: nowrap; flex-shrink: 0; }
 
   /* Native date/time pickers render a black-on-black calendar icon on a
      dark background otherwise -- color-scheme flips both to the light
@@ -1350,21 +1360,23 @@ function renderThread() {
     <div class="chat-thread" id="chatThread"></div>
     <div class="compose-bar">
       ${currentTab === 'primary' ? `
-        <div class="compose-channel-toggle">
+        <div class="compose-toolbar-row">
           ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
             <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
               ${teamUsers.map(u => `<option value="${u.id}" data-email="${escapeHtml(u.email)}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}
             </select>
           ` : ''}
-          <span class="compose-tab-group">
-            <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''}">Send Email</button>
-            ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
-          </span>
-          <span class="compose-tab-group">
-            <button type="button" data-ch="sms" class="${composeView === 'compose' && composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
-            ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="sms" title="Generate text with AI">${SPARKLE_ICON}</button>` : ''}
-          </span>
-          ${aiAssistAvailable ? `<button type="button" data-ch="summary" class="${composeView === 'summary' ? 'active' : ''}">Summary</button>` : ''}
+          <div class="compose-channel-toggle">
+            <span class="compose-tab-group">
+              <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''}">Send Email</button>
+              ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
+            </span>
+            <span class="compose-tab-group">
+              <button type="button" data-ch="sms" class="${composeView === 'compose' && composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
+              ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="sms" title="Generate text with AI">${SPARKLE_ICON}</button>` : ''}
+            </span>
+            ${aiAssistAvailable ? `<button type="button" data-ch="summary" class="${composeView === 'summary' ? 'active' : ''}">Summary</button>` : ''}
+          </div>
         </div>
       ` : ''}
       ${composeView === 'summary' ? `
