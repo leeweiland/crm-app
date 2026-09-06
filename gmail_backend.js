@@ -4,18 +4,24 @@ import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 
-// Per-user Gmail connection for capturing inbound email replies -- same
-// idea as Close's "just add it as a user", not a domain-level SES/MX setup:
-// each staff member connects their OWN Gmail via OAuth (Settings > My
-// Account), and this polls THEIR mailbox for mail from known contacts,
-// same 30s scheduler tick every other timed feature in this app already
-// uses. Zero risk to the real pacificrimathletics.com mail flow -- nothing
-// about DNS or where mail actually gets delivered changes; this only ever
-// reads a copy via the Gmail API, same as Close did.
+// Per-user Gmail connection -- same idea as Close's "just add it as a
+// user", not a domain-level SES/MX setup: each staff member connects
+// their OWN Gmail via OAuth (Settings > My Account). Two things ride on
+// this connection: reading (this polls THEIR mailbox for mail from known
+// contacts, same 30s scheduler tick every other timed feature already
+// uses) and, since 2026-09-06, sending -- the Inbox's own Send Email uses
+// this instead of SES when the sender has Gmail connected WITH the send
+// scope granted (see sendViaGmail below), because SES here is stuck in
+// sandbox mode (AWS's own GetAccountCommand confirms ProductionAccess
+// Enabled: false) -- capped at 200 sends/24h and rejecting any recipient
+// that isn't individually pre-verified in the AWS console, which is
+// nearly every real lead. Gmail has neither restriction.
 //
-// Scope is gmail.readonly -- this never sends, modifies, or deletes
-// anything in a connected mailbox, only lists/reads messages.
-const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+// gmail.send is a real, meaningful grant (unlike gmail.readonly, this
+// scope CAN send mail from the connected account) -- added here rather
+// than a domain-wide send setup so each reply still genuinely comes from
+// whichever staff member's own Gmail sent it, same as replying by hand.
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
 const REDIRECT_PATH = "/api/auth/gmail/callback";
 
 // Deliberately its own OAuth client (GOOGLE_GMAIL_CLIENT_ID/_SECRET), NOT
@@ -77,6 +83,73 @@ async function getAccessToken(refreshToken) {
   return d.access_token;
 }
 
+function b64urlEncode(str) {
+  return Buffer.from(str, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+// RFC 2047 encoded-word -- only needed if the value has non-ASCII (a
+// contact/staff name with an accent, etc.); a plain-ASCII header needs no
+// special encoding and reads fine as-is.
+function encodeHeaderValue(value) {
+  return /^[\x00-\x7F]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
+// The Inbox's own Send Email/reply path -- see GMAIL_SCOPE's comment for
+// why this exists instead of always going through SES. Builds a plain
+// RFC 2822 message by hand (no MIME library needed for a single text/html
+// part, no attachments) and hands it to Gmail's own send API, so the
+// email genuinely comes from the connected account's real mailbox --
+// identical to that person hitting reply in Gmail themselves, including
+// landing in their own Sent folder and threading correctly against any
+// reply. NOT wired through the shared campaign rendering pipeline
+// (renderEmailBody/tagHtmlLinksWithSource/unsubscribe injection) that the
+// SES path uses -- those are template/compliance features built for bulk
+// campaign sends; an ad hoc Inbox reply through a personal Gmail account
+// doesn't carry the CRM's own click-tracking or unsubscribe links today
+// either way, so there's nothing this drops for THAT path specifically.
+export async function sendViaGmail({ user, to, subject, html, contactId, sourceType, sourceId }) {
+  if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
+  if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
+  const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
+  const fromHeader = `${fromName} <${user.gmailEmail}>`;
+  // Mirrors email_backend.js's sendEmail contract: logs the attempt itself
+  // (sent OR failed) so callers on both paths can just check `.ok`,
+  // without needing to know which transport actually handled it.
+  const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: html, bodyPreview: (html || "").replace(/<[^>]+>/g, " ").trim().slice(0, 140) };
+  try {
+    const accessToken = await getAccessToken(user.gmailRefreshToken);
+    const raw = [
+      `From: ${encodeHeaderValue(fromName)} <${user.gmailEmail}>`,
+      `To: ${to}`,
+      `Subject: ${encodeHeaderValue(subject || "(no subject)")}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset="UTF-8"`,
+      ``,
+      html,
+    ].join("\r\n");
+    const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ raw: b64urlEncode(raw) }),
+      signal: gmailFetchTimeout(),
+    });
+    const d = await res.json();
+    if (!res.ok) {
+      logMessage({ ...baseRow, status: "failed", failReason: d.error?.message });
+      return { ok: false, reason: d.error?.message || "Gmail send failed" };
+    }
+    // Registers in PROVIDER_ID_INDEX_FILE immediately (via logMessage) --
+    // when the 30s poller or an on-open reconcile later sees this SAME
+    // message in the Sent folder (it's the sender's own mailbox, so of
+    // course it shows up there), processGmailMessage's dedupe check skips
+    // it instead of logging a duplicate.
+    logMessage({ ...baseRow, status: "sent", providerMessageId: d.id });
+    return { ok: true, id: d.id };
+  } catch (e) {
+    logMessage({ ...baseRow, status: "failed", failReason: e.message });
+    return { ok: false, reason: e.message };
+  }
+}
+
 export async function handleGmailRequest(req, res, url) {
   const p = url.pathname;
 
@@ -117,6 +190,12 @@ export async function handleGmailRequest(req, res, url) {
       // here, so connecting an account never backfills someone's entire
       // existing inbox into the CRM, only mail that arrives from now on.
       user.gmailHistoryId = profile.historyId || null;
+      // Google's token response lists exactly what was actually granted --
+      // a user who connected before gmail.send existed (or who declined it
+      // on the consent screen) has a refresh token that plain can't send,
+      // no matter what GMAIL_SCOPE asks for going forward. sendViaGmail
+      // checks this instead of assuming every connected account can send.
+      user.gmailScope = tokens.scope || "";
       writeJson(USERS_FILE, users);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px 20px"><h2>Gmail connected</h2><p>${profile.emailAddress || ""}</p><p><a href="/settings.html">Back to Settings</a></p></body></html>`);
@@ -130,12 +209,13 @@ export async function handleGmailRequest(req, res, url) {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const user = readJson(USERS_FILE, []).find(u => u.id === me.id);
-    return sendJson(res, 200, { connected: !!user?.gmailRefreshToken, email: user?.gmailEmail || null });
+    return sendJson(res, 200, { connected: !!user?.gmailRefreshToken, email: user?.gmailEmail || null, canSend: !!user?.gmailScope?.includes("gmail.send") });
   }
 
   // Admin-only roster of who on the team has connected Gmail -- lets an
   // admin see at a glance whose replies are actually flowing into the
-  // Inbox without having to ask each person individually.
+  // Inbox (and now, whose can actually SEND from it) without having to
+  // ask each person individually.
   if (p === "/api/auth/gmail/team-status" && req.method === "GET") {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -143,6 +223,7 @@ export async function handleGmailRequest(req, res, url) {
     const team = readJson(USERS_FILE, []).filter(u => !u.archived).map(u => ({
       id: u.id, first: u.first, last: u.last, email: u.email,
       connected: !!u.gmailRefreshToken, gmailEmail: u.gmailEmail || null,
+      canSend: !!u.gmailScope?.includes("gmail.send"),
     }));
     return sendJson(res, 200, { team });
   }

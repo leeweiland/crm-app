@@ -11,7 +11,7 @@ import {
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
 import { queryConversationsSqlite } from "./sqlite_inbox.js";
-import { reconcileRecentGmailForContact } from "./gmail_backend.js";
+import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -307,12 +307,22 @@ export async function handleInboxRequest(req, res, url) {
         const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
         if (other) sender = other;
       }
-      const result = await sendEmail({
-        to: contact.email, subject: subject || "(no subject)",
-        blocks: [{ id: "b1", type: "text", html: body.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: sender.footerTemplateId || null,
-        contactId, sourceType: "inbox", sourceId: sender.id,
-        from: `${sender.first} ${sender.last} <${sender.email}>`,
-      });
+      // Gmail first when the sender has actually granted send access --
+      // SES here is stuck in sandbox mode (confirmed via AWS's own account
+      // API: ProductionAccessEnabled false), which caps at 200 sends/24h
+      // and rejects any recipient that isn't individually pre-verified in
+      // the AWS console, i.e. nearly every real lead. Falls back to SES
+      // for anyone who hasn't (re)connected Gmail with the send scope yet
+      // rather than hard-failing their send.
+      const html = body.replace(/\n/g, "<br/>");
+      const result = (sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
+        ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", html, contactId, sourceType: "inbox", sourceId: sender.id })
+        : await sendEmail({
+            to: contact.email, subject: subject || "(no subject)",
+            blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: sender.footerTemplateId || null,
+            contactId, sourceType: "inbox", sourceId: sender.id,
+            from: `${sender.first} ${sender.last} <${sender.email}>`,
+          });
       if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
       return sendJson(res, 200, { ok: true });
     }

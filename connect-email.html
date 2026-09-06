@@ -15,9 +15,10 @@
 
       <div class="pra-panel" style="padding:22px;max-width:460px">
         <div class="pra-h2" style="margin-bottom:6px">Gmail</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Connect your own Gmail so replies to your emails show up in the Inbox automatically -- same idea as adding yourself as a user in Close, nothing about your real inbox changes.</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Connect your own Gmail so replies to your emails show up in the Inbox automatically, and so the Inbox's Send Email sends from your real Gmail instead of the shared sender -- same idea as adding yourself as a user in Close, nothing about your real inbox changes.</div>
         <div id="gmailStatus" class="pra-muted" style="font-size:.85rem;margin-bottom:10px">Loading…</div>
         <button class="pra-btn pra-btn-sm" id="gmailConnectBtn" style="display:none">Connect Gmail</button>
+        <button class="pra-btn pra-btn-sm" id="gmailReconnectBtn" style="display:none">Reconnect to enable sending</button>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="gmailDisconnectBtn" style="display:none">Disconnect</button>
       </div>
 
@@ -26,7 +27,7 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, and which address.</div>
         <div style="overflow-x:auto">
           <table class="data-table" id="teamTable">
-            <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th></tr></thead>
+            <thead><tr><th>Name</th><th>Login Email</th><th>Gmail</th><th>Can Send</th></tr></thead>
             <tbody id="teamBody"></tbody>
           </table>
         </div>
@@ -42,8 +43,11 @@ async function loadGmailStatus() {
   const status = document.getElementById('gmailStatus');
   if (!r.ok) { status.textContent = 'Could not load status.'; return; }
   const d = await r.json();
-  status.textContent = d.connected ? `Connected: ${d.email}` : 'Not connected.';
+  status.textContent = !d.connected ? 'Not connected.'
+    : d.canSend ? `Connected: ${d.email} (can send)`
+    : `Connected: ${d.email} -- reconnect below to enable sending from this account`;
   document.getElementById('gmailConnectBtn').style.display = d.connected ? 'none' : 'inline-block';
+  document.getElementById('gmailReconnectBtn').style.display = (d.connected && !d.canSend) ? 'inline-block' : 'none';
   document.getElementById('gmailDisconnectBtn').style.display = d.connected ? 'inline-block' : 'none';
 }
 async function loadTeamStatus() {
@@ -56,10 +60,12 @@ async function loadTeamStatus() {
       <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
       <td>${escapeHtml(u.email)}</td>
       <td>${u.connected ? escapeHtml(u.gmailEmail || 'Connected') : '<span class="pra-muted">Not connected</span>'}</td>
+      <td>${!u.connected ? '<span class="pra-muted">—</span>' : u.canSend ? 'Yes' : '<span class="pra-muted">No -- needs to reconnect</span>'}</td>
     </tr>
   `).join('');
 }
 document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
+document.getElementById('gmailReconnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailDisconnectBtn').onclick = async () => {
   if (!confirm('Disconnect Gmail? Replies will stop showing up in the Inbox automatically.')) return;
   await fetch('/api/auth/gmail/disconnect', { method: 'POST' });
