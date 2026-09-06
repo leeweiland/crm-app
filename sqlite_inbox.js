@@ -21,7 +21,6 @@
 // backup) -- not part of normal operation anymore.
 import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "fs";
-import * as fsPromises from "fs/promises";
 import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
@@ -86,6 +85,14 @@ export function sqliteInboxAvailable() {
     db.exec(`ALTER TABLE conversations ADD COLUMN hidden INTEGER DEFAULT 0`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_hidden ON conversations(hidden)`);
   }
+  // Marks a row's last_preview as already correct -- see
+  // queryConversationsSqlite's lazy-fix block below. Defaults to 0 (not
+  // NULL) so every pre-existing row is treated as unfixed until it's
+  // actually viewed, without needing a separate backfill pass over rows
+  // nobody's looking at.
+  if (!existingCols.has("preview_fixed")) {
+    db.exec(`ALTER TABLE conversations ADD COLUMN preview_fixed INTEGER DEFAULT 0`);
+  }
   return true;
 }
 
@@ -111,15 +118,17 @@ export function syncMessageFields(g) {
     INSERT INTO conversations
       (key, contact_id, display_name, first, last, email, phone, first_seen_at, status, program_type, owner_id,
        last_at_ms, last_inbound_at_ms, unread_count,
-       last_channel, last_direction, last_preview, last_status, last_opened, last_message_id, last_by_channel_json)
+       last_channel, last_direction, last_preview, last_status, last_opened, last_message_id, last_by_channel_json,
+       preview_fixed)
     VALUES (:key, :contactId, :displayName, :first, :last, :email, :phone, :firstSeenAt, :status, :programType, :ownerId,
             :lastAtMs, :lastInboundAtMs, :unreadCount,
-            :lastChannel, :lastDirection, :lastPreview, :lastStatus, :lastOpened, :lastMessageId, :lastByChannelJson)
+            :lastChannel, :lastDirection, :lastPreview, :lastStatus, :lastOpened, :lastMessageId, :lastByChannelJson,
+            1)
     ON CONFLICT(key) DO UPDATE SET
       last_at_ms=excluded.last_at_ms, last_inbound_at_ms=excluded.last_inbound_at_ms, unread_count=excluded.unread_count,
       last_channel=excluded.last_channel, last_direction=excluded.last_direction, last_preview=excluded.last_preview,
       last_status=excluded.last_status, last_opened=excluded.last_opened, last_message_id=excluded.last_message_id,
-      last_by_channel_json=excluded.last_by_channel_json
+      last_by_channel_json=excluded.last_by_channel_json, preview_fixed=1
   `).run({
     key: g.key, contactId: g.contactId || null,
     displayName: displayName ?? displayNameFallback,
@@ -209,57 +218,23 @@ export function renameStatusInSqlite(oldLabel, newLabel) {
   db.prepare(`UPDATE conversations SET status = :newLabel WHERE status = :oldLabel`).run({ oldLabel, newLabel });
 }
 
-// One-time backfill (2026-09-06): last_preview switched from
-// subject-first to body-first (see inbox_backend.js's own comment), but
-// existing rows keep whatever was already stored until their next real
-// message. Run from INSIDE this process specifically -- a separate script
-// opening its own connection to this same file kept losing the write lock
-// race against this server's own live traffic and made zero progress for
-// over a minute straight. Using the app's own long-lived `db` handle means
-// there's no second writer to contend with at all. Call once, then this
-// export can be deleted.
-// Async + concurrent reads (not the synchronous one-at-a-time loop a
-// standalone script used first) for two reasons: called fire-and-forget
-// from server.js right after listen() starts, so a purely synchronous
-// version would freeze the event loop -- and therefore every real
-// request -- for the ~53s this many small file reads takes; and unlike a
-// writer/reads happen off this process's own event loop turn by turn, so
-// real traffic gets to interleave between them instead of queuing behind
-// the whole thing.
-export async function backfillPreviewText() {
-  if (!sqliteInboxAvailable()) return;
-  const SIDEBAR_CHANNELS = new Set(["email", "sms", "form", "booking", "activity", "meeting"]);
-  const rows = db.prepare("SELECT contact_id, last_preview FROM conversations WHERE contact_id IS NOT NULL").all();
-  const t0 = Date.now();
-  const toFix = [];
-  let idx = 0;
-  async function worker() {
-    while (idx < rows.length) {
-      const row = rows[idx++];
-      let msgs;
-      try { msgs = JSON.parse(await fsPromises.readFile(join(DATA_DIR, "msg_by_contact", row.contact_id + ".json"), "utf8")); } catch (e) { continue; }
-      const sidebarMsgs = msgs.filter((m) => SIDEBAR_CHANNELS.has(m.channel));
-      if (!sidebarMsgs.length) continue;
-      const last = sidebarMsgs.reduce((a, b) => (new Date(b.createdAt) > new Date(a.createdAt) ? b : a));
-      const correctPreview = last.bodyPreview || last.subject || "";
-      if (correctPreview !== row.last_preview) toFix.push({ contactId: row.contact_id, preview: correctPreview });
-    }
-  }
-  await Promise.all(Array.from({ length: 100 }, worker));
-
-  // Writes happen on THIS process's own connection (no second writer to
-  // lose a lock race against), still chunked with a yield between so a
-  // real request queued behind an open transaction never waits long.
-  const upd = db.prepare("UPDATE conversations SET last_preview = :lastPreview WHERE contact_id = :contactId");
-  const CHUNK = 500;
-  for (let i = 0; i < toFix.length; i += CHUNK) {
-    const chunk = toFix.slice(i, i + CHUNK);
-    db.exec("BEGIN");
-    for (const f of chunk) upd.run({ lastPreview: f.preview, contactId: f.contactId });
-    db.exec("COMMIT");
-    await new Promise((r) => setImmediate(r));
-  }
-  console.log(`[backfill] preview text: checked ${rows.length}, fixed ${toFix.length}, took ${Date.now() - t0}ms`);
+// last_preview switched from subject-first to body-first (see inbox_
+// backend.js's own comment), but existing rows keep whatever was already
+// stored until something touches them. Rather than sweep all ~176k rows
+// up front (that read every contact's message file whether or not anyone
+// ever looks at that conversation, and contends with live traffic's own
+// disk I/O for as long as it takes), each row is fixed lazily the first
+// time it's actually returned by a query -- see the preview_fixed check in
+// queryConversationsSqlite below. A conversation nobody opens never costs
+// anything; one that's on-screen gets corrected (and cached) the moment
+// it's requested, same as scrolling the sidebar naturally would.
+const SIDEBAR_CHANNELS = new Set(["email", "sms", "form", "booking", "activity", "meeting"]);
+function computeLastPreview(contactId) {
+  const msgs = readJson(`msg_by_contact/${contactId}.json`, []);
+  const sidebarMsgs = msgs.filter((m) => SIDEBAR_CHANNELS.has(m.channel));
+  if (!sidebarMsgs.length) return null;
+  const last = sidebarMsgs.reduce((a, b) => (new Date(b.createdAt) > new Date(a.createdAt) ? b : a));
+  return last.bodyPreview || last.subject || "";
 }
 
 // Mirrors GET /api/inbox/conversations' filter/sort/pagination contract in
@@ -337,6 +312,23 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
   const rows = db.prepare(`
     SELECT * FROM conversations ${whereSql} ${orderSql} LIMIT ${safeLimit} OFFSET ${safeOffset}
   `).all(params);
+
+  // Lazy preview-text fix, scoped to just this page (at most safeLimit
+  // rows, never the whole table) -- see computeLastPreview's comment.
+  const fixes = [];
+  for (const r of rows) {
+    if (r.preview_fixed || !r.contact_id) continue;
+    const correctPreview = computeLastPreview(r.contact_id);
+    if (correctPreview === null) continue;
+    r.last_preview = correctPreview;
+    fixes.push({ contactId: r.contact_id, preview: correctPreview });
+  }
+  if (fixes.length) {
+    const upd = db.prepare("UPDATE conversations SET last_preview = :preview, preview_fixed = 1 WHERE contact_id = :contactId");
+    db.exec("BEGIN");
+    for (const f of fixes) upd.run({ preview: f.preview, contactId: f.contactId });
+    db.exec("COMMIT");
+  }
 
   const conversations = rows.map(r => {
     let last = null;
