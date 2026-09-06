@@ -156,6 +156,29 @@ export async function handleGmailRequest(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
+  // Manual recovery tool for exactly the gap reconcileRecentOutboundGmail
+  // exists for -- the poller's historyId diff permanently drops anything
+  // past MAX_MESSAGES_PER_TICK or a stale watermark, so an admin needs a
+  // way to force a re-check without waiting for someone to individually
+  // open every affected conversation. Runs IN this request handler (the
+  // server's own process/DB connection), not a separate script -- a
+  // second process opening its own SQLite connection loses the write-lock
+  // race against this server's live traffic every time (confirmed live
+  // twice already tonight, see sqlite_inbox.js's backfillPreviewText
+  // comment for the first).
+  if (p === "/api/auth/gmail/reconcile-recent" && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const hours = Number(url.searchParams.get("hours")) || 24;
+    try {
+      const results = await reconcileRecentOutboundGmail(hours);
+      return sendJson(res, 200, { ok: true, results });
+    } catch (e) {
+      return sendJson(res, 500, { error: e.message });
+    }
+  }
+
   return false;
 }
 
