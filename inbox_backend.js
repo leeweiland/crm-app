@@ -63,7 +63,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/activity" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -81,6 +81,44 @@ export async function handleInboxRequest(req, res, url) {
     const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* client gone -- close handler below cleans up */ } }, 30000);
     req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
     return true;
+  }
+
+  // A user's own sent/received SMS+email across every lead they own,
+  // newest first -- the main way to review what actually went out on
+  // their leads while they were marked Away (AI Active/coverage-sourced
+  // sends included, tagged by sourceType so it's clear which were
+  // autonomous). Bounded deliberately: owned-contact counts can run into
+  // the hundreds+ for a busy closer, and getContactMessages is a
+  // per-contact file read -- scanning everyone's entire book on every
+  // request would be a real "slow synchronous loop blocks the whole
+  // server" risk (confirmed elsewhere today with the AC engagement poll).
+  // Only the OWNED_CONTACT_SCAN_CAP most-recently-touched owned contacts
+  // are scanned; that's enough to surface genuinely recent activity
+  // without an unbounded cost as someone's book grows.
+  if (p === "/api/inbox/activity" && req.method === "GET") {
+    const userId = url.searchParams.get("userId");
+    if (!userId) return sendJson(res, 400, { error: "userId is required" });
+    if (userId !== me.id && !isAdmin(me)) return sendJson(res, 403, { error: "Can only view your own activity" });
+    const OWNED_CONTACT_SCAN_CAP = 300;
+    const ITEM_LIMIT = 150;
+    const contacts = readJson(CONTACTS_FILE, [])
+      .filter((c) => c.ownerId === userId)
+      .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+      .slice(0, OWNED_CONTACT_SCAN_CAP);
+    const items = [];
+    for (const c of contacts) {
+      const messages = getContactMessages(c.id).filter((m) => ["email", "sms"].includes(m.channel));
+      for (const m of messages.slice(-20)) { // most recent 20 per contact is plenty; avoids one very chatty thread crowding out everyone else's most recent activity
+        items.push({
+          contactId: c.id, contactName: `${c.first || ""} ${c.last || ""}`.trim() || "(no name)",
+          channel: m.channel, direction: m.direction, sourceType: m.sourceType || null,
+          preview: (m.subject ? `${m.subject} — ` : "") + (m.bodyPreview || m.body || "").replace(/<[^>]+>/g, " ").slice(0, 140),
+          createdAt: m.createdAt,
+        });
+      }
+    }
+    items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return sendJson(res, 200, { items: items.slice(0, ITEM_LIMIT), scannedContacts: contacts.length });
   }
 
   // Same cross-source aggregation as the main Inbox above, scoped to one

@@ -10,6 +10,26 @@
   .tab-btn { background: none; border: none; color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .84rem; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; }
   .tab-btn.active { color: var(--pra-white); border-bottom-color: var(--pra-blue); }
 
+  /* Away toggle -- same track+thumb switch used in ai-agents.html/
+     flow-builder.html, duplicated here since this app has no shared
+     component story for plain static pages. On = Away (AI Active is
+     working this user's leads); off = Active (business as usual). */
+  .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
+  .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .active-toggle.on { background: var(--pra-blue); }
+  .active-toggle.on::after { left: 20px; }
+
+  /* ── Activity feed (a user's own sent SMS/email, including AI-sent
+     while they were Away) ── */
+  .activity-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--pra-border); font-size: .84rem; }
+  .activity-row:last-child { border-bottom: none; }
+  .activity-channel-pill { font-size: .64rem; text-transform: uppercase; padding: 2px 7px; border-radius: 7px; background: rgba(255,255,255,.08); color: var(--pra-dim); flex-shrink: 0; margin-top: 2px; }
+  .activity-channel-pill.ai_active, .activity-channel-pill.ai_coverage, .activity-channel-pill.behavioral_trigger { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
+  .activity-body { flex: 1; min-width: 0; }
+  .activity-body .activity-contact { font-weight: 700; }
+  .activity-body .activity-preview { color: var(--pra-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-time { font-size: .74rem; color: var(--pra-dim); flex-shrink: 0; white-space: nowrap; }
+
   /* ── Flat list (Tasks / Reminders) ── */
   .inbox-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
   .inbox-toolbar select { max-width: 160px; }
@@ -380,11 +400,16 @@
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
       <div class="mobile-sticky-header">
-        <div class="pra-h1" style="margin-bottom:16px">Inbox</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <div class="pra-h1">Inbox</div>
+          <button type="button" id="awayToggleBtn" class="active-toggle" style="display:none" title="Away hands your leads to AI Active until you switch back"></button>
+          <span id="awayToggleLabel" class="pra-muted" style="display:none;font-size:.82rem;cursor:pointer"></span>
+        </div>
         <div class="tabs">
           <button class="tab-btn active" data-tab="primary">Inbox</button>
           <button class="tab-btn" data-tab="tasks">Tasks</button>
           <button class="tab-btn" data-tab="reminders">Reminders</button>
+          <button class="tab-btn" data-tab="activity">Activity</button>
         </div>
         <div class="inbox-toolbar" id="inboxToolbar" style="display:none">
           <select class="pra-select" id="viewSelect">
@@ -408,6 +433,15 @@
       <!-- Tasks / Reminders: existing flat list -->
       <div id="flatListView" style="display:none">
         <div class="pra-panel" id="itemsPanel"></div>
+      </div>
+
+      <!-- Activity: a user's sent SMS/email feed, including anything AI
+           sent on their behalf while they were marked Away -->
+      <div id="activityView" style="display:none">
+        <div class="inbox-toolbar">
+          <select class="pra-select" id="activityUserSelect"></select>
+        </div>
+        <div class="pra-panel" id="activityPanel" style="padding:0"></div>
       </div>
 
       <!-- Primary / Emails / Messages: chat-style UI -->
@@ -676,6 +710,8 @@ async function loadRefs() {
     .filter(u => u.id !== currentUser?.id)
     .map(u => `<option value="${u.id}">${escapeHtml(`${u.first} ${u.last}`.trim())}</option>`).join('');
   ownerSel.insertAdjacentHTML('beforeend', teamOptionsHtml);
+  updateAwayToggleUi();
+  populateActivityUserSelect();
 }
 
 // ── Tab switching ───────────────────────────────────────────────────────
@@ -689,12 +725,76 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   btn.classList.add('active');
   currentTab = btn.dataset.tab;
   const isChat = currentTab in CHAT_TABS;
+  const isActivity = currentTab === 'activity';
   document.getElementById('chatView').style.display = isChat ? 'flex' : 'none';
-  document.getElementById('flatListView').style.display = isChat ? 'none' : 'block';
-  document.getElementById('inboxToolbar').style.display = isChat ? 'none' : 'flex';
+  document.getElementById('flatListView').style.display = (!isChat && !isActivity) ? 'block' : 'none';
+  document.getElementById('activityView').style.display = isActivity ? 'block' : 'none';
+  document.getElementById('inboxToolbar').style.display = isChat || isActivity ? 'none' : 'flex';
   if (isChat) { document.getElementById('chatView').classList.remove('thread-open'); loadConversations(); }
+  else if (isActivity) loadActivity();
   else loadItems();
 });
+
+// ── Away toggle -- self-service switch that hands a user's own leads to
+// AI Active until they flip back. Only ever shown to a user an admin has
+// explicitly granted AI Active access to (Settings > Team Users); the
+// backend independently refuses the /away POST for anyone without it, so
+// this visibility check is a convenience, not the actual gate.
+function updateAwayToggleUi() {
+  const btn = document.getElementById('awayToggleBtn');
+  const label = document.getElementById('awayToggleLabel');
+  if (!currentUser?.canUseAiActive) { btn.style.display = 'none'; label.style.display = 'none'; return; }
+  btn.style.display = '';
+  label.style.display = '';
+  btn.classList.toggle('on', !!currentUser.away);
+  label.textContent = currentUser.away ? 'Away — AI Active is working your leads' : 'Active';
+}
+async function toggleAway() {
+  if (!currentUser) return;
+  const newAway = !currentUser.away;
+  if (newAway && !confirm('Switch to Away? AI Active will start autonomously replying to your leads (no draft review) until you switch back to Active.')) return;
+  const r = await fetch(`/api/auth/users/${currentUser.id}/away`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ away: newAway }),
+  });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not update', true); return; }
+  currentUser.away = newAway;
+  updateAwayToggleUi();
+  showToast(newAway ? 'You are now marked Away' : 'You are now marked Active');
+}
+document.getElementById('awayToggleBtn').addEventListener('click', toggleAway);
+document.getElementById('awayToggleLabel').addEventListener('click', toggleAway);
+
+// ── Activity: a user's own sent SMS/email, including anything AI sent
+// (AI Active / behavioral triggers / coverage while Away) on their leads --
+// the main way to review what actually went out while someone was away.
+function populateActivityUserSelect() {
+  const sel = document.getElementById('activityUserSelect');
+  const others = teamUsers.filter(u => u.id !== currentUser?.id);
+  sel.innerHTML = `<option value="me">My Activity</option>` + others.map(u => `<option value="${u.id}">${escapeHtml(`${u.first} ${u.last}`.trim())}'s Activity</option>`).join('');
+}
+async function loadActivity() {
+  const panel = document.getElementById('activityPanel');
+  panel.innerHTML = '<div class="pra-muted" style="padding:20px">Loading…</div>';
+  const selectedVal = document.getElementById('activityUserSelect').value;
+  const userId = selectedVal === 'me' ? (currentUser?.id || '') : selectedVal;
+  if (!userId) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Not logged in.</div>'; return; }
+  const r = await fetch(`/api/inbox/activity?userId=${encodeURIComponent(userId)}`);
+  if (!r.ok) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Could not load.</div>'; return; }
+  const { items } = await r.json();
+  if (!items.length) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">No activity yet.</div>'; return; }
+  panel.innerHTML = items.map(it => `
+    <div class="activity-row">
+      <span class="activity-channel-pill ${escapeHtml(it.sourceType || '')}">${escapeHtml(it.channel)}${it.direction === 'inbound' ? ' in' : ''}</span>
+      <div class="activity-body">
+        <span class="activity-contact">${escapeHtml(it.contactName)}</span>
+        <div class="activity-preview">${escapeHtml(it.preview || '')}</div>
+      </div>
+      <span class="activity-time">${fmtDate(it.createdAt)}</span>
+    </div>
+  `).join('');
+}
+document.getElementById('activityUserSelect').addEventListener('change', loadActivity);
 
 // ── Chat: conversation sidebar ───────────────────────────────────────────
 function convoQueryParams(offset) {

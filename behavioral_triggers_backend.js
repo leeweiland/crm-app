@@ -3,8 +3,8 @@ import { readJson, writeJson, sendJson, getSessionUser } from "./auth_backend.js
 import { CONTACTS_FILE, matchesSegment, SEGMENTS_FILE } from "./segments_shared.js";
 import { getContactMessages } from "./message_index.js";
 import {
-  AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, formatCustomerJourney,
+  AI_AGENTS_FILE, CONVERSATION_CHANNELS,
+  generateAgentReply, contactMatchesTargeting, formatCustomerJourney, isExcludable,
 } from "./ai_agents_backend.js";
 import { sendViaChannel, WAIT_UNIT_MS } from "./ai_active_backend.js";
 
@@ -22,13 +22,6 @@ import { sendViaChannel, WAIT_UNIT_MS } from "./ai_active_backend.js";
 // spamming someone who just happens to browse the site a lot in one day.
 export const BEHAVIOR_TRIGGERS_FILE = "crm_behavior_triggers.json";
 const SOURCE_TYPE = "behavioral_trigger";
-
-function isExcludable(contact) {
-  if (contact.emailOptOut && contact.smsOptOut) return "opted out";
-  if (!contact.email && !contact.phone) return "no email or phone on file";
-  if (contact.status && TERMINAL_STATUSES.has(contact.status)) return `status is "${contact.status}"`;
-  return null;
-}
 
 function randomWaitMs(range) {
   const r = range || {};

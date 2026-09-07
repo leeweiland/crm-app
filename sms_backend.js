@@ -8,6 +8,7 @@ import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
 import { appendSourceTagToSmsBody } from "./block_editor_shared.js";
 import { resolveSendSourceSlug } from "./source_names.js";
+import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
 
 export const SMS_TEMPLATES_FILE = "crm_sms_templates.json";
 
@@ -179,6 +180,7 @@ export async function handleSmsRequest(req, res, url) {
       checkConversionGoal("incoming_sms", contact.id);
       recheckStopStatus(contact.id);
       checkAutoTriggers(contact.id);
+      maybeCoverInboundReply(contact.id); // no-op unless this lead's owner is Away and an agent covers for them
     } else {
       // Message from a number with no matching contact -- still logged
       // (contactId: null) so it's visible in the Inbox, just unattributed.

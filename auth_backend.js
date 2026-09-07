@@ -1038,6 +1038,39 @@ export async function handleAuthRequest(req, res, url) {
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
+  // Admin-only gate on who can even use AI Active/coverage at all -- the
+  // Inbox's self-service Active/Away toggle only ever shows for a user with
+  // this on, so a user who shouldn't have leads worked autonomously can
+  // never accidentally (or deliberately) flip themselves into that state.
+  const aiActiveAccessMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/ai-active-access$/);
+  if (aiActiveAccessMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { canUseAiActive } = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === aiActiveAccessMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    target.canUseAiActive = !!canUseAiActive;
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
+  // Self-service (not admin-only, unlike the routes above) -- a user
+  // flips their OWN status when stepping away, same as the Inbox button
+  // that calls this. An admin can still set it for someone else if needed.
+  const awayMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/away$/);
+  if (awayMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!me) return sendJson(res, 401, { error: "Not logged in" });
+    if (me.id !== awayMatch[1] && !isAdmin(me)) return sendJson(res, 403, { error: "Can only set your own away status" });
+    const { away } = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === awayMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    if (!target.canUseAiActive) return sendJson(res, 403, { error: "This user doesn't have AI Active access" });
+    target.away = !!away;
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
   const footerMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/footer$/);
   if (footerMatch && req.method === "POST") {
     const me = getSessionUser(req);

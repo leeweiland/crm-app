@@ -355,16 +355,17 @@
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="accordion-item" data-acc="assist">
-          <button type="button" class="accordion-header"><span>AI Assist Targeting</span><span class="accordion-chev">▾</span></button>
-          <div class="accordion-body" style="display:none">
-            <div class="editor-row" style="margin-bottom:0">
-              <label>Steps in for these users (when they're marked away) — AI Assist only</label>
-              <div class="multiselect" id="msCoverUsers">
-                <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
-                <div class="multiselect-panel" id="fCoverUsers"></div>
+          <div class="accordion-item" data-acc="coverage">
+            <button type="button" class="accordion-header"><span>Coverage</span><span class="accordion-chev">▾</span></button>
+            <div class="accordion-body" style="display:none">
+              <div class="active-section-sub">When one of these teammates switches to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first.</div>
+              <div class="editor-row" style="margin-bottom:0">
+                <label>Cover for these teammates when they're Away</label>
+                <div class="multiselect" id="msCoverUsers">
+                  <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
+                  <div class="multiselect-panel" id="fCoverUsers"></div>
+                </div>
               </div>
             </div>
           </div>

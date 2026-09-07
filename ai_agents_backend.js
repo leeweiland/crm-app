@@ -261,6 +261,16 @@ export const AI_GENERATION_LOG_FILE = "crm_ai_generation_log.json";
 // another -- no reply is ever needed regardless of what the last message
 // looks like. Skipped before ever calling the model.
 export const TERMINAL_STATUSES = new Set(["ENROLLED", "STOP", BLACKLIST_STATUS_LABEL, "WE CANCELLED"]);
+// Shared by every autonomous-send mode (AI Active, behavioral triggers, AI
+// coverage) -- was duplicated verbatim in two files before this; hoisted
+// here (not its own module) since TERMINAL_STATUSES already lives here and
+// every consumer already imports from this file anyway.
+export function isExcludable(contact) {
+  if (contact.emailOptOut && contact.smsOptOut) return "opted out";
+  if (!contact.email && !contact.phone) return "no email or phone on file";
+  if (contact.status && TERMINAL_STATUSES.has(contact.status)) return `status is "${contact.status}"`;
+  return null;
+}
 // A human personally sent the last outbound message (not the AI) within
 // this window -- they're actively on this lead, don't suggest anything.
 const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;

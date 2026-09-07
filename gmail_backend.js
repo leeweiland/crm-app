@@ -7,6 +7,7 @@ import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
 import { resolveFooterHtml, absolutizeUploadUrls } from "./email_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 import { renderEmailBody } from "./block_editor_shared.js";
+import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
 
 // Per-user Gmail connection -- same idea as Close's "just add it as a
 // user", not a domain-level SES/MX setup: each staff member connects
@@ -463,6 +464,7 @@ async function processGmailMessage(user, msg) {
   // see markPriorOutboundEmailsOpenedByReply's own comment for why that
   // makes it more trustworthy than the tracking pixel itself.
   markPriorOutboundEmailsOpenedByReply(contactId, createdAt || new Date().toISOString());
+  maybeCoverInboundReply(contactId); // no-op unless this lead's owner is Away and an agent covers for them
 }
 
 // Re-derives truth straight from a Gmail search instead of trusting

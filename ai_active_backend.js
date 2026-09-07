@@ -4,7 +4,7 @@ import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting,
+  generateAgentReply, contactMatchesTargeting, isExcludable,
 } from "./ai_agents_backend.js";
 
 // ── AI Active -- "works the selected lead batch and brings the human in
@@ -32,13 +32,6 @@ export const AI_ACTIVE_BATCHES_FILE = "crm_ai_active_batches.json";
 export const AI_ACTIVE_STATES_FILE = "crm_ai_active_states.json";
 
 const MAX_FOLLOWUPS = 3;
-
-function isExcludable(contact) {
-  if (contact.emailOptOut && contact.smsOptOut) return "opted out";
-  if (!contact.email && !contact.phone) return "no email or phone on file";
-  if (contact.status && TERMINAL_STATUSES.has(contact.status)) return `status is "${contact.status}"`;
-  return null;
-}
 
 // Applies a segment's filter AND the agent's own lead-type/status targeting
 // (the same targeting AI Assist uses to decide which contacts get icons --
