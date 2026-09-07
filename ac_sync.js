@@ -500,24 +500,45 @@ const AC_ENGAGEMENT_POLL_STATE_FILE = "crm_ac_engagement_poll_state.json";
 const AC_ENGAGEMENT_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const AC_ENGAGEMENT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
+// fetchAcContactActivities has no request timeout of its own (see
+// import_backend.js) -- confirmed live this had to be added: a single
+// slow/hung AC response blocked this whole function indefinitely, which
+// in turn blocked every LATER scheduler phase behind it (including
+// processBehavioralTriggers) since tick() awaits each phase in sequence.
+// A per-call race is the fix rather than editing the shared fetch
+// function, whose other callers (live from inbox_backend.js) already
+// have their own timeout expectations.
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms))]);
+}
+const AC_ENGAGEMENT_TIME_BUDGET_MS = 15 * 1000; // hard cap per scheduler tick -- resumes next tick via nextIndex, same shape as processAcRefFillBatch
+const AC_ENGAGEMENT_PER_CALL_TIMEOUT_MS = 8 * 1000;
+
 export async function pollAcEngagementIfDue() {
   if (!acConfigured()) return;
-  const state = readJson(AC_ENGAGEMENT_POLL_STATE_FILE, { lastRunAt: null });
-  if (state.lastRunAt && Date.now() - new Date(state.lastRunAt).getTime() < AC_ENGAGEMENT_POLL_INTERVAL_MS) return;
+  const state = readJson(AC_ENGAGEMENT_POLL_STATE_FILE, { lastRunAt: null, nextIndex: 0 });
+  const startingNewPass = !state.lastRunAt || Date.now() - new Date(state.lastRunAt).getTime() >= AC_ENGAGEMENT_POLL_INTERVAL_MS;
+  if (!startingNewPass && !(state.nextIndex > 0)) return; // not due, and no in-progress pass to resume
 
   const contacts = readJson(CONTACTS_FILE, []);
   const cutoff = Date.now() - AC_ENGAGEMENT_LOOKBACK_MS;
-  const candidates = contacts.filter((c) => {
-    if (!c.externalIds?.acContactId) return false;
-    if (c.emailEngagement?.opened && c.emailEngagement?.clicked) return false;
+  // Cheap filters only (no per-contact file read) before the expensive
+  // getContactMessages check -- across ~176k contacts, even a local file
+  // read per contact adds up; narrow the field first.
+  const candidates = contacts.filter((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked));
+  const pending = candidates.filter((c) => {
     const journey = getContactMessages(c.id);
     return journey.some((m) => m.direction === "outbound" && m.channel === "email" && new Date(m.createdAt).getTime() >= cutoff);
   });
 
+  if (startingNewPass) state.nextIndex = 0;
+  const t0 = Date.now();
   let checked = 0, updated = 0;
-  for (const contact of candidates) {
+  while (state.nextIndex < pending.length && Date.now() - t0 < AC_ENGAGEMENT_TIME_BUDGET_MS) {
+    const contact = pending[state.nextIndex];
+    state.nextIndex++;
     try {
-      const { logs, linkData } = await fetchAcContactActivities(contact.externalIds.acContactId);
+      const { logs, linkData } = await withTimeout(fetchAcContactActivities(contact.externalIds.acContactId), AC_ENGAGEMENT_PER_CALL_TIMEOUT_MS);
       checked++;
       const hasOpen = (logs || []).some((l) => /open/i.test(l.type || l.eventtype || "") && new Date(l.tstamp || l.cdate || l.timestamp || 0).getTime() >= cutoff);
       const hasClick = (linkData || []).some((c2) => new Date(c2.tstamp || c2.cdate || 0).getTime() >= cutoff);
@@ -528,7 +549,8 @@ export async function pollAcEngagementIfDue() {
     }
   }
 
-  state.lastRunAt = new Date().toISOString();
+  const donePass = state.nextIndex >= pending.length;
+  if (donePass) { state.lastRunAt = new Date().toISOString(); state.nextIndex = 0; }
   writeJson(AC_ENGAGEMENT_POLL_STATE_FILE, state);
-  console.log(`[ac-engagement-poll] checked ${checked}/${candidates.length} candidates, ${updated} engagement updates`);
+  console.log(`[ac-engagement-poll] checked ${checked} this tick (${state.nextIndex}/${pending.length} of pass), ${updated} engagement updates${donePass ? " -- pass complete" : " -- resuming next tick"}`);
 }
