@@ -81,6 +81,7 @@
           <button class="tab-btn" data-tab="ads">Ads</button>
           <button class="tab-btn" data-tab="attribution">Ad Attribution</button>
           <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
+          <button class="tab-btn" data-tab="team">Team Activity</button>
         </div>
 
         <!-- Shared date-range selector -- same options, same math, used by
@@ -177,6 +178,22 @@
           </div>
         </div>
       </div>
+
+      <div class="tab-panel" id="tab-team">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Messages sent on each team member's book of contacts in the selected range, split by who/what actually sent it -- them personally, an AI agent, an SMS sequence, an email automation, or a campaign.</div>
+        <div class="rep-section">
+          <div class="rep-section-title">Email Sent</div>
+          <div class="pra-panel" style="padding:0;overflow-x:auto">
+            <table class="pra-table" style="width:100%;min-width:640px" id="teamEmailTable"></table>
+          </div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">SMS Sent</div>
+          <div class="pra-panel" style="padding:0;overflow-x:auto">
+            <table class="pra-table" style="width:100%;min-width:640px" id="teamSmsTable"></table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -253,8 +270,27 @@ function applyPeriod() {
   currentStart = start.toISOString().slice(0, 10);
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
-  loadEmailReport(); loadSmsReport(); loadAdsReport(); loadAttributionReport();
+  loadEmailReport(); loadSmsReport(); loadAdsReport(); loadAttributionReport(); loadTeamActivityReport();
   if (document.getElementById('tab-overview').classList.contains('active')) loadOverview();
+}
+
+const SENT_CATEGORY_LABELS = { human: 'Human', ai_agent: 'AI Agent', sms_sequence: 'SMS Sequence', email_automation: 'Email Automation', email_campaign: 'Campaign', other: 'Other' };
+function renderTeamSentTable(tableId, rows, categories) {
+  const table = document.getElementById(tableId);
+  const cols = categories.filter(c => rows.some(r => r[c] > 0) || ['human', 'ai_agent'].includes(c));
+  table.innerHTML = `
+    <thead><tr><th>Name</th>${cols.map(c => `<th style="text-align:right">${SENT_CATEGORY_LABELS[c]}</th>`).join('')}<th style="text-align:right">Total</th></tr></thead>
+    <tbody>${rows.map(r => `
+      <tr><td>${escapeHtml(r.name)}</td>${cols.map(c => `<td style="text-align:right">${r[c]}</td>`).join('')}<td style="text-align:right;font-weight:700">${r.total}</td></tr>
+    `).join('')}</tbody>
+  `;
+}
+async function loadTeamActivityReport() {
+  const r = await fetch(`/api/reporting/sent-by-user?start=${currentStart}&end=${currentEnd}`);
+  if (!r.ok) return; // non-admins don't see this tab's data -- table just stays empty
+  const { rows, categories } = await r.json();
+  renderTeamSentTable('teamEmailTable', rows.map(row => ({ name: row.name, ...row.email })), categories);
+  renderTeamSentTable('teamSmsTable', rows.map(row => ({ name: row.name, ...row.sms })), categories);
 }
 document.getElementById('periodSelect').addEventListener('change', applyPeriod);
 document.getElementById('updateReportBtn').onclick = applyPeriod;

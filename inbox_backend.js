@@ -112,7 +112,12 @@ export async function handleInboxRequest(req, res, url) {
         items.push({
           contactId: c.id, contactName: `${c.first || ""} ${c.last || ""}`.trim() || "(no name)",
           channel: m.channel, direction: m.direction, sourceType: m.sourceType || null,
+          subject: m.subject || null,
           preview: (m.subject ? `${m.subject} — ` : "") + (m.bodyPreview || m.body || "").replace(/<[^>]+>/g, " ").slice(0, 140),
+          // Full body only for email -- SMS bodies are already short enough
+          // that bodyPreview/preview above already show the whole thing, no
+          // separate expanded view needed for that channel.
+          body: m.channel === "email" ? (m.body || "") : null,
           createdAt: m.createdAt,
         });
       }

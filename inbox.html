@@ -21,14 +21,21 @@
 
   /* ── Activity feed (a user's own sent SMS/email, including AI-sent
      while they were Away) ── */
-  .activity-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--pra-border); font-size: .84rem; }
-  .activity-row:last-child { border-bottom: none; }
+  .activity-item { border-bottom: 1px solid var(--pra-border); }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; font-size: .84rem; cursor: pointer; }
+  .activity-row.no-expand { cursor: default; }
   .activity-channel-pill { font-size: .64rem; text-transform: uppercase; padding: 2px 7px; border-radius: 7px; background: rgba(255,255,255,.08); color: var(--pra-dim); flex-shrink: 0; margin-top: 2px; }
   .activity-channel-pill.ai_active, .activity-channel-pill.ai_coverage, .activity-channel-pill.behavioral_trigger { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .activity-body { flex: 1; min-width: 0; }
   .activity-body .activity-contact { font-weight: 700; }
+  .activity-body .activity-subject { font-weight: 600; color: var(--pra-white); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .activity-body .activity-preview { color: var(--pra-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .activity-time { font-size: .74rem; color: var(--pra-dim); flex-shrink: 0; white-space: nowrap; }
+  .activity-detail { display: none; padding: 0 14px 14px 44px; }
+  .activity-detail.open { display: block; }
+  .activity-detail iframe { width: 100%; min-height: 220px; border: 1px solid var(--pra-border); border-radius: 8px; background: #fff; }
+  .activity-view-thread-btn { margin-top: 10px; }
 
   /* ── Flat list (Tasks / Reminders) ── */
   .inbox-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -783,18 +790,62 @@ async function loadActivity() {
   if (!r.ok) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Could not load.</div>'; return; }
   const { items } = await r.json();
   if (!items.length) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">No activity yet.</div>'; return; }
-  panel.innerHTML = items.map(it => `
-    <div class="activity-row">
-      <span class="activity-channel-pill ${escapeHtml(it.sourceType || '')}">${escapeHtml(it.channel)}${it.direction === 'inbound' ? ' in' : ''}</span>
-      <div class="activity-body">
-        <span class="activity-contact">${escapeHtml(it.contactName)}</span>
-        <div class="activity-preview">${escapeHtml(it.preview || '')}</div>
+  // Only email rows expand -- SMS bodies are already short enough that the
+  // preview line above already shows the whole thing, and there's no
+  // separate subject/full-body to reveal for that channel.
+  panel.innerHTML = items.map((it, idx) => `
+    <div class="activity-item">
+      <div class="activity-row ${it.channel === 'email' ? '' : 'no-expand'}" data-activity-idx="${idx}">
+        <span class="activity-channel-pill ${escapeHtml(it.sourceType || '')}">${escapeHtml(it.channel)}${it.direction === 'inbound' ? ' in' : ''}</span>
+        <div class="activity-body">
+          <span class="activity-contact">${escapeHtml(it.contactName)}</span>
+          ${it.subject ? `<div class="activity-subject">${escapeHtml(it.subject)}</div>` : ''}
+          <div class="activity-preview">${escapeHtml(it.preview || '')}</div>
+        </div>
+        <span class="activity-time">${fmtDate(it.createdAt)}</span>
       </div>
-      <span class="activity-time">${fmtDate(it.createdAt)}</span>
+      ${it.channel === 'email' ? `<div class="activity-detail" id="activityDetail${idx}"></div>` : ''}
     </div>
   `).join('');
+  panel.querySelectorAll('[data-activity-idx]').forEach(row => {
+    row.addEventListener('click', () => {
+      const it = items[Number(row.dataset.activityIdx)];
+      if (it.channel !== 'email') return;
+      const detail = document.getElementById(`activityDetail${row.dataset.activityIdx}`);
+      const open = detail.classList.toggle('open');
+      if (open && !detail.dataset.rendered) {
+        detail.dataset.rendered = '1';
+        detail.innerHTML = `<iframe sandbox=""></iframe><button class="pra-btn pra-btn-ghost pra-btn-sm activity-view-thread-btn" data-thread-contact="${it.contactId}">View full thread</button>`;
+        // Same sandboxed-iframe pattern the main chat panel's email bubbles
+        // use (renderThread) -- keeps a contact's raw HTML email body from
+        // ever executing script in the CRM's own page context.
+        detail.querySelector('iframe').srcdoc = `<style>body,*{font-family:Arial,Helvetica,sans-serif!important;}</style>${it.body || '<p style="color:#888">(no content stored)</p>'}`;
+        detail.querySelector('[data-thread-contact]').addEventListener('click', (e) => {
+          e.stopPropagation();
+          openContactThreadFromActivity(it.contactId);
+        });
+      }
+    });
+  });
 }
 document.getElementById('activityUserSelect').addEventListener('change', loadActivity);
+
+// Jumps from an Activity row into that contact's real conversation in the
+// main Inbox tab -- reuses the same tab-switch + selectConversation path
+// the tab buttons themselves use instead of re-building thread rendering.
+async function openContactThreadFromActivity(contactId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === 'primary'));
+  currentTab = 'primary';
+  document.getElementById('chatView').style.display = 'flex';
+  document.getElementById('flatListView').style.display = 'none';
+  document.getElementById('activityView').style.display = 'none';
+  document.getElementById('inboxToolbar').style.display = 'none';
+  document.getElementById('chatView').classList.remove('thread-open');
+  await loadConversations();
+  const match = conversations.find(c => c.contactId === contactId);
+  if (match) selectConversation(match);
+  else showToast("Could not find that contact's conversation", true);
+}
 
 // ── Chat: conversation sidebar ───────────────────────────────────────────
 function convoQueryParams(offset) {

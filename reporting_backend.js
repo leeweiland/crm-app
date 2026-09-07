@@ -1,6 +1,6 @@
-import { readJson, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
 import { getMessagesForSource } from "./message_log.js";
-import { getDailyStatsInRange } from "./message_index.js";
+import { getDailyStatsInRange, getContactMessages } from "./message_index.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { AUTOMATIONS_FILE } from "./automations_backend.js";
 import { WORKFLOWS_FILE } from "./workflows_backend.js";
@@ -190,6 +190,25 @@ function parseRangeParams(url) {
   return { startMs: new Date(startStr + "T00:00:00Z").getTime(), endMs: new Date(endStr + "T23:59:59Z").getTime() };
 }
 
+// Same sourceType tags every send already carries (ai_agents_backend.js,
+// ai_active_backend.js, workflows_backend.js, automations_backend.js,
+// campaigns_backend.js) -- just grouped into the handful of buckets this
+// report actually cares about instead of the full list of exact tags.
+function sentCategoryForSourceType(sourceType) {
+  if (!sourceType || sourceType === "inbox" || sourceType === "manual") return "human";
+  if (sourceType === "ai_active" || sourceType === "behavioral_trigger" || sourceType === "ai_coverage") return "ai_agent";
+  if (sourceType === "workflow_step") return "sms_sequence";
+  if (sourceType === "automation_step") return "email_automation";
+  if (sourceType === "campaign") return "email_campaign";
+  return "other"; // ac_campaign/ac_import/hyros_import/meeting -- legacy imports and one-off reminders
+}
+const SENT_CATEGORIES = ["human", "ai_agent", "sms_sequence", "email_automation", "email_campaign", "other"];
+function emptySentCounts() {
+  const c = { total: 0 };
+  for (const cat of SENT_CATEGORIES) c[cat] = 0;
+  return c;
+}
+
 export async function handleReportingRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/reporting")) return false;
@@ -207,6 +226,46 @@ export async function handleReportingRequest(req, res, url) {
       automations: statsFromByStatus(sumByStatus(days, "automationEmailOut")),
       workflows: smsStatsFromByStatus(sumByStatus(days, "workflowSmsOut"), 0),
     });
+  }
+
+  // Messages sent per team member's book, split by channel and by who/what
+  // actually sent it (human vs AI agent vs SMS sequence vs email automation
+  // vs campaign) -- same "human-sent" vs "CRM-sent" distinction the Inbox
+  // Activity tab surfaces per-person, just rolled up across the whole team
+  // with counts instead of a row-by-row feed. Bounded the same way that
+  // endpoint is (inbox_backend.js's /api/inbox/activity): only each user's
+  // OWNED_CONTACT_SCAN_CAP most-recently-touched contacts are scanned, so
+  // this stays a handful of small per-contact file reads per team member
+  // rather than a full message-log scan (see statsFromMessages' comment
+  // above on why that's off the table).
+  if (p === "/api/reporting/sent-by-user" && req.method === "GET") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { startMs, endMs } = parseRangeParams(url);
+    const OWNED_CONTACT_SCAN_CAP = 300;
+    const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
+    const allContacts = readJson(CONTACTS_FILE, []);
+    const rows = users.map((u) => {
+      const contacts = allContacts
+        .filter((c) => c.ownerId === u.id)
+        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+        .slice(0, OWNED_CONTACT_SCAN_CAP);
+      const email = emptySentCounts();
+      const sms = emptySentCounts();
+      for (const c of contacts) {
+        for (const m of getContactMessages(c.id)) {
+          if (m.direction !== "outbound") continue;
+          if (m.channel !== "email" && m.channel !== "sms") continue;
+          const t = new Date(m.createdAt).getTime();
+          if (!(t >= startMs && t <= endMs)) continue;
+          const bucket = m.channel === "email" ? email : sms;
+          const cat = sentCategoryForSourceType(m.sourceType);
+          bucket[cat]++;
+          bucket.total++;
+        }
+      }
+      return { userId: u.id, name: `${u.first} ${u.last}`.trim(), email, sms, scannedContacts: contacts.length };
+    });
+    return sendJson(res, 200, { rows, categories: SENT_CATEGORIES });
   }
 
   if (p === "/api/reporting/email-daily" && req.method === "GET") {
