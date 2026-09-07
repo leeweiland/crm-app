@@ -844,7 +844,7 @@ export async function sendDueBookingReminders() {
 // send it directly here than to try to recombine two independent Flow
 // runs into one email. No contactId passed -- this goes to internal
 // staff, not the contact, so it shouldn't be gated by their email opt-out.
-async function sendInternalBookingNotification(booking, eventType, contact) {
+export async function sendInternalBookingNotification(booking, eventType, contact) {
   const recipients = (eventType.notifyEmails || []).filter(Boolean);
   if (!recipients.length) return;
   const start = new Date(booking.startAt);
@@ -859,7 +859,7 @@ async function sendInternalBookingNotification(booking, eventType, contact) {
     <p><b>When:</b> ${when}<br/><b>Email:</b> ${escapeHtml(booking.email)}${booking.phone ? `<br/><b>Phone:</b> ${escapeHtml(booking.phone)}` : ""}</p>
     ${formAnswersText ? `<p><b>Form answers:</b><br/>${escapeHtml(formAnswersText).replace(/\n/g, "<br/>")}</p>` : ""}
     ${booking.notes ? `<p><b>Application &amp; booking answers:</b><br/>${escapeHtml(booking.notes).replace(/\n/g, "<br/>")}</p>` : ""}
-    <p><a href="${manageUrl}">Need to cancel this booking?</a></p>`;
+    <p><a href="${manageUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-weight:bold;font-size:14px;text-decoration:none;padding:10px 18px;border-radius:6px;margin-top:6px">Cancel This Booking</a></p>`;
   await Promise.all(recipients.map(to => sendEmail({
     to, subject: `New booking: ${booking.name} — ${eventType.name}`,
     blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
