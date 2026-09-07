@@ -7,6 +7,7 @@ import { WORKFLOWS_FILE } from "./workflows_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
+import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -190,25 +191,6 @@ function parseRangeParams(url) {
   return { startMs: new Date(startStr + "T00:00:00Z").getTime(), endMs: new Date(endStr + "T23:59:59Z").getTime() };
 }
 
-// Same sourceType tags every send already carries (ai_agents_backend.js,
-// ai_active_backend.js, workflows_backend.js, automations_backend.js,
-// campaigns_backend.js) -- just grouped into the handful of buckets this
-// report actually cares about instead of the full list of exact tags.
-function sentCategoryForSourceType(sourceType) {
-  if (!sourceType || sourceType === "inbox" || sourceType === "manual") return "human";
-  if (sourceType === "ai_active" || sourceType === "behavioral_trigger" || sourceType === "ai_coverage") return "ai_agent";
-  if (sourceType === "workflow_step") return "sms_sequence";
-  if (sourceType === "automation_step") return "email_automation";
-  if (sourceType === "campaign" || sourceType === "ac_campaign") return "email_campaign";
-  // Bulk-migrated history from before this CRM -- these carry the original
-  // send's own createdAt, so they can still land inside a recent date range
-  // despite not being anything that happened through this app. Split out
-  // from "other" so a big number here reads as "old imported history", not
-  // an unexplained mystery bucket.
-  if (sourceType === "close_import" || sourceType === "ac_import" || sourceType === "hyros_import") return "legacy_import";
-  return "other"; // meeting reminders, anything untagged/unrecognized
-}
-const SENT_CATEGORIES = ["human", "ai_agent", "sms_sequence", "email_automation", "email_campaign", "legacy_import", "other"];
 function emptySentCounts() {
   const c = { total: 0 };
   for (const cat of SENT_CATEGORIES) c[cat] = 0;

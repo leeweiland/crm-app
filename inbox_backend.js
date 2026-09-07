@@ -6,13 +6,14 @@ import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { CONVERSATION_META_FILE, getConvoMeta, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
 import {
-  getContactMessages, appendContactMessage, updateContactMessagesByIds, deleteContactMessageFile,
+  getContactMessages, getSourceMessages, appendContactMessage, updateContactMessagesByIds, deleteContactMessageFile,
   markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
 import { queryConversationsSqlite, syncContactFields } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
+import { sentCategoryForSourceType } from "./ai_agents_backend.js";
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 
@@ -83,18 +84,19 @@ export async function handleInboxRequest(req, res, url) {
     return true;
   }
 
-  // A user's own sent/received SMS+email across every lead they own,
-  // newest first -- the main way to review what actually went out on
-  // their leads while they were marked Away (AI Active/coverage-sourced
-  // sends included, tagged by sourceType so it's clear which were
-  // autonomous). Bounded deliberately: owned-contact counts can run into
+  // A user's own sent/received SMS+email -- messages they personally sent
+  // (to anyone, owned or not), replies on those conversations, and AI
+  // sends standing in for them on leads they own while marked Away.
+  // Newest first, the main way to review what actually went out under
+  // their name. Bounded deliberately: owned-contact counts can run into
   // the hundreds+ for a busy closer, and getContactMessages is a
   // per-contact file read -- scanning everyone's entire book on every
   // request would be a real "slow synchronous loop blocks the whole
   // server" risk (confirmed elsewhere today with the AC engagement poll).
   // Only the OWNED_CONTACT_SCAN_CAP most-recently-touched owned contacts
-  // are scanned; that's enough to surface genuinely recent activity
-  // without an unbounded cost as someone's book grows.
+  // are scanned for the AI-coverage half of this; that's enough to surface
+  // genuinely recent activity without an unbounded cost as someone's book
+  // grows.
   if (p === "/api/inbox/activity" && req.method === "GET") {
     // "me" (also the default with no param at all) resolves from the
     // session server-side instead of trusting a client-supplied id for the
@@ -112,13 +114,50 @@ export async function handleInboxRequest(req, res, url) {
     // of messages the user never scrolls to.
     const PAGE_SIZE = 30;
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
-    const contacts = readJson(CONTACTS_FILE, [])
+    const allContacts = readJson(CONTACTS_FILE, []);
+    const ownedContacts = allContacts
       .filter((c) => c.ownerId === userId)
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
       .slice(0, OWNED_CONTACT_SCAN_CAP);
+    // Confirmed live: scoping purely by contact ownership silently dropped
+    // someone's real, personal Inbox sends whenever the lead they messaged
+    // was unowned/unassigned (a brand-new teammate's very first sends were
+    // all to unassigned leads -- none of them showed up here at all). The
+    // msg_by_source index (message_index.js) already tracks every "inbox"
+    // send by sourceId=the sender's own user id regardless of who owns the
+    // contact, so it fills that gap cheaply -- one small per-user file,
+    // not a scan of every contact in the system.
+    const personalContactIds = new Set(getSourceMessages("inbox", userId).map((m) => m.contactId).filter(Boolean));
+    const ownedIds = new Set(ownedContacts.map((c) => c.id));
+    const extraContacts = [...personalContactIds]
+      .filter((id) => !ownedIds.has(id))
+      .map((id) => allContacts.find((c) => c.id === id))
+      .filter(Boolean);
+    const contacts = ownedContacts.concat(extraContacts);
     const items = [];
     for (const c of contacts) {
-      const messages = getContactMessages(c.id).filter((m) => ["email", "sms"].includes(m.channel));
+      // Confirmed live: without this filter, an org-wide SMS Sequence/email
+      // Automation/Campaign blast (or bulk-migrated Close/AC/Hyros history)
+      // that merely reached a lead this person happens to own was showing
+      // up as if it were their own activity -- a generic sequence text
+      // signed "-Coach Lee" appeared identically under two different
+      // coaches' Activity feeds just because they owned some recipients.
+      // Inbound is always kept (it's the contact's own reply, never
+      // automated-on-someone's-behalf). Outbound counts as "theirs" only if
+      // THIS person personally sent it (sourceId match, not just "some
+      // human sent something to a contact they own" -- a teammate covering
+      // one reply manually on someone else's lead shouldn't count as the
+      // owner's own activity), or if AI sent it standing in for them while
+      // Away on their own book specifically.
+      const messages = getContactMessages(c.id)
+        .filter((m) => ["email", "sms"].includes(m.channel))
+        .filter((m) => {
+          if (m.direction === "inbound") return true;
+          const cat = sentCategoryForSourceType(m.sourceType);
+          if (cat === "human") return m.sourceId === userId;
+          if (cat === "ai_agent") return c.ownerId === userId;
+          return false;
+        });
       for (const m of messages.slice(-20)) { // most recent 20 per contact is plenty; avoids one very chatty thread crowding out everyone else's most recent activity
         items.push({
           contactId: c.id, contactName: `${c.first || ""} ${c.last || ""}`.trim() || "(no name)",

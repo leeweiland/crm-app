@@ -271,6 +271,28 @@ export function isExcludable(contact) {
   if (contact.status && TERMINAL_STATUSES.has(contact.status)) return `status is "${contact.status}"`;
   return null;
 }
+// Buckets every outbound sourceType tag into who/what actually sent it --
+// shared by the Inbox Activity feed (which sender's OWN activity a message
+// counts as) and the per-user sent-by-user report, so both agree on what
+// counts as "this person's" activity vs. an org-wide send that merely
+// touched a lead they happen to own. Confirmed live this distinction
+// matters: a bulk SMS Sequence signed "-Coach Lee" going out to dozens of
+// leads in the same second was showing up as two different coaches' own
+// Activity just because they owned some of the recipients.
+export function sentCategoryForSourceType(sourceType) {
+  if (!sourceType || sourceType === "inbox" || sourceType === "manual") return "human";
+  if (sourceType === "ai_active" || sourceType === "behavioral_trigger" || sourceType === "ai_coverage") return "ai_agent";
+  if (sourceType === "workflow_step") return "sms_sequence";
+  if (sourceType === "automation_step") return "email_automation";
+  if (sourceType === "campaign" || sourceType === "ac_campaign") return "email_campaign";
+  // Bulk-migrated history from before this CRM -- carries the MIGRATION's
+  // own timestamp, not the original send date (confirmed live), and is
+  // attributed to whoever owns the contact today, not who actually sent it.
+  if (sourceType === "close_import" || sourceType === "ac_import" || sourceType === "hyros_import") return "legacy_import";
+  return "other"; // meeting reminders, anything untagged/unrecognized
+}
+export const SENT_CATEGORIES = ["human", "ai_agent", "sms_sequence", "email_automation", "email_campaign", "legacy_import", "other"];
+
 // A human personally sent the last outbound message (not the AI) within
 // this window -- they're actively on this lead, don't suggest anything.
 const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;
