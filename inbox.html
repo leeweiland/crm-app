@@ -976,7 +976,7 @@ function wireConvoRow(row) {
       showToast('Status updated');
       if (convo.contact) convo.contact.status = status;
       e.target.setAttribute('style', avatarStyle(status));
-      if (status === 'STOP' || status === 'BLACKLIST') dropConvoFromSidebar(convo.key);
+      if ((status === 'STOP' || status === 'BLACKLIST') && convoFilter !== 'hidden') dropConvoFromSidebar(convo.key);
       // A status change can auto-archive (STOP) or auto-hide (Blacklist)
       // the conversation -- same reload chatStatusSelect's handler does, so
       // a freshly-archived/hidden row actually drops out of the current
@@ -1111,7 +1111,16 @@ document.getElementById('ctxArchiveBtn').onclick = async () => {
   const c = ctxMenuConvo;
   closeContextMenu();
   if (!c?.contactId) return;
-  await fetch(`/api/inbox/conversations/${c.contactId}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: !c.archived }) });
+  const nextArchived = !c.archived;
+  await fetch(`/api/inbox/conversations/${c.contactId}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: nextArchived }) });
+  c.archived = nextArchived;
+  showToast(nextArchived ? 'Archived' : 'Unarchived');
+  // Every bucket except the dedicated Archived tab excludes archived rows
+  // outright (see sqlite_inbox.js's queryConversationsSqlite) -- drop it
+  // the instant it no longer belongs in whichever tab is open instead of
+  // waiting on loadConversations()'s own round trip to notice.
+  if (nextArchived !== (convoFilter === 'archived')) dropConvoFromSidebar(c.key);
+  else renderSidebar();
   loadConversations();
 };
 document.getElementById('ctxBlacklistBtn').onclick = async () => {
@@ -1120,7 +1129,9 @@ document.getElementById('ctxBlacklistBtn').onclick = async () => {
   if (!c?.contactId) return;
   await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) });
   showToast('Marked as Blacklist');
-  dropConvoFromSidebar(c.key);
+  // Blacklist sets the same hidden=1 flag as STOP -- if the Hidden tab is
+  // what's open, this row still belongs there, just don't drop it.
+  if (convoFilter !== 'hidden') dropConvoFromSidebar(c.key);
   loadRefs();
   loadConversations();
 };
@@ -1139,6 +1150,8 @@ document.getElementById('confirmDeleteConvoBtn').onclick = async () => {
   if (!res.ok) { showToast('Could not delete conversation', true); return; }
   showToast('Conversation deleted');
   if (selectedConvo?.key === key) { selectedConvo = null; document.getElementById('chatView').classList.remove('thread-open'); document.getElementById('chatPanel').innerHTML = '<div class="chat-empty">Select a conversation</div>'; }
+  conversations = conversations.filter(x => x.key !== key);
+  renderSidebar();
   loadConversations();
 };
 
@@ -1718,7 +1731,7 @@ function renderThread() {
     await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
     showToast('Status updated');
     e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
-    if (status === 'STOP' || status === 'BLACKLIST') dropConvoFromSidebar(c.key);
+    if ((status === 'STOP' || status === 'BLACKLIST') && convoFilter !== 'hidden') dropConvoFromSidebar(c.key);
     loadRefs();
     // A status change can auto-archive (STOP) or auto-hide (Blacklist) the
     // conversation -- loadRefs() only refreshes contacts/statuses/users,
