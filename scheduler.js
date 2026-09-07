@@ -11,7 +11,7 @@ import { sendDueBookingReminders } from "./scheduling_backend.js";
 import { checkGmailInbox } from "./gmail_backend.js";
 import { processCloseAltBackfillBatch, processStopStatusRecoveryBatch } from "./import_backend.js";
 import { resyncStaleStopRows, resyncStaleLegacyLabelRows } from "./sqlite_inbox.js";
-import { processAcRefFillBatch, pollAcEngagementIfDue, processAcNightlySyncBatch } from "./ac_sync.js";
+import { processAcRefFillBatch } from "./ac_sync.js";
 import { processBehavioralTriggers } from "./behavioral_triggers_backend.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
@@ -65,8 +65,17 @@ async function tick() {
     await timedPhase("resyncStaleStopRows", async () => resyncStaleStopRows());
     await timedPhase("resyncStaleLegacyLabelRows", async () => resyncStaleLegacyLabelRows());
     await timedPhase("processAcRefFillBatch", processAcRefFillBatch);
-    await timedPhase("pollAcEngagementIfDue", pollAcEngagementIfDue);
-    await timedPhase("processAcNightlySyncBatch", processAcNightlySyncBatch);
+    // pollAcEngagementIfDue and processAcNightlySyncBatch REMOVED (2026-09-07)
+    // -- both were unconditional background AC polling: the former caused
+    // three production OOM crashes today re-reading the full ~180MB contacts
+    // file, and even fixed, both are still a standing per-tick/per-contact
+    // AC API load the user explicitly doesn't want running in the
+    // background right now. Per direct instruction: engagement/campaign
+    // data should only refresh when a contact's conversation is actually
+    // opened (syncAcEngagementForContact, already wired to /opened in
+    // inbox_backend.js -- unaffected by this), and any bulk AC import
+    // happens as a deliberate one-off later, once AWS SES is live. Both
+    // functions are still exported from ac_sync.js, just not scheduled.
     await timedPhase("processBehavioralTriggers", processBehavioralTriggers);
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
