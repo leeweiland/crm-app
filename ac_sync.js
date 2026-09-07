@@ -522,21 +522,23 @@ export async function pollAcEngagementIfDue() {
 
   const contacts = readJson(CONTACTS_FILE, []);
   const cutoff = Date.now() - AC_ENGAGEMENT_LOOKBACK_MS;
-  // Cheap filters only (no per-contact file read) before the expensive
-  // getContactMessages check -- across ~176k contacts, even a local file
-  // read per contact adds up; narrow the field first.
   const candidates = contacts.filter((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked));
-  const pending = candidates.filter((c) => {
-    const journey = getContactMessages(c.id);
-    return journey.some((m) => m.direction === "outbound" && m.channel === "email" && new Date(m.createdAt).getTime() >= cutoff);
-  });
 
   if (startingNewPass) state.nextIndex = 0;
   const t0 = Date.now();
-  let checked = 0, updated = 0;
-  while (state.nextIndex < pending.length && Date.now() - t0 < AC_ENGAGEMENT_TIME_BUDGET_MS) {
-    const contact = pending[state.nextIndex];
+  let checked = 0, updated = 0, skipped = 0;
+  // The time-budget check gates EVERY iteration, not just the network
+  // call -- confirmed live this had to cover getContactMessages too:
+  // across ~176k contacts, even a synchronous per-contact file read in an
+  // unbounded loop blocked the event loop (and every phase queued behind
+  // it in the same scheduler tick) for minutes, well before any AC API
+  // call ever happened.
+  while (state.nextIndex < candidates.length && Date.now() - t0 < AC_ENGAGEMENT_TIME_BUDGET_MS) {
+    const contact = candidates[state.nextIndex];
     state.nextIndex++;
+    const journey = getContactMessages(contact.id);
+    const hasRecentEmail = journey.some((m) => m.direction === "outbound" && m.channel === "email" && new Date(m.createdAt).getTime() >= cutoff);
+    if (!hasRecentEmail) { skipped++; continue; }
     try {
       const { logs, linkData } = await withTimeout(fetchAcContactActivities(contact.externalIds.acContactId), AC_ENGAGEMENT_PER_CALL_TIMEOUT_MS);
       checked++;
@@ -549,8 +551,8 @@ export async function pollAcEngagementIfDue() {
     }
   }
 
-  const donePass = state.nextIndex >= pending.length;
+  const donePass = state.nextIndex >= candidates.length;
   if (donePass) { state.lastRunAt = new Date().toISOString(); state.nextIndex = 0; }
   writeJson(AC_ENGAGEMENT_POLL_STATE_FILE, state);
-  console.log(`[ac-engagement-poll] checked ${checked} this tick (${state.nextIndex}/${pending.length} of pass), ${updated} engagement updates${donePass ? " -- pass complete" : " -- resuming next tick"}`);
+  console.log(`[ac-engagement-poll] ${state.nextIndex}/${candidates.length} scanned this pass (${checked} AC calls, ${skipped} skipped -- no recent email, ${updated} engagement updates)${donePass ? " -- pass complete" : " -- resuming next tick"}`);
 }
