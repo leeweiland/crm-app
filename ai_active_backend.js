@@ -65,7 +65,7 @@ function buildCandidateList(segment, batchSize, targeting) {
 // Falls back to a shared `unit`, then to "hours", for records saved
 // before per-field units existed (those only ever stored minHours/maxHours,
 // always meaning hours).
-const WAIT_UNIT_MS = { seconds: 1000, minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+export const WAIT_UNIT_MS = { seconds: 1000, minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
 function randomDelayMs(waitTimeRange) {
   const range = waitTimeRange || {};
   const minMult = WAIT_UNIT_MS[range.minUnit || range.unit] || WAIT_UNIT_MS.hours;
@@ -75,18 +75,22 @@ function randomDelayMs(waitTimeRange) {
   return loMs + Math.random() * (hiMs - loMs);
 }
 
-async function sendViaChannel(contact, channel, text, agentId, subject) {
+// sourceType defaults to "ai_active" (this file's own callers) but is
+// overridable so behavioral_triggers_backend.js can reuse the exact same
+// send path while tagging its messages distinctly (its own frequency-cap
+// and revisit logic key off sourceType === "behavioral_trigger").
+export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active") {
   if (channel === "email" && contact.email) {
     const { sendEmail } = await import("./email_backend.js");
     return sendEmail({
       to: contact.email, subject: subject || "PacificRimAthletics.com",
       blocks: [{ id: "b1", type: "text", html: text.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: null,
-      contactId: contact.id, sourceType: "ai_active", sourceId: agentId,
+      contactId: contact.id, sourceType, sourceId: agentId,
     });
   }
   if (channel === "sms" && contact.phone) {
     const { sendSms } = await import("./sms_backend.js");
-    return sendSms({ to: contact.phone, body: text, contactId: contact.id, sourceType: "ai_active", sourceId: agentId });
+    return sendSms({ to: contact.phone, body: text, contactId: contact.id, sourceType, sourceId: agentId });
   }
   return null;
 }

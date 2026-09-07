@@ -9,6 +9,7 @@ import { markContactEmailEngagement, suppressContactEmail } from "./contacts_bac
 import { getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { resolveSendSourceSlug } from "./source_names.js";
 import { setConvoMeta } from "./conversation_meta.js";
+import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -366,8 +367,8 @@ export async function handleEmailRequest(req, res, url) {
         const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
         if (providerMessageId && statusMap[eventType]) {
           const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
-          if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); }
-          if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
+          if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
+          if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
           if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained")) suppressContactEmail(row.contactId, statusMap[eventType]);
         }
       } catch (e) { console.error("[SES webhook] parse failed", e.message); }
@@ -386,7 +387,7 @@ export async function handleEmailRequest(req, res, url) {
       // message_log.js). Every real click was paying that cost.
       row = updateMessageById(messageLogId, { status: "clicked" });
       if (row) {
-        if (row.contactId) { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); }
+        if (row.contactId) { fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
         if (dest) executeLinkClickAction(row, dest);
       }
     }

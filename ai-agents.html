@@ -243,6 +243,84 @@
             <div class="active-section-title" style="margin-bottom:10px">Running batches</div>
             <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
           </div>
+
+          <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--pra-border)">
+            <div class="editor-row toggle-row" style="margin-bottom:10px">
+              <div class="toggle-item">
+                <button type="button" class="active-toggle" id="fBtToggle"></button>
+                <span class="toggle-label" id="fBtLabel">Behavioral Outbound (contextual message when a lead visits the site, opens/clicks an email, or clicks an SMS link)</span>
+              </div>
+            </div>
+            <div id="btSection" style="display:none">
+              <div class="active-section-sub" style="margin-bottom:12px">Fires per-contact, not a batch -- reaches out shortly after real activity, using what they just did plus their real history as context. Still requires the AI Active toggle above and this agent's own targeting/segment to match.</div>
+
+              <div class="editor-row">
+                <label>Trigger on</label>
+                <div style="display:flex;flex-wrap:wrap;gap:14px">
+                  <label style="display:flex;align-items:center;gap:6px;font-size:.86rem;cursor:pointer"><input type="checkbox" id="btSourcePageVisit"/> Website visits</label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:.86rem;cursor:pointer"><input type="checkbox" id="btSourceSmsClick"/> SMS link clicks</label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:.86rem;cursor:pointer"><input type="checkbox" id="btSourceVideoWatch"/> Video link clicks (tag links with ?yt=)</label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:.86rem;cursor:pointer"><input type="checkbox" id="btSourceEmailOpen"/> Email opens</label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:.86rem;cursor:pointer"><input type="checkbox" id="btSourceEmailClick"/> Email clicks</label>
+                </div>
+              </div>
+
+              <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
+                <div style="flex:1">
+                  <label>Wait before sending</label>
+                  <div style="display:flex;gap:6px">
+                    <input type="number" id="btWaitMin" min="0" step="1" value="60" style="flex:1"/>
+                    <select id="btWaitMinUnit" style="flex:1">
+                      <option value="seconds" selected>Seconds</option><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option>
+                    </select>
+                  </div>
+                </div>
+                <div style="flex:1">
+                  <label>up to</label>
+                  <div style="display:flex;gap:6px">
+                    <input type="number" id="btWaitMax" min="0" step="1" value="300" style="flex:1"/>
+                    <select id="btWaitMaxUnit" style="flex:1">
+                      <option value="seconds" selected>Seconds</option><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
+                <div style="flex:1">
+                  <label>Max outbounds per contact</label>
+                  <input type="number" id="btCapCount" min="1" step="1" value="1"/>
+                </div>
+                <div style="flex:1">
+                  <label>within</label>
+                  <div style="display:flex;gap:6px">
+                    <input type="number" id="btCapWindowValue" min="1" step="1" value="24" style="flex:1"/>
+                    <select id="btCapWindowUnit" style="flex:1">
+                      <option value="hours" selected>Hours</option><option value="days">Days</option><option value="minutes">Minutes</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="editor-row toggle-row" style="margin-bottom:8px">
+                <div class="toggle-item">
+                  <button type="button" class="active-toggle" id="btRevisitToggle"></button>
+                  <span class="toggle-label">If they come back after we've already reached out, follow up</span>
+                </div>
+              </div>
+              <div class="editor-row" style="display:flex;gap:12px;max-width:280px">
+                <input type="number" id="btRevisitDelayValue" min="1" step="1" value="1" style="flex:1"/>
+                <select id="btRevisitDelayUnit" style="flex:1">
+                  <option value="days" selected>Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option>
+                </select>
+              </div>
+
+              <div style="margin-top:18px">
+                <div class="active-section-title" style="margin-bottom:10px">Recent activity</div>
+                <div id="btActivityList" class="pra-muted" style="font-size:.8rem">Loading…</div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="editor-row">
           <label>Steps in for these users (when they're marked away) — AI Assist only</label>
@@ -354,6 +432,7 @@ function renderUserCheckboxes(selected) {
 function setToggle(btnId, on) { document.getElementById(btnId).classList.toggle('on', !!on); }
 function getToggle(btnId) { return document.getElementById(btnId).classList.contains('on'); }
 function updateActiveSectionVisibility() { document.getElementById('activeSection').style.display = getToggle('fActiveToggle') ? 'block' : 'none'; }
+function updateBtSectionVisibility() { document.getElementById('btSection').style.display = getToggle('fBtToggle') ? 'block' : 'none'; }
 document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); scheduleAutosave(); });
 document.getElementById('fAiAssistToggle').addEventListener('click', () => { setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')); scheduleAutosave(); });
 document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
@@ -441,6 +520,25 @@ async function openEditor(agentId) {
   document.getElementById('testSmsResult').style.display = 'none';
   document.getElementById('testEmailResult').style.display = 'none';
   document.getElementById('previewResult').style.display = 'none';
+  const bt = cfg.behavioralTrigger || {};
+  setToggle('fBtToggle', bt.enabled);
+  document.getElementById('btSourcePageVisit').checked = !!bt.sources?.page_visit;
+  document.getElementById('btSourceSmsClick').checked = !!bt.sources?.sms_click;
+  document.getElementById('btSourceVideoWatch').checked = !!bt.sources?.video_watch;
+  document.getElementById('btSourceEmailOpen').checked = !!bt.sources?.email_open;
+  document.getElementById('btSourceEmailClick').checked = !!bt.sources?.email_click;
+  document.getElementById('btWaitMin').value = bt.waitThreshold?.min ?? 60;
+  document.getElementById('btWaitMinUnit').value = bt.waitThreshold?.minUnit || 'seconds';
+  document.getElementById('btWaitMax').value = bt.waitThreshold?.max ?? 300;
+  document.getElementById('btWaitMaxUnit').value = bt.waitThreshold?.maxUnit || 'seconds';
+  document.getElementById('btCapCount').value = bt.frequencyCap?.maxCount ?? 1;
+  document.getElementById('btCapWindowValue').value = bt.frequencyCap?.windowValue ?? 24;
+  document.getElementById('btCapWindowUnit').value = bt.frequencyCap?.windowUnit || 'hours';
+  setToggle('btRevisitToggle', bt.revisitFollowUp?.enabled ?? true);
+  document.getElementById('btRevisitDelayValue').value = bt.revisitFollowUp?.delayValue ?? 1;
+  document.getElementById('btRevisitDelayUnit').value = bt.revisitFollowUp?.delayUnit || 'days';
+  updateBtSectionVisibility();
+  if (agentId) loadBtActivity(agentId); else document.getElementById('btActivityList').textContent = 'Save this agent before activity can show here.';
   updateActiveSectionVisibility();
   if (agentId) loadBatchList(agentId); else document.getElementById('batchList').textContent = 'Save this agent before starting a batch.';
   document.querySelectorAll('#msProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
@@ -624,6 +722,32 @@ function buildAgentPayload() {
         sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value },
         email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value },
       },
+      behavioralTrigger: {
+        enabled: getToggle('fBtToggle'),
+        sources: {
+          page_visit: document.getElementById('btSourcePageVisit').checked,
+          sms_click: document.getElementById('btSourceSmsClick').checked,
+          video_watch: document.getElementById('btSourceVideoWatch').checked,
+          email_open: document.getElementById('btSourceEmailOpen').checked,
+          email_click: document.getElementById('btSourceEmailClick').checked,
+        },
+        waitThreshold: {
+          min: Number(document.getElementById('btWaitMin').value) || 60,
+          minUnit: document.getElementById('btWaitMinUnit').value || 'seconds',
+          max: Number(document.getElementById('btWaitMax').value) || 300,
+          maxUnit: document.getElementById('btWaitMaxUnit').value || 'seconds',
+        },
+        frequencyCap: {
+          maxCount: Number(document.getElementById('btCapCount').value) || 1,
+          windowValue: Number(document.getElementById('btCapWindowValue').value) || 24,
+          windowUnit: document.getElementById('btCapWindowUnit').value || 'hours',
+        },
+        revisitFollowUp: {
+          enabled: getToggle('btRevisitToggle'),
+          delayValue: Number(document.getElementById('btRevisitDelayValue').value) || 1,
+          delayUnit: document.getElementById('btRevisitDelayUnit').value || 'days',
+        },
+      },
     },
   };
 }
@@ -646,12 +770,18 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(flushAutosave, 800);
 }
 function wireAutosave() {
-  ['fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit', 'fReengageSmsPrompt', 'fReengageEmailPrompt'].forEach((id) => {
+  [
+    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit', 'fReengageSmsPrompt', 'fReengageEmailPrompt',
+    'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
+    'btWaitMin', 'btWaitMinUnit', 'btWaitMax', 'btWaitMaxUnit', 'btCapCount', 'btCapWindowValue', 'btCapWindowUnit', 'btRevisitDelayValue', 'btRevisitDelayUnit',
+  ].forEach((id) => {
     document.getElementById(id).addEventListener('input', scheduleAutosave);
   });
   document.querySelectorAll('.multiselect-panel').forEach((panel) => panel.addEventListener('change', scheduleAutosave));
   document.getElementById('fReengageSmsToggle').addEventListener('click', () => { setToggle('fReengageSmsToggle', !getToggle('fReengageSmsToggle')); scheduleAutosave(); });
   document.getElementById('fReengageEmailToggle').addEventListener('click', () => { setToggle('fReengageEmailToggle', !getToggle('fReengageEmailToggle')); scheduleAutosave(); });
+  document.getElementById('fBtToggle').addEventListener('click', () => { setToggle('fBtToggle', !getToggle('fBtToggle')); updateBtSectionVisibility(); scheduleAutosave(); });
+  document.getElementById('btRevisitToggle').addEventListener('click', () => { setToggle('btRevisitToggle', !getToggle('btRevisitToggle')); scheduleAutosave(); });
 }
 
 // ── AI Active: preview / start / monitor batches ─────────────────────────
@@ -729,6 +859,27 @@ async function loadBatchList(agentId) {
     el.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', () => toggleBatchReview(btn.dataset.review)));
   } catch {
     el.innerHTML = '<span class="pra-muted">Could not load batches.</span>';
+  }
+}
+async function loadBtActivity(agentId) {
+  const el = document.getElementById('btActivityList');
+  try {
+    const r = await fetch(`/api/behavioral-triggers?agentId=${agentId}`);
+    const data = await r.json();
+    if (!data.total) { el.innerHTML = '<span class="pra-muted">No activity yet.</span>'; return; }
+    const statusLine = Object.entries(data.byStatus || {}).map(([s, n]) => `<b>${n}</b> ${escapeHtml(s.replace('_', ' '))}`).join(' · ');
+    el.innerHTML = `
+      <div class="batch-stats" style="margin-bottom:8px">${statusLine}</div>
+      ${data.recent.map(t => `
+        <div class="review-row">
+          <span class="review-state-pill ${t.status}">${escapeHtml(t.status.replace('_', ' '))}</span>
+          <span style="flex:1">${escapeHtml(t.contactName)} — ${escapeHtml(t.source.replace('_', ' '))}${t.context?.path ? `: ${escapeHtml(t.context.path)}` : ''}</span>
+          <span class="pra-muted" style="font-size:.72rem">${fmtDate(t.updatedAt || t.createdAt)}</span>
+        </div>
+      `).join('')}
+    `;
+  } catch {
+    el.innerHTML = '<span class="pra-muted">Could not load activity.</span>';
   }
 }
 async function toggleBatchReview(batchId) {

@@ -19,6 +19,8 @@ import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
 import { acConfigured, fetchAcOneToOneCampaigns, fetchAcContactActivities, acCampaignName, AC_BASE } from "./import_backend.js";
 import { getRecentlyActiveContactIds } from "./sqlite_inbox.js";
+import { markContactEmailEngagement } from "./contacts_backend.js";
+import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 
 // The SAME campaign gets sent to every one of its recipients -- storing
 // its HTML on each recipient's own message record duplicated it once per
@@ -475,4 +477,58 @@ export async function processAcRefFillBatch() {
   flushAcStats(statsAcc);
   writeJson(AC_REF_FILL_STATE_FILE, state);
   console.log(`[ac-ref-fill] ${state.nextIndex}/${files.length} scanned (+${state.nextIndex - startIndex} this batch), ${state.refsAttached} refs attached so far, ${statsAcc.size} campaigns' stats updated this batch`);
+}
+
+// ── Ongoing AC engagement poll (NOT the one-time backfill above) --
+// interim substitute for AWS SES's real-time open/click webhook while SES
+// is still pending approval. AC has no webhook push in this codebase, so
+// this polls AC's per-contact activity API instead. Deliberately bounded
+// to a small, likely-relevant candidate set (contacts with an AC id, not
+// already both opened+clicked, who received an AC email within the
+// lookback window) rather than polling all ~176k contacts' full history
+// every run -- that many individual /activities API calls per pass would
+// be both slow and a likely rate-limit problem.
+//
+// NOTE: the exact field names on AC's /api/3/activities log entries
+// (`type`, timestamp field) are matched here based on typical AC API
+// conventions, not confirmed against a live response from this account --
+// this is the one piece of the behavioral-trigger feature that most needs
+// a real-world check once deployed (watch the [ac-engagement-poll] log
+// line; if `updated` stays 0 for days despite known opens/clicks in AC's
+// own dashboard, the field-matching below needs adjusting).
+const AC_ENGAGEMENT_POLL_STATE_FILE = "crm_ac_engagement_poll_state.json";
+const AC_ENGAGEMENT_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const AC_ENGAGEMENT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+export async function pollAcEngagementIfDue() {
+  if (!acConfigured()) return;
+  const state = readJson(AC_ENGAGEMENT_POLL_STATE_FILE, { lastRunAt: null });
+  if (state.lastRunAt && Date.now() - new Date(state.lastRunAt).getTime() < AC_ENGAGEMENT_POLL_INTERVAL_MS) return;
+
+  const contacts = readJson(CONTACTS_FILE, []);
+  const cutoff = Date.now() - AC_ENGAGEMENT_LOOKBACK_MS;
+  const candidates = contacts.filter((c) => {
+    if (!c.externalIds?.acContactId) return false;
+    if (c.emailEngagement?.opened && c.emailEngagement?.clicked) return false;
+    const journey = getContactMessages(c.id);
+    return journey.some((m) => m.direction === "outbound" && m.channel === "email" && new Date(m.createdAt).getTime() >= cutoff);
+  });
+
+  let checked = 0, updated = 0;
+  for (const contact of candidates) {
+    try {
+      const { logs, linkData } = await fetchAcContactActivities(contact.externalIds.acContactId);
+      checked++;
+      const hasOpen = (logs || []).some((l) => /open/i.test(l.type || l.eventtype || "") && new Date(l.tstamp || l.cdate || l.timestamp || 0).getTime() >= cutoff);
+      const hasClick = (linkData || []).some((c2) => new Date(c2.tstamp || c2.cdate || 0).getTime() >= cutoff);
+      if (hasOpen && !contact.emailEngagement?.opened) { markContactEmailEngagement(contact.id, "opened"); queueBehavioralTrigger({ contactId: contact.id, source: "email_open", context: {} }); updated++; }
+      if (hasClick && !contact.emailEngagement?.clicked) { markContactEmailEngagement(contact.id, "clicked"); queueBehavioralTrigger({ contactId: contact.id, source: "email_click", context: {} }); updated++; }
+    } catch (err) {
+      console.error(`[ac-engagement-poll] contact ${contact.id} failed:`, err.message);
+    }
+  }
+
+  state.lastRunAt = new Date().toISOString();
+  writeJson(AC_ENGAGEMENT_POLL_STATE_FILE, state);
+  console.log(`[ac-engagement-poll] checked ${checked}/${candidates.length} candidates, ${updated} engagement updates`);
 }

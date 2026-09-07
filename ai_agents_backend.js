@@ -138,7 +138,17 @@ function newAgent({ name, description }) {
       statuses: [],     // [] = all statuses; non-empty = only these
       coverForUserIds: [], // human users this agent "steps in for" when they're away
     },
-    activeConfig: { segmentId: null, batchSize: 25, waitTimeRange: { minHours: 4, maxHours: 24 } },
+    activeConfig: {
+      segmentId: null, batchSize: 25, waitTimeRange: { minHours: 4, maxHours: 24 },
+      behavioralTrigger: {
+        enabled: false,
+        sources: { page_visit: false, sms_click: false, video_watch: false, email_open: false, email_click: false },
+        segmentId: null, // optional -- null means "any lead matching the agent's own targeting"
+        waitThreshold: { min: 60, max: 300, unit: "seconds" },
+        frequencyCap: { maxCount: 1, windowValue: 24, windowUnit: "hours" },
+        revisitFollowUp: { enabled: true, delayValue: 1, delayUnit: "days" },
+      },
+    },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

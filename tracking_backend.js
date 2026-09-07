@@ -3,6 +3,7 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 import { markContactVisitedPage } from "./contacts_backend.js";
+import { queueBehavioralTrigger, parseVisitContext } from "./behavioral_triggers_backend.js";
 
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
 const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
@@ -149,6 +150,16 @@ export async function handleTrackingRequest(req, res, url) {
       markContactVisitedPage(cid, parsed.path || "");
       fireTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
       fireWorkflowTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
+      // Behavioral-trigger AI outbound -- an SMS-tagged (el=sms-<slug>) or
+      // video-tagged (yt=<id>, a convention you tag yourself when sending
+      // video links -- no separate SMS-click or video-player tracking
+      // exists or is needed) visit is queued as that more specific source;
+      // anything else is a plain page visit. Cheap/synchronous, never
+      // calls the model here -- only decides whether a later scheduler
+      // tick should.
+      const visitCtx = parseVisitContext(parsed.search || "");
+      const source = visitCtx.videoId ? "video_watch" : visitCtx.isSmsClick ? "sms_click" : "page_visit";
+      queueBehavioralTrigger({ contactId: cid, source, context: { path: parsed.path || "", ...visitCtx } });
     }
 
     // The visit itself is logged either way -- el= on an anonymous visit is

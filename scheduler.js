@@ -11,7 +11,8 @@ import { sendDueBookingReminders } from "./scheduling_backend.js";
 import { checkGmailInbox } from "./gmail_backend.js";
 import { processCloseAltBackfillBatch, processStopStatusRecoveryBatch } from "./import_backend.js";
 import { resyncStaleStopRows, resyncStaleLegacyLabelRows } from "./sqlite_inbox.js";
-import { processAcRefFillBatch } from "./ac_sync.js";
+import { processAcRefFillBatch, pollAcEngagementIfDue } from "./ac_sync.js";
+import { processBehavioralTriggers } from "./behavioral_triggers_backend.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
 // Phase 2 only checks scheduled campaigns; Phase 3 adds automation
@@ -55,6 +56,8 @@ async function tick() {
     await timedPhase("resyncStaleStopRows", async () => resyncStaleStopRows());
     await timedPhase("resyncStaleLegacyLabelRows", async () => resyncStaleLegacyLabelRows());
     await timedPhase("processAcRefFillBatch", processAcRefFillBatch);
+    await timedPhase("pollAcEngagementIfDue", pollAcEngagementIfDue);
+    await timedPhase("processBehavioralTriggers", processBehavioralTriggers);
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }

@@ -26,6 +26,7 @@ import { handleFlowsRequest } from "./flows_backend.js";
 import { handleDuplicatesRequest } from "./duplicates_backend.js";
 import { handleAiAgentsRequest } from "./ai_agents_backend.js";
 import { handleAiActiveRequest } from "./ai_active_backend.js";
+import { handleBehavioralTriggersRequest } from "./behavioral_triggers_backend.js";
 import { handleConversionsRequest } from "./conversions_backend.js";
 import { handleMeetingsRequest } from "./meetings_backend.js";
 import { handleGmailRequest } from "./gmail_backend.js";
@@ -150,6 +151,7 @@ createServer(async (req, res) => {
   if (await handleDuplicatesRequest(req, res, url)) return;
   if (await handleAiAgentsRequest(req, res, url)) return;
   if (await handleAiActiveRequest(req, res, url)) return;
+  if (await handleBehavioralTriggersRequest(req, res, url)) return;
   if (await handleConversionsRequest(req, res, url)) return;
   if (await handleMeetingsRequest(req, res, url)) return;
   if (await handleGmailRequest(req, res, url)) return;
