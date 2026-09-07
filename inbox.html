@@ -77,6 +77,15 @@
      room to spare -- see crm-design-system.css's .owner-field-select). */
   .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; width: 100px; max-width: 100px; }
   .convo-owner-field { width: 100px; max-width: 100px; }
+  /* Same misalignment bug, same fix -- this badge sits AFTER convo-name in
+     the row but its width still fed back into where status/owner (which
+     come BEFORE it) start: since convo-name is the row's only flex:1 item,
+     a narrower badge (e.g. "GYM", 3 chars) left name MORE room to grow
+     than a wider one ("ONLINE", 6 chars) did, and status/owner sit right
+     after name -- so their left edge shifted with it, even though this
+     badge visually comes later. Fixed width for every value this can
+     show (online/gym/blank's "SET TYPE" fallback) closes that. */
+  .convo-row [data-type-badge] { display: inline-block; width: 64px; text-align: center; flex-shrink: 0; }
   /* Two rows, both plain single-line flex rows (never wrap) -- row 1 is
      identity + metadata (name, status, assigned, type, time), row 2 is the
      message preview + pin/star. Name and preview are the only two elements
@@ -167,7 +176,7 @@
     .convo-status-select .mobile-select-trigger, .convo-owner-field .mobile-select-trigger { padding: 3px 16px 3px 6px; }
     .convo-status-select .mobile-select-trigger-label, .convo-owner-field .mobile-select-trigger-label { font-size: .64rem; }
     .convo-status-select .mobile-select-trigger-caret, .convo-owner-field .mobile-select-trigger-caret { font-size: .6em; }
-    .convo-row [data-type-badge] { padding: 2px 5px !important; }
+    .convo-row [data-type-badge] { padding: 2px 5px !important; width: 20px; }
     .convo-row .type-badge-full { display: none; }
     .convo-row .type-badge-short { display: inline; }
     .convo-time { font-size: .64rem; min-width: 44px; }
