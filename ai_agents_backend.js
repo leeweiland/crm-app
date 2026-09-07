@@ -223,8 +223,19 @@ export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false, se
   // introduce itself as whichever real team member is actually at the
   // keyboard, not whoever happened to send the historical example it was
   // pulled from.
+  // autoSend picks the framing: a fully-autonomous send (AI Active,
+  // behavioral triggers) has no human at all, so the agent name IS the
+  // sender's own identity, not someone it's ghostwriting for -- confirmed
+  // live this distinction matters: with the old "drafting on behalf of a
+  // logged-in team member" wording on an autoSend, a behavioral-trigger
+  // message still opened with "...Alexis here, Director of Client
+  // Success" mid-sentence despite correctly signing off with the real
+  // name at the end -- the instruction only covered introductions/sign-
+  // offs, not any other claim of identity woven into the body.
   const senderNote = senderName
-    ? `You are drafting this on behalf of ${senderName}, a real team member who is logged in right now. If you introduce yourself or sign off by name, use "${senderName}" -- never a name from an example or past conversation below (e.g. "Alexis"), even though the phrasing/technique from those examples is exactly what you should reuse.`
+    ? autoSend
+      ? `You are "${senderName}" in this conversation -- that is YOUR OWN name/identity here, not a character from an example. Never call yourself, sign as, or claim to be any other name (e.g. "Alexis") anywhere in the message, in any form -- not as a sign-off, not as an introduction ("it's Alexis"), not in passing. Reuse the example material's PHRASING and technique, never its NAME.`
+      : `You are drafting this for ${senderName}, a real team member who will review and send it. If you introduce yourself or sign off by name, use "${senderName}" -- never a name from an example or past conversation below (e.g. "Alexis"), even though the phrasing/technique from those examples is exactly what you should reuse.`
     : "";
   return `You are "${agent.name}", an AI agent for Pacific Rim Athletics. ${agent.description || ""}
 
