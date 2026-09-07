@@ -580,15 +580,36 @@ function withTimeout(promise, ms) {
 const AC_ENGAGEMENT_TIME_BUDGET_MS = 15 * 1000; // hard cap per scheduler tick -- resumes next tick via nextIndex, same shape as processAcRefFillBatch
 const AC_ENGAGEMENT_PER_CALL_TIMEOUT_MS = 8 * 1000;
 
+// In-memory only, deliberately NOT persisted -- a pass over 160K+ contacts
+// spans many hours of ticks (see AC_ENGAGEMENT_TIME_BUDGET_MS above), and
+// this was re-reading + re-parsing the ENTIRE ~180MB contacts file from
+// disk on EVERY 30s tick for that whole span (confirmed live: nextIndex
+// stays > 0 almost continuously, so the "not due" early-return below
+// almost never actually fires). That's not just wasteful -- confirmed live
+// (2026-09-07) as the proximate cause of a production OOM crash (heap hit
+// the 2560MB cap and the process aborted, twice, ~4 minutes after each
+// boot) once the contacts file grew past ~180MB: repeatedly allocating and
+// discarding a 160K-object graph every 30 seconds outpaced GC. Caching it
+// once per PASS cuts that from "every tick, forever" down to "once every
+// ~6+ hours," and resets naturally on every deploy/restart since the cache
+// is in-memory. Trade-off, stated plainly: a contact newly linked to AC
+// mid-pass won't be in the cached list, so it waits for the NEXT pass
+// instead of showing up within that same tick's fresh re-read like
+// before -- a multi-hour delay on a poll whose own interval is already
+// 6 hours, not a correctness issue.
+let _engagementCandidatesCache = null;
 export async function pollAcEngagementIfDue() {
   if (!acConfigured()) return;
   const state = readJson(AC_ENGAGEMENT_POLL_STATE_FILE, { lastRunAt: null, nextIndex: 0 });
   const startingNewPass = !state.lastRunAt || Date.now() - new Date(state.lastRunAt).getTime() >= AC_ENGAGEMENT_POLL_INTERVAL_MS;
   if (!startingNewPass && !(state.nextIndex > 0)) return; // not due, and no in-progress pass to resume
 
-  const contacts = readJson(CONTACTS_FILE, []);
+  if (startingNewPass || !_engagementCandidatesCache) {
+    const contacts = readJson(CONTACTS_FILE, []);
+    _engagementCandidatesCache = contacts.filter((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked));
+  }
+  const candidates = _engagementCandidatesCache;
   const cutoff = Date.now() - AC_ENGAGEMENT_LOOKBACK_MS;
-  const candidates = contacts.filter((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked));
 
   if (startingNewPass) state.nextIndex = 0;
   const t0 = Date.now();
