@@ -1085,8 +1085,27 @@ document.getElementById('ctxDoneBtn').onclick = async () => {
   const c = ctxMenuConvo;
   closeContextMenu();
   if (!c?.contactId) return;
-  await fetch(`/api/inbox/conversations/${c.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: !c.done }) });
-  loadConversations();
+  const nextDone = !c.done;
+  await fetch(`/api/inbox/conversations/${c.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) });
+  // Same optimistic update as the chat panel's own Mark Done button (see
+  // renderThread) -- without it this just called loadConversations()
+  // immediately, which almost always lost the race against the server's
+  // own batched unread_count recompute (up to 5s later, see message_index.js's
+  // scheduleConversationFlush) and re-showed the row as still unresponded,
+  // making the click look like it did nothing.
+  c.done = nextDone;
+  if (nextDone) c.unreadCount = 0;
+  if (convoFilter === 'unresponded' && c.unreadCount === 0) {
+    conversations = conversations.filter(x => x.key !== c.key);
+  }
+  showToast(nextDone ? 'Marked done' : 'Marked not done');
+  renderSidebar();
+  if (selectedConvo?.contactId === c.contactId) {
+    selectedConvo.done = nextDone;
+    const btn = document.getElementById('chatMarkDoneBtn');
+    if (btn) btn.textContent = nextDone ? 'Mark Not Done' : 'Mark Done';
+  }
+  setTimeout(loadConversations, 5500);
 };
 document.getElementById('ctxArchiveBtn').onclick = async () => {
   const c = ctxMenuConvo;
