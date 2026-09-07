@@ -780,20 +780,9 @@ function populateActivityUserSelect() {
   const others = teamUsers.filter(u => u.id !== currentUser?.id);
   sel.innerHTML = `<option value="me">My Activity</option>` + others.map(u => `<option value="${u.id}">${escapeHtml(`${u.first} ${u.last}`.trim())}'s Activity</option>`).join('');
 }
-async function loadActivity() {
-  const panel = document.getElementById('activityPanel');
-  panel.innerHTML = '<div class="pra-muted" style="padding:20px">Loading…</div>';
-  const selectedVal = document.getElementById('activityUserSelect').value;
-  const userId = selectedVal === 'me' ? (currentUser?.id || '') : selectedVal;
-  if (!userId) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Not logged in.</div>'; return; }
-  const r = await fetch(`/api/inbox/activity?userId=${encodeURIComponent(userId)}`);
-  if (!r.ok) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">Could not load.</div>'; return; }
-  const { items } = await r.json();
-  if (!items.length) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">No activity yet.</div>'; return; }
-  // Only email rows expand -- SMS bodies are already short enough that the
-  // preview line above already shows the whole thing, and there's no
-  // separate subject/full-body to reveal for that channel.
-  panel.innerHTML = items.map((it, idx) => `
+let activityItems = [], activityOffset = 0, activityHasMore = false, activityLoading = false;
+function activityRowHtml(it, idx) {
+  return `
     <div class="activity-item">
       <div class="activity-row ${it.channel === 'email' ? '' : 'no-expand'}" data-activity-idx="${idx}">
         <span class="activity-channel-pill ${escapeHtml(it.sourceType || '')}">${escapeHtml(it.channel)}${it.direction === 'inbound' ? ' in' : ''}</span>
@@ -806,29 +795,71 @@ async function loadActivity() {
       </div>
       ${it.channel === 'email' ? `<div class="activity-detail" id="activityDetail${idx}"></div>` : ''}
     </div>
-  `).join('');
-  panel.querySelectorAll('[data-activity-idx]').forEach(row => {
-    row.addEventListener('click', () => {
-      const it = items[Number(row.dataset.activityIdx)];
-      if (it.channel !== 'email') return;
-      const detail = document.getElementById(`activityDetail${row.dataset.activityIdx}`);
-      const open = detail.classList.toggle('open');
-      if (open && !detail.dataset.rendered) {
-        detail.dataset.rendered = '1';
-        detail.innerHTML = `<iframe sandbox=""></iframe><button class="pra-btn pra-btn-ghost pra-btn-sm activity-view-thread-btn" data-thread-contact="${it.contactId}">View full thread</button>`;
-        // Same sandboxed-iframe pattern the main chat panel's email bubbles
-        // use (renderThread) -- keeps a contact's raw HTML email body from
-        // ever executing script in the CRM's own page context.
-        detail.querySelector('iframe').srcdoc = `<style>body,*{font-family:Arial,Helvetica,sans-serif!important;}</style>${it.body || '<p style="color:#888">(no content stored)</p>'}`;
-        detail.querySelector('[data-thread-contact]').addEventListener('click', (e) => {
-          e.stopPropagation();
-          openContactThreadFromActivity(it.contactId);
-        });
-      }
-    });
+  `;
+}
+// Only email rows expand -- SMS bodies are already short enough that the
+// preview line above already shows the whole thing, and there's no
+// separate subject/full-body to reveal for that channel.
+function wireActivityRow(row) {
+  row.addEventListener('click', () => {
+    const it = activityItems[Number(row.dataset.activityIdx)];
+    if (it.channel !== 'email') return;
+    const detail = document.getElementById(`activityDetail${row.dataset.activityIdx}`);
+    const open = detail.classList.toggle('open');
+    if (open && !detail.dataset.rendered) {
+      detail.dataset.rendered = '1';
+      detail.innerHTML = `<iframe sandbox=""></iframe><button class="pra-btn pra-btn-ghost pra-btn-sm activity-view-thread-btn" data-thread-contact="${it.contactId}">View full thread</button>`;
+      // Same sandboxed-iframe pattern the main chat panel's email bubbles
+      // use (renderThread) -- keeps a contact's raw HTML email body from
+      // ever executing script in the CRM's own page context.
+      detail.querySelector('iframe').srcdoc = `<style>body,*{font-family:Arial,Helvetica,sans-serif!important;}</style>${it.body || '<p style="color:#888">(no content stored)</p>'}`;
+      detail.querySelector('[data-thread-contact]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openContactThreadFromActivity(it.contactId);
+      });
+    }
+  });
+}
+async function loadActivity() {
+  activityItems = []; activityOffset = 0; activityHasMore = false;
+  const panel = document.getElementById('activityPanel');
+  panel.innerHTML = '<div class="pra-muted" style="padding:20px">Loading…</div>';
+  await loadMoreActivity(true);
+}
+// Fetches one page at a time (server-side default PAGE_SIZE) instead of
+// pulling everything a user's ever sent up front -- each email row now
+// carries its full body for the inline-expand view, so loading all of it
+// at once would mean downloading every body just to show 30 preview lines.
+// Scroll-triggered below via the window scroll listener.
+async function loadMoreActivity(replace) {
+  if (activityLoading || (!replace && !activityHasMore)) return;
+  activityLoading = true;
+  const userId = document.getElementById('activityUserSelect').value || 'me';
+  const r = await fetch(`/api/inbox/activity?userId=${encodeURIComponent(userId)}&offset=${replace ? 0 : activityOffset}`);
+  activityLoading = false;
+  const panel = document.getElementById('activityPanel');
+  if (!r.ok) { if (replace) panel.innerHTML = '<div class="pra-muted" style="padding:20px">Could not load.</div>'; return; }
+  const { items, hasMore } = await r.json();
+  if (replace && !items.length) { panel.innerHTML = '<div class="pra-muted" style="padding:20px">No activity yet.</div>'; return; }
+  const startIdx = replace ? 0 : activityItems.length;
+  activityItems = replace ? items : activityItems.concat(items);
+  activityOffset = startIdx + items.length;
+  activityHasMore = hasMore;
+  const html = items.map((it, i) => activityRowHtml(it, startIdx + i)).join('');
+  if (replace) panel.innerHTML = html; else panel.insertAdjacentHTML('beforeend', html);
+  items.forEach((it, i) => {
+    const row = panel.querySelector(`[data-activity-idx="${startIdx + i}"]`);
+    if (row) wireActivityRow(row);
   });
 }
 document.getElementById('activityUserSelect').addEventListener('change', loadActivity);
+// The Activity panel scrolls with the whole page (no inner overflow region
+// of its own), so this listens on the window rather than the panel --
+// fires only while the Activity tab is actually the one showing.
+window.addEventListener('scroll', () => {
+  if (currentTab !== 'activity' || !activityHasMore || activityLoading) return;
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 400) loadMoreActivity(false);
+});
 
 // Jumps from an Activity row into that contact's real conversation in the
 // main Inbox tab -- reuses the same tab-switch + selectConversation path

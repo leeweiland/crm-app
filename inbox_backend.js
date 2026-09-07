@@ -96,11 +96,22 @@ export async function handleInboxRequest(req, res, url) {
   // are scanned; that's enough to surface genuinely recent activity
   // without an unbounded cost as someone's book grows.
   if (p === "/api/inbox/activity" && req.method === "GET") {
-    const userId = url.searchParams.get("userId");
-    if (!userId) return sendJson(res, 400, { error: "userId is required" });
+    // "me" (also the default with no param at all) resolves from the
+    // session server-side instead of trusting a client-supplied id for the
+    // common case -- avoids any dependency on the client's own copy of its
+    // logged-in user object being populated yet by the time this fires.
+    const requestedUserId = url.searchParams.get("userId");
+    const userId = !requestedUserId || requestedUserId === "me" ? me.id : requestedUserId;
     if (userId !== me.id && !isAdmin(me)) return sendJson(res, 403, { error: "Can only view your own activity" });
     const OWNED_CONTACT_SCAN_CAP = 300;
     const ITEM_LIMIT = 150;
+    // Paged so the client never has to pull (and render) all 150 rows --
+    // each email row now carries its full body for the inline-expand view,
+    // so the old "just send everything, it's only 150 rows" assumption no
+    // longer holds; a phone on a slow connection shouldn't pay for bodies
+    // of messages the user never scrolls to.
+    const PAGE_SIZE = 30;
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
     const contacts = readJson(CONTACTS_FILE, [])
       .filter((c) => c.ownerId === userId)
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
@@ -123,7 +134,9 @@ export async function handleInboxRequest(req, res, url) {
       }
     }
     items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return sendJson(res, 200, { items: items.slice(0, ITEM_LIMIT), scannedContacts: contacts.length });
+    const capped = items.slice(0, ITEM_LIMIT);
+    const page = capped.slice(offset, offset + PAGE_SIZE);
+    return sendJson(res, 200, { items: page, hasMore: offset + PAGE_SIZE < capped.length, total: capped.length, scannedContacts: contacts.length });
   }
 
   // Same cross-source aggregation as the main Inbox above, scoped to one

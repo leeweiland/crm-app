@@ -274,7 +274,7 @@ function applyPeriod() {
   if (document.getElementById('tab-overview').classList.contains('active')) loadOverview();
 }
 
-const SENT_CATEGORY_LABELS = { human: 'Human', ai_agent: 'AI Agent', sms_sequence: 'SMS Sequence', email_automation: 'Email Automation', email_campaign: 'Campaign', other: 'Other' };
+const SENT_CATEGORY_LABELS = { human: 'Human', ai_agent: 'AI Agent', sms_sequence: 'SMS Sequence', email_automation: 'Email Automation', email_campaign: 'Campaign', legacy_import: 'Legacy Import', other: 'Other' };
 function renderTeamSentTable(tableId, rows, categories) {
   const table = document.getElementById(tableId);
   const cols = categories.filter(c => rows.some(r => r[c] > 0) || ['human', 'ai_agent'].includes(c));

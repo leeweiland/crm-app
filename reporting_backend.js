@@ -199,10 +199,16 @@ function sentCategoryForSourceType(sourceType) {
   if (sourceType === "ai_active" || sourceType === "behavioral_trigger" || sourceType === "ai_coverage") return "ai_agent";
   if (sourceType === "workflow_step") return "sms_sequence";
   if (sourceType === "automation_step") return "email_automation";
-  if (sourceType === "campaign") return "email_campaign";
-  return "other"; // ac_campaign/ac_import/hyros_import/meeting -- legacy imports and one-off reminders
+  if (sourceType === "campaign" || sourceType === "ac_campaign") return "email_campaign";
+  // Bulk-migrated history from before this CRM -- these carry the original
+  // send's own createdAt, so they can still land inside a recent date range
+  // despite not being anything that happened through this app. Split out
+  // from "other" so a big number here reads as "old imported history", not
+  // an unexplained mystery bucket.
+  if (sourceType === "close_import" || sourceType === "ac_import" || sourceType === "hyros_import") return "legacy_import";
+  return "other"; // meeting reminders, anything untagged/unrecognized
 }
-const SENT_CATEGORIES = ["human", "ai_agent", "sms_sequence", "email_automation", "email_campaign", "other"];
+const SENT_CATEGORIES = ["human", "ai_agent", "sms_sequence", "email_automation", "email_campaign", "legacy_import", "other"];
 function emptySentCounts() {
   const c = { total: 0 };
   for (const cat of SENT_CATEGORIES) c[cat] = 0;
@@ -257,8 +263,16 @@ export async function handleReportingRequest(req, res, url) {
           if (m.channel !== "email" && m.channel !== "sms") continue;
           const t = new Date(m.createdAt).getTime();
           if (!(t >= startMs && t <= endMs)) continue;
-          const bucket = m.channel === "email" ? email : sms;
           const cat = sentCategoryForSourceType(m.sourceType);
+          // Bulk-migrated history (Close/AC/Hyros) is attributed to whoever
+          // owns the contact TODAY, which has nothing to do with who
+          // actually sent it back then -- confirmed live this misattributes
+          // real activity (e.g. AC was only ever used by one person, but
+          // ac_import rows show up under teammates who never touched AC,
+          // just because they inherited the contact later). Excluded
+          // entirely rather than shown under the wrong name.
+          if (cat === "legacy_import") continue;
+          const bucket = m.channel === "email" ? email : sms;
           bucket[cat]++;
           bucket.total++;
         }
