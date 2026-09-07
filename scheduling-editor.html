@@ -784,13 +784,21 @@ document.getElementById('confEmailFooterSaveAsNewBtn').onclick = async () => {
   const { template } = await r.json();
   allFooters.push(template);
   const footerSel = document.getElementById('confEmailFooter');
-  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${template.id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+  footerSel.innerHTML = `<option value="">${escapeHtml(defaultFooterLabel())}</option>` + allFooters.map(f => `<option value="${f.id}" ${template.id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   draft.confirmation.email.footerTemplateId = template.id;
   confEmailEditor.setFooter(template);
   document.getElementById('confEmailFooterDirtyBar').style.display = 'none';
   showToast('Saved as a new footer');
 };
 
+// No separate "org default" footer -- the blank option always resolves to
+// whichever teammate's footer is flagged isDefault (Lee's), same fallback
+// resolveFooterHtml uses server-side, just spelled out instead of hidden
+// behind the word "Default".
+function defaultFooterLabel() {
+  const d = allFooters.find(f => f.isDefault);
+  return d ? `${d.name} (default)` : 'No footer';
+}
 function renderNotifications() {
   document.getElementById('confSmsBody').value = draft.confirmation.sms || '';
   document.getElementById('confEmailSubject').value = draft.confirmation.email.subject || '';

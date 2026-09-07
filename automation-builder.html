@@ -687,12 +687,20 @@ function openStepConfigModal(step, isNew) {
 }
 
 // ── Send-email step (shared block editor) ────────────────────────────────
+// No separate "org default" footer -- the blank option always resolves to
+// whichever teammate's footer is flagged isDefault (Lee's), same fallback
+// resolveFooterHtml uses server-side, just spelled out instead of hidden
+// behind the word "Default".
+function defaultFooterLabel() {
+  const d = allFooters.find(f => f.isDefault);
+  return d ? `${d.name} (default)` : 'No footer';
+}
 function openEmailStepEditor(step, isNew) {
   editingStepId = step.id;
   document.getElementById('emailStepSubject').value = step.config.subject || '';
   document.getElementById('emailStepPreviewText').value = step.config.previewText || '';
   const footerSel = document.getElementById('emailStepFooter');
-  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${step.config.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+  footerSel.innerHTML = `<option value="">${escapeHtml(defaultFooterLabel())}</option>` + allFooters.map(f => `<option value="${f.id}" ${step.config.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   const root = document.getElementById('emailStepEditorRoot');
   root.innerHTML = '';
   // Offered on every automation regardless of trigger type -- most aren't
@@ -752,7 +760,7 @@ function openEmailStepEditor(step, isNew) {
     if (!r.ok) { showToast('Failed to save new footer', true); return; }
     const { template } = await r.json();
     allFooters.push(template);
-    footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${template.id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+    footerSel.innerHTML = `<option value="">${escapeHtml(defaultFooterLabel())}</option>` + allFooters.map(f => `<option value="${f.id}" ${template.id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
     emailStepEditor.setFooter(template);
     document.getElementById('emailStepFooterDirtyBar').style.display = 'none';
     showToast('Saved as a new footer');

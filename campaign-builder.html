@@ -267,8 +267,16 @@ function renderAll() {
   const segSel = document.getElementById('segmentSelect');
   segSel.innerHTML = '<option value="">None</option>' + allSegments.map(s => `<option value="${s.id}" ${campaign.recipients.segmentId === s.id ? 'selected' : ''}>${s.name}</option>`).join('');
   const footerSel = document.getElementById('footerSelect');
-  footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${campaign.footerTemplateId === f.id ? 'selected' : ''}>${f.name}</option>`).join('');
+  footerSel.innerHTML = `<option value="">${escapeHtml(defaultFooterLabel())}</option>` + allFooters.map(f => `<option value="${f.id}" ${campaign.footerTemplateId === f.id ? 'selected' : ''}>${f.name}</option>`).join('');
   updateRecipientCount();
+}
+// No separate "org default" footer -- the blank option always resolves to
+// whichever teammate's footer is flagged isDefault (Lee's), same fallback
+// resolveFooterHtml uses server-side, just spelled out instead of hidden
+// behind the word "Default".
+function defaultFooterLabel() {
+  const d = allFooters.find(f => f.isDefault);
+  return d ? `${d.name} (default)` : 'No footer';
 }
 function toggleId(arr, id) {
   const idx = arr.indexOf(id);
