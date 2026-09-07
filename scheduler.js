@@ -26,10 +26,19 @@ const TICK_MS = 30 * 1000;
 // waiting on, for instance) shows exactly which phase never returned,
 // same reasoning as server.js's req-start log. Remove once the real cause
 // of tonight's freezes is found.
+// Temporary diagnostic (2026-09-07) -- logs heapUsed after every phase so a
+// repeated production OOM (heap hit the 2560MB --max-old-space-size cap and
+// the process aborted, three times today so far, at a fairly consistent
+// ~200-250s after boot) shows exactly WHICH phase's completion the climb
+// tracks, instead of guessing from code review alone -- two prior guesses
+// (both real bugs, both fixed) didn't stop the crash, so this replaces
+// guessing with an actual measurement on the next occurrence. Remove once
+// the real cause is confirmed and fixed.
+function heapMb() { return Math.round(process.memoryUsage().heapUsed / 1024 / 1024); }
 async function timedPhase(name, fn) {
   console.log(`[scheduler] ${name} starting`);
   await fn();
-  console.log(`[scheduler] ${name} done`);
+  console.log(`[scheduler] ${name} done (heap ${heapMb()}MB)`);
 }
 async function tick() {
   try {
