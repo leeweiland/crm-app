@@ -18,6 +18,23 @@ import { getEmailTheme } from "./integrations_backend.js";
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 function escapeHtmlBasic(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
+// Live cross-tab/cross-user sync for the Inbox sidebar -- one teammate
+// marking a conversation done (or replying, which routes through the same
+// /done handler below) used to only update THEIR OWN browser; everyone
+// else's sidebar stayed stale until they happened to refresh. Server-Sent
+// Events instead of a poll: every open Inbox tab holds one persistent GET
+// connection here, and the /done handler pushes a tiny event to all of
+// them the instant it actually happens. Plain Set of raw ServerResponse
+// objects -- this app is a single Node process (no multi-instance/Redis
+// fanout needed), so an in-memory registry is enough.
+const sseClients = new Set();
+function broadcastInboxUpdate(payload) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(data); } catch { sseClients.delete(res); }
+  }
+}
+
 export const CALLS_FILE = "crm_calls.json";
 export const TASKS_FILE = "crm_tasks.json";
 export const NOTES_FILE = "crm_notes.json";
@@ -33,10 +50,25 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // Opened once per Inbox tab (inbox.html's own EventSource) and just held
+  // open -- no request body, no JSON response, this IS the response.
+  if (p === "/api/inbox/events" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write(": connected\n\n");
+    sseClients.add(res);
+    // Without a periodic write, some proxies/load balancers (and Railway's
+    // own edge) silently time out and close an idle connection -- this
+    // just keeps bytes flowing so the browser's EventSource never sees a
+    // dropped connection and has to reconnect.
+    const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* client gone -- close handler below cleans up */ } }, 30000);
+    req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
+    return true;
+  }
 
   // Same cross-source aggregation as the main Inbox above, scoped to one
   // contact -- the activity timeline on their detail page. Every source
@@ -260,7 +292,16 @@ export async function handleInboxRequest(req, res, url) {
       if (idsToFlip.length) markContactMessagesDone(contactId);
       recomputeConversationSummary(contactId);
     }
-    return sendJson(res, 200, { ok: true, meta: setConvoMeta(contactId, { done: value }) });
+    const meta = setConvoMeta(contactId, { done: value });
+    // Same event whether this came from the actual "Mark Done" button or
+    // from a reply (sendComposeMessage calls this same endpoint right
+    // after sending -- see its own comment) -- every other open Inbox tab
+    // (including the acting user's own other tabs) applies the identical
+    // "done means unreadCount is now 0" logic inbox.html's own click
+    // handler already does locally, instead of each of them polling or
+    // waiting on a stale refetch to catch up.
+    broadcastInboxUpdate({ type: "done", contactId, done: value });
+    return sendJson(res, 200, { ok: true, meta });
   }
 
   // Fired whenever the sidebar opens a conversation -- distinct from

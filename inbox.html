@@ -2056,6 +2056,40 @@ const SIDEBAR_MIN_WIDTH = 220, SIDEBAR_MAX_WIDTH = 560;
   // second wait instead of staying bounded by the single slowest request.
   await Promise.all([loadRefs(), loadConversations()]);
 })();
+
+// Live cross-tab/cross-user sync -- see inbox_backend.js's own comment on
+// broadcastInboxUpdate for why this exists (a teammate marking done, or
+// replying, used to only update THEIR OWN browser). One persistent
+// connection per open Inbox tab; the browser's own EventSource already
+// auto-reconnects with backoff on a dropped connection, so no manual
+// retry logic is needed here.
+function applyRemoteConvoUpdate(data) {
+  if (data.type !== 'done') return;
+  const inList = conversations.find(x => x.contactId === data.contactId);
+  if (inList) {
+    // Same "done deterministically means unreadCount is 0, so drop the row
+    // if Unresponded is the active filter" logic as the local Mark Done
+    // click handler above -- kept in sync with it; a genuine reconcile
+    // still happens on the next real loadConversations() either way.
+    inList.done = data.done;
+    if (data.done) inList.unreadCount = 0;
+    if (convoFilter === 'unresponded' && inList.unreadCount === 0) {
+      conversations = conversations.filter(x => x.contactId !== data.contactId);
+    }
+    renderSidebar();
+  }
+  if (selectedConvo?.contactId === data.contactId) {
+    selectedConvo.done = data.done;
+    const btn = document.getElementById('chatMarkDoneBtn');
+    if (btn) btn.textContent = data.done ? 'Mark Not Done' : 'Mark Done';
+  }
+}
+(function connectInboxEvents() {
+  const es = new EventSource('/api/inbox/events');
+  es.onmessage = (e) => {
+    try { applyRemoteConvoUpdate(JSON.parse(e.data)); } catch { /* malformed payload -- ignore rather than throw */ }
+  };
+})();
 </script>
 </body>
 </html>

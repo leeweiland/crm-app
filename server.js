@@ -77,6 +77,13 @@ let _reqCounter = 0;
 setInterval(() => {
   const now = Date.now();
   for (const [id, info] of _inFlightRequests) {
+    // Server-Sent Events connections (inbox_backend.js's live-sync stream)
+    // are deliberately held open for as long as the tab is -- hours, not a
+    // stuck computation -- and never hit res.finish/close to clear this map
+    // entry until the tab closes. Without this exemption every open Inbox
+    // tab would spam this exact "stuck request" alarm forever, drowning out
+    // a genuine one.
+    if (info.url === "/api/inbox/events") continue;
     if (now - info.startedAt > 3000) {
       console.error(`[watchdog] request #${id} (${info.method} ${info.url}) has been running ${((now - info.startedAt) / 1000).toFixed(1)}s`);
     }
