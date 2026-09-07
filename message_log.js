@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { appendJsonRecordFast, appendToJsonObjectFast, readJson } from "./auth_backend.js";
 import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition } from "./message_index.js";
+import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -71,6 +72,20 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
   appendSourceMessage(row);
   recordDailyStatsNew(row);
   upsertConversationSummary(row);
+  // A conversation marked Done stays that way forever otherwise (done is a
+  // sticky manual flag -- see conversation_meta.js -- never cleared just
+  // because unread_count went back up). A genuinely new inbound message
+  // means whatever was "done" about this conversation no longer covers it,
+  // so the Mark Done button should read "Mark Done" again, not stay stuck
+  // on "Mark Not Done" from whenever it was last closed out. Same
+  // auto-reversal shape as compliance_backend.js's checkAutoTriggers
+  // un-hiding a STOP'd conversation on a genuine reply, just channel-
+  // agnostic here since logMessage is the one place every inbound message
+  // (email, sms, form, etc.) already passes through.
+  if (row.direction === "inbound" && row.contactId) {
+    const meta = getConvoMeta(row.contactId);
+    if (meta?.done) setConvoMeta(row.contactId, { done: false });
+  }
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
   return row;

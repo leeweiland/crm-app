@@ -876,12 +876,14 @@ function wireConvoRow(row) {
       showToast('Status updated');
       if (convo.contact) convo.contact.status = status;
       e.target.setAttribute('style', avatarStyle(status));
+      if (status === 'STOP' || status === 'BLACKLIST') dropConvoFromSidebar(convo.key);
       // A status change can auto-archive (STOP) or auto-hide (Blacklist)
       // the conversation -- same reload chatStatusSelect's handler does, so
       // a freshly-archived/hidden row actually drops out of the current
       // view instead of sticking around from the stale local
-      // `conversations` array.
-      await loadConversations();
+      // `conversations` array. dropConvoFromSidebar above already handles
+      // the instant case; this is the reconcile for everything else.
+      loadConversations();
     });
   }
   row.querySelector('[data-pin]')?.addEventListener('click', async (e) => {
@@ -910,6 +912,18 @@ function wireConvoRow(row) {
 function applyOwnerChangeToConvoState(contactId, ownerId) {
   const row = conversations.find(c => c.contactId === contactId);
   if (row?.contact) row.contact.ownerId = ownerId;
+}
+// A status of STOP or BLACKLIST always hides the conversation server-side
+// (see compliance_backend.js's applyStatusOptOut -- both set the same
+// hidden:true meta flag). Drop it from the sidebar the instant the PATCH
+// resolves rather than making the click wait on the trailing loadRefs()/
+// loadConversations() round trip below to see the same result -- that
+// reconcile still runs right after, this just removes the "why is their
+// sorry ass still sitting here" gap in between.
+function dropConvoFromSidebar(key) {
+  conversations = conversations.filter(x => x.key !== key);
+  renderSidebar();
+  if (selectedConvo?.key === key) backToConvoList();
 }
 function renderSidebar() {
   const list = document.getElementById('chatSidebarList');
@@ -987,7 +1001,8 @@ document.getElementById('ctxBlacklistBtn').onclick = async () => {
   if (!c?.contactId) return;
   await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) });
   showToast('Marked as Blacklist');
-  await loadRefs();
+  dropConvoFromSidebar(c.key);
+  loadRefs();
   loadConversations();
 };
 document.getElementById('ctxDeleteBtn').onclick = () => {
@@ -1584,13 +1599,16 @@ function renderThread() {
     await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
     showToast('Status updated');
     e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
-    await loadRefs();
+    if (status === 'STOP' || status === 'BLACKLIST') dropConvoFromSidebar(c.key);
+    loadRefs();
     // A status change can auto-archive (STOP) or auto-hide (Blacklist) the
     // conversation -- loadRefs() only refreshes contacts/statuses/users,
     // not the conversation list itself, so without this the row would keep
     // showing in the sidebar (stale local `conversations` array) even
-    // though the backend already archived/hidden it.
-    await loadConversations();
+    // though the backend already archived/hidden it. The dropConvoFromSidebar
+    // call above already handles the instant case; this is just the
+    // reconcile for every other status change and for other open tabs.
+    loadConversations();
   });
 
   // Just VIEWING a thread is deliberately NOT the same as responding to it
