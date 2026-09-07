@@ -420,7 +420,9 @@ async function loadUsers() {
       <td style="cursor:grab;text-align:center;color:var(--pra-dim)" title="Drag to reorder">⠿</td>
       <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
       <td class="pra-muted">${escapeHtml(u.email)}</td>
-      <td><span class="pra-badge pra-badge-${u.role}">${u.role}</span></td>
+      <td><select class="pra-badge pra-badge-${u.role}" data-user-role="${u.id}" style="border-style:solid;cursor:pointer;font-family:inherit">
+        ${['admin', 'superuser', 'user'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+      </select></td>
       <td><select class="pra-select" data-user-footer="${u.id}" style="font-size:.8rem;padding:4px 8px">${footerOptions(u.footerTemplateId)}</select></td>
       <td><input class="pra-input" data-user-zoom="${u.id}" value="${escapeHtml(u.zoomLink || '')}" placeholder="https://zoom.us/j/..." style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
       <td><input class="pra-input" data-user-cal="${u.id}" value="${escapeHtml(u.calendarEmail || '')}" placeholder="${escapeHtml(u.email)}" style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
@@ -473,6 +475,21 @@ async function loadUsers() {
         body: JSON.stringify({ canUseAiActive: cb.checked }),
       });
       if (!r.ok) { showToast('Could not save', true); cb.checked = !cb.checked; return; }
+      showToast('Saved');
+    });
+  });
+  // Backend refuses to let an admin demote their own account (auth_backend.js),
+  // so on that rejection we just revert the select back to admin via reload.
+  body.querySelectorAll('[data-user-role]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const newRole = sel.value;
+      const r = await fetch(`/api/auth/users/${sel.dataset.userRole}/role`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not save', true); loadUsers(); return; }
+      sel.className = `pra-badge pra-badge-${newRole}`;
+      sel.style.borderStyle = 'solid'; sel.style.cursor = 'pointer'; sel.style.fontFamily = 'inherit';
       showToast('Saved');
     });
   });
