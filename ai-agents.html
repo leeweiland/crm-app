@@ -160,12 +160,21 @@
         </div>
         <div class="editor-row toggle-row">
           <div class="toggle-item">
+            <button type="button" class="active-toggle" id="fAiAssistToggle"></button>
+            <span class="toggle-label" id="fAiAssistLabel">AI Assist (drafts only, in the Inbox)</span>
+          </div>
+          <div class="toggle-item">
             <button type="button" class="active-toggle" id="fActiveToggle"></button>
             <span class="toggle-label" id="fActiveLabel">AI Active (works this batch on its own, no draft review)</span>
           </div>
-          <div class="toggle-item">
-            <button type="button" class="active-toggle" id="fAiAssistToggle"></button>
-            <span class="toggle-label" id="fAiAssistLabel">AI Assist (drafts only, in the Inbox)</span>
+        </div>
+
+        <div class="accordion-item open" data-acc="prompt">
+          <button type="button" class="accordion-header"><span>System Prompt</span><span class="accordion-chev">▾</span></button>
+          <div class="accordion-body">
+            <div class="editor-row" style="margin-bottom:0">
+              <textarea id="fSystemPrompt"></textarea>
+            </div>
           </div>
         </div>
 
@@ -357,15 +366,6 @@
                 <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
                 <div class="multiselect-panel" id="fCoverUsers"></div>
               </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="accordion-item open" data-acc="prompt">
-          <button type="button" class="accordion-header"><span>System Prompt</span><span class="accordion-chev">▾</span></button>
-          <div class="accordion-body">
-            <div class="editor-row" style="margin-bottom:0">
-              <textarea id="fSystemPrompt"></textarea>
             </div>
           </div>
         </div>
