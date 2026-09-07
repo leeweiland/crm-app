@@ -8,7 +8,7 @@
 <style>
   .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
   .agent-active-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
-  .agent-on { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .agent-on { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .agent-off { background: rgba(255,255,255,0.1); color: #fff; }
   /* .editor-backdrop is a sibling of .pra-root (not a descendant), same as
      every .modal-backdrop elsewhere in the app -- without an explicit
@@ -32,12 +32,12 @@
   /* Active / AI Assist toggles -- same track+thumb switch as flow-builder.html's
      .active-toggle, so a boolean setting looks and behaves the same way
      everywhere in the app instead of a plain checkbox. */
-  .toggle-row { display: flex; gap: 28px; margin-bottom: 20px; }
+  .toggle-row { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-bottom: 20px; }
   .toggle-item { display: flex; align-items: center; gap: 10px; }
   .toggle-item .toggle-label { font-size: .86rem; color: var(--pra-white); font-weight: 700; cursor: pointer; }
   .active-toggle { width: 40px; height: 22px; border-radius: 11px; background: var(--pra-border); border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
   .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
-  .active-toggle.on { background: var(--pra-green); }
+  .active-toggle.on { background: var(--pra-blue); }
   .active-toggle.on::after { left: 20px; }
 
   /* Dropdown multi-selects (lead type / status / covering users) -- a
@@ -83,7 +83,7 @@
   .batch-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .batch-name { font-weight: 700; flex: 1; }
   .batch-status-pill { font-size: .64rem; text-transform: uppercase; padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--pra-dim); }
-  .batch-status-pill.running { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .batch-status-pill.running { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .batch-status-pill.paused { background: rgba(255,159,10,.15); color: #ff9f0a; }
   .batch-stats { display: flex; flex-wrap: wrap; gap: 10px; font-size: .74rem; color: var(--pra-dim); margin-bottom: 8px; }
   .batch-stats b { color: var(--pra-white); }
@@ -92,7 +92,7 @@
   .review-state-pill { font-size: .64rem; text-transform: uppercase; padding: 2px 7px; border-radius: 7px; background: rgba(255,255,255,.08); color: var(--pra-dim); flex-shrink: 0; }
   .review-state-pill.hot_handoff, .review-state-pill.escalated { background: rgba(255,159,10,.15); color: #ff9f0a; }
   .review-state-pill.opted_out, .review-state-pill.human_takeover { background: rgba(255,59,59,0.15); color: var(--pra-red); }
-  .review-state-pill.done { background: rgba(57,255,20,0.1); color: var(--pra-green); }
+  .review-state-pill.done { background: rgba(0,155,255,0.1); color: var(--pra-blue); }
 
   /* ── Test Conversation panel -- same iMessage-bubble pattern as the
      stand-alone role-play chat prototype, embedded directly in the editor
@@ -177,6 +177,7 @@
               <div class="editor-row">
                 <label>Segment</label>
                 <select id="fSegment"><option value="">Select a saved segment…</option></select>
+                <div class="pra-muted" id="segmentCountLabel" style="font-size:.76rem;margin-top:6px"></div>
               </div>
               <div class="editor-row">
                 <label>Active for lead type (also narrows which leads get AI Assist icons in the Inbox)</label>
@@ -199,7 +200,7 @@
                 <label>Batch size (max leads contacted per Start)</label>
                 <input type="number" id="fBatchSize" min="1" max="1000" step="1" value="25"/>
               </div>
-              <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
+              <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
                 <div style="flex:1">
                   <label>Min wait between messages</label>
                   <div style="display:flex;gap:6px">
@@ -288,7 +289,7 @@
                   </div>
                 </div>
 
-                <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
+                <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
                   <div style="flex:1">
                     <label>Wait before sending</label>
                     <div style="display:flex;gap:6px">
@@ -309,7 +310,7 @@
                   </div>
                 </div>
 
-                <div class="editor-row" style="display:flex;gap:12px;margin-bottom:12px">
+                <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
                   <div style="flex:1">
                     <label>Max outbounds per contact</label>
                     <input type="number" id="btCapCount" min="1" step="1" value="1"/>
@@ -331,7 +332,7 @@
                     <span class="toggle-label">If they come back after we've already reached out, follow up</span>
                   </div>
                 </div>
-                <div class="editor-row" style="display:flex;gap:12px;max-width:280px">
+                <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;max-width:280px">
                   <input type="number" id="btRevisitDelayValue" min="1" step="1" value="1" style="flex:1"/>
                   <select id="btRevisitDelayUnit" style="flex:1">
                     <option value="days" selected>Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option>
@@ -542,6 +543,8 @@ async function openEditor(agentId) {
   const cfg = agent.activeConfig || {};
   document.getElementById('fSegment').value = cfg.segmentId || '';
   document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
+  document.getElementById('segmentCountLabel').textContent = '';
+  updateSegmentSizeDisplay(false);
   const wait = cfg.waitTimeRange || {};
   document.getElementById('fWaitMin').value = wait.min ?? wait.minHours ?? 4;
   document.getElementById('fWaitMax').value = wait.max ?? wait.maxHours ?? 24;
@@ -824,6 +827,46 @@ function wireAutosave() {
   document.getElementById('fBtToggle').addEventListener('click', () => { setToggle('fBtToggle', !getToggle('fBtToggle')); updateBtSectionVisibility(); scheduleAutosave(); });
   document.getElementById('btRevisitToggle').addEventListener('click', () => { setToggle('btRevisitToggle', !getToggle('btRevisitToggle')); scheduleAutosave(); });
 }
+
+// Live segment size -- batch size auto-fills to the number actually
+// contactable (matches segment + targeting, minus opt-outs/no-contact-
+// info/terminal status) whenever the segment changes, and can be reduced
+// but never typed above that ceiling. resetToMax is only true on an actual
+// segment change (a deliberate pick); reopening the editor or a targeting
+// tweak just refreshes the live count/ceiling without overwriting a
+// batch size you already dialed down.
+async function updateSegmentSizeDisplay(resetToMax) {
+  const segmentId = document.getElementById('fSegment').value;
+  const label = document.getElementById('segmentCountLabel');
+  const batchSizeInput = document.getElementById('fBatchSize');
+  if (!segmentId || !editingAgentId) { label.textContent = ''; batchSizeInput.removeAttribute('max'); return; }
+  label.textContent = 'Checking segment size…';
+  try {
+    const r = await fetch('/api/ai-active/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId: editingAgentId, segmentId, batchSize: 100000 }),
+    });
+    const data = await r.json();
+    if (!r.ok) { label.textContent = 'Could not check segment size.'; return; }
+    const eligible = Math.max(1, data.willContact.length);
+    label.textContent = `${data.willContact.length} of ${data.totalMatchingSegment} eligible to contact (excludes opt-outs, no contact info, terminal status)`;
+    batchSizeInput.max = String(eligible);
+    if (resetToMax || !batchSizeInput.value || Number(batchSizeInput.value) > eligible) {
+      batchSizeInput.value = String(eligible);
+      scheduleAutosave();
+    }
+  } catch {
+    label.textContent = '';
+  }
+}
+document.getElementById('fSegment').addEventListener('change', () => updateSegmentSizeDisplay(true));
+document.getElementById('fBatchSize').addEventListener('input', () => {
+  const max = Number(document.getElementById('fBatchSize').max);
+  if (max && Number(document.getElementById('fBatchSize').value) > max) document.getElementById('fBatchSize').value = String(max);
+});
+document.querySelectorAll('#msProgramTypes input, #fStatuses').forEach((el) => {
+  el.addEventListener('change', () => updateSegmentSizeDisplay(false));
+});
 
 // ── AI Active: preview / start / monitor batches ─────────────────────────
 function currentActiveConfig() {
