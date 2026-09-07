@@ -1,4 +1,4 @@
-import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
+import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
@@ -258,7 +258,7 @@ export async function handleGmailRequest(req, res, url) {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
-    const team = readJson(USERS_FILE, []).filter(u => !u.archived).map(u => ({
+    const team = sortByName(readJson(USERS_FILE, []).filter(u => !u.archived)).map(u => ({
       id: u.id, first: u.first, last: u.last, email: u.email,
       connected: !!u.gmailRefreshToken, gmailEmail: u.gmailEmail || null,
       canSend: !!u.gmailScope?.includes("gmail.send"),

@@ -227,10 +227,11 @@
       </div>
 
       <div class="tab-panel pra-panel" id="tab-users" style="padding:22px">
-        <div class="pra-h2" style="margin-bottom:14px">Team Users</div>
+        <div class="pra-h2" style="margin-bottom:4px">Team Users</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px">Drag the <span style="cursor:grab">⠿</span> handle to reorder -- this order is also what the Inbox "send as" dropdown and Connect Email use.</div>
         <div style="overflow-x:auto">
           <table class="data-table" id="usersTable">
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Footer</th><th>Zoom Link</th><th>Calendar Email</th><th>AI Active Access</th><th></th></tr></thead>
+            <thead><tr><th style="width:28px"></th><th>Name</th><th>Email</th><th>Role</th><th>Footer</th><th>Zoom Link</th><th>Calendar Email</th><th>AI Active Access</th><th></th></tr></thead>
             <tbody id="usersBody"></tbody>
           </table>
         </div>
@@ -406,7 +407,7 @@ document.getElementById('addFieldBtn').onclick = async () => {
 async function loadUsers() {
   const r = await fetch('/api/auth/users');
   const body = document.getElementById('usersBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">Admins only.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="9" class="pra-muted">Admins only.</td></tr>'; return; }
   const { users } = await r.json();
   // Each user's own footer for their Inbox 1:1 replies -- independent of
   // the org-wide default used by campaigns/automations (email_backend.js's
@@ -415,7 +416,8 @@ async function loadUsers() {
   const footerOptions = (selectedId) => `<option value="">Org default</option>` +
     footerTemplates.map(f => `<option value="${f.id}" ${selectedId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
   body.innerHTML = users.map(u => `
-    <tr>
+    <tr draggable="true" data-user-row="${u.id}">
+      <td style="cursor:grab;text-align:center;color:var(--pra-dim)" title="Drag to reorder">⠿</td>
       <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
       <td class="pra-muted">${escapeHtml(u.email)}</td>
       <td><span class="pra-badge pra-badge-${u.role}">${u.role}</span></td>
@@ -507,6 +509,39 @@ async function loadUsers() {
       });
       if (!r.ok) { showToast('Could not save', true); return; }
       showToast('Saved');
+    });
+  });
+  wireUserRowDragDrop();
+}
+
+// Drag-to-reorder Team Users -- native HTML5 drag/drop on each <tr>. Rows
+// are moved live in the DOM as you drag over them (not just on drop), so
+// the reordering feels immediate; the final order is only persisted once
+// (on dragend), read straight off the DOM's current row order rather than
+// tracked separately, so there's no way for the saved order to drift from
+// what's actually on screen.
+let draggedUserRow = null;
+function wireUserRowDragDrop() {
+  const body = document.getElementById('usersBody');
+  body.querySelectorAll('tr[data-user-row]').forEach(row => {
+    row.addEventListener('dragstart', () => { draggedUserRow = row; row.style.opacity = '0.4'; });
+    row.addEventListener('dragend', async () => {
+      row.style.opacity = '';
+      draggedUserRow = null;
+      const orderedIds = Array.from(body.querySelectorAll('tr[data-user-row]')).map(r => r.dataset.userRow);
+      const r = await fetch('/api/auth/users/reorder', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds }),
+      });
+      if (!r.ok) { showToast('Could not save order', true); loadUsers(); return; }
+      showToast('Order saved');
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!draggedUserRow || draggedUserRow === row) return;
+      const rect = row.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      row.parentNode.insertBefore(draggedUserRow, before ? row : row.nextSibling);
     });
   });
 }

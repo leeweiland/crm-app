@@ -860,8 +860,19 @@ export function publicUser(u) {
 // so they all show the same, predictable order instead of each falling back
 // to USERS_FILE's own array order (effectively creation order, which meant
 // whoever signed up first always led every list regardless of name).
-function sortByName(users) {
-  return [...users].sort((a, b) => `${a.first} ${a.last}`.localeCompare(`${b.first} ${b.last}`));
+//
+// `order` is a manually-set position from Settings > Team Users' drag-to-
+// reorder -- takes priority once set, since a deliberate manual order beats
+// an alphabetical guess. Anyone without one yet (a brand-new user, before
+// the next reorder-save touches them) falls back to alphabetical so they
+// still land somewhere sensible instead of unpredictably at the very end.
+export function sortByName(users) {
+  return [...users].sort((a, b) => {
+    const ao = typeof a.order === "number" ? a.order : Infinity;
+    const bo = typeof b.order === "number" ? b.order : Infinity;
+    if (ao !== bo) return ao - bo;
+    return `${a.first} ${a.last}`.localeCompare(`${b.first} ${b.last}`);
+  });
 }
 
 // ── Roles ────────────────────────────────────────────────────────────────
@@ -1010,6 +1021,24 @@ export async function handleAuthRequest(req, res, url) {
     users.push(newUser);
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(newUser) });
+  }
+  // Drag-to-reorder from Settings > Team Users -- persists as a plain
+  // 0-based `order` field per user, which sortByName above already treats
+  // as authoritative. Every list that shows team members (this table, the
+  // Inbox "send as" dropdown, Connect Email) reads through sortByName/
+  // /api/auth/team, so one save here reorders everywhere at once.
+  if (p === "/api/auth/users/reorder" && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { orderedIds } = await readJsonBody(req);
+    if (!Array.isArray(orderedIds) || !orderedIds.length) return sendJson(res, 400, { error: "orderedIds array is required" });
+    const users = readJson(USERS_FILE, []);
+    orderedIds.forEach((id, index) => {
+      const u = users.find((x) => x.id === id);
+      if (u) u.order = index;
+    });
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, users: sortByName(users).map(publicUser) });
   }
   const roleMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/role$/);
   if (roleMatch && req.method === "POST") {
