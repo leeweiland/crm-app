@@ -148,9 +148,17 @@ async function getOneToOneCampaigns() {
 // looking at, instead of iterating AC's per-contact activity feed (one
 // real API call each) across the ~160K contacts linked to AC on some
 // blind schedule.
-export async function syncAcEngagementForContact(contactId) {
+// preloadedContact: optional, for a caller that's already iterating its
+// own in-memory contacts array/Map (e.g. processAcNightlySyncBatch below,
+// sweeping tens of thousands of contacts in one pass) -- without it, every
+// single call re-read and re-parsed the entire ~180MB contacts file from
+// disk just to look up ONE row, which is fine for the on-open fire-and-
+// forget case this was originally written for (one call, a rare user
+// action) but was confirmed live to itself OOM the process within about a
+// minute once something looped it across a real batch of contacts.
+export async function syncAcEngagementForContact(contactId, preloadedContact) {
   if (!acConfigured() || !contactId) return;
-  const contact = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+  const contact = preloadedContact !== undefined ? preloadedContact : readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
   const acContactId = contact?.externalIds?.acContactId;
   if (!acContactId || !contact.email) return;
   const email = contact.email.toLowerCase();
@@ -316,6 +324,15 @@ function acNightlySyncLocalDate(d = new Date()) {
 function acNightlySyncLocalHour(d = new Date()) {
   return +new Intl.DateTimeFormat("en-US", { timeZone: AC_NIGHTLY_SYNC_TZ, hour: "numeric", hour12: false }).format(d);
 }
+// In-memory only, same reasoning and same fix shape as pollAcEngagementIfDue's
+// own cache above -- this was re-reading the full ~180MB contacts file on
+// EVERY tick for a pass's entire multi-hour span. Confirmed live
+// (2026-09-07) causing a fresh OOM crash within about a minute of a pass
+// actually starting -- worse than pollAcEngagementIfDue's version of this
+// same bug, since each contact processed ALSO used to trigger its own
+// redundant full-file read inside syncAcEngagementForContact (fixed above
+// via preloadedContact) on top of this one.
+let _nightlySyncTargetsCache = null;
 export async function processAcNightlySyncBatch() {
   if (!acConfigured()) return;
   const state = readJson(AC_NIGHTLY_SYNC_STATE_FILE, { lastCompletedDate: null, nextIndex: 0 });
@@ -327,10 +344,14 @@ export async function processAcNightlySyncBatch() {
   // same as every other batch job in this file.
   if (!inProgress && (acNightlySyncLocalHour() !== AC_NIGHTLY_SYNC_HOUR || state.lastCompletedDate === today)) return;
 
-  const targets = readJson(CONTACTS_FILE, []).filter(c => c.externalIds?.acContactId);
+  if (!inProgress || !_nightlySyncTargetsCache) {
+    _nightlySyncTargetsCache = readJson(CONTACTS_FILE, []).filter(c => c.externalIds?.acContactId);
+  }
+  const targets = _nightlySyncTargetsCache;
   if (state.nextIndex >= targets.length) {
     state.nextIndex = 0;
     state.lastCompletedDate = today;
+    _nightlySyncTargetsCache = null;
     writeJson(AC_NIGHTLY_SYNC_STATE_FILE, state);
     console.log(`[ac-nightly-sync] full pass complete for ${today} (${targets.length} contacts)`);
     return;
@@ -340,8 +361,9 @@ export async function processAcNightlySyncBatch() {
   const startIndex = state.nextIndex;
   let errors = 0;
   while (state.nextIndex < targets.length && Date.now() - t0 < AC_NIGHTLY_SYNC_BATCH_MS) {
-    try { await syncAcEngagementForContact(targets[state.nextIndex].id); }
-    catch (e) { errors++; console.error(`[ac-nightly-sync] contact ${targets[state.nextIndex].id} failed:`, e.message); }
+    const target = targets[state.nextIndex];
+    try { await syncAcEngagementForContact(target.id, target); }
+    catch (e) { errors++; console.error(`[ac-nightly-sync] contact ${target.id} failed:`, e.message); }
     state.nextIndex++;
     await new Promise(res => setTimeout(res, AC_NIGHTLY_SYNC_DELAY_MS));
   }
