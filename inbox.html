@@ -56,20 +56,27 @@
   .convo-avatar { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s; }
   .convo-avatar.has-unread { background: #39ff14; color: #0a0a0d; }
   #chatStatusSelect, .convo-status-select { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s; }
-  /* No flex-shrink:0 here (unlike the type badge/date below) and a real
-     max-width -- statusSelectWidthRule's inline width can run past 300px
-     for the longest status label ("FOLLOW UP (They have a Task / Date
-     set)" alone is 48ch), which on a resized-narrow sidebar was eating the
-     ENTIRE row and squeezing the name to a computed 0px width. Letting it
-     shrink means status/assigned give ground before the name does, not
-     after. convo-owner-field gets the same treatment right below -- both
-     scoped to these sidebar-row-specific classes now, not the bare
-     owner-field-select every assigned-user dropdown carries (that used to
-     also cap the chat panel header's and Contacts table's copies at this
-     same tight width, truncating a name like "Lee Weiland" to "Lee We…"
-     with room to spare -- see crm-design-system.css's .owner-field-select). */
-  .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; max-width: 100px; }
-  .convo-owner-field { max-width: 110px; }
+  /* No flex-shrink:0 here (unlike the type badge/date below), but a real
+     fixed width now (not just max-width, and no more per-row inline
+     statusSelectWidthRule sizing-to-content) -- .convo-name is the row's
+     only flex:1 item, so it absorbs whatever width this column ISN'T
+     using; a short status like "BOOKED" sized to its own text let the
+     name grow wider than next to a longer one like "APPLICATION",
+     shifting the whole assigned/type-badge/date cluster left or right
+     row-to-row instead of lining up like a table column. Native <select>
+     text already left-aligns inside a fixed-width box, so this also
+     answers "align these columns to the left" for free. Can still SHRINK
+     under real pressure (default flex-shrink:1, no flex-basis override)
+     so a resized-narrow sidebar still gives ground here before the name
+     does, same protection the old max-width-only rule was for. convo-
+     owner-field gets the same treatment right below -- both scoped to
+     these sidebar-row-specific classes now, not the bare owner-field-
+     select every assigned-user dropdown carries (that used to also cap
+     the chat panel header's and Contacts table's copies at this same
+     tight width, truncating a name like "Lee Weiland" to "Lee We…" with
+     room to spare -- see crm-design-system.css's .owner-field-select). */
+  .convo-status-select { font-size: .72rem; padding: 2px 20px 2px 6px; width: 100px; max-width: 100px; }
+  .convo-owner-field { width: 100px; max-width: 100px; }
   /* Two rows, both plain single-line flex rows (never wrap) -- row 1 is
      identity + metadata (name, status, assigned, type, time), row 2 is the
      message preview + pin/star. Name and preview are the only two elements
@@ -759,7 +766,7 @@ function typeBadgeInnerHtml(programType) {
 }
 function convoStatusFieldHtml(c) {
   const status = c.contact?.status || '';
-  return `<select class="pra-select convo-status-select" data-status-contact="${c.contactId}" style="${avatarStyle(status)};${statusSelectWidthRule(status)}" title="Change status">
+  return `<select class="pra-select convo-status-select" data-status-contact="${c.contactId}" style="${avatarStyle(status)}" title="Change status">
     <option value="">Set status...</option>
     ${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}
   </select>`;
@@ -847,7 +854,7 @@ function wireConvoRow(row) {
       await fetch('/api/contacts/' + convo.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
       showToast('Status updated');
       if (convo.contact) convo.contact.status = status;
-      e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
+      e.target.setAttribute('style', avatarStyle(status));
       // A status change can auto-archive (STOP) or auto-hide (Blacklist)
       // the conversation -- same reload chatStatusSelect's handler does, so
       // a freshly-archived/hidden row actually drops out of the current
