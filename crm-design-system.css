@@ -204,6 +204,15 @@ body { margin: 0; }
    regardless of the pill's per-status color. */
 .status-pill-select option { background: #fff; color: #000; }
 
+/* Team Users' role badge, clickable-to-change -- same "native select
+   painted as a pill" trick as .status-pill-select above, so it stays a
+   single flat badge instead of stacking browser chrome under it. */
+.role-pill-select { -webkit-appearance: none; appearance: none; font-family: var(--font-secondary); font-weight: 400; font-size: .6rem; letter-spacing: .06em; text-transform: uppercase; border: 1px solid rgba(0,155,255,0.35); border-radius: 20px; padding: 3px 9px; cursor: pointer; }
+.role-pill-select option { background: #fff; color: #000; text-transform: none; }
+.role-pill-admin { background: rgba(0,155,255,0.15); color: var(--pra-blue); border-color: rgba(0,155,255,0.35); }
+.role-pill-superuser { background: rgba(255,59,59,0.15); color: var(--pra-red); border-color: rgba(255,59,59,0.35); }
+.role-pill-user { background: rgba(255,255,255,0.12); color: #fff; border-color: var(--pra-border); }
+
 .pra-avatar {
   width: 38px; height: 38px; border-radius: 50%;
   background: var(--pra-panel-2);

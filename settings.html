@@ -420,7 +420,7 @@ async function loadUsers() {
       <td style="cursor:grab;text-align:center;color:var(--pra-dim)" title="Drag to reorder">⠿</td>
       <td>${escapeHtml(u.first)} ${escapeHtml(u.last)}</td>
       <td class="pra-muted">${escapeHtml(u.email)}</td>
-      <td><select class="pra-badge pra-badge-${u.role}" data-user-role="${u.id}" style="border-style:solid;cursor:pointer;font-family:inherit">
+      <td><select class="role-pill-select role-pill-${u.role}" data-user-role="${u.id}">
         ${['admin', 'superuser', 'user'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
       </select></td>
       <td><select class="pra-select" data-user-footer="${u.id}" style="font-size:.8rem;padding:4px 8px">${footerOptions(u.footerTemplateId)}</select></td>
@@ -488,8 +488,7 @@ async function loadUsers() {
         body: JSON.stringify({ role: newRole }),
       });
       if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not save', true); loadUsers(); return; }
-      sel.className = `pra-badge pra-badge-${newRole}`;
-      sel.style.borderStyle = 'solid'; sel.style.cursor = 'pointer'; sel.style.fontFamily = 'inherit';
+      sel.className = `role-pill-select role-pill-${newRole}`;
       showToast('Saved');
     });
   });
