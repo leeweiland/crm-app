@@ -579,12 +579,13 @@ async function openEditor(agentId) {
   if (agentId) loadBtActivity(agentId); else document.getElementById('btActivityList').textContent = 'Save this agent before activity can show here.';
   updateActiveSectionVisibility();
   if (agentId) loadBatchList(agentId); else document.getElementById('batchList').textContent = 'Save this agent before starting a batch.';
-  // Auto-expand any accordion that already has something configured, so
-  // reopening an existing agent never hides settings it's actually using
-  // behind a collapsed header.
-  setAccordionOpen('reengage', !!(reengage.sms?.enabled || reengage.email?.enabled));
-  setAccordionOpen('behavioral', !!bt.enabled);
-  setAccordionOpen('assist', (agent.targeting?.coverForUserIds || []).length > 0);
+  // Which accordions are open is a standing UI preference (see
+  // applyPersistedAccordionState), not recomputed from this agent's data
+  // every time -- confirmed live that auto-expanding "whatever has content"
+  // was actively unwanted: every section with anything configured popped
+  // open on every single edit, which is exactly the all-vertical-scrolling
+  // problem accordions were built to avoid.
+  applyPersistedAccordionState();
   document.querySelectorAll('#msProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
   updateMsSummary('msProgramTypes', 'Select lead type(s)…');
   renderStatusCheckboxes(agent.targeting?.statuses || []);
@@ -1021,6 +1022,23 @@ document.getElementById('editorCancelBtn').addEventListener('click', cancelEdito
 document.getElementById('editorBackdrop').addEventListener('click', (e) => { if (e.target.id === 'editorBackdrop') closeEditor().then(loadAgents); });
 wireAutosave();
 
+// Which accordions are open/closed is a standing per-browser UI preference,
+// not something recomputed from an agent's data every time the editor opens
+// -- persisted so it survives reopening the editor, reloading the page, or
+// restarting the browser, same as the user would expect from any collapsed/
+// expanded UI state. Shared across all agents (there's one "how I like this
+// panel laid out" preference, not one per agent).
+const ACCORDION_STATE_KEY = 'aiAgentsAccordionState';
+function loadAccordionState() {
+  try { return JSON.parse(localStorage.getItem(ACCORDION_STATE_KEY) || '{}'); } catch { return {}; }
+}
+function saveAccordionOpenState(dataAcc, open) {
+  try {
+    const state = loadAccordionState();
+    state[dataAcc] = open;
+    localStorage.setItem(ACCORDION_STATE_KEY, JSON.stringify(state));
+  } catch {}
+}
 function initAccordions() {
   document.querySelectorAll('.accordion-header').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1029,6 +1047,7 @@ function initAccordions() {
       const willOpen = body.style.display === 'none';
       body.style.display = willOpen ? 'block' : 'none';
       item.classList.toggle('open', willOpen);
+      saveAccordionOpenState(item.dataset.acc, willOpen);
     });
   });
 }
@@ -1038,6 +1057,17 @@ function setAccordionOpen(dataAcc, open) {
   if (!item) return;
   item.querySelector('.accordion-body').style.display = open ? 'block' : 'none';
   item.classList.toggle('open', !!open);
+}
+// Applies the saved preference where one exists; an accordion never opened/
+// closed before (first-ever visit) keeps whatever the HTML markup already
+// defaults it to (Batches & Targeting and System Prompt open, the rest
+// collapsed) rather than being forced one way or the other.
+function applyPersistedAccordionState() {
+  const state = loadAccordionState();
+  document.querySelectorAll('.accordion-item').forEach((item) => {
+    const acc = item.dataset.acc;
+    if (Object.prototype.hasOwnProperty.call(state, acc)) setAccordionOpen(acc, state[acc]);
+  });
 }
 
 (async function init() {
