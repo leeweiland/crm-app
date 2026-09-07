@@ -86,6 +86,13 @@
      badge visually comes later. Fixed width for every value this can
      show (online/gym/blank's "SET TYPE" fallback) closes that. */
   .convo-row [data-type-badge] { display: inline-block; width: 64px; text-align: center; flex-shrink: 0; }
+  /* Fixed-width wrapper regardless of state (same reasoning as the type
+     badge comment above) -- only the icon's COLOR changes with whether a
+     booking exists, never the space it takes, so it can't shift anything
+     else in the row left/right depending on which contacts have one. */
+  .convo-booking-mark { width: 16px; flex-shrink: 0; display: inline-flex; color: var(--pra-border); }
+  .convo-booking-mark.on { color: var(--pra-green); }
+  .convo-booking-mark svg { width: 15px; height: 15px; }
   /* Two rows, both plain single-line flex rows (never wrap) -- row 1 is
      identity + metadata (name, status, assigned, type, time), row 2 is the
      message preview + pin/star. Name and preview are the only two elements
@@ -606,6 +613,10 @@ const STAR_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5
 const SPARKLE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c.6 5.4 2.2 7 7.6 7.6-5.4.6-7 2.2-7.6 7.6-.6-5.4-2.2-7-7.6-7.6C9.8 9 11.4 7.4 12 2Z"/><path d="M19 17c.25 1.9.85 2.5 2.75 2.75C19.85 20 19.25 20.6 19 22.5c-.25-1.9-.85-2.5-2.75-2.75C18.15 19.5 18.75 18.9 19 17Z"/></svg>';
 const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/></svg>';
 const CALENDAR_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+// Filled (not outline, like CALENDAR_ICON above) with a checkmark -- a
+// deliberately different shape, not just a different color, for the
+// sidebar's "has an upcoming booking" indicator (see convoRowHtml).
+const BOOKING_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3v4M16 3v4" stroke="var(--pra-black,#000)" stroke-width="1.8" stroke-linecap="round"/><path d="M7.5 13l2.7 2.7L16.5 9.5" stroke="var(--pra-black,#000)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 // Always the LOGGED-IN user's own Zoom link, never the assigned coach's or
 // the contact's -- whoever's actually in the conversation is who'd be
 // running the call, so they need their own room link handy to paste in,
@@ -804,6 +815,7 @@ function convoRowHtml(c) {
           ${c.pinned ? `<span class="convo-pinned-mark" title="Pinned">${PIN_ICON}</span>` : ''}
           <span class="convo-name">${escapeHtml(c.displayName)}</span>
           ${c.contactId ? convoStatusFieldHtml(c) : ''}
+          ${c.contactId ? `<span class="convo-booking-mark${c.hasUpcomingBooking ? ' on' : ''}" title="${c.hasUpcomingBooking ? 'Has an upcoming booking' : 'No upcoming booking'}">${BOOKING_ICON}</span>` : ''}
           ${c.contactId ? ownerFieldHtml(c.contact, 'convo-owner-field') : ''}
           ${c.contactId ? `<span class="pra-badge pra-badge-${c.contact?.programType || ''}" data-type-badge style="font-size:.56rem;padding:2px 7px">${typeBadgeInnerHtml(c.contact?.programType)}</span>` : ''}
           <div class="convo-time${hasUnread ? ' has-unread' : ''}">${fmtShort(c.lastAt)}</div>

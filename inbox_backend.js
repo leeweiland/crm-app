@@ -14,9 +14,22 @@ import { queryConversationsSqlite, syncContactFields } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 import { getEmailTheme } from "./integrations_backend.js";
+import { BOOKINGS_FILE } from "./scheduling_backend.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 function escapeHtmlBasic(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+// Mirrors sqlite_inbox.js's own upcomingBookedContactIds -- this file's
+// conversation-list handler only reaches this JSON-fold path when SQLite
+// is unavailable or explicitly disabled (?_sqlite=0), but it should still
+// report the same booking indicator when it does.
+function upcomingBookedContactIds() {
+  const now = Date.now();
+  return new Set(
+    readJson(BOOKINGS_FILE, [])
+      .filter(b => b.status === "confirmed" && b.contactId && new Date(b.startAt).getTime() > now)
+      .map(b => b.contactId)
+  );
+}
 
 // Live cross-tab/cross-user sync for the Inbox sidebar -- one teammate
 // marking a conversation done (or replying, which routes through the same
@@ -158,10 +171,12 @@ export async function handleInboxRequest(req, res, url) {
 
     const contactById = new Map(contacts.map(c => [c.id, c]));
     const metaByContactId = getConvoMetaMap();
+    const bookedContactIds = upcomingBookedContactIds();
     const conversations = rowsForChannel.map(g => {
       const last = g.last;
       const contact = g.contactId ? contactById.get(g.contactId) || null : null;
       const meta = g.contactId ? metaByContactId.get(g.contactId) || null : null;
+      const hasUpcomingBooking = !!g.contactId && bookedContactIds.has(g.contactId);
       // Read-receipt-style status for the last MINE message in this thread
       // (independent of `last`, which could be their most recent inbound
       // reply) -- single check (sent/queued), double grey (delivered), or
@@ -189,7 +204,7 @@ export async function handleInboxRequest(req, res, url) {
       const lastInboundAtMs = g.lastInboundAt ? new Date(g.lastInboundAt).getTime() : null;
       const hasUnseen = !hidden && !!lastInboundAtMs && (lastSeenAtMs == null || lastInboundAtMs > lastSeenAtMs);
       return {
-        key: g.key, contactId: g.contactId, contact,
+        key: g.key, contactId: g.contactId, contact, hasUpcomingBooking,
         displayName: contact ? `${contact.first} ${contact.last}`.trim() : (last.direction === "inbound" ? last.from : last.to) || "Unknown",
         lastChannel: last.channel, lastDirection: last.direction,
         // Body snippet, not the subject line -- "Re: yo" (a real subject

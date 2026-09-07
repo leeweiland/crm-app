@@ -25,6 +25,10 @@ import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 
+// Declared locally rather than imported from scheduling_backend.js, which
+// already imports syncContactFields from THIS file -- that import would be
+// circular (same reasoning as auth_backend.js's own local FOOTER_TEMPLATES_FILE).
+const BOOKINGS_FILE = "crm_bookings.json";
 const DB_PATH = join(DATA_DIR, "crm_prototype.db");
 let db = null;
 export function sqliteInboxAvailable() {
@@ -135,6 +139,17 @@ function lastSeenByMeMs(row, currentUserId) {
     const byUser = JSON.parse(row.last_seen_by_json || "{}");
     return toMs(byUser[currentUserId]);
   } catch { return null; }
+}
+// crm_bookings.json is tiny (production: a few dozen rows) -- one full read
+// per conversation-list request, same cost class as getConvoMetaMap's own
+// full-file read, not worth a real join/index over.
+function upcomingBookedContactIds() {
+  const now = Date.now();
+  return new Set(
+    readJson(BOOKINGS_FILE, [])
+      .filter(b => b.status === "confirmed" && b.contactId && new Date(b.startAt).getTime() > now)
+      .map(b => b.contactId)
+  );
 }
 
 // message_index.js calls this with the same `g` group object it just wrote
@@ -438,6 +453,7 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
     db.exec("COMMIT");
   }
 
+  const bookedContactIds = upcomingBookedContactIds();
   const conversations = rows.map(r => {
     let last = null;
     if (channel) {
@@ -446,6 +462,7 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
     const lastSeenMs = lastSeenByMeMs(r, currentUserId);
     return {
       key: r.key, contactId: r.contact_id,
+      hasUpcomingBooking: !!r.contact_id && bookedContactIds.has(r.contact_id),
       contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id } : null,
       displayName: r.display_name,
       lastChannel: last?.channel || r.last_channel, lastDirection: last?.direction || r.last_direction,
