@@ -59,7 +59,7 @@
   .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
   /* ── AI Active (batch settings, preview, running batches) ── */
-  .active-section { border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; margin-bottom: 16px; background: rgba(57,255,20,0.03); }
+  .active-section { border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; margin-bottom: 16px; background: rgba(255,255,255,0.02); }
   .active-section-title { font-weight: 700; font-size: .88rem; margin-bottom: 4px; }
   .active-section-sub { font-size: .76rem; color: var(--pra-dim); margin-bottom: 14px; }
   .preview-result { border: 1px solid var(--pra-border); border-radius: 8px; padding: 12px; margin-top: 10px; font-size: .82rem; }
@@ -219,7 +219,7 @@
           <div class="editor-row">
             <label>Re-engagement SMS opener prompt</label>
             <textarea id="fReengageSmsPrompt" style="min-height:70px" placeholder="e.g. Keep it very short and text-native, reference their real goal from their application, ask one specific question to get them talking."></textarea>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="testSmsBtn" type="button" style="margin-top:6px">Test SMS</button>
+            <button class="pra-btn pra-btn-sm" id="testSmsBtn" type="button" style="margin-top:6px">Test SMS</button>
             <div class="preview-result" id="testSmsResult" style="display:none;margin-top:8px"></div>
           </div>
 
@@ -232,11 +232,11 @@
           <div class="editor-row">
             <label>Re-engagement email opener prompt</label>
             <textarea id="fReengageEmailPrompt" style="min-height:70px" placeholder="e.g. Warm, personal-sounding subject line, reference something specific from their application, short and inviting a reply."></textarea>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="testEmailBtn" type="button" style="margin-top:6px">Test Email</button>
+            <button class="pra-btn pra-btn-sm" id="testEmailBtn" type="button" style="margin-top:6px">Test Email</button>
             <div class="preview-result" id="testEmailResult" style="display:none;margin-top:8px"></div>
           </div>
 
-          <button class="pra-btn pra-btn-ghost" id="previewBatchBtn" type="button">Preview Batch</button>
+          <button class="pra-btn" id="previewBatchBtn" type="button">Preview Batch</button>
           <div class="preview-result" id="previewResult" style="display:none"></div>
 
           <div style="margin-top:18px">
