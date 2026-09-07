@@ -363,11 +363,6 @@ export async function deleteCalendarEvent(eventId, calendarId) {
 // ── Add-to-calendar links + universal .ics, same shapes as chat-app's ──────
 function icsDate(d) { return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z"); }
 function icsEscape(s) { return String(s || "").replace(/[\\,;]/g, m => "\\" + m).replace(/\n/g, "\\n"); }
-// Same simple regex-replace escaping email_backend.js's own (unexported)
-// escapeHtml uses -- needed here for the internal booking notification,
-// which embeds visitor-submitted values (name, notes, etc.) into an HTML
-// email body.
-function escapeHtml(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function buildGoogleCalendarLink({ summary, description, start, end, timezone }) {
   const params = new URLSearchParams({ action: "TEMPLATE", text: summary, details: description || "", dates: `${icsDate(start)}/${icsDate(end)}`, ctz: timezone });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
@@ -832,41 +827,6 @@ export async function sendDueBookingReminders() {
   if (changed) writeJson(BOOKINGS_FILE, bookings);
 }
 
-// One email, to whoever's listed in the event type's own "Notify these
-// emails on booking" setting, with EVERYTHING in it -- booking.notes
-// already carries both the calendar's own custom questions AND (folded in
-// via book.html's prefillFormAnswers handoff) the rest of the form's
-// answers when this calendar sits inside one, so there's nothing left to
-// pull from a second source. Deliberately not routed through Flows' two
-// separate trigger events (form_submitted/booking_created each only ever
-// see their own half) -- this is the one moment both halves are already
-// sitting in the same place, so it's simpler and more reliable to just
-// send it directly here than to try to recombine two independent Flow
-// runs into one email. No contactId passed -- this goes to internal
-// staff, not the contact, so it shouldn't be gated by their email opt-out.
-export async function sendInternalBookingNotification(booking, eventType, contact) {
-  const recipients = (eventType.notifyEmails || []).filter(Boolean);
-  if (!recipients.length) return;
-  const start = new Date(booking.startAt);
-  const when = start.toLocaleString("en-US", { timeZone: booking.timezone || "America/Anchorage", dateStyle: "full", timeStyle: "short" });
-  const formAnswersText = formatFormAnswers(booking.formAnswers);
-  // Same public cancel link handed to the lead in their own confirmation
-  // (book.html's "Need to cancel?") and to the staff calendar event's own
-  // description -- lets whoever's on this notify list cancel straight from
-  // their inbox without opening the CRM.
-  const manageUrl = `${getPublicBaseUrl()}/book/${eventType.slug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
-  const html = `<p><b>${escapeHtml(booking.name)}</b> just booked <b>${escapeHtml(eventType.name)}</b>.</p>
-    <p><b>When:</b> ${when}<br/><b>Email:</b> ${escapeHtml(booking.email)}${booking.phone ? `<br/><b>Phone:</b> ${escapeHtml(booking.phone)}` : ""}</p>
-    ${formAnswersText ? `<p><b>Form answers:</b><br/>${escapeHtml(formAnswersText).replace(/\n/g, "<br/>")}</p>` : ""}
-    ${booking.notes ? `<p><b>Application &amp; booking answers:</b><br/>${escapeHtml(booking.notes).replace(/\n/g, "<br/>")}</p>` : ""}
-    <p><a href="${manageUrl}" style="display:inline-block;background:#dc2626;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-weight:bold;font-size:14px;text-decoration:none;padding:10px 18px;border-radius:6px;margin-top:6px">Cancel This Booking</a></p>`;
-  await Promise.all(recipients.map(to => sendEmail({
-    to, subject: `New booking: ${booking.name} — ${eventType.name}`,
-    blocks: [{ id: "b1", type: "text", html }], theme: {}, footerTemplateId: null,
-    sourceType: "booking", sourceId: booking.id,
-  }).catch(() => {})));
-}
-
 export async function handleSchedulingRequest(req, res, url) {
   const p = url.pathname;
 
@@ -1047,7 +1007,10 @@ export async function handleSchedulingRequest(req, res, url) {
     // given, a second sequential SMS send before the visitor ever saw
     // "You're booked" -- confirmation delivery doesn't need to block that.
     sendBookingConfirmation(booking, et, contact).catch(() => {});
-    sendInternalBookingNotification(booking, et, contact).catch(() => {});
+    // The internal staff notification is now the Flows engine's own
+    // editable send_email step (booking_created trigger), not a hardcoded
+    // backend email nobody could customize -- see e.g. "2 ONLINE BOOKING"'s
+    // own send_email step, which fireFlowTrigger below already reaches.
 
     const startDate = new Date(booking.startAt), endDate = new Date(booking.endAt);
     return sendJson(res, 200, {

@@ -19,12 +19,22 @@ export const STEP_TYPES = [
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
 ];
 
-// send_email's Body is a plain textarea, not the block editor's rich HTML --
-// escape it like real text, then turn line breaks into <br> so paragraphs
-// still read as paragraphs once it's wrapped in a single "text" block for
-// sendEmail() (block_editor_shared.js just injects a text block's html raw).
+// send_email's Body is still just a flat string (not the block editor's
+// real HTML) -- escape it like real text first, so nothing a lead typed
+// into a form answer (or the literal text of the field itself) can inject
+// markup, THEN convert the flow-builder's own **bold** markers (see
+// flow-builder.html's toggleBoldSelection/insertQaPair -- its Bold button
+// and the Body field's "insert as Q&A pair" token action both produce
+// this marker, not real stored HTML) to real <b> tags, safe to do after
+// escaping since escaping never touches `*` characters. Line breaks last,
+// so paragraphs still read as paragraphs once it's wrapped in a single
+// "text" block for sendEmail() (block_editor_shared.js just injects a
+// text block's html raw).
 function escapeHtmlForEmail(s) {
-  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+  return String(s || "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\n/g, "<br>");
 }
 
 // Bounds any single external call (Sheets API, SES) a step makes -- without

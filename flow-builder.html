@@ -72,6 +72,13 @@
   .token-chip-x:hover { opacity: 1; }
   .token-insert-btn { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .token-insert-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
+  /* Bold sits to the LEFT of the existing "+" token button, same box --
+     only the Body field of Send Email gets one (see wireTokenButtons),
+     so the extra right-padding only needs to apply where that button
+     actually exists. */
+  .token-bold-btn { position: absolute; top: 6px; right: 34px; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-weight: 700; font-size: .8rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .token-bold-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
+  .token-input-wrap:has(.token-bold-btn) > .token-editor { padding-right: 62px; }
   .token-popover { z-index: 700; width: 260px; max-height: 320px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); padding: 4px; }
   .token-popover-item { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 6px; padding: 7px 9px; cursor: pointer; color: #fff; }
   .token-popover-item:hover { background: rgba(0,155,255,0.12); }
@@ -879,7 +886,11 @@ function openStepConfigModal(step, isNew) {
       <div class="field"><label class="pra-label">To</label><div class="token-input-wrap">${tokenEditorHtml(c.to || '', { placeholder: 'lee@pacificrimathletics.com, {{payload.Email}}', attrs: 'id="cfgEmailTo"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
       <div class="field"><label class="pra-label">From (optional -- defaults to this business's sender)</label><div class="token-input-wrap">${tokenEditorHtml(c.from || '', { placeholder: 'leave blank to use the default sender', attrs: 'id="cfgEmailFrom"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
       <div class="field"><label class="pra-label">Subject</label><div class="token-input-wrap">${tokenEditorHtml(c.subject || '', { placeholder: 'New {{payload.Program}} lead: {{payload.First Name}}', attrs: 'id="cfgEmailSubject"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field"><label class="pra-label">Body</label><div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+      <div class="field">
+        <label class="pra-label">Body</label>
+        <div class="pra-muted" style="font-size:.74rem;margin-bottom:4px">Click a field below to insert it as a formatted question/answer pair (bold label, the value, a blank line) -- or select text and hit <b>B</b> to bold it yourself.</div>
+        <div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"' })}<button class="token-bold-btn" type="button" data-bold-btn title="Bold selected text">B</button><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
+      </div>
     `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
@@ -1033,11 +1044,16 @@ function tokenLabel(raw) {
 function chipHtml(raw) {
   return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(tokenLabel(raw))}</span><button type="button" class="token-chip-x" tabindex="-1">&times;</button></span>`;
 }
+// **bold** markers only apply on the multiline field (Send Email's Body) --
+// see the toggleBoldSelection/insertQaPair comments for why this is a plain
+// markdown-style marker in the saved string rather than real stored HTML.
 function tokenEditorContentHtml(value, multiline) {
-  const parts = String(value || '').split(/(\{\{[^}]+\}\})/g);
+  const pattern = multiline ? /(\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g : /(\{\{[^}]+\}\})/g;
+  const parts = String(value || '').split(pattern);
   return parts.map(p => {
     if (!p) return '';
     if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
+    if (multiline && /^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
     const esc = escapeHtml(p);
     return multiline ? esc.replace(/\n/g, '<br>') : esc.replace(/\n/g, ' ');
   }).join('');
@@ -1059,6 +1075,10 @@ function getTokenEditorValue(el) {
     else if (node.nodeType === Node.ELEMENT_NODE) {
       if (node.classList.contains('token-chip')) out += node.dataset.raw;
       else if (node.tagName === 'BR') out += '\n';
+      // Recurses (not .textContent) so a chip typed/selected INTO a bold
+      // run still round-trips as its real {{token}}, not the chip's
+      // display label -- matches how a plain, non-bold chip is handled.
+      else if (node.tagName === 'B' || node.tagName === 'STRONG') out += `**${getTokenEditorValue(node)}**`;
       else out += node.textContent;
     }
   });
@@ -1094,6 +1114,74 @@ function insertChipAtCaret(editor, raw) {
   range.setEndAfter(chip);
   sel.removeAllRanges();
   sel.addRange(range);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+}
+// Same insert-at-caret shape as insertChipAtCaret above, for a plain bold
+// text run instead of a chip -- used by both the toolbar's manual Bold
+// button and insertQaPair's auto-inserted question label.
+function insertBoldTextAtCaret(editor, text) {
+  editor.focus();
+  const sel = window.getSelection();
+  let range;
+  if (sel.rangeCount && editor.contains(sel.anchorNode)) range = sel.getRangeAt(0);
+  else { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
+  range.deleteContents();
+  const b = document.createElement('b');
+  b.textContent = text;
+  range.insertNode(b);
+  range.setStartAfter(b);
+  range.setEndAfter(b);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return range;
+}
+// Toolbar's Bold button -- wraps the current selection in <b>, or unwraps
+// it if the selection already sits inside one (toggle). A collapsed
+// selection (just a blinking cursor, nothing highlighted) starts an empty
+// bold run instead, same as clicking Bold in a real word processor before
+// you've typed anything -- a zero-width space gives the cursor somewhere
+// to land inside the otherwise-empty <b>, invisible either way.
+function toggleBoldSelection(editor) {
+  editor.focus();
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !editor.contains(sel.anchorNode)) return;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed) {
+    const b = document.createElement('b');
+    b.appendChild(document.createTextNode('​'));
+    range.insertNode(b);
+    const newRange = document.createRange();
+    newRange.setStart(b.firstChild, 1);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+  const startEl = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+  const existingB = startEl?.closest('b');
+  if (existingB && editor.contains(existingB)) {
+    const parent = existingB.parentNode;
+    while (existingB.firstChild) parent.insertBefore(existingB.firstChild, existingB);
+    parent.removeChild(existingB);
+  } else {
+    const b = document.createElement('b');
+    b.appendChild(range.extractContents());
+    range.insertNode(b);
+  }
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+}
+// The Body field's own token-popover action (see openTokenPopover) --
+// inserts "**Question Label**", a line break, the answer's own {{token}}
+// chip, then a blank line, so clicking straight down the list of available
+// fields builds exactly the "Question (bold) / Answer / blank line" layout
+// without the user hand-typing ** markers or line breaks themselves.
+function insertQaPair(editor, label, token) {
+  insertBoldTextAtCaret(editor, label);
+  insertLineBreak(editor);
+  insertChipAtCaret(editor, token);
+  insertLineBreak(editor);
+  insertLineBreak(editor);
   editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 function insertLineBreak(editor) {
@@ -1169,9 +1257,18 @@ async function openTokenPopover(btn, input) {
   pop.style.position = 'fixed';
   pop.style.top = Math.min(rect.bottom + 4, window.innerHeight - pop.offsetHeight - 8) + 'px';
   pop.style.left = Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8) + 'px';
+  // The Body field (the one multiline editor) builds a formatted Q&A block
+  // per click -- bold question label, the answer's own chip, blank line --
+  // instead of just the bare chip every other (single-line) field gets.
+  const multiline = input.dataset.multiline === 'true';
   pop.querySelectorAll('[data-token]').forEach(item => {
     item.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected through the click
-    item.onclick = () => { insertChipAtCaret(input, item.dataset.token); closeTokenPopover(); };
+    item.onclick = () => {
+      const opt = options.find(o => o.token === item.dataset.token);
+      if (multiline && opt) insertQaPair(input, opt.label, opt.token);
+      else insertChipAtCaret(input, item.dataset.token);
+      closeTokenPopover();
+    };
   });
 }
 function wireTokenButtons(root) {
@@ -1180,6 +1277,13 @@ function wireTokenButtons(root) {
     const input = btn.previousElementSibling;
     btn.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected when the button itself is clicked
     btn.onclick = () => openTokenPopover(btn, input);
+  });
+  // Bold only ever appears next to the multiline Body field -- see where
+  // it's rendered in the send_email step's own markup.
+  root.querySelectorAll('[data-bold-btn]').forEach(btn => {
+    const input = btn.parentElement.querySelector('[data-token-editor]');
+    btn.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected when the button itself is clicked
+    btn.onclick = () => toggleBoldSelection(input);
   });
 }
 
