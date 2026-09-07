@@ -283,6 +283,72 @@ export async function syncAcEngagementForRecentContacts(sinceMs) {
   return { checked, contacts: contactIds.length };
 }
 
+// ── Full nightly sweep, batched across scheduler ticks ──────────────────
+// The two paths above are both deliberately narrow -- on-open sync only
+// covers a contact once someone actually opens their conversation, and
+// syncAcEngagementForRecentContacts only covers contacts already active
+// in THIS crm. A pure-AC send (a 20K-recipient bulk campaign to leads who
+// have never once texted/emailed into this CRM, e.g.) falls through both
+// gaps and would otherwise never show up in that contact's journey until
+// -- if ever -- someone happens to open their conversation. This sweeps
+// every AC-linked contact once a night instead, same resumable-across-
+// ticks/restarts shape as processAcRefFillBatch below (persisted
+// nextIndex, bounded time budget per tick), so a deploy mid-pass just
+// picks back up instead of losing progress.
+//
+// AC's API has no bulk "who received campaign X" endpoint for bulk sends
+// (see import_backend.js's fetchAcContactActivities comment -- confirmed
+// by testing, not assumed), only a per-contact activity feed. There's no
+// way to shrink 160K+ contacts down to "just today's actual recipients"
+// without asking AC about each one -- this is that sweep, just spread
+// across a whole night's worth of ticks instead of one giant blocking
+// script (which is exactly what died mid-run, more than once, before
+// this file existed at all -- see the ref-fill comment further down).
+export const AC_NIGHTLY_SYNC_STATE_FILE = "crm_ac_nightly_sync_state.json";
+const AC_NIGHTLY_SYNC_BATCH_MS = 20000; // leaves headroom inside the 30s tick, same as every other batch job here
+const AC_NIGHTLY_SYNC_DELAY_MS = 100; // this is a real per-contact AC API call, unlike the ref-fill's local-file scan -- stays well clear of AC's rate limit across a run this long
+const AC_NIGHTLY_SYNC_TZ = "America/Anchorage";
+const AC_NIGHTLY_SYNC_HOUR = 2; // local hour a fresh pass is allowed to START in; an in-progress pass keeps running past this regardless
+
+function acNightlySyncLocalDate(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: AC_NIGHTLY_SYNC_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+function acNightlySyncLocalHour(d = new Date()) {
+  return +new Intl.DateTimeFormat("en-US", { timeZone: AC_NIGHTLY_SYNC_TZ, hour: "numeric", hour12: false }).format(d);
+}
+export async function processAcNightlySyncBatch() {
+  if (!acConfigured()) return;
+  const state = readJson(AC_NIGHTLY_SYNC_STATE_FILE, { lastCompletedDate: null, nextIndex: 0 });
+  const today = acNightlySyncLocalDate();
+  const inProgress = state.nextIndex > 0;
+  // Only the START of a fresh pass is gated to the 2am hour and "not
+  // already run today" -- once nextIndex is past 0, every later tick
+  // keeps going regardless of clock time until it actually finishes,
+  // same as every other batch job in this file.
+  if (!inProgress && (acNightlySyncLocalHour() !== AC_NIGHTLY_SYNC_HOUR || state.lastCompletedDate === today)) return;
+
+  const targets = readJson(CONTACTS_FILE, []).filter(c => c.externalIds?.acContactId);
+  if (state.nextIndex >= targets.length) {
+    state.nextIndex = 0;
+    state.lastCompletedDate = today;
+    writeJson(AC_NIGHTLY_SYNC_STATE_FILE, state);
+    console.log(`[ac-nightly-sync] full pass complete for ${today} (${targets.length} contacts)`);
+    return;
+  }
+
+  const t0 = Date.now();
+  const startIndex = state.nextIndex;
+  let errors = 0;
+  while (state.nextIndex < targets.length && Date.now() - t0 < AC_NIGHTLY_SYNC_BATCH_MS) {
+    try { await syncAcEngagementForContact(targets[state.nextIndex].id); }
+    catch (e) { errors++; console.error(`[ac-nightly-sync] contact ${targets[state.nextIndex].id} failed:`, e.message); }
+    state.nextIndex++;
+    await new Promise(res => setTimeout(res, AC_NIGHTLY_SYNC_DELAY_MS));
+  }
+  writeJson(AC_NIGHTLY_SYNC_STATE_FILE, state);
+  console.log(`[ac-nightly-sync] ${state.nextIndex}/${targets.length} scanned (+${state.nextIndex - startIndex} this batch, ${errors} errors)`);
+}
+
 // ── Full account-wide reference fill, batched across scheduler ticks ────
 // A one-off `railway ssh` script doing this same sweep died TWICE tonight
 // mid-run -- once from hitting AC's rate limit, once from an unrelated
