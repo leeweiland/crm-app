@@ -284,7 +284,15 @@
   .track-summary b { color: var(--pra-white); }
   .track-summary .on { color: #39ff14; }
 
-  .compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; }
+  .compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; overflow-y: auto; }
+  /* Drag handle between chat-thread and compose-bar -- lets a dragged
+     height on compose-bar (see wireComposeResize) trade space with
+     chat-thread's flex:1, instead of the thread always just taking
+     whatever's left over. Sits on the same border-top compose-bar already
+     draws, rather than adding a second visible line. */
+  .compose-resize-handle { height: 8px; cursor: row-resize; flex-shrink: 0; position: relative; }
+  .compose-resize-handle::after { content: ''; position: absolute; left: 50%; top: 2px; width: 36px; height: 3px; margin-left: -18px; border-radius: 2px; background: var(--pra-border); }
+  .compose-resize-handle:hover::after, .compose-resize-handle.dragging::after { background: var(--pra-blue); }
   /* AI Assist icons next to the Send Email/Send SMS tabs -- only rendered
      when aiAssistAvailable, click generates/regenerates straight into the
      compose fields (no separate review card anymore). */
@@ -607,6 +615,11 @@ function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([],
 let currentTab = 'primary', currentView = 'new', currentSort = 'desc';
 let allStatuses = [], allUsers = [], currentItems = [], selectedIds = new Set();
 let conversations = [], selectedConvo = null, threadItems = [], composeChannel = 'email', convoSearchQuery = '';
+// Dragged height for the compose panel (see wireComposeResize) -- kept
+// outside renderThread's own template so it survives the innerHTML
+// replace that happens on every send/conversation switch instead of
+// resetting back to auto-height each time.
+let composeBarHeight = null;
 let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
 let composeReplyTo = null; // set by an email bubble's Reply button; { subject, quotedHtml, quotedMeta } | null
 let currentUser = null, teamUsers = [];
@@ -1598,6 +1611,47 @@ function emailStatsHtml(items) {
     </div>
   `;
 }
+// Drag handle between chat-thread and compose-bar -- re-wired every
+// renderThread() call since that replaces chatPanel's innerHTML wholesale,
+// tearing down any listener attached to the old element. Uses pointer
+// capture on the handle itself so move/up keep firing even once the
+// pointer leaves the thin 8px strip, instead of needing document-level
+// listeners.
+function wireComposeResize() {
+  const handle = document.getElementById('composeResizeHandle');
+  const composeBar = document.getElementById('composeBar');
+  const panel = document.getElementById('chatPanel');
+  const thread = document.getElementById('chatThread');
+  if (!handle || !composeBar || !panel || !thread) return;
+  const MIN_COMPOSE = 90, MIN_THREAD = 100;
+  handle.onpointerdown = (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startHeight = composeBar.getBoundingClientRect().height;
+    // Constant for the duration of this drag -- whatever space isn't
+    // chat-thread or compose-bar right now (header, chat-panel-actions,
+    // this handle itself).
+    const fixedChrome = panel.clientHeight - thread.getBoundingClientRect().height - startHeight;
+    handle.classList.add('dragging');
+    const onMove = (ev) => {
+      const delta = startY - ev.clientY; // dragging up (delta > 0) grows compose-bar
+      const maxHeight = Math.max(MIN_COMPOSE, panel.clientHeight - fixedChrome - MIN_THREAD);
+      const next = Math.max(MIN_COMPOSE, Math.min(startHeight + delta, maxHeight));
+      composeBar.style.height = next + 'px';
+      composeBar.style.flex = `0 0 ${next}px`;
+    };
+    const onUp = () => {
+      handle.releasePointerCapture(e.pointerId);
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.classList.remove('dragging');
+      composeBarHeight = composeBar.getBoundingClientRect().height;
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+  };
+}
 function renderThread() {
   const panel = document.getElementById('chatPanel');
   const c = selectedConvo;
@@ -1680,7 +1734,8 @@ function renderThread() {
     </div>
     ${emailStatsHtml(emailItems)}
     <div class="chat-thread" id="chatThread"></div>
-    <div class="compose-bar">
+    <div class="compose-resize-handle" id="composeResizeHandle" title="Drag to resize"></div>
+    <div class="compose-bar" id="composeBar" style="${composeBarHeight ? `height:${composeBarHeight}px;flex:0 0 ${composeBarHeight}px;` : ''}">
       ${currentTab === 'primary' ? `
         <div class="compose-toolbar-row">
           ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
@@ -1780,6 +1835,7 @@ function renderThread() {
   if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
   else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
   document.getElementById('chatBackBtn').onclick = backToConvoList;
+  wireComposeResize();
   const zoomCopyBtn = document.getElementById('chatZoomCopyBtn');
   if (zoomCopyBtn) zoomCopyBtn.onclick = (e) => {
     e.preventDefault();
