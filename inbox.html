@@ -1999,11 +1999,26 @@ async function sendComposeMessage() {
   // responding, not merely having opened the thread earlier (see
   // selectConversation's comment). Marks every prior unread inbound
   // message done and moves the conversation out of Unresponded.
-  await fetch(`/api/inbox/conversations/${selectedConvo.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
-  const threadRes = await fetch('/api/inbox/contact/' + selectedConvo.contactId);
+  const sentContactId = selectedConvo.contactId;
+  await fetch(`/api/inbox/conversations/${sentContactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
+  // Same optimistic update + delayed refetch as ctxDoneBtn's handler, and
+  // for the identical reason (see its own comment): the server's
+  // unread_count recompute is batched, up to 5s behind (message_index.js's
+  // scheduleConversationFlush). Calling loadConversations() right away used
+  // to lose that race almost every time -- the refetch would land before
+  // unread_count actually hit 0, so the row reappeared under Unresponded
+  // looking like the reply never registered, even though it genuinely sent.
+  const inList = conversations.find(x => x.contactId === sentContactId);
+  if (inList) {
+    inList.done = true;
+    inList.unreadCount = 0;
+    if (convoFilter === 'unresponded') conversations = conversations.filter(x => x.contactId !== sentContactId);
+    renderSidebar();
+  }
+  const threadRes = await fetch('/api/inbox/contact/' + sentContactId);
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   renderThread();
-  loadConversations();
+  setTimeout(loadConversations, 5500);
 }
 
 // ── Contact details overlay ──────────────────────────────────────────────
