@@ -357,6 +357,7 @@ async function generateCardContent(prompt, contact, journeyBlock, customFieldsTe
     jsonText = jsonText.replace(/[\r\n\t]+/g, " ");
     parsed = JSON.parse(jsonText);
   }
+  console.log("[app-summary][debug] stop_reason:", data.stop_reason, "keys:", Object.keys(parsed), "rawLen:", text.length, "raw:", text.slice(0, 1500));
   return {
     title: parsed.title || "YOUR NEXT CHAPTER",
     overview: parsed.overview || "",
