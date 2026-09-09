@@ -145,7 +145,7 @@ function buildSvg({ title, subtitle, rows }) {
 
 async function generateCardContent(prompt, contact, journeyBlock, customFieldsText) {
   const userText = `APPLICATION / CUSTOM FIELDS:\n${customFieldsText || "(none on file)"}\n\nCONVERSATION HISTORY:\n${journeyBlock || "(no conversation history yet)"}\n\nCore info: ${contact.first || ""} ${contact.last || ""}, ${contact.programType || "unknown"} lead, status ${contact.status || "unknown"}.`;
-  const system = `${prompt}\n\nRespond with ONLY a JSON object, no markdown fences, no commentary, shaped exactly like:\n{"title": "short punchy 2-5 word title", "subtitle": "one sentence tailored to this person", "rows": [{"label": "SHORT LABEL", "value": "concise value, one sentence max"}, ...]}\nUse 6 to 9 rows. Every row must be genuinely grounded in the application data or conversation supplied -- never invent a detail that isn't in it. Keep every value short enough to read at a glance (under ~90 characters).`;
+  const system = `${prompt}\n\nRespond with ONLY a JSON object, no markdown fences, no commentary, shaped exactly like:\n{"title": "short punchy 2-5 word title", "subtitle": "one sentence tailored to this person", "rows": [{"label": "SHORT LABEL", "value": "concise value, one sentence max"}, ...]}\nUse 6 to 9 rows. Every row must be genuinely grounded in the application data or conversation supplied -- never invent a detail that isn't in it. Keep every value short enough to read at a glance (under ~90 characters). The entire response must be valid JSON on a single line -- every string value must be a single line with no literal line breaks in it (use a space instead), and any literal double-quote or backslash inside a value must be escaped.`;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
@@ -155,7 +155,20 @@ async function generateCardContent(prompt, contact, journeyBlock, customFieldsTe
   const data = await res.json();
   const text = (data.content || []).find((b) => b.type === "text")?.text || "{}";
   const jsonMatch = text.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+  let jsonText = jsonMatch ? jsonMatch[0] : text;
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    // Claude occasionally puts a literal line break inside a string value
+    // (a real newline instead of an escaped \n) -- confirmed live, this is
+    // the one thing that reliably breaks JSON.parse here. Every value on
+    // this card is meant to read as one short line anyway, so collapsing
+    // any stray newline/tab to a single space is a safe fix, not a
+    // meaning-changing one -- retry once with that repair before giving up.
+    jsonText = jsonText.replace(/[\r\n\t]+/g, " ");
+    parsed = JSON.parse(jsonText);
+  }
   return {
     title: parsed.title || "YOUR NEXT CHAPTER",
     subtitle: parsed.subtitle || "",
