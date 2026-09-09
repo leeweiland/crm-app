@@ -2013,7 +2013,12 @@ async function generateAiContent(channel, btn) {
     if (!r.ok) { showToast(d.error || 'Could not generate', true); return; }
     if (d.status === 'skip') { showToast(d.reason || 'No response needed right now'); return; }
     if (d.status === 'escalate') { showToast('⚠️ ' + d.reason, true); return; }
-    composeReplyTo = null;
+    // composeReplyTo (the quoted-thread preview) used to get cleared here
+    // unconditionally, silently exiting reply mode and collapsing the quote
+    // preview every time this ran, even when drafting the exact reply
+    // already being composed -- the template only renders that preview for
+    // composeChannel==='email' anyway, so there's no need to clear it just
+    // because channel is changing.
     composeChannel = channel;
     composeView = 'compose';
     renderThread();
