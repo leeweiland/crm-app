@@ -621,6 +621,20 @@ let conversations = [], selectedConvo = null, threadItems = [], composeChannel =
 // replace that happens on every send/conversation switch instead of
 // resetting back to auto-height each time.
 let composeBarHeight = null;
+// contactId -> confirmedAt ms, for every conversation THIS tab has just
+// itself confirmed done (Mark Done, a reply going out, or another tab's
+// broadcast of the same). The server-side unread_count recompute is
+// batched and, under real load, can genuinely take longer than any fixed
+// client-side wait -- a background reconcile fetch landing before it
+// catches up used to overwrite the whole `conversations` array with that
+// still-stale server answer, silently un-marking a row we already know is
+// done ("disappears, then snaps back on the next refresh"). loadConversations()
+// re-excludes/re-corrects anything in here regardless of what the server
+// says, for a bounded window -- long enough to safely outlast the slowest
+// realistic recompute, short enough that a genuinely new inbound message
+// from the same contact later isn't masked forever by an old entry.
+const RECENT_DONE_OVERRIDE_MS = 90000;
+let recentlyConfirmedDone = new Map();
 let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose' | 'summary'
 let composeReplyTo = null; // set by an email bubble's Reply button; { subject, quotedHtml, quotedMeta } | null
 let currentUser = null, teamUsers = [];
@@ -955,8 +969,25 @@ async function loadConversations(quiet) {
   if (!r.ok) { list.innerHTML = '<div class="pra-muted" style="padding:16px;font-size:.82rem">Could not load.</div>'; return; }
   const data = await r.json();
   conversations = data.conversations;
+  // Pagination offset must track what the server actually returned, not
+  // what's left after the override filter below removes a few rows client-
+  // side -- otherwise the next page fetch skips/duplicates rows.
   convoOffset = conversations.length;
   convoHasMore = !!data.hasMore;
+  // Never let a fresh fetch regress a conversation this tab (or another
+  // tab, via SSE) already confirmed done -- see recentlyConfirmedDone's own
+  // comment for why a plain overwrite here used to "snap back" a row the
+  // person had just watched disappear.
+  if (recentlyConfirmedDone.size) {
+    const now = Date.now();
+    for (const [id, at] of recentlyConfirmedDone) {
+      if (now - at > RECENT_DONE_OVERRIDE_MS) { recentlyConfirmedDone.delete(id); continue; }
+      const row = conversations.find(c => c.contactId === id);
+      if (!row) continue; // server already agrees it's excluded -- nothing to override
+      row.done = true; row.unreadCount = 0;
+    }
+    if (convoFilter === 'unresponded') conversations = conversations.filter(c => !recentlyConfirmedDone.has(c.contactId));
+  }
   renderSidebar();
   if (initialContactId) {
     const match = conversations.find(c => c.contactId === initialContactId);
@@ -1228,7 +1259,7 @@ document.getElementById('ctxDoneBtn').onclick = async () => {
   // scheduleConversationFlush) and re-showed the row as still unresponded,
   // making the click look like it did nothing.
   c.done = nextDone;
-  if (nextDone) c.unreadCount = 0;
+  if (nextDone) { c.unreadCount = 0; recentlyConfirmedDone.set(c.contactId, Date.now()); } else recentlyConfirmedDone.delete(c.contactId);
   if (convoFilter === 'unresponded' && c.unreadCount === 0) {
     conversations = conversations.filter(x => x.key !== c.key);
   }
@@ -1870,7 +1901,7 @@ function renderThread() {
         // so the immediate loadConversations() below would otherwise still
         // see the OLD count and the row would look like Mark Done had no
         // effect, even though it did.
-        if (nextDone) inList.unreadCount = 0;
+        if (nextDone) { inList.unreadCount = 0; recentlyConfirmedDone.set(c.contactId, Date.now()); } else recentlyConfirmedDone.delete(c.contactId);
         // Unresponded is unread_count > 0 (see sqlite_inbox.js) -- once
         // that's 0, this row doesn't belong in the list currently on
         // screen. Drop it now rather than let the stale refetch below keep
@@ -2083,6 +2114,7 @@ async function sendComposeMessage() {
   // to lose that race almost every time -- the refetch would land before
   // unread_count actually hit 0, so the row reappeared under Unresponded
   // looking like the reply never registered, even though it genuinely sent.
+  recentlyConfirmedDone.set(sentContactId, Date.now());
   const inList = conversations.find(x => x.contactId === sentContactId);
   if (inList) {
     inList.done = true;
@@ -2439,7 +2471,7 @@ function applyRemoteConvoUpdate(data) {
     // click handler above -- kept in sync with it; a genuine reconcile
     // still happens on the next real loadConversations() either way.
     inList.done = data.done;
-    if (data.done) inList.unreadCount = 0;
+    if (data.done) { inList.unreadCount = 0; recentlyConfirmedDone.set(data.contactId, Date.now()); } else recentlyConfirmedDone.delete(data.contactId);
     if (convoFilter === 'unresponded' && inList.unreadCount === 0) {
       conversations = conversations.filter(x => x.contactId !== data.contactId);
     }
