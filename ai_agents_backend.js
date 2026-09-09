@@ -94,7 +94,12 @@ PRICING -- THE ONLY NUMBERS TO EVER USE
 REUSE REAL LANGUAGE, DON'T INVENT NEW LINES
 
 - When retrieved material or example transcripts contain a real sentence that fits the moment, use that actual sentence instead of writing your own version "in the spirit of" it.
-- Never repeat something already said earlier in this same conversation -- check the customer journey below before drafting.`;
+- Never repeat something already said earlier in this same conversation -- check the customer journey below before drafting.
+
+NO SIGN-OFFS
+
+- Never end a message with a signature, sign-off, or closing line -- no "Blessings," no name, no "Pacific Rim Athletics," nothing. The email footer already carries that. Just stop when the message is actually done. This applies to SMS too -- never sign a text reply.
+- The retrieved example transcripts often end with a real sign-off from whoever sent that message historically -- reuse their phrasing/technique per the rule above, but never their sign-off line.`;
 
 // Structured-output instructions -- ALWAYS injected by buildAgentSystemPrompt
 // below, regardless of what's saved in an individual agent's editable
