@@ -137,7 +137,7 @@
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Excludes this contact's sends from the Reporting dashboards (Email/SMS/Automations/Sequences) -- still sends, still logs, just doesn't count toward those numbers"><input type="checkbox" id="fTestContact"/> Test contact (exclude from Reporting)</label>
             </div>
             <div id="customFieldsWrap"></div>
-            <button class="pra-btn" id="genSummaryImageBtn" style="margin-top:12px;width:100%">&#128444;&#65039; Generate Summary Image</button>
+            <button class="pra-btn" id="genSummaryImageBtn" style="margin-top:12px;width:100%">Generate Summary Image</button>
             <button class="pra-btn pra-btn-danger" id="deleteBtn" style="margin-top:16px">Delete Contact</button>
           </div>
         </div>
@@ -603,6 +603,7 @@ document.getElementById('genSummaryImageBtn').onclick = async () => {
     }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
     body.innerHTML = `
       <img src="${url}" style="max-width:100%;display:block;margin:0 auto;border-radius:8px"/>
       <div style="text-align:center;margin-top:14px">
