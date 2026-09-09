@@ -14,7 +14,7 @@ import { queryConversationsSqlite, syncContactFields } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 import { sentCategoryForSourceType } from "./ai_agents_backend.js";
-import { getEmailTheme } from "./integrations_backend.js";
+import { getEmailTheme, getEmailSendPreference } from "./integrations_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
@@ -552,7 +552,11 @@ export async function handleInboxRequest(req, res, url) {
         // reply (and the footer between them) instead of looking bunched up.
         ? `<div style="border-left:3px solid #ccc;margin:28px 0 0 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
         : undefined;
-      const result = (sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
+      // "ses" mode forces the shared AWS pipeline even for a sender with
+      // Gmail connected -- see getEmailSendPreference's own comment. Default
+      // ("gmail") keeps the existing per-sender behavior: use their own
+      // connected Gmail when they have one, otherwise fall back to SES.
+      const result = (getEmailSendPreference() !== "ses" && sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
         ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", blocks, theme, contactId, sourceType: "inbox", sourceId: sender.id, footerTemplateId: sender.footerTemplateId || null, trailingHtml })
         : await sendEmail({
             to: contact.email, subject: subject || "(no subject)",

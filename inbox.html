@@ -411,6 +411,8 @@
           <div class="pra-h1">Inbox</div>
           <button type="button" id="awayToggleBtn" class="active-toggle" style="display:none" title="Away hands your leads to AI Active until you switch back"></button>
           <span id="awayToggleLabel" class="pra-muted" style="display:none;font-size:.82rem;cursor:pointer"></span>
+          <button type="button" id="emailProviderToggleBtn" class="active-toggle" style="display:none" title="Which transport Inbox replies send through -- AWS SES (sandboxed) or each sender's own connected Gmail"></button>
+          <span id="emailProviderToggleLabel" class="pra-muted" style="display:none;font-size:.82rem;cursor:pointer"></span>
         </div>
         <div class="tabs">
           <button class="tab-btn active" data-tab="primary">Inbox</button>
@@ -718,6 +720,7 @@ async function loadRefs() {
     .map(u => `<option value="${u.id}">${escapeHtml(`${u.first} ${u.last}`.trim())}</option>`).join('');
   ownerSel.insertAdjacentHTML('beforeend', teamOptionsHtml);
   updateAwayToggleUi();
+  updateEmailProviderToggleUi();
   populateActivityUserSelect();
 }
 
@@ -771,6 +774,36 @@ async function toggleAway() {
 }
 document.getElementById('awayToggleBtn').addEventListener('click', toggleAway);
 document.getElementById('awayToggleLabel').addEventListener('click', toggleAway);
+
+// ── Email provider toggle -- AWS SES (shared, sandboxed) vs each sender's
+// own connected Gmail (see integrations_backend.js's getEmailSendPreference
+// and inbox_backend.js's send-channel branch). Admin-only since it changes
+// how EVERY staff member's replies send, not just the viewer's own.
+let emailProvider = 'gmail';
+async function updateEmailProviderToggleUi() {
+  const btn = document.getElementById('emailProviderToggleBtn');
+  const label = document.getElementById('emailProviderToggleLabel');
+  if (currentUser?.role !== 'admin') { btn.style.display = 'none'; label.style.display = 'none'; return; }
+  const r = await fetch('/api/integrations/email-provider').catch(() => null);
+  emailProvider = r?.ok ? (await r.json()).provider : 'gmail';
+  btn.style.display = '';
+  label.style.display = '';
+  btn.classList.toggle('on', emailProvider === 'gmail');
+  label.textContent = emailProvider === 'gmail' ? 'Sending via Gmail' : 'Sending via AWS SES';
+}
+async function toggleEmailProvider() {
+  const next = emailProvider === 'gmail' ? 'ses' : 'gmail';
+  const r = await fetch('/api/integrations/email-provider', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: next }),
+  });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(d.error || 'Could not update', true); return; }
+  emailProvider = next;
+  updateEmailProviderToggleUi();
+  showToast(`Inbox replies now send via ${next === 'gmail' ? 'each sender\'s connected Gmail' : 'AWS SES'}`);
+}
+document.getElementById('emailProviderToggleBtn').addEventListener('click', toggleEmailProvider);
+document.getElementById('emailProviderToggleLabel').addEventListener('click', toggleEmailProvider);
 
 // ── Activity: a user's own sent SMS/email, including anything AI sent
 // (AI Active / behavioral triggers / coverage while Away) on their leads --

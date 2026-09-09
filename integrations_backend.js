@@ -35,6 +35,18 @@ export function getEmailTheme() {
   return { ...DEFAULT_THEME, ...stored };
 }
 
+// Which transport the Inbox's reply/send path should prefer -- "gmail"
+// (default, per-sender's own connected account, see gmail_backend.js) or
+// "ses" (force the shared AWS pipeline even for a sender with Gmail
+// connected -- useful once SES is out of sandbox and for testing it).
+// Doesn't grant Gmail sending to anyone -- a sender still needs their own
+// gmailRefreshToken+send scope (Settings > My Account) for "gmail" to
+// actually apply to their sends; this only decides which transport is
+// preferred when that's available.
+export function getEmailSendPreference() {
+  return readSettings().emailSendPreference === "ses" ? "ses" : "gmail";
+}
+
 export function getSesSettings() {
   const s = readSettings().ses || {};
   return {
@@ -181,6 +193,12 @@ export async function handleIntegrationsRequest(req, res, url) {
     return sendJson(res, 200, getNavPermissions());
   }
 
+  // Also readable by any logged-in user -- the Inbox toggle needs this for
+  // whoever's viewing it, not just admins.
+  if (p === "/api/integrations/email-provider" && req.method === "GET") {
+    return sendJson(res, 200, { provider: getEmailSendPreference() });
+  }
+
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
 
   if (p === "/api/integrations/email-theme" && req.method === "POST") {
@@ -249,6 +267,15 @@ export async function handleIntegrationsRequest(req, res, url) {
     if (Array.isArray(body.triggerKeywords)) all.compliance.triggerKeywords = body.triggerKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === "/api/integrations/email-provider" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    if (body.provider !== "gmail" && body.provider !== "ses") return sendJson(res, 400, { error: "provider must be 'gmail' or 'ses'" });
+    const all = readSettings();
+    all.emailSendPreference = body.provider;
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true, provider: getEmailSendPreference() });
   }
 
   if (p === "/api/integrations/nav-permissions" && req.method === "POST") {
