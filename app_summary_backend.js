@@ -89,10 +89,11 @@ function wrapText(text, maxCharsPerLine, maxLines) {
   return lines;
 }
 
-const W = 1200, H = 1500;
+const W = 1200;
 const BLUE = "#009bff";
 const DARK_BLUE = "#062033";
 const ROW_LABEL_SIZE = 22, ROW_VALUE_SIZE = 27, ROW_LINE_HEIGHT = 34;
+const FOOTER_SPACE = 140; // room reserved below the last row for the tagline
 
 function buildSvg({ title, subtitle, rows }) {
   const logo = getLogoDataUri();
@@ -118,6 +119,13 @@ function buildSvg({ title, subtitle, rows }) {
     y += blockHeight + 20;
   }
 
+  // The canvas grows to fit however much content Claude actually produced --
+  // a fixed height clipped the last row (and overlapped the footer tagline
+  // on top of it) whenever a card had several longer rows, confirmed live
+  // on the very first real end-to-end test. A floor keeps a short card from
+  // looking like a tiny sliver.
+  const H = Math.max(1100, y + FOOTER_SPACE);
+
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <radialGradient id="bgGlow" cx="30%" cy="0%" r="75%">
@@ -139,7 +147,7 @@ function buildSvg({ title, subtitle, rows }) {
 
     ${rowBlocks.join("")}
 
-    <text x="${W / 2}" y="${H - 70}" text-anchor="middle" font-family="Poppins" font-size="20" font-weight="600" letter-spacing="1" fill="${BLUE}">A STRONGER YOU IS ALWAYS POSSIBLE</text>
+    <text x="${W / 2}" y="${H - 60}" text-anchor="middle" font-family="Poppins" font-size="20" font-weight="600" letter-spacing="1" fill="${BLUE}">A STRONGER YOU IS ALWAYS POSSIBLE</text>
   </svg>`;
 }
 
