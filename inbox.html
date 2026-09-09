@@ -2462,7 +2462,30 @@ const SIDEBAR_MIN_WIDTH = 220, SIDEBAR_MAX_WIDTH = 560;
 // connection per open Inbox tab; the browser's own EventSource already
 // auto-reconnects with backoff on a dropped connection, so no manual
 // retry logic is needed here.
+// A new inbound message has no way to describe its own unread_count/preview/
+// sort-position client-side (that's all computed server-side, batched --
+// see message_index.js's scheduleConversationFlush), so unlike the 'done'
+// case above this doesn't try to patch `conversations` in place -- it just
+// asks the server for the current page again. Debounced so a burst of
+// several messages arriving close together (a lead replying twice, several
+// different leads texting in around the same time) triggers one reload,
+// not one per message.
+let newMessageRefreshTimer = null;
+function scheduleConvoRefreshForNewMessage() {
+  if (newMessageRefreshTimer) return;
+  newMessageRefreshTimer = setTimeout(() => { newMessageRefreshTimer = null; loadConversations(true); }, 400);
+}
 function applyRemoteConvoUpdate(data) {
+  if (data.type === 'new_message') {
+    scheduleConvoRefreshForNewMessage();
+    // The thread currently open in the chat panel doesn't come from
+    // `conversations` at render time -- it's its own fetched threadItems
+    // array (see selectConversation) -- so a sidebar-only refresh above
+    // wouldn't show the new message to someone already looking at this
+    // exact contact. Re-fetch that thread too when it's the open one.
+    if (selectedConvo?.contactId === data.contactId) selectConversation(selectedConvo, true);
+    return;
+  }
   if (data.type !== 'done') return;
   const inList = conversations.find(x => x.contactId === data.contactId);
   if (inList) {

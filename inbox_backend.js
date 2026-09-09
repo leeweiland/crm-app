@@ -16,6 +16,7 @@ import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCam
 import { sentCategoryForSourceType } from "./ai_agents_backend.js";
 import { getEmailTheme, getEmailSendPreference } from "./integrations_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
+import { sseClients, broadcastInboxUpdate } from "./inbox_events.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 function escapeHtmlBasic(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -38,16 +39,9 @@ function upcomingBookedContactIds() {
 // else's sidebar stayed stale until they happened to refresh. Server-Sent
 // Events instead of a poll: every open Inbox tab holds one persistent GET
 // connection here, and the /done handler pushes a tiny event to all of
-// them the instant it actually happens. Plain Set of raw ServerResponse
-// objects -- this app is a single Node process (no multi-instance/Redis
-// fanout needed), so an in-memory registry is enough.
-const sseClients = new Set();
-function broadcastInboxUpdate(payload) {
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of sseClients) {
-    try { res.write(data); } catch { sseClients.delete(res); }
-  }
-}
+// them the instant it actually happens. sseClients/broadcastInboxUpdate now
+// live in inbox_events.js so message_log.js can push its own "new_message"
+// broadcast too -- see that file's header comment for why it moved.
 
 export const CALLS_FILE = "crm_calls.json";
 export const TASKS_FILE = "crm_tasks.json";

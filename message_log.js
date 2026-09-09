@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { appendJsonRecordFast, appendToJsonObjectFast, readJson } from "./auth_backend.js";
-import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition } from "./message_index.js";
+import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, SIDEBAR_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
+import { broadcastInboxUpdate } from "./inbox_events.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -85,6 +86,18 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
   if (row.direction === "inbound" && row.contactId) {
     const meta = getConvoMeta(row.contactId);
     if (meta?.done) setConvoMeta(row.contactId, { done: false });
+  }
+  // Every OTHER live-sync broadcast here is for a status flip an open tab
+  // already knows the row exists for (done/pin/etc) -- a genuinely new
+  // inbound message is different: no open tab has any way to learn about
+  // it at all otherwise, short of polling or a manual refresh (confirmed
+  // live -- new replies just sat invisible in the sidebar until someone
+  // happened to reload). SIDEBAR_CHANNELS-gated the same way
+  // upsertConversationSummary above already is, so a channel that doesn't
+  // drive the Inbox list (activity/meeting logs, etc.) doesn't trigger a
+  // pointless reload in every open tab.
+  if (row.direction === "inbound" && row.contactId && SIDEBAR_CHANNELS.includes(row.channel)) {
+    broadcastInboxUpdate({ type: "new_message", contactId: row.contactId });
   }
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
