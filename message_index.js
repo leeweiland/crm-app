@@ -303,6 +303,34 @@ function flushConversationIndex() {
   const recomputes = new Set(_pendingRecomputeIds); _pendingRecomputeIds.clear();
   const removes = new Set(_pendingRemoveKeys); _pendingRemoveKeys.clear();
 
+  // Recomputes and removes never need the slow legacy JSON below -- a
+  // recompute's group is built entirely from getContactMessages() (that
+  // contact's own small file), and a remove just deletes a row. Both used
+  // to sit AFTER the ~10-12s readJson(CONVERSATION_INDEX_FILE) further
+  // down, so the Inbox's real read path (SQLite -- queryConversationsSqlite,
+  // see inbox_backend.js) sat blocked behind that slow legacy read on every
+  // mark-done/reply, even though this file is otherwise only the `_sqlite=0`
+  // fallback view. Confirmed live: the sidebar's "Unresponded" filter kept
+  // showing a just-answered conversation as still unread for 10+ seconds
+  // past a client-side reconcile that assumed this whole flush landed in
+  // ~5s. Syncing these first means the row a human is actually watching
+  // (Mark Done, a reply going out) updates in the time the recompute
+  // itself takes -- milliseconds -- not whenever the legacy file's turn
+  // comes up. Upserts still fold into the slow read below unchanged (they
+  // need the prior row's state to fold a new message into, unlike a
+  // from-scratch recompute).
+  const recomputedGroups = new Map(); // contactId -> group, reused below for the legacy JSON write
+  const deletedRecomputeIds = new Set();
+  for (const contactId of recomputes) {
+    const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
+    if (!messages.length) { deletedRecomputeIds.add(contactId); safeSqliteSync(() => deleteConversationRow(contactId)); continue; }
+    const g = emptyGroup(contactId, contactId);
+    for (const m of messages) foldMessageIntoGroup(g, m);
+    recomputedGroups.set(contactId, g);
+    safeSqliteSync(() => syncMessageFields(g));
+  }
+  for (const key of removes) safeSqliteSync(() => deleteConversationRow(key));
+
   const rows = readJson(CONVERSATION_INDEX_FILE, []);
   const byKey = new Map(rows.map(r => [r.key, r]));
 
@@ -312,18 +340,9 @@ function flushConversationIndex() {
     for (const m of messages) foldMessageIntoGroup(g, m);
     safeSqliteSync(() => syncMessageFields(g));
   }
-  for (const contactId of recomputes) {
-    const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
-    if (!messages.length) { byKey.delete(contactId); safeSqliteSync(() => deleteConversationRow(contactId)); continue; }
-    const g = emptyGroup(contactId, contactId);
-    for (const m of messages) foldMessageIntoGroup(g, m);
-    byKey.set(contactId, g);
-    safeSqliteSync(() => syncMessageFields(g));
-  }
-  for (const key of removes) {
-    byKey.delete(key);
-    safeSqliteSync(() => deleteConversationRow(key));
-  }
+  for (const [contactId, g] of recomputedGroups) byKey.set(contactId, g);
+  for (const contactId of deletedRecomputeIds) byKey.delete(contactId);
+  for (const key of removes) byKey.delete(key);
   writeJson(CONVERSATION_INDEX_FILE, [...byKey.values()]);
 }
 export function upsertConversationSummary(m) {

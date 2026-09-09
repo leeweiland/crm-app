@@ -942,9 +942,14 @@ function convoQueryParams(offset) {
 // Full reset -- called on initial tab load and whenever any filter/sort/
 // search/channel control changes. Replaces `conversations` outright rather
 // than appending (see loadMoreConversations for that).
-async function loadConversations() {
+// `quiet` skips the "Loading…" wipe -- used by the delayed post-action
+// reconcile (Mark Done/reply, see their own comments) where the optimistic
+// local update already shows the right thing; without this, that
+// background correctness check visibly flashed the ENTIRE list to empty
+// and back every single time, on top of whatever it actually changed.
+async function loadConversations(quiet) {
   const list = document.getElementById('chatSidebarList');
-  list.innerHTML = '<div class="pra-muted" style="padding:16px;font-size:.82rem">Loading…</div>';
+  if (!quiet) list.innerHTML = '<div class="pra-muted" style="padding:16px;font-size:.82rem">Loading…</div>';
   convoOffset = 0; convoHasMore = true;
   const r = await fetch('/api/inbox/conversations?' + convoQueryParams(0));
   if (!r.ok) { list.innerHTML = '<div class="pra-muted" style="padding:16px;font-size:.82rem">Could not load.</div>'; return; }
@@ -1234,7 +1239,7 @@ document.getElementById('ctxDoneBtn').onclick = async () => {
     const btn = document.getElementById('chatMarkDoneBtn');
     if (btn) btn.textContent = nextDone ? 'Mark Not Done' : 'Mark Done';
   }
-  setTimeout(loadConversations, 5500);
+  setTimeout(loadConversations, 5500, true);
 };
 document.getElementById('ctxArchiveBtn').onclick = async () => {
   const c = ctxMenuConvo;
@@ -1880,7 +1885,7 @@ function renderThread() {
       // Delayed past the conversation-index's own batched flush window so
       // this reconciles with the server's now-actually-updated unread_count
       // instead of the stale one an immediate refetch would still see.
-      setTimeout(loadConversations, 5500);
+      setTimeout(loadConversations, 5500, true);
     };
     wireInlineEditClick(document.getElementById('chatPanelTypeBadge'), {
       field: 'programType',
@@ -1936,12 +1941,20 @@ function renderThread() {
   renderSidebar();
 }
 async function selectConversation(c, skipFetch) {
+  const isRealSwitch = selectedConvo?.key !== c.key;
   selectedConvo = c;
   document.querySelectorAll('.convo-row').forEach(r => r.classList.toggle('selected', r.dataset.convo === c.key));
   document.getElementById('chatView').classList.add('thread-open'); // mobile: swap to the chat panel
-  composeReplyTo = null; // switching contacts always exits reply mode
+  // Only reset compose state on an actual contact switch. loadConversations()
+  // also calls this (skipFetch=true) for the CURRENTLY selected conversation
+  // after any Mark Done/reply, purely to resync unread state/thread items in
+  // the background -- resetting composeReplyTo/composeView there too used to
+  // silently drop whatever quote preview or in-progress reply/channel choice
+  // the person was looking at, every single time, for no reason tied to what
+  // that resync actually needed to fix.
+  if (isRealSwitch) composeReplyTo = null;
   if (!c.contactId) { aiAssistAvailable = false; return; }
-  composeView = 'compose';
+  if (isRealSwitch) composeView = 'compose';
   // The AI icons next to Send Email/Send SMS only show up at all if some
   // AI Assist agent actually applies to this lead -- a cheap check (no LLM
   // call), separate from generateAiContent()/loadAiSummary() below, which
@@ -2075,7 +2088,7 @@ async function sendComposeMessage() {
   const threadRes = await fetch('/api/inbox/contact/' + sentContactId);
   threadItems = threadRes.ok ? (await threadRes.json()).items : [];
   renderThread();
-  setTimeout(loadConversations, 5500);
+  setTimeout(loadConversations, 5500, true);
 }
 
 // ── Contact details overlay ──────────────────────────────────────────────
