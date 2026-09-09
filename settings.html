@@ -29,6 +29,7 @@
           <button class="tab-btn active" data-tab="general">General</button>
           <button class="tab-btn" data-tab="statuses">Statuses</button>
           <button class="tab-btn" data-tab="customfields">Custom Fields</button>
+          <button class="tab-btn" data-tab="summaryimage">Summary Image</button>
           <button class="tab-btn" data-tab="emailtheme">Email Theme</button>
           <button class="tab-btn" data-tab="ses">SMTP / SES</button>
           <button class="tab-btn" data-tab="twilio">Twilio</button>
@@ -76,6 +77,15 @@
           <input class="pra-input" id="newFieldLabel" placeholder="New field label..."/>
           <button class="pra-btn" id="addFieldBtn">Add</button>
         </div>
+      </div>
+
+      <div class="tab-panel pra-panel" id="tab-summaryimage" style="padding:22px;max-width:640px">
+        <div class="pra-h2" style="margin-bottom:6px">Summary Image</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">The instructions Claude gets before writing a lead's branded one-page summary card ("Generate Summary Image" button on the contact panel). It reads this contact's own application/custom field data and full conversation history alongside these instructions -- edit this to change what it emphasizes or how it's written, not the visual template (fonts/colors/logo are fixed in code).</div>
+        <textarea class="pra-input" id="summaryImagePrompt" rows="10" style="font-family:inherit;resize:vertical"></textarea>
+        <button class="pra-btn" id="saveSummaryImagePromptBtn" style="margin-top:12px">Save</button>
+        <button class="pra-btn pra-btn-ghost" id="resetSummaryImagePromptBtn" style="margin-top:12px">Reset to default</button>
+        <div class="pra-muted" id="summaryImagePromptMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-emailtheme" style="padding:22px;max-width:480px">
@@ -950,11 +960,33 @@ document.getElementById('resetAllThemesBtn').onclick = async () => {
   showToast('Reset complete');
 };
 
+// ── Summary Image prompt ─────────────────────────────────────────────────
+let summaryImageDefaultPrompt = '';
+async function loadSummaryImagePrompt() {
+  const r = await fetch('/api/app-summary/prompt');
+  if (!r.ok) return;
+  const data = await r.json();
+  summaryImageDefaultPrompt = data.default || '';
+  document.getElementById('summaryImagePrompt').value = data.prompt || summaryImageDefaultPrompt;
+}
+document.getElementById('saveSummaryImagePromptBtn').onclick = async () => {
+  const msg = document.getElementById('summaryImagePromptMsg');
+  const prompt = document.getElementById('summaryImagePrompt').value;
+  const r = await fetch('/api/app-summary/prompt', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) });
+  if (!r.ok) { msg.textContent = 'Could not save (admins only).'; return; }
+  msg.textContent = 'Saved.';
+  showToast('Summary image prompt saved');
+};
+document.getElementById('resetSummaryImagePromptBtn').onclick = () => {
+  document.getElementById('summaryImagePrompt').value = summaryImageDefaultPrompt;
+};
+
 loadStatuses();
 loadFields();
 loadUsers();
 loadNavPermissions();
 loadEmailTheme();
+loadSummaryImagePrompt();
 loadSesSettings();
 loadTwilioSettings();
 loadComplianceSettings();

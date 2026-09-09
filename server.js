@@ -30,6 +30,7 @@ import { handleBehavioralTriggersRequest } from "./behavioral_triggers_backend.j
 import { handleConversionsRequest } from "./conversions_backend.js";
 import { handleMeetingsRequest } from "./meetings_backend.js";
 import { handleGmailRequest } from "./gmail_backend.js";
+import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { readJson, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
@@ -155,6 +156,7 @@ createServer(async (req, res) => {
   if (await handleConversionsRequest(req, res, url)) return;
   if (await handleMeetingsRequest(req, res, url)) return;
   if (await handleGmailRequest(req, res, url)) return;
+  if (await handleAppSummaryRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike
   // chat-app, which shares a domain/nav with sibling apps), so there's no
