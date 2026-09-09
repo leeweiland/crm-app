@@ -337,7 +337,7 @@ async function generateCardContent(prompt, contact, journeyBlock, customFieldsTe
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 1500, system, messages: [{ role: "user", content: userText }] }),
+    body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 4096, system, messages: [{ role: "user", content: userText }] }),
   });
   if (!res.ok) throw new Error(`Anthropic error ${res.status}: ${await res.text()}`);
   const data = await res.json();
