@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Summary Image — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  body { background: var(--pra-black); min-height: 100vh; display: flex; justify-content: center; padding: 40px 20px; }
+  .wrap { width: 100%; max-width: 700px; }
+  .status { padding: 60px 20px; text-align: center; }
+  img.card { max-width: 100%; display: block; margin: 0 auto; border-radius: 8px; border: 1px solid var(--pra-border); }
+  .actions { text-align: center; margin-top: 16px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="pra-panel" style="padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="pra-h2" style="margin:0" id="pageTitle">Summary Image</div>
+      <a class="pra-btn pra-btn-ghost pra-btn-sm" id="backLink" href="#">&larr; Back to contact</a>
+    </div>
+    <div id="body"><div class="pra-muted status">Reading their application &amp; conversation history, generating card&hellip; this can take a minute or two.</div></div>
+  </div>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const contactId = params.get('contactId') || '';
+const name = params.get('name') || 'Contact';
+document.title = name + ' — Summary Image';
+document.getElementById('pageTitle').textContent = name + ' — Summary Image';
+document.getElementById('backLink').href = '/contact-detail.html?id=' + encodeURIComponent(contactId);
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function generate() {
+  const body = document.getElementById('body');
+  body.innerHTML = '<div class="pra-muted status">Reading their application &amp; conversation history, generating card&hellip; this can take a minute or two.</div>';
+  if (!contactId) {
+    body.innerHTML = '<div class="pra-muted status" style="color:var(--pra-red)">Missing contact id.</div>';
+    return;
+  }
+  try {
+    const r = await fetch('/api/contacts/' + encodeURIComponent(contactId) + '/summary-image', { method: 'POST' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      body.innerHTML = `<div class="pra-muted status" style="color:var(--pra-red)">${escapeHtml(d.error || 'Could not generate the image.')}</div>
+        <div class="actions"><button class="pra-btn" onclick="generate()">Try Again</button></div>`;
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    body.innerHTML = `
+      <img class="card" src="${url}"/>
+      <div class="actions">
+        <a class="pra-btn" href="${url}" download="${escapeHtml(name.replace(/\s+/g, '_'))}_summary.png">Download PNG</a>
+        <button class="pra-btn pra-btn-ghost" onclick="generate()">Regenerate</button>
+      </div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="pra-muted status" style="color:var(--pra-red)">${escapeHtml(e.message)}</div>
+      <div class="actions"><button class="pra-btn" onclick="generate()">Try Again</button></div>`;
+  }
+}
+generate();
+</script>
+</body>
+</html>

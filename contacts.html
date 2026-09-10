@@ -461,19 +461,26 @@ async function loadAndRenderKind(kind, rawItems, containerId, barId, sortSelectI
   const sel = document.getElementById(sortSelectId);
   if (sel) sel.value = mode;
   let items = rawItems, prefetchedCounts = null;
-  if (kind === 'tag') {
-    // One bulk fetch (one pass over every contact, server-side) instead of
-    // one request PER TAG -- at 3500+ tags in production, the old
-    // per-row/per-sort fetchCount pattern below fired that many separate
-    // full-contacts-array filters, confirmed live as the actual cause of
-    // the Contacts tab's 10+ second load. Covers both alpha (the default)
-    // and count sort modes, and renderManagedList's own prefetched-counts
-    // branch already skips any further per-row fetch once this is set.
+  // One bulk fetch (one pass over every contact, server-side) instead of
+  // one-or-two requests PER ROW -- at 3500+ tags in production, the old
+  // per-row/per-sort fetchCount pattern fired that many separate
+  // full-contacts-array filters, confirmed live as the actual cause of the
+  // Contacts tab's 10+ second load. Lists and segments had far fewer rows
+  // so this was never applied to them, but at 8+ lists (2 requests each)
+  // plus segments, that was still enough real network round trips -- each
+  // one blocking init()'s loadContacts() from even starting -- to be the
+  // actual cause of a later, separately-reported 5+ second load. Covers
+  // both alpha (the default) and count sort modes; renderManagedList's own
+  // prefetched-counts branch skips any further per-row fetch once this is
+  // set.
+  if (kind === 'tag' || kind === 'list' || kind === 'segment') {
+    const countsUrl = kind === 'tag' ? '/api/tags/counts' : kind === 'list' ? '/api/lists/counts' : '/api/segments/counts';
+    const emptyCount = kind === 'list' ? { total: 0, subscribed: 0 } : 0;
     try {
-      const r = await fetch('/api/tags/counts');
+      const r = await fetch(countsUrl);
       if (r.ok) {
         const { counts } = await r.json();
-        prefetchedCounts = new Map(rawItems.map(item => [item.id, counts[item.id] ?? 0]));
+        prefetchedCounts = new Map(rawItems.map(item => [item.id, counts[item.id] ?? emptyCount]));
       }
     } catch {}
   }
@@ -487,7 +494,10 @@ async function loadAndRenderKind(kind, rawItems, containerId, barId, sortSelectI
       await runWithConcurrency(rawItems.map((item, i) => ({ item, i })), 6, async ({ item, i }) => { counts[i] = await fetchCount(kind, item); });
       prefetchedCounts = new Map(rawItems.map((item, i) => [item.id, counts[i]]));
     }
-    items = [...rawItems].sort((a, b) => (prefetchedCounts.get(b.id) ?? -1) - (prefetchedCounts.get(a.id) ?? -1));
+    // Lists' prefetched counts are {total, subscribed} objects (not a bare
+    // number like tags/segments) -- sort by total membership either way.
+    const countOf = (id) => { const c = prefetchedCounts.get(id); return typeof c === 'object' && c ? c.total : (c ?? -1); };
+    items = [...rawItems].sort((a, b) => countOf(b.id) - countOf(a.id));
   }
   renderManagedList(kind, items, containerId, barId, nameHtmlFn, mode, prefetchedCounts);
 }
@@ -549,15 +559,14 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
     el.textContent = `${subTxt} subscribed / ${totalTxt} contacts`;
   }
   if (prefetchedCounts) {
-    // Already fetched (up front, for "contact count" sort mode) -- paint
-    // the total immediately instead of re-fetching the same data per row.
-    items.forEach(item => paintCount(item, prefetchedCounts.get(item.id), null));
-    if (kind === 'list') {
-      runWithConcurrency(items, 6, item =>
-        fetch(`/api/contacts?${cfg.contactsQuery(item)}&emailOptOut=false&limit=1`).then(r => r.ok ? r.json() : null)
-          .then(d => paintCount(item, prefetchedCounts.get(item.id), d?.total)).catch(() => {})
-      );
-    }
+    // Already fetched in bulk up front (loadAndRenderKind) -- paint
+    // immediately, no per-row fetch at all. Lists carry {total, subscribed}
+    // per id; tags/segments carry a bare total.
+    items.forEach(item => {
+      const c = prefetchedCounts.get(item.id);
+      if (kind === 'list' && c && typeof c === 'object') paintCount(item, c.total, c.subscribed);
+      else paintCount(item, c, null);
+    });
   } else {
     // Concurrency-capped, not one fetch per row fired all at once: Tags
     // alone has 3500+ rows in production, and firing that many simultaneous

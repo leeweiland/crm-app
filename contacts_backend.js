@@ -367,6 +367,28 @@ export async function handleContactsRequest(req, res, url) {
     removeValuesFromArrayField(CONTACTS_FILE, "listIds", ids);
     return sendJson(res, 200, { ok: true });
   }
+  // Same one-pass bulk-count fix as /api/tags/counts below, extended to
+  // lists -- the Contacts page fired 2 requests (total + subscribed) PER
+  // LIST via the old per-row `/api/contacts?listId=X&limit=1` pattern.
+  // renderManagedList's own comment assumed "only a handful of lists,
+  // nowhere near [tags'] scale" -- true in raw request count, but with 8+
+  // lists that's still 16+ real network round trips blocking the page's
+  // init() sequence (loadContacts() waits on loadLists() finishing) before
+  // the actual contacts table could even start loading. Confirmed via real
+  // browser network timing (not just server-side request timing, which was
+  // fast in isolation) as the actual cause of the reported 5+ second load.
+  if (p === "/api/lists/counts" && req.method === "GET") {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const counts = {};
+    for (const c of contacts) {
+      for (const listId of c.listIds || []) {
+        const entry = counts[listId] || (counts[listId] = { total: 0, subscribed: 0 });
+        entry.total++;
+        if (!c.emailOptOut) entry.subscribed++;
+      }
+    }
+    return sendJson(res, 200, { counts });
+  }
   const listMatch = p.match(/^\/api\/lists\/([^/]+)$/);
   if (listMatch && req.method === "DELETE") {
     const lists = readJson(LISTS_FILE, []);
@@ -482,6 +504,19 @@ export async function handleContactsRequest(req, res, url) {
     const segments = readJson(SEGMENTS_FILE, []);
     writeJson(SEGMENTS_FILE, segments.filter(s => !idSet.has(s.id)));
     return sendJson(res, 200, { ok: true });
+  }
+  // Same one-pass bulk-count fix as /api/lists/counts above -- each segment
+  // used to get its own full-array `/api/contacts?filter=...&limit=1`
+  // round trip; this evaluates every segment's filter against every
+  // contact in one read instead, same total matchesSegment() calls, one
+  // network round trip instead of N.
+  if (p === "/api/segments/counts" && req.method === "GET") {
+    const segments = readJson(SEGMENTS_FILE, []);
+    const contacts = readJson(CONTACTS_FILE, []);
+    const counts = {};
+    for (const s of segments) counts[s.id] = 0;
+    for (const c of contacts) for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++;
+    return sendJson(res, 200, { counts });
   }
   const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);
   if (segmentMatch && req.method === "DELETE") {

@@ -249,6 +249,15 @@ body { margin: 0; }
 .app-main { flex: 1; min-width: 0; padding: 28px 32px; max-width: 1400px; }
 .app-sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--pra-border); font-size: .78rem; color: var(--pra-dim); }
 
+/* Base (desktop-width) sticky behavior for .mobile-sticky-header -- the
+   name predates this rule (it only ever got a sticky position inside the
+   mobile media queries below, pinned under the fixed hamburger bar), but
+   the class's own purpose ("pin the page chrome, scroll the content
+   underneath") applies just as much at desktop width, where there's no
+   fixed top bar to dodge, hence top: 0 here vs the mobile overrides' 70px/
+   64px offsets. */
+.mobile-sticky-header { position: sticky; top: 0; z-index: 90; background: var(--pra-black-soft); }
+
 /* ── Responsive: sidebar becomes an off-canvas slide-in/out panel at
    tablet/mobile widths, toggled by a hamburger button crm-nav.js injects
    into every page (so this applies app-wide with one shared script, not a
