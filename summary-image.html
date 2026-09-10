@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
   body { background: var(--pra-black); min-height: 100vh; display: flex; justify-content: center; padding: 40px 20px; }
+  .pra-root { width: 100%; display: flex; justify-content: center; min-height: 0; }
   .wrap { width: 100%; max-width: 700px; }
   .status { padding: 60px 20px; text-align: center; }
   img.card { max-width: 100%; display: block; margin: 0 auto; border-radius: 8px; border: 1px solid var(--pra-border); }
@@ -14,6 +15,7 @@
 </style>
 </head>
 <body>
+<div class="pra-root">
 <div class="wrap">
   <div class="pra-panel" style="padding:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -22,6 +24,7 @@
     </div>
     <div id="body"><div class="pra-muted status">Reading their application &amp; conversation history, generating card&hellip; this can take a minute or two.</div></div>
   </div>
+</div>
 </div>
 <script>
 const params = new URLSearchParams(location.search);
