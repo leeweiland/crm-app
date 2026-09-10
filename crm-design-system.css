@@ -501,3 +501,161 @@ body { margin: 0; }
 @media (max-width: 900px) { .cond-row { grid-template-columns: 1fr; } }
 .match-toggle { display: flex; gap: 6px; align-items: center; font-size: .8rem; }
 .filter-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+
+/* ── Conversation panel (conversation-panel.js) -- the shared message
+   thread + compose bar rendered by ConversationPanel.init(), used by both
+   inbox.html (layout:'full', inside its own .chat-shell) and
+   contact-detail.html (layout:'compact', inside its own .convo-panel
+   wrapper). Canonical source is inbox.html's own original copy -- moved
+   here (rather than left duplicated per-page) so a future change to this
+   markup/CSS applies to both pages automatically. Blue (#009bff), not the
+   green contact-detail.html used to carry here (--pra-blue is this app's
+   current tracking-badge color everywhere else). ── */
+.chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--pra-black-soft); }
+.chat-panel-header { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
+.chat-panel-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; }
+.chat-panel-name-row .owner-field-select { flex: 0 0 auto; width: auto; }
+.chat-panel-name { font-weight: 700; font-size: .95rem; color: var(--pra-white); text-decoration: none; cursor: pointer; }
+.chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
+.chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
+.chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
+.chat-zoom-link { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
+.zoom-copy-btn { width: 18px; height: 18px; border-radius: 4px; border: none; background: transparent; color: var(--pra-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; opacity: .6; flex-shrink: 0; }
+.zoom-copy-btn:hover { opacity: 1; color: var(--pra-blue); }
+.zoom-copy-btn svg { width: 13px; height: 13px; }
+.chat-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--pra-dim); font-size: .88rem; }
+.chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
+
+.chat-thread { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.bubble-row { display: flex; }
+.bubble-row.outbound { justify-content: flex-end; }
+.bubble-row.inbound { justify-content: flex-start; }
+/* max-width belongs on this wrapper, not .sms-bubble itself -- a
+   percentage max-width on a descendant of an auto-width flex item can't
+   resolve during the item's own intrinsic-size pass, so the flex item
+   (and therefore the bubble) silently fills the entire row instead of
+   shrinking to its content, which made every outbound bubble render
+   flush left like an inbound one despite the correct blue color/class. */
+.bubble-content { max-width: 62%; }
+.sms-bubble { max-width: 100%; padding: 9px 13px; border-radius: 14px; font-size: .87rem; font-weight: 400; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-row.outbound .sms-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
+.bubble-row.inbound .sms-bubble { background: var(--pra-panel-2); color: var(--pra-dim); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
+.bubble-time { font-size: .64rem; color: var(--pra-dim); margin-top: 3px; }
+.bubble-row.outbound .bubble-time { text-align: right; }
+
+.email-bubble { width: 100%; max-width: 90%; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; cursor: pointer; }
+.bubble-row.outbound .email-bubble { margin-left: auto; border-color: rgba(0,155,255,0.4); }
+.email-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); }
+.email-bubble-icon { flex-shrink: 0; }
+.email-bubble-subject { font-weight: 700; font-size: .85rem; color: var(--pra-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-bubble-from { font-size: .7rem; font-weight: 400; color: var(--pra-dim); opacity: .7; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-bubble-reply-btn { flex-shrink: 0; font-family: var(--font-primary); font-weight: 700; font-size: .7rem; color: var(--pra-blue); background: var(--pra-blue-dim); border: 1px solid rgba(0,155,255,0.35); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+.email-bubble-reply-btn:hover { background: rgba(0,155,255,0.22); }
+.email-bubble-preview { font-size: .8rem; font-weight: 400; color: var(--pra-dim); padding: 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-bubble.expanded .email-bubble-preview { display: none; }
+.email-bubble-body { display: none; background: #fff; }
+.email-bubble.expanded .email-bubble-body { display: block; }
+.email-bubble-body iframe { width: 100%; min-height: 260px; border: none; display: block; }
+.email-bubble-meta { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: .68rem; font-weight: 400; color: var(--pra-dim); border-top: 1px solid var(--pra-border); flex-wrap: wrap; }
+
+.note-bubble { border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; }
+.note-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); font-weight: 700; font-size: .85rem; }
+.note-bubble-body { font-size: .8rem; color: var(--pra-dim); padding: 8px 14px; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--pra-border); }
+.note-bubble .bubble-time { padding: 0 14px 10px; }
+.track-badge { display: inline-flex; align-items: center; gap: 3px; font-size: .66rem; font-weight: 700; padding: 2px 8px; border-radius: 9px; background: rgba(255,255,255,0.05); color: var(--pra-dim); }
+.track-badge.on { background: rgba(0,155,255,0.16); color: #009bff; box-shadow: 0 0 6px rgba(0,155,255,0.35); }
+
+.track-summary { display: flex; align-items: center; gap: 12px; padding: 8px 18px; border-bottom: 1px solid var(--pra-border); font-size: .74rem; color: var(--pra-dim); flex-shrink: 0; }
+.track-summary b { color: var(--pra-white); }
+.track-summary .on { color: #009bff; }
+
+.compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; display: flex; flex-direction: column; }
+.compose-bar > .compose-toolbar-row, .compose-bar > input.pra-input, .compose-bar > .compose-quote-preview { flex-shrink: 0; }
+/* Drag handle between chat-thread and compose-bar -- lets a dragged
+   height on compose-bar (see conversation-panel.js's wireComposeResize)
+   trade space with chat-thread's flex:1, instead of the thread always just
+   taking whatever's left over. The whole bar lights up on hover/drag (not
+   just a small grip) so it reads as one draggable line. */
+.compose-resize-handle { height: 8px; cursor: row-resize; flex-shrink: 0; }
+.compose-resize-handle:hover, .compose-resize-handle.dragging { background: var(--pra-blue); }
+/* AI Assist icons next to the Send Email/Send SMS tabs -- only rendered
+   when aiAssistAvailable, click generates/regenerates straight into the
+   compose fields (no separate review card anymore). */
+.compose-tab-group { display: inline-flex; align-items: center; gap: 2px; }
+.ai-gen-btn { background: none; border: none; color: var(--pra-blue); cursor: pointer; padding: 4px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; }
+.ai-gen-btn svg { width: 13px; height: 13px; }
+.ai-gen-btn:hover { background: var(--pra-blue-dim); }
+.ai-gen-btn:disabled { opacity: .4; cursor: default; }
+.ai-gen-btn.loading svg { animation: ai-gen-spin 1s linear infinite; }
+@keyframes ai-gen-spin { to { transform: rotate(360deg); } }
+.ai-summary-panel { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: .85rem; line-height: 1.6; }
+.ai-summary-row { margin-bottom: 10px; }
+.ai-summary-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 2px; }
+.ai-summary-takeover { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.4); color: #ff9f0a; font-weight: 700; font-size: .82rem; }
+/* Sender picker sits BESIDE the toggle pill, not inside it -- the pill's
+   own border/overflow:hidden is styling meant for its own buttons only,
+   nesting an unrelated <select> in there boxed-within-boxed and made it
+   look bulky/mismatched instead of like a second, equally compact
+   control on the same row. */
+.compose-toolbar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; }
+.compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
+.compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
+.compose-channel-toggle button.active.reply-mode { background: rgba(57,255,20,0.12); color: var(--pra-green); }
+.compose-row { display: flex; gap: 8px; flex: 1; min-height: 0; }
+.compose-row #composeSendBtn { align-self: flex-end; }
+#composeSendBtn.reply-mode { background: var(--pra-green); color: #06210a; }
+.compose-row textarea { flex: 1; resize: vertical; min-height: 40px; }
+.compose-quote-preview { border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
+.compose-quote-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--pra-panel-2); font-size: .72rem; color: var(--pra-dim); }
+.compose-quote-preview-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compose-quote-preview-head button { flex-shrink: 0; background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .9rem; padding: 0 4px; line-height: 1; }
+.compose-quote-preview-head button:hover { color: var(--pra-white); }
+#composeQuoteFrame { display: block; width: 100%; height: 160px; border: none; background: #fff; }
+.compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
+/* Shows who a reply sends as -- the sender is always the logged-in user
+   (see inbox_backend.js, not client-controlled), this is display-only so
+   teammates are visible but never look clickable. */
+.compose-from-select { font-size: .78rem; padding: 5px 10px; max-width: 200px; }
+
+/* Native date/time pickers render a black-on-black calendar icon on a
+   dark background otherwise -- color-scheme flips both to the light
+   variant so the icon and popover are visible (same fix as chat-app). */
+#taskPanelDate, #taskPanelTime { color-scheme: dark; color: #fff; }
+
+/* ── Chat panel header: Tasks/Notes/Schedule + status control ── */
+.chat-panel-task-btn { flex-shrink: 0; position: relative; }
+#chatScheduleBtn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 9px; }
+#chatScheduleBtn svg { width: 15px; height: 15px; }
+.schedule-panel-hint { font-size: .7rem; color: var(--pra-dim); margin: 2px 0 8px; }
+.schedule-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); font-size: .78rem; }
+.schedule-panel-row:last-child { border-bottom: none; }
+.schedule-panel-row .schedule-panel-when { flex: 1; }
+.schedule-panel-row .schedule-panel-when a { color: var(--pra-blue); text-decoration: none; }
+.schedule-panel-row .schedule-panel-when a:hover { text-decoration: underline; }
+.schedule-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
+.schedule-panel-row button:hover { color: var(--pra-red); }
+.chat-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
+/* Deliberately NOT flex:1/min-width -- that stretched this to fill the
+   whole row width regardless of the status text length. Auto-width lets
+   it shrink-wrap like every other pill/badge in this app. */
+.chat-panel-actions #chatStatusSelect { flex: 0 0 auto; width: auto; }
+/* Anchored under the Tasks button, not a full modal -- lists existing
+   tasks (edit/delete) plus a quick-add form. Closes on click-out or
+   Cancel, never needs its own scroll to be usable on a phone screen. */
+.task-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 400; width: 280px; max-width: 88vw; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 12px; }
+.task-panel.open { display: block; }
+.task-panel-list { max-height: 220px; overflow-y: auto; margin-bottom: 10px; }
+.task-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); }
+.task-panel-row:last-child { border-bottom: none; }
+.task-panel-row input[type="text"] { flex: 1; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .82rem; padding: 2px 0; }
+.task-panel-row input[type="text"]:focus { outline: none; border-bottom: 1px solid var(--pra-blue); }
+.task-panel-row.done input[type="text"] { color: var(--pra-dim); text-decoration: line-through; }
+.task-panel-row .task-panel-due { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
+.task-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
+.task-panel-row button:hover { color: var(--pra-red); }
+.task-panel-add { display: flex; flex-direction: column; gap: 6px; }
+.task-panel-add input { font-size: .82rem; padding: 6px 8px; }
+.task-panel-add-row { display: flex; gap: 6px; }
+.task-panel-add-row input[type="date"], .task-panel-add-row input[type="time"] { flex: 1; min-width: 0; }
+.task-panel-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
