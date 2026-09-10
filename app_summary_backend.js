@@ -225,14 +225,17 @@ function iconGlyph(type, color) {
 }
 function pickRowIcon(label) {
   const l = (label || "").toLowerCase();
-  if (/type|program|track/.test(l)) return "monitor";
-  if (/when|date|applied|since|start/.test(l)) return "calendar";
-  if (/career|job|work|occupation/.test(l)) return "briefcase";
-  if (/age|height|weight|stats|body/.test(l)) return "person";
-  if (/ready|today|urgen|now/.test(l)) return "bolt";
-  if (/injur|health|pain|condition/.test(l)) return "pulse";
-  if (/goal|target|aim/.test(l)) return "target";
-  if (/location|city|region|area/.test(l)) return "mountain";
+  // Whole-word matches only -- a bare substring test matched "age" inside
+  // "Engagement" and mislabeled it with the age/height/weight icon,
+  // confirmed live on the first real end-to-end test.
+  if (/\b(type|program|track)\b/.test(l)) return "monitor";
+  if (/\b(when|date|applied|since|start)\b/.test(l)) return "calendar";
+  if (/\b(career|job|work|occupation)\b/.test(l)) return "briefcase";
+  if (/\b(age|height|weight|stats|body)\b/.test(l)) return "person";
+  if (/\b(ready|today|urgent|urgency|now)\b/.test(l)) return "bolt";
+  if (/\b(injur\w*|health|pain|condition)\b/.test(l)) return "pulse";
+  if (/\b(goal|goals|target|aim)\b/.test(l)) return "target";
+  if (/\b(location|city|region|area)\b/.test(l)) return "mountain";
   return "flag";
 }
 function iconBadge(cx, cy, iconType, color) {
@@ -357,7 +360,6 @@ async function generateCardContent(prompt, contact, journeyBlock, customFieldsTe
     jsonText = jsonText.replace(/[\r\n\t]+/g, " ");
     parsed = JSON.parse(jsonText);
   }
-  console.log("[app-summary][debug] stop_reason:", data.stop_reason, "keys:", Object.keys(parsed), "rawLen:", text.length, "raw:", text.slice(0, 1500));
   return {
     title: parsed.title || "YOUR NEXT CHAPTER",
     overview: parsed.overview || "",
