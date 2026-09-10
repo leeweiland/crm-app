@@ -21,15 +21,14 @@
     .detail-col-left { width: 100% !important; max-width: none; }
     .detail-resize-handle { display: none; }
   }
-  /* .track-badge/.chat-panel/.chat-thread/.bubble-*/.email-bubble*/
-     .note-bubble*/.compose-* (the conversation panel itself -- thread +
-     compose bar + AI assist + task/note/schedule popovers) now live in
-     crm-design-system.css, shared with inbox.html via conversation-panel.js.
-     This used to be its own independently-drifted copy here (green track-
-     badges instead of the app's current blue, no Reply button, a simpler
-     non-resizable compose bar, no AI assist/Task/Note/Schedule popovers at
-     all) -- don't re-add a page-local copy, see that file's own header
-     comment. */
+  /* The conversation panel itself (track-badge, chat-panel, chat-thread,
+     the bubble/email-bubble/note-bubble classes, compose-bar and friends)
+     now lives in crm-design-system.css, shared with inbox.html via
+     conversation-panel.js. This used to be its own independently-drifted
+     copy here (green track-badges instead of the app's current blue, no
+     Reply button, a simpler non-resizable compose bar, no AI assist or
+     Task/Note/Schedule popovers at all) -- don't re-add a page-local copy,
+     see that file's own header comment. */
   /* 195px, not 170px -- .mobile-sticky-header (wrapping the back-links +
      name/status row) adds ~28px of padding/margin the original 170px
      estimate predates. dvh wins over vh when supported (real visible
