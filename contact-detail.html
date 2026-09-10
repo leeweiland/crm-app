@@ -21,54 +21,21 @@
     .detail-col-left { width: 100% !important; max-width: none; }
     .detail-resize-handle { display: none; }
   }
-  .track-badge { display: inline-flex; align-items: center; gap: 3px; font-size: .66rem; font-weight: 700; padding: 2px 8px; border-radius: 9px; background: rgba(255,255,255,0.05); color: var(--pra-dim); }
-  .track-badge.on { background: rgba(57,255,20,0.16); color: #39ff14; box-shadow: 0 0 6px rgba(57,255,20,0.35); }
-  .track-summary { display: flex; align-items: center; gap: 12px; padding: 8px 18px; border-bottom: 1px solid var(--pra-border); font-size: .74rem; color: var(--pra-dim); flex-shrink: 0; }
-  .track-summary b { color: var(--pra-white); }
-  .track-summary .on { color: #39ff14; }
-
-  /* ── Conversation panel (ported from inbox.html's chat panel) ── */
+  /* .track-badge/.chat-panel/.chat-thread/.bubble-*/.email-bubble*/
+     .note-bubble*/.compose-* (the conversation panel itself -- thread +
+     compose bar + AI assist + task/note/schedule popovers) now live in
+     crm-design-system.css, shared with inbox.html via conversation-panel.js.
+     This used to be its own independently-drifted copy here (green track-
+     badges instead of the app's current blue, no Reply button, a simpler
+     non-resizable compose bar, no AI assist/Task/Note/Schedule popovers at
+     all) -- don't re-add a page-local copy, see that file's own header
+     comment. */
   /* 195px, not 170px -- .mobile-sticky-header (wrapping the back-links +
      name/status row) adds ~28px of padding/margin the original 170px
      estimate predates. dvh wins over vh when supported (real visible
      viewport, not mobile's "largest possible" 100vh). */
   .convo-panel { display: flex; flex-direction: column; height: calc(100vh - 195px); height: calc(100dvh - 195px); min-height: 460px; }
   .convo-panel-title { padding: 16px 18px 0; }
-  .chat-thread { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
-  .bubble-row { display: flex; }
-  .bubble-row.outbound { justify-content: flex-end; }
-  .bubble-row.inbound { justify-content: flex-start; }
-  .bubble-content { max-width: 82%; }
-  .sms-bubble { max-width: 100%; padding: 9px 13px; border-radius: 14px; font-size: .87rem; font-weight: 400; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .bubble-row.outbound .sms-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
-  .bubble-row.inbound .sms-bubble { background: var(--pra-panel-2); color: var(--pra-dim); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
-  .bubble-time { font-size: .64rem; color: var(--pra-dim); margin-top: 3px; }
-  .bubble-row.outbound .bubble-time { text-align: right; }
-
-  .email-bubble { width: 100%; max-width: 96%; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; cursor: pointer; }
-  .bubble-row.outbound .email-bubble { margin-left: auto; border-color: rgba(0,155,255,0.4); }
-  .email-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); }
-  .email-bubble-icon { flex-shrink: 0; }
-  .email-bubble-subject { font-weight: 700; font-size: .85rem; color: var(--pra-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .email-bubble-preview { font-size: .8rem; font-weight: 400; color: var(--pra-dim); padding: 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .email-bubble.expanded .email-bubble-preview { display: none; }
-  .email-bubble-body { display: none; background: #fff; }
-  .email-bubble.expanded .email-bubble-body { display: block; }
-  .email-bubble-body iframe { width: 100%; min-height: 260px; border: none; display: block; }
-  .email-bubble-meta { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: .68rem; font-weight: 400; color: var(--pra-dim); border-top: 1px solid var(--pra-border); flex-wrap: wrap; }
-
-  .note-bubble { border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; }
-  .note-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); font-weight: 700; font-size: .85rem; }
-  .note-bubble-body { font-size: .8rem; color: var(--pra-dim); padding: 8px 14px; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--pra-border); }
-  .note-bubble .bubble-time { padding: 0 14px 10px; }
-
-  .compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; }
-  .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
-  .compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
-  .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
-  .compose-row { display: flex; gap: 8px; align-items: flex-end; }
-  .compose-row textarea { flex: 1; resize: none; min-height: 40px; max-height: 140px; }
-  .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
   .contact-header { display: flex; align-items: center; gap: 12px; margin: 10px 0 20px; }
   .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
 </style>
@@ -147,7 +114,7 @@
         <div class="detail-col-right">
           <div class="pra-panel convo-panel" style="padding:0">
             <div class="convo-panel-title"><div class="pra-h2">Conversation</div></div>
-            <div id="convoPanelBody" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+            <div id="convoPanelBody" style="min-height:0"></div>
           </div>
         </div>
       </div>
@@ -155,6 +122,7 @@
   </div>
 </div>
 <script src="/crm-nav.js"></script>
+<script src="/conversation-panel.js"></script>
 <script>
 const contactId = new URLSearchParams(location.search).get('id');
 document.getElementById('backToChatLink').href = '/inbox.html?tab=primary&contact=' + encodeURIComponent(contactId || '');
@@ -382,7 +350,7 @@ async function autoSaveDetails() {
   await saveContact();
   document.getElementById('contactName').textContent = contact.first + ' ' + contact.last;
   renderPhoneDialLink();
-  renderConvoPanel();
+  panelInstance?.render();
   showToast('Saved');
 }
 ['fFirst', 'fLast', 'fAccount', 'fEmail', 'fPhone', 'fEmailOptOut', 'fSmsOptOut', 'fTestContact'].forEach(id => document.getElementById(id).addEventListener('change', autoSaveDetails));
@@ -432,113 +400,51 @@ document.getElementById('deleteBtn').onclick = async () => {
   loadThread();
 })();
 
-// ── Conversation panel -- same bubble rendering + compose bar as
-// inbox.html's chat panel, ported here scoped to this one known contact
-// (no conversation sidebar/selection needed, contactId is already fixed).
+// ── Conversation panel -- ConversationPanel (conversation-panel.js) is the
+// SAME thread+compose implementation inbox.html uses, in 'compact' layout
+// (thread/compose/AI-assist/Mark Done/Task-Note-Schedule popovers only --
+// no header row, since this page already has its own status select/owner
+// field/opt-out badges in the sticky top bar and Details column above).
+// This used to be its own simpler, independently-drifted copy (no Reply
+// button, no AI assist, no Mark Done, green track-badges) -- see that
+// file's own header comment for why it's shared now.
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
-let threadItems = [], composeChannel = 'email';
-
-function emailBubbleHtml(item, idx) {
-  const opened = (item.statusHistory || []).find(h => h.status === 'opened');
-  const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
-  return `
-    <div class="bubble-row ${item.direction}">
-      <div class="email-bubble" data-email-toggle="${idx}">
-        <div class="email-bubble-head"><span class="email-bubble-icon">📧</span><span class="email-bubble-subject">${escapeHtml(item.subject || '(no subject)')}</span></div>
-        <div class="email-bubble-preview">${escapeHtml((item.bodyPreview || '').replace(/<[^>]+>/g, ' ')).trim()}</div>
-        <div class="email-bubble-body"><iframe data-src="${idx}"></iframe></div>
-        <div class="email-bubble-meta">
-          <span>${fmtDate(item.at)}</span>
-          <span>${item.status || ''}</span>
-          ${item.direction === 'outbound' ? `<span class="track-badge${opened ? ' on' : ''}">${opened ? 'Opened' : 'Not opened'}</span><span class="track-badge${clicked ? ' on' : ''}">${clicked ? 'Clicked' : 'Not clicked'}</span>` : ''}
-        </div>
-      </div>
-    </div>
-  `;
-}
-function smsBubbleHtml(item) {
-  return `
-    <div class="bubble-row ${item.direction}">
-      <div class="bubble-content">
-        <div class="sms-bubble">${escapeHtml(item.body || item.bodyPreview || '')}</div>
-        <div class="bubble-time">${fmtDate(item.at)}</div>
-      </div>
-    </div>
-  `;
-}
-function noteBubbleHtml(item) {
-  const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
-  return `
-    <div class="bubble-row ${item.direction}">
-      <div class="bubble-content note-bubble">
-        <div class="note-bubble-head"><span>${icon}</span><span class="note-bubble-subject">${escapeHtml(item.subject || '')}</span></div>
-        ${item.body ? `<div class="note-bubble-body">${escapeHtml(item.body)}</div>` : ''}
-        <div class="bubble-time">${fmtDate(item.at)}</div>
-      </div>
-    </div>
-  `;
-}
-function emailStatsHtml(items) {
-  const sent = items.filter(i => i.itemType === 'email' && i.direction === 'outbound');
-  if (!sent.length) return '';
-  const opened = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'opened')).length;
-  const clicked = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'clicked')).length;
-  const pct = (n) => Math.round((n / sent.length) * 100);
-  return `
-    <div class="track-summary">
-      <span><b>${sent.length}</b> email${sent.length === 1 ? '' : 's'} sent</span>
-      <span class="${opened ? 'on' : ''}"><b>${opened}</b> opened (${pct(opened)}%)</span>
-      <span class="${clicked ? 'on' : ''}"><b>${clicked}</b> clicked (${pct(clicked)}%)</span>
-    </div>
-  `;
-}
-function renderConvoPanel() {
-  const wrap = document.getElementById('convoPanelBody');
-  const emailOk = contact.email, smsOk = contact.phone;
-  const emailItems = threadItems.filter(i => i.itemType === 'email');
-  wrap.innerHTML = `
-    ${emailStatsHtml(emailItems)}
-    <div class="chat-thread" id="chatThread"></div>
-    <div class="compose-bar">
-      <div class="compose-channel-toggle">
-        <button type="button" data-ch="email" class="${composeChannel === 'email' ? 'active' : ''}">Send Email</button>
-        <button type="button" data-ch="sms" class="${composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
-      </div>
-      ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
-      <div class="compose-row">
-        <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
-        <button class="pra-btn" id="composeSendBtn">Send</button>
-      </div>
-      ${composeChannel === 'email' && !emailOk ? '<div class="compose-hint">This contact has no email on file.</div>' : ''}
-      ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
-    </div>
-  `;
-  const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
-  const threadEl = document.getElementById('chatThread');
-  threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
-  threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {
-    const wasExpanded = el.classList.contains('expanded');
-    el.classList.toggle('expanded');
-    if (!wasExpanded) {
-      const iframe = el.querySelector('iframe');
-      const item = items[Number(el.dataset.emailToggle)];
-      if (iframe && !iframe.srcdoc) iframe.srcdoc = `<style>body,*{font-family:Arial,Helvetica,sans-serif!important;}</style>${item.body || '<p style="color:#888">(no content stored)</p>'}`;
-    }
-  });
-  threadEl.scrollTop = threadEl.scrollHeight;
-
-  wrap.querySelectorAll('.compose-channel-toggle button').forEach(btn => btn.onclick = () => { composeChannel = btn.dataset.ch; renderConvoPanel(); });
-  document.getElementById('composeSendBtn').onclick = sendComposeMessage;
-  // Viewing this page is deliberately NOT the same as responding -- see
-  // inbox.html's selectConversation for the full reasoning. Marking done
-  // now only happens on an actual reply, in sendComposeMessage below.
+let threadItems = [], panelInstance = null;
+function getPanelConfig() {
+  return {
+    contactId,
+    layout: 'compact',
+    currentUser: window.crmMe || null,
+    teamUsers: window.crmTeamUsers || [],
+    getContact: () => contact,
+    // threadItems/renderHyrosUrls (Details column's "First/Last ad click"
+    // pills) used to be refreshed inline inside this file's own loadThread()
+    // -- same effect here, just fed by the shared module's own fetch instead
+    // of a second one of our own.
+    onThreadLoaded: (items) => { threadItems = items; renderHyrosUrls(); },
+  };
 }
 async function loadThread() {
-  const r = await fetch('/api/inbox/contact/' + contactId);
-  threadItems = r.ok ? (await r.json()).items : [];
-  renderConvoPanel();
-  renderHyrosUrls();
+  if (!panelInstance) panelInstance = ConversationPanel.init(document.getElementById('convoPanelBody'), getPanelConfig());
+  await panelInstance.loadThread();
 }
+// Live cross-tab/cross-user sync, same SSE endpoint inbox.html's own chat
+// panel listens on -- so marking done (or a new message arriving) from the
+// Inbox side while this page is open updates this panel too, live. Scoped
+// to just this one contactId; a mismatched event is a no-op inside
+// handleRemoteUpdate itself, but checking here too avoids even constructing
+// that call for every OTHER contact's traffic.
+(function connectContactEvents() {
+  if (!contactId) return;
+  const es = new EventSource('/api/inbox/events');
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.contactId !== contactId) return;
+      panelInstance?.handleRemoteUpdate(data);
+    } catch { /* malformed payload -- ignore rather than throw */ }
+  };
+})();
 // ── Details column: drag-to-resize, width remembered across visits ──────
 (function initDetailResize() {
   const left = document.getElementById('detailColLeft');
@@ -564,27 +470,6 @@ async function loadThread() {
     localStorage.setItem('contactDetailWidth', parseInt(left.style.width, 10));
   });
 })();
-
-async function sendComposeMessage() {
-  const body = document.getElementById('composeBody').value.trim();
-  if (!body) return;
-  const subject = composeChannel === 'email' ? document.getElementById('composeSubject').value.trim() : undefined;
-  const btn = document.getElementById('composeSendBtn');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  const r = await fetch('/api/inbox/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contactId, channel: composeChannel, subject, body }),
-  });
-  const d = await r.json();
-  btn.disabled = false; btn.textContent = 'Send';
-  if (!r.ok) { showToast(d.error || 'Send failed', true); return; }
-  showToast('Sent');
-  // A real reply just went out -- see inbox.html's sendComposeMessage for
-  // why this is the only thing that should move the conversation out of
-  // Unresponded, not merely having viewed this page.
-  await fetch(`/api/inbox/conversations/${contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
-  await loadThread();
-}
 
 // ── Summary image (branded 1-pager from this contact's own application
 // data + conversation history -- see app_summary_backend.js). Generation
