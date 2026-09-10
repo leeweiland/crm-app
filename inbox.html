@@ -75,6 +75,12 @@
   .convo-row:hover { background: rgba(255,255,255,0.03); }
   .convo-row.selected { background: var(--pra-blue-dim); border-left: 3px solid var(--pra-blue); padding-left: 9px; }
   .convo-row.pinned { background: rgba(0,155,255,0.04); }
+  /* Multi-select highlight -- deliberately distinct from .selected above
+     (that one marks whichever thread is currently OPEN, an unrelated,
+     single-row concept that can be true at the same time as this). */
+  .convo-row.multi-selected { background: rgba(0,155,255,0.16); box-shadow: inset 0 0 0 1px var(--pra-blue); }
+  .convo-row { transition: transform .18s ease, opacity .18s ease; }
+  .convo-row.swiping { transition: none; }
   /* Outer glow color is set inline per row (--status-glow, from the
      contact's CRM status -- see STATUS_GLOW below); background flips to
      the brightest neon green specifically for an unresponded thread,
@@ -215,128 +221,11 @@
     .convo-row .type-badge-short { display: inline; }
     .convo-time { font-size: .64rem; min-width: 44px; }
   }
-  .chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
-
-  .chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--pra-black-soft); }
-  .chat-panel-header { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
-  /* wrap, not nowrap -- the owner field here shows the FULL assigned name
-     (see .owner-field-select/.convo-owner-field's own comments: the tight
-     first-letter/ellipsis treatment is deliberately sidebar-only, this
-     header has room to spare). A long name plus the type badge and contact
-     name can still outrun a narrow phone's width in one line though, so
-     this wraps to a second line instead of running the owner field off the
-     right edge of the screen. */
-  .chat-panel-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; }
-  /* .pra-select defaults to width:100% (crm-design-system.css) -- fine
-     inside a form, wrong for an inline field sitting next to a name. Same
-     fix #chatStatusSelect already needed below in .chat-panel-actions. */
-  .chat-panel-name-row .owner-field-select { flex: 0 0 auto; width: auto; }
-  .chat-panel-name { font-weight: 700; font-size: .95rem; color: var(--pra-white); text-decoration: none; cursor: pointer; }
-  .chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
-  .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
-  .chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
-  .chat-zoom-link { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
-  .zoom-copy-btn { width: 18px; height: 18px; border-radius: 4px; border: none; background: transparent; color: var(--pra-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; opacity: .6; flex-shrink: 0; }
-  .zoom-copy-btn:hover { opacity: 1; color: var(--pra-blue); }
-  .zoom-copy-btn svg { width: 13px; height: 13px; }
-  .chat-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--pra-dim); font-size: .88rem; }
-
-  .chat-thread { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
-  .bubble-row { display: flex; }
-  .bubble-row.outbound { justify-content: flex-end; }
-  .bubble-row.inbound { justify-content: flex-start; }
-  /* max-width belongs on this wrapper, not .sms-bubble itself -- a
-     percentage max-width on a descendant of an auto-width flex item can't
-     resolve during the item's own intrinsic-size pass, so the flex item
-     (and therefore the bubble) silently fills the entire row instead of
-     shrinking to its content, which made every outbound bubble render
-     flush left like an inbound one despite the correct blue color/class. */
-  .bubble-content { max-width: 62%; }
-  .sms-bubble { max-width: 100%; padding: 9px 13px; border-radius: 14px; font-size: .87rem; font-weight: 400; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .bubble-row.outbound .sms-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
-  .bubble-row.inbound .sms-bubble { background: var(--pra-panel-2); color: var(--pra-dim); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
-  .bubble-time { font-size: .64rem; color: var(--pra-dim); margin-top: 3px; }
-  .bubble-row.outbound .bubble-time { text-align: right; }
-
-  .email-bubble { width: 100%; max-width: 90%; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; cursor: pointer; }
-  .bubble-row.outbound .email-bubble { margin-left: auto; border-color: rgba(0,155,255,0.4); }
-  .email-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); }
-  .email-bubble-icon { flex-shrink: 0; }
-  .email-bubble-subject { font-weight: 700; font-size: .85rem; color: var(--pra-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .email-bubble-from { font-size: .7rem; font-weight: 400; color: var(--pra-dim); opacity: .7; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .email-bubble-reply-btn { flex-shrink: 0; font-family: var(--font-primary); font-weight: 700; font-size: .7rem; color: var(--pra-blue); background: var(--pra-blue-dim); border: 1px solid rgba(0,155,255,0.35); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
-  .email-bubble-reply-btn:hover { background: rgba(0,155,255,0.22); }
-  .email-bubble-preview { font-size: .8rem; font-weight: 400; color: var(--pra-dim); padding: 8px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .email-bubble.expanded .email-bubble-preview { display: none; }
-  .email-bubble-body { display: none; background: #fff; }
-  .email-bubble.expanded .email-bubble-body { display: block; }
-  .email-bubble-body iframe { width: 100%; min-height: 260px; border: none; display: block; }
-  .email-bubble-meta { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: .68rem; font-weight: 400; color: var(--pra-dim); border-top: 1px solid var(--pra-border); flex-wrap: wrap; }
-
-  .note-bubble { border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; }
-  .note-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); font-weight: 700; font-size: .85rem; }
-  .note-bubble-body { font-size: .8rem; color: var(--pra-dim); padding: 8px 14px; white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--pra-border); }
-  .note-bubble .bubble-time { padding: 0 14px 10px; }
-  .track-badge { display: inline-flex; align-items: center; gap: 3px; font-size: .66rem; font-weight: 700; padding: 2px 8px; border-radius: 9px; background: rgba(255,255,255,0.05); color: var(--pra-dim); }
-  .track-badge.on { background: rgba(0,155,255,0.16); color: #009bff; box-shadow: 0 0 6px rgba(0,155,255,0.35); }
-
-  .track-summary { display: flex; align-items: center; gap: 12px; padding: 8px 18px; border-bottom: 1px solid var(--pra-border); font-size: .74rem; color: var(--pra-dim); flex-shrink: 0; }
-  .track-summary b { color: var(--pra-white); }
-  .track-summary .on { color: #009bff; }
-
-  .compose-bar { border-top: 1px solid var(--pra-border); padding: 12px 16px; flex-shrink: 0; display: flex; flex-direction: column; }
-  .compose-bar > .compose-toolbar-row, .compose-bar > input.pra-input, .compose-bar > .compose-quote-preview { flex-shrink: 0; }
-  /* Drag handle between chat-thread and compose-bar -- lets a dragged
-     height on compose-bar (see wireComposeResize) trade space with
-     chat-thread's flex:1, instead of the thread always just taking
-     whatever's left over. The whole bar lights up on hover/drag (not just
-     a small grip) so it reads as one draggable line. */
-  .compose-resize-handle { height: 8px; cursor: row-resize; flex-shrink: 0; }
-  .compose-resize-handle:hover, .compose-resize-handle.dragging { background: var(--pra-blue); }
-  /* AI Assist icons next to the Send Email/Send SMS tabs -- only rendered
-     when aiAssistAvailable, click generates/regenerates straight into the
-     compose fields (no separate review card anymore). */
-  .compose-tab-group { display: inline-flex; align-items: center; gap: 2px; }
-  .ai-gen-btn { background: none; border: none; color: var(--pra-blue); cursor: pointer; padding: 4px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; }
-  .ai-gen-btn svg { width: 13px; height: 13px; }
-  .ai-gen-btn:hover { background: var(--pra-blue-dim); }
-  .ai-gen-btn:disabled { opacity: .4; cursor: default; }
-  .ai-gen-btn.loading svg { animation: ai-gen-spin 1s linear infinite; }
-  @keyframes ai-gen-spin { to { transform: rotate(360deg); } }
-  .ai-summary-panel { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: .85rem; line-height: 1.6; }
-  .ai-summary-row { margin-bottom: 10px; }
-  .ai-summary-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 2px; }
-  .ai-summary-takeover { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(255,159,10,.12); border: 1px solid rgba(255,159,10,.4); color: #ff9f0a; font-weight: 700; font-size: .82rem; }
-  /* Sender picker sits BESIDE the toggle pill, not inside it -- the pill's
-     own border/overflow:hidden is styling meant for its own buttons only,
-     nesting an unrelated <select> in there boxed-within-boxed and made it
-     look bulky/mismatched instead of like a second, equally compact
-     control on the same row. */
-  .compose-toolbar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; }
-  .compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
-  .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
-  .compose-channel-toggle button.active.reply-mode { background: rgba(57,255,20,0.12); color: var(--pra-green); }
-  .compose-row { display: flex; gap: 8px; flex: 1; min-height: 0; }
-  .compose-row #composeSendBtn { align-self: flex-end; }
-  #composeSendBtn.reply-mode { background: var(--pra-green); color: #06210a; }
-  .compose-row textarea { flex: 1; resize: vertical; min-height: 40px; }
-  .compose-quote-preview { border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
-  .compose-quote-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--pra-panel-2); font-size: .72rem; color: var(--pra-dim); }
-  .compose-quote-preview-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .compose-quote-preview-head button { flex-shrink: 0; background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .9rem; padding: 0 4px; line-height: 1; }
-  .compose-quote-preview-head button:hover { color: var(--pra-white); }
-  #composeQuoteFrame { display: block; width: 100%; height: 160px; border: none; background: #fff; }
-  .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
-  /* Shows who a reply sends as -- the sender is always the logged-in user
-     (see inbox_backend.js, not client-controlled), this is display-only so
-     teammates are visible but never look clickable. */
-  .compose-from-select { font-size: .78rem; padding: 5px 10px; max-width: 200px; }
-
-  /* Native date/time pickers render a black-on-black calendar icon on a
-     dark background otherwise -- color-scheme flips both to the light
-     variant so the icon and popover are visible (same fix as chat-app). */
-  #taskPanelDate, #taskPanelTime { color-scheme: dark; color: #fff; }
+  /* The conversation panel itself (chat-panel, chat-thread, bubbles,
+     email/note bubbles, track badges, compose bar, AI assist, task/note/
+     schedule popovers) now lives in crm-design-system.css, shared with
+     contact-detail.html via conversation-panel.js. Don't re-add page-local
+     copies here -- see that file's own header comment. */
 
   /* ── Chat sidebar: filter/sort row ── */
   .chat-sidebar-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; flex-shrink: 0; }
@@ -357,43 +246,6 @@
   .context-menu button { display: flex; align-items: center; width: 100%; padding: 8px 10px; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .83rem; text-align: left; border-radius: 5px; cursor: pointer; }
   .context-menu button:hover { background: rgba(255,255,255,0.06); }
   .context-menu button.danger { color: var(--pra-red); }
-
-  /* ── Chat panel header: status + tasks control ── */
-  .chat-panel-task-btn { flex-shrink: 0; position: relative; }
-  #chatScheduleBtn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 9px; }
-  #chatScheduleBtn svg { width: 15px; height: 15px; }
-  .schedule-panel-hint { font-size: .7rem; color: var(--pra-dim); margin: 2px 0 8px; }
-  .schedule-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); font-size: .78rem; }
-  .schedule-panel-row:last-child { border-bottom: none; }
-  .schedule-panel-row .schedule-panel-when { flex: 1; }
-  .schedule-panel-row .schedule-panel-when a { color: var(--pra-blue); text-decoration: none; }
-  .schedule-panel-row .schedule-panel-when a:hover { text-decoration: underline; }
-  .schedule-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
-  .schedule-panel-row button:hover { color: var(--pra-red); }
-  .chat-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
-  /* Deliberately NOT flex:1/min-width -- that stretched this to fill the
-     whole row width regardless of the status text length. Auto-width lets
-     it shrink-wrap like every other pill/badge in this app. */
-  .chat-panel-actions #chatStatusSelect { flex: 0 0 auto; width: auto; }
-  /* Anchored under the Tasks button, not a full modal -- lists existing
-     tasks (edit/delete) plus a quick-add form. Closes on click-out or
-     Cancel, never needs its own scroll to be usable on a phone screen. */
-  .task-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 400; width: 280px; max-width: 88vw; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 12px; }
-  .task-panel.open { display: block; }
-  .task-panel-list { max-height: 220px; overflow-y: auto; margin-bottom: 10px; }
-  .task-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); }
-  .task-panel-row:last-child { border-bottom: none; }
-  .task-panel-row input[type="text"] { flex: 1; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .82rem; padding: 2px 0; }
-  .task-panel-row input[type="text"]:focus { outline: none; border-bottom: 1px solid var(--pra-blue); }
-  .task-panel-row.done input[type="text"] { color: var(--pra-dim); text-decoration: line-through; }
-  .task-panel-row .task-panel-due { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
-  .task-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
-  .task-panel-row button:hover { color: var(--pra-red); }
-  .task-panel-add { display: flex; flex-direction: column; gap: 6px; }
-  .task-panel-add input { font-size: .82rem; padding: 6px 8px; }
-  .task-panel-add-row { display: flex; gap: 6px; }
-  .task-panel-add-row input[type="date"], .task-panel-add-row input[type="time"] { flex: 1; min-width: 0; }
-  .task-panel-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
 
   /* ── Contact details overlay (opened from the chat panel's name link) ── */
   .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); margin: 0 6px 6px 0; }
@@ -525,6 +377,7 @@
 </div>
 
 <div class="context-menu" id="convoContextMenu">
+  <div id="ctxSelectionCount" style="display:none;padding:4px 10px 6px;font-size:.72rem;color:var(--pra-dim);border-bottom:1px solid var(--pra-border);margin-bottom:4px"></div>
   <button type="button" id="ctxDoneBtn">Mark Done</button>
   <button type="button" id="ctxArchiveBtn">Archive</button>
   <button type="button" id="ctxBlacklistBtn">Blacklist</button>
@@ -596,6 +449,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/conversation-panel.js"></script>
 <script src="/inline-edit.js"></script>
 <script>
 function openModal(id) { document.getElementById(id).classList.add('show'); }
@@ -639,6 +493,24 @@ let composeView = 'compose', aiAssistAvailable = false; // composeView: 'compose
 let composeReplyTo = null; // set by an email bubble's Reply button; { subject, quotedHtml, quotedMeta } | null
 let currentUser = null, teamUsers = [];
 let convoFilter = 'unresponded', convoSort = 'newest', convoChannel = '', convoStatus = '', convoType = '', convoOwner = '', ctxMenuConvo = null, longPressTimer = null;
+// Multi-select -- ctrl/cmd+click toggles a row, shift+click selects the
+// range since the last-clicked row (selectAnchorKey), then right-click
+// opens the SAME context menu but acting on every selected row instead of
+// just one. touchSelectionActive is the mobile equivalent: a long-press
+// starts it (selecting that row and opening the menu, same as before),
+// and while it's on, a plain tap on another row toggles it into the
+// selection too (a touch has no ctrl/shift key to hold) instead of
+// opening that row's thread -- see wireConvoRow/openContextMenu.
+let selectedConvoKeys = new Set(), selectAnchorKey = null, touchSelectionActive = false;
+function toggleConvoSelection(key) { if (selectedConvoKeys.has(key)) selectedConvoKeys.delete(key); else selectedConvoKeys.add(key); }
+function selectRangeBetween(fromKey, toKey) {
+  const keys = conversations.map(c => c.key);
+  const i = keys.indexOf(fromKey), j = keys.indexOf(toKey);
+  if (i === -1 || j === -1) { selectedConvoKeys.add(toKey); return; }
+  const [lo, hi] = i < j ? [i, j] : [j, i];
+  for (let k = lo; k <= hi; k++) selectedConvoKeys.add(keys[k]);
+}
+function clearConvoSelection() { selectedConvoKeys.clear(); selectAnchorKey = null; touchSelectionActive = false; renderSidebar(); }
 // Pagination -- the sidebar only ever asks the server for CONVO_PAGE_SIZE
 // rows at a time (filtered/sorted server-side first, see inbox_backend.js)
 // instead of loading the entire conversation list up front; scrolling near
@@ -677,29 +549,12 @@ function avatarStyle(status, email) {
 }
 const PIN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 2.5a1.5 1.5 0 0 1 2.1 0l4.9 4.9a1.5 1.5 0 0 1 0 2.1l-2.1 2.1-1.4-1.4-3.5 3.5.5 4.6-1.6 1.6-4.2-4.2-5.4 5.4-1.1-1.1 5.4-5.4-4.2-4.2 1.6-1.6 4.6.5 3.5-3.5-1.4-1.4Z"/></svg>';
 const STAR_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.6 7.1.7-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.7z"/></svg>';
-// Four-point sparkle -- same "single path, fill:currentColor" icon style
-// as PIN_ICON/STAR_ICON above, used in place of a plain robot emoji for
-// the AI draft banner so it reads as part of this app's own icon set
-// rather than a generic OS emoji.
-const SPARKLE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c.6 5.4 2.2 7 7.6 7.6-5.4.6-7 2.2-7.6 7.6-.6-5.4-2.2-7-7.6-7.6C9.8 9 11.4 7.4 12 2Z"/><path d="M19 17c.25 1.9.85 2.5 2.75 2.75C19.85 20 19.25 20.6 19 22.5c-.25-1.9-.85-2.5-2.75-2.75C18.15 19.5 18.75 18.9 19 17Z"/></svg>';
-const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/></svg>';
-const CALENDAR_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-// Filled (not outline, like CALENDAR_ICON above) with a checkmark -- a
-// deliberately different shape, not just a different color, for the
-// sidebar's "has an upcoming booking" indicator (see convoRowHtml).
+// Filled (not outline) with a checkmark -- a deliberately different shape,
+// not just a different color, for the sidebar's "has an upcoming booking"
+// indicator (see convoRowHtml). SPARKLE_ICON/COPY_ICON/CALENDAR_ICON and
+// zoomLinkHtml() (the panel's own AI-draft/zoom/schedule icons) now live in
+// conversation-panel.js -- only this file's own sidebar-row icons stay here.
 const BOOKING_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3v4M16 3v4" stroke="var(--pra-black,#000)" stroke-width="1.8" stroke-linecap="round"/><path d="M7.5 13l2.7 2.7L16.5 9.5" stroke="var(--pra-black,#000)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
-// Always the LOGGED-IN user's own Zoom link, never the assigned coach's or
-// the contact's -- whoever's actually in the conversation is who'd be
-// running the call, so they need their own room link handy to paste in,
-// not someone else's (confirmed with Lee, not just a guess).
-// Link text is just "Zoom" (not the raw URL) -- these often carry long
-// ?pwd= query strings that would blow out the sub-line's width for no
-// benefit, since the point is a click-to-join/copy-to-share action, not
-// a number someone reads off and dials like the phone link next to it.
-function zoomLinkHtml() {
-  if (!currentUser?.zoomLink) return '';
-  return `<span class="chat-zoom-link"><a class="pra-tel-link" href="${escapeHtml(currentUser.zoomLink)}" target="_blank" rel="noopener noreferrer">Zoom</a><button type="button" class="zoom-copy-btn" id="chatZoomCopyBtn" title="Copy Zoom link" data-zoom-link="${escapeHtml(currentUser.zoomLink)}">${COPY_ICON}</button></span>`;
-}
 // WhatsApp-style read receipts, same as chat-app's: one grey check (sent),
 // two grey checks (delivered), two blue checks (read -- an email "opened"
 // event stands in for read, since SMS has no carrier-level read receipt).
@@ -1025,14 +880,9 @@ async function loadMoreConversations() {
 // `conversations` is always exactly the rows that belong on screen, in
 // order. This just turns that array into HTML; it never re-filters or
 // re-sorts it client-side.
-// Same badge markup as the contact overlay's renderOverlayOptOutBadges /
-// contact-detail.html's equivalent -- the chat panel didn't have this at
-// all before, unlike those other two contact views.
-function optOutBadgesHtml(contact) {
-  if (!contact) return '';
-  const badge = (label) => `<span class="pra-badge" style="background:#3a1414;color:#ff6b6b;border:1px solid #ff6b6b55">${label}</span>`;
-  return (contact.emailOptOut ? badge('EMAIL OPT-OUT') : '') + (contact.smsOptOut ? badge('SMS OPT-OUT') : '');
-}
+// optOutBadgesHtml (the chat panel's own opt-out badges) now lives in
+// conversation-panel.js -- see its own copy for the contact overlay's
+// separate renderOverlayOptOutBadges equivalent.
 // Same select + glow treatment as the chat panel's #chatStatusSelect
 // (avatarStyle/statusSelectWidthRule), just compact enough to sit in the
 // sidebar row next to the name -- lets a status get changed without
@@ -1073,7 +923,7 @@ function convoRowHtml(c) {
   const previewRaw = (c.lastPreview || '').replace(/\s*\(active\)\s*$/i, '');
   const previewText = escapeHtml(previewRaw.replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
   return `
-    <div class="convo-row${selectedConvo?.key === c.key ? ' selected' : ''}${c.pinned ? ' pinned' : ''}" data-convo="${c.key}">
+    <div class="convo-row${selectedConvo?.key === c.key ? ' selected' : ''}${c.pinned ? ' pinned' : ''}${selectedConvoKeys.has(c.key) ? ' multi-selected' : ''}" data-convo="${c.key}">
       <div class="pra-avatar convo-avatar${hasUnread ? ' has-unread' : ''}" style="${avatarStyle(c.contact?.status, c.contact?.email)}">${initials(c.displayName)}</div>
       <div class="convo-meta">
         <div class="convo-top">
@@ -1097,20 +947,76 @@ function convoRowHtml(c) {
   `;
 }
 function wireConvoRow(row) {
-  row.onclick = (e) => {
-    if (row.dataset.longPress) { delete row.dataset.longPress; return; }
-    if (e.target.closest('[data-add-contact], [data-pin], [data-star]')) return;
-    const c = conversations.find(x => x.key === row.dataset.convo);
-    if (c.contactId) selectConversation(c);
-  };
   const c = () => conversations.find(x => x.key === row.dataset.convo);
-  row.addEventListener('contextmenu', (e) => { e.preventDefault(); openContextMenu(c(), e.clientX, e.clientY); });
+  row.onclick = (e) => {
+    if (row.dataset.longPress) { delete row.dataset.longPress; return; } // tail end of a long-press or swipe touch sequence
+    if (e.target.closest('[data-add-contact], [data-pin], [data-star]')) return;
+    const convo = c();
+    if (!convo) return;
+    if (e.shiftKey && selectAnchorKey) { selectRangeBetween(selectAnchorKey, convo.key); selectAnchorKey = convo.key; renderSidebar(); return; }
+    if (e.ctrlKey || e.metaKey) { toggleConvoSelection(convo.key); selectAnchorKey = convo.key; renderSidebar(); return; }
+    // Already mid multi-select (desktop ctrl-click session, or mobile
+    // long-press) -- a plain tap/click on another row extends it instead
+    // of opening that row's thread. Ends the session once nothing's left.
+    if (selectedConvoKeys.size) {
+      toggleConvoSelection(convo.key); selectAnchorKey = convo.key;
+      if (!selectedConvoKeys.size) touchSelectionActive = false;
+      renderSidebar();
+      return;
+    }
+    selectAnchorKey = convo.key; // so a later shift-click anchors from "the last row I actually looked at", not a stale ctrl/shift pick
+    if (convo.contactId) selectConversation(convo);
+  };
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); openContextMenu(c(), e.clientX, e.clientY, false); });
+  // Row-local (not shared across rows) swipe-tracking state -- a plain
+  // horizontal flick marks this ONE conversation done, Tinder-card style,
+  // as an alternative to opening the long-press menu for a single-row
+  // action. Only engages once movement is clearly horizontal (not a
+  // vertical scroll) and cancels the long-press timer the moment it does.
+  let swipeStartX = 0, swipeStartY = 0, swipeDragging = false, swipeCommitted = false;
   row.addEventListener('touchstart', (e) => {
+    if (touchSelectionActive) return; // list-level drag-select owns touches while a multi-select session is active
     const touch = e.touches[0];
-    longPressTimer = setTimeout(() => { row.dataset.longPress = '1'; openContextMenu(c(), touch.clientX, touch.clientY); }, 500);
+    swipeStartX = touch.clientX; swipeStartY = touch.clientY; swipeDragging = false; swipeCommitted = false;
+    longPressTimer = setTimeout(() => {
+      row.dataset.longPress = '1';
+      const additive = touchSelectionActive;
+      touchSelectionActive = true;
+      openContextMenu(c(), touch.clientX, touch.clientY, additive);
+    }, 500);
   }, { passive: true });
-  row.addEventListener('touchend', () => clearTimeout(longPressTimer));
-  row.addEventListener('touchmove', () => clearTimeout(longPressTimer));
+  row.addEventListener('touchmove', (e) => {
+    if (touchSelectionActive) { clearTimeout(longPressTimer); return; }
+    const touch = e.touches[0];
+    const dx = touch.clientX - swipeStartX, dy = touch.clientY - swipeStartY;
+    if (!swipeCommitted) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.3) { swipeCommitted = true; swipeDragging = true; clearTimeout(longPressTimer); row.classList.add('swiping'); }
+      else if (Math.abs(dy) > 10) { clearTimeout(longPressTimer); return; } // reads as a scroll, not a swipe -- let it scroll
+      else return; // not enough movement yet to tell which this is
+    }
+    if (!swipeDragging) return;
+    e.preventDefault();
+    row.style.transform = `translateX(${dx}px)`;
+    row.style.opacity = String(Math.max(0.15, 1 - Math.abs(dx) / 220));
+    row.dataset.swipeDx = String(dx);
+  }, { passive: false });
+  row.addEventListener('touchend', () => {
+    clearTimeout(longPressTimer);
+    if (swipeDragging) {
+      row.classList.remove('swiping');
+      const dx = Number(row.dataset.swipeDx || 0);
+      if (Math.abs(dx) > 90) {
+        row.style.transform = `translateX(${dx > 0 ? '120%' : '-120%'})`;
+        row.style.opacity = '0';
+        const convo = c();
+        setTimeout(() => { if (convo?.contactId) swipeMarkDone(convo); }, 180);
+      } else {
+        row.style.transform = ''; row.style.opacity = '';
+      }
+      row.dataset.longPress = '1'; // this touch sequence's trailing click shouldn't open the thread
+    }
+    swipeDragging = false; swipeCommitted = false;
+  });
   row.querySelector('[data-add-contact]')?.addEventListener('click', (e) => { e.stopPropagation(); openConfirmPotential(c()); });
   const typeBadge = row.querySelector('[data-type-badge]');
   if (typeBadge && row.dataset.convo) {
@@ -1170,6 +1076,27 @@ function wireConvoRow(row) {
     btn.dataset.starOn = starred ? '0' : '1';
   });
 }
+// A completed swipe's mark-done call -- same optimistic-update contract as
+// every other Mark Done path (ctxDoneBtn/chatMarkDoneBtn) so it stays in
+// sync with the same recentlyConfirmedDone protection against a slow
+// server recompute un-marking it again (see that Map's own comment). The
+// row's own removal animation already ran before this fires; this only
+// updates state and refreshes whatever else needs it (the open thread's
+// own Mark Done button, if this happens to be the open conversation).
+async function swipeMarkDone(convo) {
+  await fetch(`/api/inbox/conversations/${convo.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
+  convo.done = true; convo.unreadCount = 0;
+  recentlyConfirmedDone.set(convo.contactId, Date.now());
+  if (convoFilter === 'unresponded') conversations = conversations.filter(x => x.key !== convo.key);
+  showToast('Marked done');
+  renderSidebar();
+  if (selectedConvo?.contactId === convo.contactId) {
+    selectedConvo.done = true;
+    const btn = document.getElementById('chatMarkDoneBtn');
+    if (btn) btn.textContent = 'Mark Not Done';
+  }
+  setTimeout(loadConversations, 5500, true);
+}
 // Updates the in-memory row (not just the <select>'s own value, which
 // already reflects the change natively) so a later re-render of the same
 // list -- filter/sort change, scroll-triggered append -- doesn't show the
@@ -1215,6 +1142,24 @@ document.getElementById('chatSidebarList').addEventListener('scroll', (e) => {
   const el = e.target;
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 150) loadMoreConversations();
 });
+// Mobile range-select by dragging -- "long-press one row, then (with or
+// without lifting your finger in between) slide across others" selects
+// everything the finger passes over, the touch equivalent of shift-click.
+// Only engages once touchSelectionActive is already on (a long-press has
+// happened at least once); a plain scroll swipe when nothing's selected
+// is completely unaffected.
+let touchDragLastKey = null;
+document.getElementById('chatSidebarList').addEventListener('touchstart', () => { touchDragLastKey = null; }, { passive: true });
+document.getElementById('chatSidebarList').addEventListener('touchmove', (e) => {
+  if (!touchSelectionActive) return;
+  const touch = e.touches[0];
+  const row = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.convo-row');
+  if (!row || row.dataset.convo === touchDragLastKey) return;
+  e.preventDefault(); // suppress scrolling while actively sweeping a selection
+  if (touchDragLastKey) selectRangeBetween(touchDragLastKey, row.dataset.convo); else selectedConvoKeys.add(row.dataset.convo);
+  touchDragLastKey = row.dataset.convo;
+  renderSidebar();
+}, { passive: false });
 document.getElementById('convoSearchInput').addEventListener('input', (e) => {
   convoSearchQuery = e.target.value;
   clearTimeout(convoSearchDebounce);
@@ -1228,15 +1173,32 @@ document.getElementById('convoTypeSelect').addEventListener('change', (e) => { c
 document.getElementById('convoOwnerSelect').addEventListener('change', (e) => { convoOwner = e.target.value; loadConversations(); });
 
 // ── Chat: right-click (desktop) / long-press (mobile) row menu ──────────
-function openContextMenu(c, x, y) {
+function openContextMenu(c, x, y, additive) {
   if (!c) return;
-  ctxMenuConvo = c;
+  // A right-click/long-press on a row already IN the current selection
+  // acts on the whole selection; on a row OUTSIDE it, `additive` decides
+  // whether that replaces the selection (desktop right-click convention)
+  // or adds to it (mobile long-press-to-extend, see wireConvoRow).
+  if (!selectedConvoKeys.has(c.key)) {
+    if (additive) selectedConvoKeys.add(c.key);
+    else { selectedConvoKeys.clear(); selectedConvoKeys.add(c.key); }
+  }
+  selectAnchorKey = c.key;
+  ctxMenuConvo = c; // Delete stays single-row -- see its own button below
+  const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(Boolean);
+  const anyContact = rows.some(r => r.contactId);
   const menu = document.getElementById('convoContextMenu');
-  document.getElementById('ctxDoneBtn').textContent = c.done ? 'Mark Not Done' : 'Mark Done';
-  document.getElementById('ctxDoneBtn').style.display = c.contactId ? '' : 'none';
-  document.getElementById('ctxArchiveBtn').textContent = c.archived ? 'Unarchive' : 'Archive';
-  document.getElementById('ctxArchiveBtn').style.display = c.contactId ? '' : 'none';
-  document.getElementById('ctxBlacklistBtn').style.display = c.contactId ? '' : 'none';
+  const countEl = document.getElementById('ctxSelectionCount');
+  countEl.style.display = rows.length > 1 ? '' : 'none';
+  countEl.textContent = `${rows.length} selected`;
+  document.getElementById('ctxDoneBtn').textContent = rows.every(r => r.done) ? 'Mark Not Done' : 'Mark Done';
+  document.getElementById('ctxDoneBtn').style.display = anyContact ? '' : 'none';
+  document.getElementById('ctxArchiveBtn').textContent = rows.every(r => r.archived) ? 'Unarchive' : 'Archive';
+  document.getElementById('ctxArchiveBtn').style.display = anyContact ? '' : 'none';
+  document.getElementById('ctxBlacklistBtn').style.display = anyContact ? '' : 'none';
+  // No safe bulk-confirm UX for a permanent delete yet -- stays single-row.
+  document.getElementById('ctxDeleteBtn').style.display = rows.length > 1 ? 'none' : '';
+  renderSidebar();
   menu.classList.add('show');
   // Clamp so the menu never renders off the right/bottom edge of the viewport.
   const rect = menu.getBoundingClientRect();
@@ -1244,59 +1206,72 @@ function openContextMenu(c, x, y) {
   menu.style.top = Math.min(y, window.innerHeight - rect.height - 8) + 'px';
 }
 function closeContextMenu() { document.getElementById('convoContextMenu').classList.remove('show'); }
-document.addEventListener('click', (e) => { if (!e.target.closest('#convoContextMenu')) closeContextMenu(); });
-document.addEventListener('contextmenu', (e) => { if (!e.target.closest('.convo-row')) closeContextMenu(); });
-document.getElementById('ctxDoneBtn').onclick = async () => {
-  const c = ctxMenuConvo;
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#convoContextMenu')) return;
+  // A click ON a row is handled entirely by that row's own onclick (open a
+  // thread, ctrl/shift-toggle into the selection, or -- on mobile, mid
+  // long-press session -- extend it, see wireConvoRow). It must never ALSO
+  // be treated as "clicked away, dismiss everything" here, or a plain
+  // ctrl/shift-click's OWN selection would get wiped the instant this same
+  // click bubbles up to document. A mobile selection session additionally
+  // needs the menu to stay open while it's being built.
+  if (e.target.closest('.convo-row')) { if (!touchSelectionActive) closeContextMenu(); return; }
   closeContextMenu();
-  if (!c?.contactId) return;
-  const nextDone = !c.done;
-  await fetch(`/api/inbox/conversations/${c.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) });
-  // Same optimistic update as the chat panel's own Mark Done button (see
-  // renderThread) -- without it this just called loadConversations()
-  // immediately, which almost always lost the race against the server's
-  // own batched unread_count recompute (up to 5s later, see message_index.js's
-  // scheduleConversationFlush) and re-showed the row as still unresponded,
-  // making the click look like it did nothing.
-  c.done = nextDone;
-  if (nextDone) { c.unreadCount = 0; recentlyConfirmedDone.set(c.contactId, Date.now()); } else recentlyConfirmedDone.delete(c.contactId);
-  if (convoFilter === 'unresponded' && c.unreadCount === 0) {
-    conversations = conversations.filter(x => x.key !== c.key);
+  if (selectedConvoKeys.size) clearConvoSelection();
+});
+document.addEventListener('contextmenu', (e) => { if (!e.target.closest('.convo-row')) closeContextMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && selectedConvoKeys.size) { closeContextMenu(); clearConvoSelection(); } });
+// Every bulk action below runs the exact same per-row optimistic-update +
+// recentlyConfirmedDone tracking the single-row handlers always used (see
+// their own comments) -- just looped over the full selection instead of
+// one ctxMenuConvo, and fired in parallel rather than one at a time.
+document.getElementById('ctxDoneBtn').onclick = async () => {
+  const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
+  closeContextMenu();
+  if (!rows.length) { clearConvoSelection(); return; }
+  const nextDone = !rows.every(r => r.done);
+  await Promise.all(rows.map(r => fetch(`/api/inbox/conversations/${r.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) })));
+  for (const r of rows) {
+    r.done = nextDone;
+    if (nextDone) { r.unreadCount = 0; recentlyConfirmedDone.set(r.contactId, Date.now()); } else recentlyConfirmedDone.delete(r.contactId);
+    if (selectedConvo?.contactId === r.contactId) {
+      selectedConvo.done = nextDone;
+      const btn = document.getElementById('chatMarkDoneBtn');
+      if (btn) btn.textContent = nextDone ? 'Mark Not Done' : 'Mark Done';
+    }
   }
-  showToast(nextDone ? 'Marked done' : 'Marked not done');
-  renderSidebar();
-  if (selectedConvo?.contactId === c.contactId) {
-    selectedConvo.done = nextDone;
-    const btn = document.getElementById('chatMarkDoneBtn');
-    if (btn) btn.textContent = nextDone ? 'Mark Not Done' : 'Mark Done';
-  }
+  if (convoFilter === 'unresponded' && nextDone) conversations = conversations.filter(x => !rows.some(r => r.key === x.key));
+  showToast(rows.length > 1 ? `Marked ${rows.length} ${nextDone ? 'done' : 'not done'}` : (nextDone ? 'Marked done' : 'Marked not done'));
+  clearConvoSelection();
   setTimeout(loadConversations, 5500, true);
 };
 document.getElementById('ctxArchiveBtn').onclick = async () => {
-  const c = ctxMenuConvo;
+  const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
   closeContextMenu();
-  if (!c?.contactId) return;
-  const nextArchived = !c.archived;
-  await fetch(`/api/inbox/conversations/${c.contactId}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: nextArchived }) });
-  c.archived = nextArchived;
-  showToast(nextArchived ? 'Archived' : 'Unarchived');
+  if (!rows.length) { clearConvoSelection(); return; }
+  const nextArchived = !rows.every(r => r.archived);
+  await Promise.all(rows.map(r => fetch(`/api/inbox/conversations/${r.contactId}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: nextArchived }) })));
+  for (const r of rows) r.archived = nextArchived;
+  showToast(rows.length > 1 ? `${nextArchived ? 'Archived' : 'Unarchived'} ${rows.length}` : (nextArchived ? 'Archived' : 'Unarchived'));
   // Every bucket except the dedicated Archived tab excludes archived rows
   // outright (see sqlite_inbox.js's queryConversationsSqlite) -- drop it
   // the instant it no longer belongs in whichever tab is open instead of
   // waiting on loadConversations()'s own round trip to notice.
-  if (nextArchived !== (convoFilter === 'archived')) dropConvoFromSidebar(c.key);
+  if (nextArchived !== (convoFilter === 'archived')) rows.forEach(r => dropConvoFromSidebar(r.key));
   else renderSidebar();
+  clearConvoSelection();
   loadConversations();
 };
 document.getElementById('ctxBlacklistBtn').onclick = async () => {
-  const c = ctxMenuConvo;
+  const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
   closeContextMenu();
-  if (!c?.contactId) return;
-  await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) });
-  showToast('Marked as Blacklist');
+  if (!rows.length) { clearConvoSelection(); return; }
+  await Promise.all(rows.map(r => fetch('/api/contacts/' + r.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) })));
+  showToast(rows.length > 1 ? `Marked ${rows.length} as Blacklist` : 'Marked as Blacklist');
   // Blacklist sets the same hidden=1 flag as STOP -- if the Hidden tab is
   // what's open, this row still belongs there, just don't drop it.
-  if (convoFilter !== 'hidden') dropConvoFromSidebar(c.key);
+  if (convoFilter !== 'hidden') rows.forEach(r => dropConvoFromSidebar(r.key));
+  clearConvoSelection();
   loadRefs();
   loadConversations();
 };
@@ -1320,224 +1295,10 @@ document.getElementById('confirmDeleteConvoBtn').onclick = async () => {
   loadConversations();
 };
 
-// ── Chat panel: contact-bound Tasks panel ────────────────────────────────
-// Anchored dropdown (not a modal) so it never needs its own scroll to
-// reach the "Add" button on a phone screen -- lists existing tasks with
-// inline edit (click the title) / delete, plus a quick-add form. Reuses
-// threadItems (already loaded by loadThread() for this contact) instead
-// of a separate fetch.
-// Compact date -- fmtDate's toLocaleString() always includes a time, which
-// reads as noise ("12:00:00 AM") for a task/note that was only ever given
-// a date. Only shows a time when one was actually set (non-midnight).
-function fmtDueCompact(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const dateStr = d.toLocaleDateString();
-  return (d.getHours() || d.getMinutes()) ? `${dateStr} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : dateStr;
-}
-function taskPanelRowHtml(t) {
-  return `
-    <div class="task-panel-row${t.done ? ' done' : ''}" data-task-row="${t.id}">
-      <button type="button" data-task-delete="${t.id}" title="Delete">&times;</button>
-      ${t.dueAt ? `<span class="task-panel-due">${fmtDueCompact(t.dueAt)}</span>` : '<span class="task-panel-due">No date</span>'}
-      <input type="text" data-task-title="${t.id}" value="${escapeHtml(t.title)}"/>
-    </div>
-  `;
-}
-function renderTaskPanel() {
-  const list = document.getElementById('taskPanelList');
-  const tasks = threadItems.filter(i => i.itemType === 'task').sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
-  list.innerHTML = tasks.length ? tasks.map(taskPanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No tasks yet.</div>';
-  list.querySelectorAll('[data-task-title]').forEach(inp => {
-    const commit = async () => {
-      const id = inp.dataset.taskTitle;
-      const title = inp.value.trim();
-      if (!title) { inp.value = threadItems.find(i => i.id === id)?.title || ''; return; }
-      await fetch('/api/tasks/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) });
-      const t = threadItems.find(i => i.id === id); if (t) t.title = title;
-    };
-    inp.addEventListener('blur', commit);
-    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
-  });
-  list.querySelectorAll('[data-task-delete]').forEach(btn => btn.onclick = async () => {
-    const id = btn.dataset.taskDelete;
-    await fetch('/api/tasks/' + id, { method: 'DELETE' });
-    threadItems = threadItems.filter(i => i.id !== id);
-    renderTaskPanel();
-  });
-}
-function toggleTaskPanel(contactId) {
-  const panel = document.getElementById('taskPanel');
-  const opening = !panel.classList.contains('open');
-  panel.classList.toggle('open', opening);
-  panel.dataset.contactId = contactId || '';
-  if (opening) {
-    document.getElementById('taskPanelTitle').value = '';
-    document.getElementById('taskPanelDate').value = '';
-    document.getElementById('taskPanelTime').value = '';
-    renderTaskPanel();
-  }
-}
-async function submitNewTask() {
-  const title = document.getElementById('taskPanelTitle').value.trim();
-  if (!title) { showToast('Title is required', true); return; }
-  const contactId = document.getElementById('taskPanel').dataset.contactId;
-  const dateVal = document.getElementById('taskPanelDate').value;
-  const timeVal = document.getElementById('taskPanelTime').value;
-  const dueAt = dateVal ? new Date(`${dateVal}T${timeVal || '00:00'}`).toISOString() : null;
-  const r = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'task', contactId, title, dueAt }) });
-  const { task } = await r.json();
-  threadItems.push({ ...task, itemType: 'task', at: task.dueAt || task.createdAt });
-  document.getElementById('taskPanelTitle').value = '';
-  document.getElementById('taskPanelDate').value = '';
-  document.getElementById('taskPanelTime').value = '';
-  renderTaskPanel();
-}
-// ── Chat panel: contact-bound Notes panel ────────────────────────────────
-// Same shape as the Tasks panel above, minus dueAt/done -- a note isn't
-// something you complete, just something you write down and can edit later.
-function notePanelRowHtml(n) {
-  return `
-    <div class="task-panel-row" data-note-row="${n.id}">
-      <button type="button" data-note-delete="${n.id}" title="Delete">&times;</button>
-      <span class="task-panel-due">${fmtDueCompact(n.at)}</span>
-      <input type="text" data-note-text="${n.id}" value="${escapeHtml(n.text)}"/>
-    </div>
-  `;
-}
-function renderNotePanel() {
-  const list = document.getElementById('notePanelList');
-  const notes = threadItems.filter(i => i.itemType === 'note').sort((a, b) => new Date(b.at) - new Date(a.at));
-  list.innerHTML = notes.length ? notes.map(notePanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No notes yet.</div>';
-  list.querySelectorAll('[data-note-text]').forEach(inp => {
-    const commit = async () => {
-      const id = inp.dataset.noteText;
-      const text = inp.value.trim();
-      if (!text) { inp.value = threadItems.find(i => i.id === id)?.text || ''; return; }
-      await fetch('/api/notes/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
-      const n = threadItems.find(i => i.id === id); if (n) n.text = text;
-    };
-    inp.addEventListener('blur', commit);
-    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
-  });
-  list.querySelectorAll('[data-note-delete]').forEach(btn => btn.onclick = async () => {
-    const id = btn.dataset.noteDelete;
-    await fetch('/api/notes/' + id, { method: 'DELETE' });
-    threadItems = threadItems.filter(i => i.id !== id);
-    renderNotePanel();
-  });
-}
-function toggleNotePanel(contactId) {
-  const panel = document.getElementById('notePanel');
-  const opening = !panel.classList.contains('open');
-  panel.classList.toggle('open', opening);
-  panel.dataset.contactId = contactId || '';
-  if (opening) {
-    document.getElementById('notePanelText').value = '';
-    renderNotePanel();
-  }
-}
-async function submitNewNote() {
-  const text = document.getElementById('notePanelText').value.trim();
-  if (!text) { showToast('Note text is required', true); return; }
-  const contactId = document.getElementById('notePanel').dataset.contactId;
-  const r = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId, text }) });
-  const { note } = await r.json();
-  threadItems.push({ ...note, itemType: 'note', at: note.createdAt });
-  document.getElementById('notePanelText').value = '';
-  renderNotePanel();
-}
-// ── Chat panel: Schedule-a-meeting popover ──────────────────────────────
-// Same toggle-popover shell as Tasks/Notes above, but meetings live in
-// their own file/endpoint (meetings_backend.js), not the tasks/notes
-// merge inbox_backend.js already returns off /api/inbox/contact/:id -- so
-// this panel does its own fetch on open rather than filtering threadItems.
-// The "scheduled" confirmation itself still shows up as a bubble in the
-// thread for free, since creating a meeting also logs a message-log entry
-// (channel "meeting") the normal contact-activity fetch already picks up.
-function schedulePanelRowHtml(m) {
-  const when = new Date(m.startISO).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-  return `
-    <div class="schedule-panel-row" data-meeting-row="${m.id}">
-      <button type="button" data-meeting-cancel="${m.id}" title="Cancel meeting">&times;</button>
-      <span class="schedule-panel-when">${escapeHtml(m.title)}<br>${when} · ${m.durationMinutes} min${m.calendarEventLink ? ` · <a href="${escapeHtml(m.calendarEventLink)}" target="_blank" rel="noopener noreferrer">View</a>` : ''}</span>
-    </div>
-  `;
-}
-async function renderSchedulePanel(contactId) {
-  const list = document.getElementById('schedulePanelList');
-  if (!contactId) { list.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Match this conversation to a contact first.</div>'; return; }
-  list.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Loading…</div>';
-  const r = await fetch('/api/meetings?contactId=' + encodeURIComponent(contactId));
-  const { meetings } = r.ok ? await r.json() : { meetings: [] };
-  const upcoming = (meetings || []).filter(m => m.status === 'scheduled' && new Date(m.startISO).getTime() > Date.now());
-  list.innerHTML = upcoming.length ? upcoming.map(schedulePanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No upcoming meetings.</div>';
-  list.querySelectorAll('[data-meeting-cancel]').forEach(btn => btn.onclick = async () => {
-    if (!confirm('Cancel this meeting?')) return;
-    await fetch('/api/meetings/' + btn.dataset.meetingCancel, { method: 'DELETE' });
-    showToast('Meeting cancelled');
-    renderSchedulePanel(contactId);
-    if (selectedConvo?.contactId === contactId) selectConversation(selectedConvo);
-    loadConversations();
-  });
-}
-function toggleSchedulePanel(contactId) {
-  const panel = document.getElementById('schedulePanel');
-  const opening = !panel.classList.contains('open');
-  panel.classList.toggle('open', opening);
-  panel.dataset.contactId = contactId || '';
-  if (opening) {
-    document.getElementById('schedulePanelTitle').value = '';
-    document.getElementById('schedulePanelDate').value = '';
-    document.getElementById('schedulePanelTime').value = '';
-    document.getElementById('schedulePanelDuration').value = '30';
-    renderSchedulePanel(contactId);
-  }
-}
-async function submitNewMeeting() {
-  const contactId = document.getElementById('schedulePanel').dataset.contactId;
-  if (!contactId) { showToast('Match this conversation to a contact first', true); return; }
-  const dateVal = document.getElementById('schedulePanelDate').value;
-  const timeVal = document.getElementById('schedulePanelTime').value;
-  if (!dateVal || !timeVal) { showToast('Pick a date and time', true); return; }
-  const startISO = new Date(`${dateVal}T${timeVal}`).toISOString();
-  const durationMinutes = Number(document.getElementById('schedulePanelDuration').value);
-  const title = document.getElementById('schedulePanelTitle').value.trim();
-  const btn = document.getElementById('schedulePanelAddBtn');
-  btn.disabled = true; btn.textContent = 'Scheduling…';
-  const r = await fetch('/api/meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId, startISO, durationMinutes, title: title || undefined }) });
-  const d = await r.json();
-  btn.disabled = false; btn.textContent = 'Schedule';
-  if (!r.ok) { showToast(d.error || 'Could not schedule meeting', true); return; }
-  showToast('Meeting scheduled');
-  document.getElementById('schedulePanelTitle').value = '';
-  document.getElementById('schedulePanelDate').value = '';
-  document.getElementById('schedulePanelTime').value = '';
-  renderSchedulePanel(contactId);
-  if (selectedConvo?.contactId === contactId) selectConversation(selectedConvo);
-  loadConversations();
-}
-// Delegated (not a direct getElementById().onclick) since both panels' DOM
-// is recreated every time renderThread() re-renders the chat panel header
-// -- a direct binding would go stale the moment a new conversation opens.
-// Same listener also handles click-out-to-close for whichever panel is
-// open: clicks on a panel itself or its own trigger button are ignored
-// (the trigger has its own toggle handler, which would otherwise
-// immediately re-close what it just opened).
-document.addEventListener('click', (e) => {
-  if (e.target.id === 'taskPanelCancelBtn') { toggleTaskPanel(null); return; }
-  if (e.target.id === 'taskPanelAddBtn') { submitNewTask(); return; }
-  if (e.target.id === 'notePanelCancelBtn') { toggleNotePanel(null); return; }
-  if (e.target.id === 'notePanelAddBtn') { submitNewNote(); return; }
-  if (e.target.id === 'schedulePanelCancelBtn') { toggleSchedulePanel(null); return; }
-  if (e.target.id === 'schedulePanelAddBtn') { submitNewMeeting(); return; }
-  const taskPanel = document.getElementById('taskPanel');
-  if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') toggleTaskPanel(null);
-  const notePanel = document.getElementById('notePanel');
-  if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') toggleNotePanel(null);
-  const schedulePanel = document.getElementById('schedulePanel');
-  if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) toggleSchedulePanel(null);
-});
+// Task/Note/Schedule popovers (taskPanelRowHtml..submitNewMeeting, their
+// shared delegated click handler, and fmtDueCompact) now live in
+// conversation-panel.js, wired to whichever contact the panel currently
+// shows -- see that file's own header comment.
 function openConfirmPotential(c) {
   document.getElementById('confirmPotentialFrom').textContent = `From: ${c.displayName}`;
   document.getElementById('confirmFirst').value = '';
