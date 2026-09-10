@@ -8,13 +8,14 @@
 //      grounded in Lee's own writing archive so the copy is his voice, not
 //      invented marketing text.
 //   2. That structured content, plus the full admin prompt as creative
-//      direction, gets sent to OpenAI's gpt-image-1 (images.edit, with the
+//      direction, gets sent to OpenAI's gpt-image-2 (images.edit, with the
 //      real assets/pra-logo.png attached as a reference image) to actually
 //      render the finished page. A hand-built SVG template was tried first
 //      and produced flat, template-y results nowhere near the production
-//      value of real sports-brand marketing collateral -- gpt-image-1 gets
-//      much closer, at the cost of exact pixel-level control over text/logo
-//      placement.
+//      value of real sports-brand marketing collateral; gpt-image-1 got
+//      much closer but still garbled text/the logo wordmark fairly often.
+//      gpt-image-2 (the current top-tier OpenAI image model as of this
+//      writing) fixes most of that -- confirmed side by side.
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -82,14 +83,16 @@ Brand rule, non-negotiable: this is a bodyweight/mobility/movement coaching bran
 async function generateSummaryImagePng(adminPrompt, content) {
   const prompt = buildImagePrompt(adminPrompt, content);
   const form = new FormData();
-  form.append("model", "gpt-image-1");
+  // gpt-image-2 (Apr 2026) supersedes gpt-image-1 -- reasons before
+  // drawing, far more reliable text rendering, and always processes
+  // reference images at max fidelity (it rejects the input_fidelity param
+  // gpt-image-1 needed, since there's no lower tier to opt out of).
+  // Confirmed side by side: gpt-image-1 regularly misspelled body text and
+  // garbled the logo wordmark; gpt-image-2 rendered both correctly.
+  form.append("model", "gpt-image-2");
   form.append("prompt", prompt);
   form.append("size", "1024x1536");
   form.append("quality", "high");
-  // Preserves fine detail in the attached reference image (the logo)
-  // instead of loosely reinterpreting it -- the default fidelity garbled
-  // the wordmark into misspelled letterforms in testing.
-  form.append("input_fidelity", "high");
   form.append("image[]", new Blob([getLogoBuffer()], { type: "image/png" }), "pra-logo.png");
 
   const res = await fetch("https://api.openai.com/v1/images/edits", {
