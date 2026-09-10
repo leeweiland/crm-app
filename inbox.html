@@ -1092,8 +1092,7 @@ async function swipeMarkDone(convo) {
   renderSidebar();
   if (selectedConvo?.contactId === convo.contactId) {
     selectedConvo.done = true;
-    const btn = document.getElementById('chatMarkDoneBtn');
-    if (btn) btn.textContent = 'Mark Not Done';
+    chatPanelInstance?.handleRemoteUpdate({ type: 'done', contactId: convo.contactId, done: true });
   }
   setTimeout(loadConversations, 5500, true);
 }
@@ -1236,8 +1235,7 @@ document.getElementById('ctxDoneBtn').onclick = async () => {
     if (nextDone) { r.unreadCount = 0; recentlyConfirmedDone.set(r.contactId, Date.now()); } else recentlyConfirmedDone.delete(r.contactId);
     if (selectedConvo?.contactId === r.contactId) {
       selectedConvo.done = nextDone;
-      const btn = document.getElementById('chatMarkDoneBtn');
-      if (btn) btn.textContent = nextDone ? 'Mark Not Done' : 'Mark Done';
+      chatPanelInstance?.handleRemoteUpdate({ type: 'done', contactId: r.contactId, done: nextDone });
     }
   }
   if (convoFilter === 'unresponded' && nextDone) conversations = conversations.filter(x => !rows.some(r => r.key === x.key));
@@ -1321,573 +1319,84 @@ document.getElementById('saveConfirmBtn').onclick = async () => {
 };
 
 // ── Chat: thread panel ────────────────────────────────────────────────────
-// "Coach Lee <lee@pacificrimathletics.com>" -> "lee@pacificrimathletics.com"
-// -- item.from is a raw header string for Gmail-captured sends (gmail_
-// backend.js) but a plain address for SES sends (email_backend.js), same
-// two shapes that server-side extractEmailAddress already handles.
-function extractEmailAddr(raw) {
-  const m = String(raw || '').match(/<([^>]+)>/);
-  return (m ? m[1] : raw || '').trim();
-}
-function emailBubbleHtml(item, idx) {
-  const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
-  // A click can't happen without an open first -- pixel-based open tracking
-  // alone is unreliable (many mail clients block the tracking image), so a
-  // recorded click counts as an open too, same convention used everywhere
-  // else opened/clicked stats are computed (see message_index.js).
-  const opened = (item.statusHistory || []).find(h => h.status === 'opened') || clicked;
-  return `
-    <div class="bubble-row ${item.direction}">
-      <div class="email-bubble" data-email-toggle="${idx}">
-        <div class="email-bubble-head">
-          <span class="email-bubble-icon">📧</span>
-          <span class="email-bubble-subject">${escapeHtml(item.subject || '(no subject)')}</span>
-          ${item.from ? `<span class="email-bubble-from">${escapeHtml(item.direction === 'outbound' ? 'From' : 'To')}: ${escapeHtml(extractEmailAddr(item.direction === 'outbound' ? item.from : item.to))}</span>` : ''}
-          ${item.direction !== 'outbound' ? `<button type="button" class="email-bubble-reply-btn" data-reply-idx="${idx}" title="Reply">↩ Reply</button>` : ''}
-        </div>
-        <div class="email-bubble-preview">${escapeHtml((item.bodyPreview || '').replace(/<[^>]+>/g, ' ')).trim()}</div>
-        <!-- sandbox="" (no allow-* tokens) -- item.body is a real sender's
-             actual email HTML now (see gmail_backend.js's extractBody:
-             prefers the HTML part over a flattened plain-text one for
-             proper formatting), i.e. genuinely untrusted third-party
-             markup, not something this app authored. The empty sandbox
-             blocks script execution/forms/top-navigation/popups while
-             still rendering visual HTML fine (text, images, inline
-             styles) -- everything an email preview actually needs. -->
-        <div class="email-bubble-body"><iframe data-src="${idx}" sandbox=""></iframe></div>
-        <div class="email-bubble-meta">
-          <span>${fmtDate(item.at)}</span>
-          <span>${item.status || ''}</span>
-          ${item.direction === 'outbound' ? `<span class="track-badge${opened ? ' on' : ''}">${opened ? 'Opened' : 'Not opened'}</span><span class="track-badge${clicked ? ' on' : ''}">${clicked ? 'Clicked' : 'Not clicked'}</span>` : ''}
-        </div>
-      </div>
-    </div>
-  `;
-}
-function smsBubbleHtml(item) {
-  return `
-    <div class="bubble-row ${item.direction}">
-      <div class="bubble-content">
-        <div class="sms-bubble">${escapeHtml(item.body || item.bodyPreview || '')}</div>
-        <div class="bubble-time">${fmtDate(item.at)}</div>
-      </div>
-    </div>
-  `;
-}
-// Form submissions and new bookings -- always inbound (something the lead
-// did on the site), shown as a simple system-style card rather than a
-// chat bubble, same visual family as the email card minus the expand/iframe.
-function noteBubbleHtml(item) {
-  const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
-  return `
-    <div class="bubble-row ${item.direction}">
-      <div class="bubble-content note-bubble">
-        <div class="note-bubble-head"><span>${icon}</span><span class="note-bubble-subject">${escapeHtml(item.subject || '')}</span></div>
-        ${item.body ? `<div class="note-bubble-body">${escapeHtml(item.body)}</div>` : ''}
-        <div class="bubble-time">${fmtDate(item.at)}</div>
-      </div>
-    </div>
-  `;
-}
-// Opens/clicks only ever apply to OUTBOUND email -- there's nothing to
-// track on an inbound message or an SMS (no click data exists for SMS
-// yet; see readReceiptTicksHtml's own comment on why SMS read-state stops
-// at "delivered"). Skipped entirely (not "0%") when there's no outbound
-// email to measure yet, since 0% reads as "everyone ignored you" when the
-// real story is "nothing's been sent."
-function emailStatsHtml(items) {
-  const sent = items.filter(i => i.itemType === 'email' && i.direction === 'outbound');
-  if (!sent.length) return '';
-  const opened = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'opened' || h.status === 'clicked')).length;
-  const clicked = sent.filter(i => (i.statusHistory || []).some(h => h.status === 'clicked')).length;
-  const pct = (n) => Math.round((n / sent.length) * 100);
-  return `
-    <div class="track-summary">
-      <span><b>${sent.length}</b> email${sent.length === 1 ? '' : 's'} sent</span>
-      <span class="${opened ? 'on' : ''}"><b>${opened}</b> opened (${pct(opened)}%)</span>
-      <span class="${clicked ? 'on' : ''}"><b>${clicked}</b> clicked (${pct(clicked)}%)</span>
-    </div>
-  `;
-}
-// Drag handle between chat-thread and compose-bar -- re-wired every
-// renderThread() call since that replaces chatPanel's innerHTML wholesale,
-// tearing down any listener attached to the old element. Uses pointer
-// capture on the handle itself so move/up keep firing even once the
-// pointer leaves the thin 8px strip, instead of needing document-level
-// listeners.
-function wireComposeResize() {
-  const handle = document.getElementById('composeResizeHandle');
-  const composeBar = document.getElementById('composeBar');
-  const panel = document.getElementById('chatPanel');
-  const thread = document.getElementById('chatThread');
-  if (!handle || !composeBar || !panel || !thread) return;
-  const MIN_COMPOSE = 90, MIN_THREAD = 100;
-  handle.onpointerdown = (e) => {
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-    const startY = e.clientY;
-    const startHeight = composeBar.getBoundingClientRect().height;
-    // Constant for the duration of this drag -- whatever space isn't
-    // chat-thread or compose-bar right now (header, chat-panel-actions,
-    // this handle itself).
-    const fixedChrome = panel.clientHeight - thread.getBoundingClientRect().height - startHeight;
-    handle.classList.add('dragging');
-    const onMove = (ev) => {
-      const delta = startY - ev.clientY; // dragging up (delta > 0) grows compose-bar
-      const maxHeight = Math.max(MIN_COMPOSE, panel.clientHeight - fixedChrome - MIN_THREAD);
-      const next = Math.max(MIN_COMPOSE, Math.min(startHeight + delta, maxHeight));
-      composeBar.style.height = next + 'px';
-      composeBar.style.flex = `0 0 ${next}px`;
-    };
-    const onUp = () => {
-      handle.releasePointerCapture(e.pointerId);
-      handle.removeEventListener('pointermove', onMove);
-      handle.removeEventListener('pointerup', onUp);
-      handle.classList.remove('dragging');
-      composeBarHeight = composeBar.getBoundingClientRect().height;
-    };
-    handle.addEventListener('pointermove', onMove);
-    handle.addEventListener('pointerup', onUp);
-  };
-}
-function renderThread() {
-  const panel = document.getElementById('chatPanel');
-  const c = selectedConvo;
-  const emailOk = c.contact?.email, smsOk = c.contact?.phone;
-  const emailItems = threadItems.filter(i => i.itemType === 'email');
-  panel.innerHTML = `
-    <div class="chat-panel-header">
-      <button class="chat-back-btn" id="chatBackBtn" title="Back to chats">&larr;</button>
-      <div>
-        <span class="chat-panel-name-row">
-          <span class="pra-badge pra-badge-${c.contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${c.contact?.programType ? escapeHtml(c.contact.programType) : 'SET TYPE'}</span>
-          <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(c.displayName)}</a>
-          ${c.contactId ? ownerFieldHtml(c.contact) : ''}
-        </span>
-        <div class="chat-panel-sub">${[
-          c.contact?.email ? escapeHtml(c.contact.email) : '',
-          c.contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(c.contact.phone)}</a>` : '',
-          zoomLinkHtml(),
-          c.contact?.firstSeenAt ? `<span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(c.contact.firstSeenAt)}</span>` : '',
-        ].filter(Boolean).join(' · ')}</div>
-      </div>
-      ${c.contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${c.done ? 'Mark Not Done' : 'Mark Done'}</button>` : ''}
-    </div>
-    <div class="chat-panel-actions">
-      <div class="chat-panel-task-btn">
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatAddTaskBtn" type="button">Tasks</button>
-        <div class="task-panel" id="taskPanel">
-          <div class="task-panel-list" id="taskPanelList"></div>
-          <div class="task-panel-add">
-            <input class="pra-input" id="taskPanelTitle" placeholder="New task..."/>
-            <div class="task-panel-add-row">
-              <input class="pra-input" type="date" id="taskPanelDate"/>
-              <input class="pra-input" type="time" id="taskPanelTime"/>
-            </div>
-          </div>
-          <div class="task-panel-footer">
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="taskPanelCancelBtn" type="button">Cancel</button>
-            <button class="pra-btn pra-btn-sm" id="taskPanelAddBtn" type="button" style="margin-left:8px">Add</button>
-          </div>
-        </div>
-      </div>
-      <div class="chat-panel-task-btn">
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatAddNoteBtn" type="button">Notes</button>
-        <div class="task-panel" id="notePanel">
-          <div class="task-panel-list" id="notePanelList"></div>
-          <div class="task-panel-add">
-            <input class="pra-input" id="notePanelText" placeholder="New note..."/>
-          </div>
-          <div class="task-panel-footer">
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="notePanelCancelBtn" type="button">Cancel</button>
-            <button class="pra-btn pra-btn-sm" id="notePanelAddBtn" type="button" style="margin-left:8px">Add</button>
-          </div>
-        </div>
-      </div>
-      <div class="chat-panel-task-btn">
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatScheduleBtn" type="button" title="Schedule a meeting">${CALENDAR_ICON}</button>
-        <div class="task-panel" id="schedulePanel">
-          <div class="task-panel-list" id="schedulePanelList"></div>
-          <div class="task-panel-add">
-            <input class="pra-input" id="schedulePanelTitle" placeholder="Meeting title (optional)"/>
-            <div class="task-panel-add-row">
-              <input class="pra-input" type="date" id="schedulePanelDate"/>
-              <input class="pra-input" type="time" id="schedulePanelTime"/>
-              <select class="pra-select" id="schedulePanelDuration">
-                <option value="15">15 min</option>
-                <option value="30" selected>30 min</option>
-                <option value="45">45 min</option>
-                <option value="60">60 min</option>
-              </select>
-            </div>
-          </div>
-          <div class="task-panel-footer">
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="schedulePanelCancelBtn" type="button">Cancel</button>
-            <button class="pra-btn pra-btn-sm" id="schedulePanelAddBtn" type="button" style="margin-left:8px">Schedule</button>
-          </div>
-        </div>
-      </div>
-      <select class="pra-select" id="chatStatusSelect" style="${avatarStyle(c.contact?.status)};${statusSelectWidthRule(c.contact?.status)}"><option value="">Change status...</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
-      ${optOutBadgesHtml(c.contact)}
-    </div>
-    ${emailStatsHtml(emailItems)}
-    <div class="chat-thread" id="chatThread"></div>
-    <div class="compose-resize-handle" id="composeResizeHandle" title="Drag to resize"></div>
-    <div class="compose-bar" id="composeBar" style="${composeBarHeight ? `height:${composeBarHeight}px;flex:0 0 ${composeBarHeight}px;` : ''}">
-      ${currentTab === 'primary' ? `
-        <div class="compose-toolbar-row">
-          ${composeChannel === 'email' && teamUsers.length > 1 && currentUser?.role === 'admin' ? `
-            <select class="pra-select compose-from-select" id="composeFromUserId" title="Send this email as">
-              ${teamUsers.map(u => `<option value="${u.id}" ${currentUser && u.id === currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}
-            </select>
-          ` : ''}
-          <div class="compose-channel-toggle">
-            <span class="compose-tab-group">
-              <button type="button" data-ch="email" class="${composeView === 'compose' && composeChannel === 'email' ? 'active' : ''} ${composeView === 'compose' && composeChannel === 'email' && composeReplyTo ? 'reply-mode' : ''}">${composeView === 'compose' && composeChannel === 'email' && composeReplyTo ? 'Reply To Email' : 'Send Email'}</button>
-              ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
-            </span>
-            <span class="compose-tab-group">
-              <button type="button" data-ch="sms" class="${composeView === 'compose' && composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
-              ${aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="sms" title="Generate text with AI">${SPARKLE_ICON}</button>` : ''}
-            </span>
-            ${aiAssistAvailable ? `<button type="button" data-ch="summary" class="${composeView === 'summary' ? 'active' : ''}">Summary</button>` : ''}
-          </div>
-        </div>
-      ` : ''}
-      ${composeView === 'summary' ? `
-        <div class="ai-summary-panel" id="aiSummaryPanel"><div class="pra-muted">Loading summary…</div></div>
-      ` : `
-        ${composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
-        <div class="compose-row">
-          <textarea class="pra-textarea" id="composeBody" placeholder="${composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
-          <button class="pra-btn ${composeChannel === 'email' && composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${composeChannel === 'email' && composeReplyTo ? 'Reply' : 'Send'}</button>
-        </div>
-        ${composeChannel === 'email' && composeReplyTo ? `
-          <div class="compose-quote-preview">
-            <div class="compose-quote-preview-head">
-              <span title="${escapeHtml(composeReplyTo.quotedMeta)}">${escapeHtml(composeReplyTo.quotedMeta)}</span>
-              <button type="button" id="composeQuoteRemoveBtn" title="Remove quoted text">✕</button>
-            </div>
-            <iframe id="composeQuoteFrame" sandbox=""></iframe>
-          </div>
-        ` : ''}
-        ${composeChannel === 'email' && !emailOk ? '<div class="compose-hint">This contact has no email on file.</div>' : ''}
-        ${composeChannel === 'sms' && !smsOk ? '<div class="compose-hint">This contact has no phone number on file.</div>' : ''}
-      `}
-    </div>
-  `;
-  const items = [...threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
-  const threadEl = document.getElementById('chatThread');
-  threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
-  threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {
-    const wasExpanded = el.classList.contains('expanded');
-    el.classList.toggle('expanded');
-    if (!wasExpanded) {
-      const iframe = el.querySelector('iframe');
-      const item = items[Number(el.dataset.emailToggle)];
-      // Force Arial regardless of whatever font the source HTML specifies
-      // inline (Close-imported emails carry their own inline styles) --
-      // !important is the only way to reliably win against those.
-      if (iframe && !iframe.srcdoc) iframe.srcdoc = `<style>body,*{font-family:Arial,Helvetica,sans-serif!important;}</style>${item.body || '<p style="color:#888">(no content stored)</p>'}`;
-    }
-  });
-  threadEl.querySelectorAll('[data-reply-idx]').forEach(el => el.onclick = (e) => {
-    e.stopPropagation();
-    const item = items[Number(el.dataset.replyIdx)];
-    const fromAddr = extractEmailAddr(item.from) || (c.contact ? `${c.contact.first || ''} ${c.contact.last || ''}`.trim() : '') || 'they';
-    composeReplyTo = {
-      subject: /^re:/i.test(item.subject || '') ? item.subject : `Re: ${item.subject || ''}`,
-      // The real HTML, not a plain-text strip -- rendered read-only below
-      // the compose box (see the compose-quote-preview iframe) and sent
-      // through to the recipient verbatim on Send, same reasoning as why
-      // the email bubble itself renders item.body through an iframe
-      // instead of flattening it.
-      quotedHtml: item.body || `<p style="color:#888">${escapeHtml(item.bodyPreview || '(no content stored)')}</p>`,
-      quotedMeta: `On ${fmtDate(item.at)}, ${fromAddr} wrote:`,
-    };
-    composeChannel = 'email';
-    composeView = 'compose';
-    renderThread();
-    const subjEl = document.getElementById('composeSubject');
-    const bodyEl = document.getElementById('composeBody');
-    if (subjEl) subjEl.value = composeReplyTo.subject;
-    if (bodyEl) { bodyEl.value = ''; bodyEl.focus(); }
-  });
-  threadEl.scrollTop = threadEl.scrollHeight;
-
-  if (currentTab === 'primary') {
-    panel.querySelectorAll('.compose-channel-toggle [data-ch]').forEach(btn => btn.onclick = () => {
-      composeReplyTo = null; // manually switching tabs exits reply mode
-      if (btn.dataset.ch === 'summary') composeView = 'summary';
-      else { composeChannel = btn.dataset.ch; composeView = 'compose'; }
-      renderThread();
-    });
-    panel.querySelectorAll('.ai-gen-btn').forEach(btn => btn.onclick = () => generateAiContent(btn.dataset.aiCh, btn));
-  }
-  if (composeChannel === 'email' && composeReplyTo) {
-    const quoteFrame = document.getElementById('composeQuoteFrame');
-    if (quoteFrame) quoteFrame.srcdoc = `<style>body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:8px;color:#333}</style>${composeReplyTo.quotedHtml}`;
-    const quoteRemoveBtn = document.getElementById('composeQuoteRemoveBtn');
-    if (quoteRemoveBtn) quoteRemoveBtn.onclick = () => { composeReplyTo = null; renderThread(); };
-  }
-  if (composeView === 'summary') { if (c.contactId) loadAiSummary(c.contactId); }
-  else document.getElementById('composeSendBtn').onclick = sendComposeMessage;
-  document.getElementById('chatBackBtn').onclick = backToConvoList;
-  wireComposeResize();
-  const zoomCopyBtn = document.getElementById('chatZoomCopyBtn');
-  if (zoomCopyBtn) zoomCopyBtn.onclick = (e) => {
-    e.preventDefault();
-    navigator.clipboard.writeText(zoomCopyBtn.dataset.zoomLink)
-      .then(() => showToast('Zoom link copied'))
-      .catch(() => showToast('Could not copy', true));
-  };
-  document.getElementById('chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); toggleTaskPanel(c.contactId); };
-  document.getElementById('chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); toggleNotePanel(c.contactId); };
-  document.getElementById('chatScheduleBtn').onclick = (e) => { e.stopPropagation(); toggleSchedulePanel(c.contactId); };
-  if (c.contactId) document.getElementById('chatPanelNameLink').onclick = () => openContactOverlay(c.contactId);
-  wireOwnerFields(panel, (contactId, ownerId) => { if (c.contact) c.contact.ownerId = ownerId; applyOwnerChangeToConvoState(contactId, ownerId); });
-  if (c.contactId) {
-    document.getElementById('chatMarkDoneBtn').onclick = async () => {
-      const nextDone = !c.done;
-      await fetch(`/api/inbox/conversations/${c.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) });
-      c.done = nextDone;
-      const inList = conversations.find(x => x.key === c.key);
-      if (inList) {
-        inList.done = nextDone;
-        // Marking done clears every unread inbound message for this contact,
-        // synchronously, server-side -- predictable enough to reflect right
-        // here instead of waiting on it. The conversation-index rebuild that
-        // actually recomputes unread_count is batched up to 5s out (see
-        // message_index.js's recomputeConversationSummary/FLUSH_DELAY_MS),
-        // so the immediate loadConversations() below would otherwise still
-        // see the OLD count and the row would look like Mark Done had no
-        // effect, even though it did.
-        if (nextDone) { inList.unreadCount = 0; recentlyConfirmedDone.set(c.contactId, Date.now()); } else recentlyConfirmedDone.delete(c.contactId);
-        // Unresponded is unread_count > 0 (see sqlite_inbox.js) -- once
-        // that's 0, this row doesn't belong in the list currently on
-        // screen. Drop it now rather than let the stale refetch below keep
-        // showing it for up to 5 more seconds.
-        if (convoFilter === 'unresponded' && inList.unreadCount === 0) {
-          conversations = conversations.filter(x => x.key !== c.key);
-        }
+// The actual thread+compose UI (bubbles, Send Email/SMS/Summary tabs,
+// sparkle AI-draft buttons, Reply-To-Email with quote preview, Mark Done,
+// Task/Note/Schedule popovers, drag-resize) lives in conversation-panel.js,
+// shared with contact-detail.html -- see that file's own header comment.
+// This page supplies the "full" layout (its own header row, status select,
+// owner field, Zoom link, opt-out badges) plus every sidebar-sync side
+// effect (renderSidebar/loadConversations/dropConvoFromSidebar/
+// applyOwnerChangeToConvoState/recentlyConfirmedDone bookkeeping) the panel
+// itself knows nothing about.
+let chatPanelInstance = null;
+function getChatPanelConfig() {
+  return {
+    allStatuses, currentUser, teamUsers,
+    layout: 'full',
+    getContact: () => selectedConvo?.contact,
+    getDisplayName: () => selectedConvo?.displayName,
+    showComposeToolbar: () => currentTab === 'primary',
+    statusGlowStyle: (status) => `${avatarStyle(status)};${statusSelectWidthRule(status)}`,
+    onBack: backToConvoList,
+    onOpenContactOverlay: openContactOverlay,
+    onOwnerChanged: applyOwnerChangeToConvoState,
+    onProgramTypeChanged: (contactId, value) => {
+      const row = conversations.find(x => x.contactId === contactId);
+      if (row?.contact) row.contact.programType = value;
+    },
+    onStatusChanged: (contactId, status) => {
+      // A status change can auto-archive (STOP) or auto-hide (Blacklist)
+      // the conversation -- loadConversations() below reconciles the
+      // sidebar with whatever the backend actually did; dropConvoFromSidebar
+      // here just removes the "why is their sorry ass still sitting here"
+      // gap while that reconcile is in flight.
+      if ((status === 'STOP' || status === 'BLACKLIST') && convoFilter !== 'hidden') {
+        const row = conversations.find(x => x.contactId === contactId);
+        if (row) dropConvoFromSidebar(row.key);
       }
-      showToast(nextDone ? 'Marked done' : 'Marked not done');
-      renderThread();
+      loadRefs();
+      loadConversations();
+    },
+    onOpened: (contactId) => {
+      const inList = conversations.find(x => x.contactId === contactId);
+      if (inList) inList.hasUnseen = false;
       renderSidebar();
-      // Delayed past the conversation-index's own batched flush window so
-      // this reconciles with the server's now-actually-updated unread_count
-      // instead of the stale one an immediate refetch would still see.
+    },
+    // Shared by both the Mark Done button and a real reply going out (see
+    // conversation-panel.js's sendComposeMessage) -- same optimistic local
+    // update + delayed reconcile fetch every done-marking path here has
+    // always needed, since the server's own unread_count recompute is
+    // batched up to 5s behind (message_index.js's scheduleConversationFlush).
+    onDoneChanged: (contactId, done) => {
+      const inList = conversations.find(x => x.contactId === contactId);
+      if (inList) {
+        inList.done = done;
+        if (done) { inList.unreadCount = 0; recentlyConfirmedDone.set(contactId, Date.now()); } else recentlyConfirmedDone.delete(contactId);
+        if (convoFilter === 'unresponded' && inList.unreadCount === 0) conversations = conversations.filter(x => x.contactId !== contactId);
+      }
+      renderSidebar();
       setTimeout(loadConversations, 5500, true);
-    };
-    wireInlineEditClick(document.getElementById('chatPanelTypeBadge'), {
-      field: 'programType',
-      contactId: c.contactId,
-      onSaved: (value) => {
-        if (c.contact) c.contact.programType = value;
-        const badge = document.getElementById('chatPanelTypeBadge');
-        badge.className = `pra-badge pra-badge-${value || ''}`;
-        badge.textContent = value ? value : 'SET TYPE';
-      },
-    });
-  }
-  document.getElementById('chatStatusSelect').addEventListener('change', async (e) => {
-    const status = e.target.value;
-    if (!c.contactId) return;
-    // Selecting the blank "Change status..." option explicitly clears the
-    // status back to none -- previously this silently no-opped, so picking
-    // it back after a real status was set never actually saved, and a
-    // reload would revert to whatever status was there before.
-    await fetch('/api/contacts/' + c.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
-    showToast('Status updated');
-    e.target.setAttribute('style', `${avatarStyle(status)};${statusSelectWidthRule(status)}`);
-    if ((status === 'STOP' || status === 'BLACKLIST') && convoFilter !== 'hidden') dropConvoFromSidebar(c.key);
-    loadRefs();
-    // A status change can auto-archive (STOP) or auto-hide (Blacklist) the
-    // conversation -- loadRefs() only refreshes contacts/statuses/users,
-    // not the conversation list itself, so without this the row would keep
-    // showing in the sidebar (stale local `conversations` array) even
-    // though the backend already archived/hidden it. The dropConvoFromSidebar
-    // call above already handles the instant case; this is just the
-    // reconcile for every other status change and for other open tabs.
-    loadConversations();
-  });
-
-  // Just VIEWING a thread is deliberately NOT the same as responding to it
-  // -- staff opening a conversation to read it must not silently move it
-  // out of Unresponded, since nothing has actually been answered yet.
-  // This used to also call markDone() here (the same effect as opening the
-  // old detail modal), but that's wrong: a lead can sit read-but-unanswered
-  // for a while, and Unresponded needs to keep surfacing it the whole time,
-  // not just until someone happens to click on it. Marking done now only
-  // ever happens two ways: a real reply going out (see sendComposeMessage)
-  // or the explicit "Mark done" action.
-  //
-  // /opened still fires on every view, though, and DOES clear the row's
-  // visual glow immediately -- hasUnseen is a separate flag from
-  // unreadCount/done (see sqlite_inbox.js's queryConversationsSqlite), so
-  // this is safe to clear optimistically the instant a thread is opened
-  // without affecting whether it's still sitting in Unresponded.
-  fetch(`/api/inbox/conversations/${c.contactId}/opened`, { method: 'POST' });
-  const inList = conversations.find(x => x.key === c.key);
-  if (inList) inList.hasUnseen = false;
-  renderSidebar();
+    },
+  };
 }
 async function selectConversation(c, skipFetch) {
   const isRealSwitch = selectedConvo?.key !== c.key;
   selectedConvo = c;
   document.querySelectorAll('.convo-row').forEach(r => r.classList.toggle('selected', r.dataset.convo === c.key));
   document.getElementById('chatView').classList.add('thread-open'); // mobile: swap to the chat panel
-  // Only reset compose state on an actual contact switch. loadConversations()
-  // also calls this (skipFetch=true) for the CURRENTLY selected conversation
-  // after any Mark Done/reply, purely to resync unread state/thread items in
-  // the background -- resetting composeReplyTo/composeView there too used to
-  // silently drop whatever quote preview or in-progress reply/channel choice
-  // the person was looking at, every single time, for no reason tied to what
-  // that resync actually needed to fix.
-  if (isRealSwitch) composeReplyTo = null;
-  if (!c.contactId) { aiAssistAvailable = false; return; }
-  if (isRealSwitch) composeView = 'compose';
-  // The AI icons next to Send Email/Send SMS only show up at all if some
-  // AI Assist agent actually applies to this lead -- a cheap check (no LLM
-  // call), separate from generateAiContent()/loadAiSummary() below, which
-  // only run when a human clicks one of those icons.
-  //
-  // c.contact itself is the sidebar's own denormalized SQLite snapshot
-  // (see sqlite_inbox.js) -- deliberately NOT re-fetched from the real
-  // ~190MB contacts file here. That was tried (both blocking the first
-  // render and, after that made every click feel broken, as a background
-  // patch-in-after) and reverted both times: the live-sync hooks
-  // (syncContactFields et al) already keep this snapshot correct on every
-  // contact edit going forward, so the extra request bought correctness
-  // this app already has for a real, felt performance cost that wasn't
-  // worth it.
-  // status/programType passed straight from the sidebar's own snapshot --
-  // lets the matches endpoint skip its own full-contacts-file lookup (see
-  // that endpoint's comment).
-  const [threadRes, matchRes] = await Promise.all([
-    fetch('/api/inbox/contact/' + c.contactId),
-    fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(c.contactId) + '&status=' + encodeURIComponent(c.contact?.status || '') + '&programType=' + encodeURIComponent(c.contact?.programType || '')),
-  ]);
-  // Discard a stale response -- if the user has since clicked a DIFFERENT
-  // conversation while this one's fetch was still in flight, selectedConvo
-  // has already moved on by the time we get here. Without this check, a
-  // slow-to-resolve click (any real latency -- a loaded server, a slow
-  // connection) can win the race against a faster later click and overwrite
-  // the panel with the wrong contact's thread. Confirmed live: this is what
-  // made clicking any name open whichever contact's fetch happened to be
-  // slowest, not the one actually clicked.
-  if (selectedConvo?.key !== c.key) return;
-  threadItems = threadRes.ok ? (await threadRes.json()).items : [];
-  aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
-  if (selectedConvo?.key !== c.key) return; // re-check: could have changed again during the json() awaits
-  renderThread();
+  if (!c.contactId) return;
+  if (!chatPanelInstance) chatPanelInstance = ConversationPanel.init(document.getElementById('chatPanel'), getChatPanelConfig());
+  // Only reset compose state (reply mode, Summary tab) on an actual contact
+  // switch -- loadConversations() also calls this (skipFetch=true) for the
+  // CURRENTLY selected conversation after any Mark Done/reply, purely to
+  // resync unread state/thread items in the background, and resetting those
+  // there too used to silently drop whatever quote preview or in-progress
+  // reply/channel choice the person was looking at, every single time, for
+  // no reason tied to what that resync actually needed to fix.
+  if (isRealSwitch) chatPanelInstance.switchContact(c.contactId, { done: c.done });
+  await chatPanelInstance.loadThread();
 }
 function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }
-
-// Generates (or regenerates) straight into the compose fields -- no
-// separate review card. skip/escalate never touch the compose box at all,
-// they just tell the closer why via a toast.
-async function generateAiContent(channel, btn) {
-  if (!selectedConvo?.contactId) return;
-  btn.disabled = true;
-  btn.classList.add('loading');
-  // Only the success path used to clear this -- it happens to work there
-  // because renderThread() below replaces the whole compose panel (a fresh,
-  // never-disabled button), but every early-return (skip/escalate/error) or
-  // network failure left THIS button disabled and spinning indefinitely,
-  // since nothing else was left to reset it. finally covers every exit.
-  try {
-    const r = await fetch('/api/ai-agents/generate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contactId: selectedConvo.contactId, channel }),
-    });
-    const d = await r.json();
-    if (!r.ok) { showToast(d.error || 'Could not generate', true); return; }
-    if (d.status === 'skip') { showToast(d.reason || 'No response needed right now'); return; }
-    if (d.status === 'escalate') { showToast('⚠️ ' + d.reason, true); return; }
-    // composeReplyTo (the quoted-thread preview) used to get cleared here
-    // unconditionally, silently exiting reply mode and collapsing the quote
-    // preview every time this ran, even when drafting the exact reply
-    // already being composed -- the template only renders that preview for
-    // composeChannel==='email' anyway, so there's no need to clear it just
-    // because channel is changing.
-    composeChannel = channel;
-    composeView = 'compose';
-    renderThread();
-    if (channel === 'email' && d.subject) document.getElementById('composeSubject').value = d.subject;
-    document.getElementById('composeBody').value = d.body || '';
-    if (d.buyingSignal) showToast('🔥 Buying signal detected — consider taking over');
-  } catch {
-    showToast('Could not generate', true);
-  } finally {
-    btn.disabled = false;
-    btn.classList.remove('loading');
-  }
-}
-async function loadAiSummary(contactId) {
-  const panel = document.getElementById('aiSummaryPanel');
-  if (!panel) return;
-  try {
-    const r = await fetch('/api/ai-agents/summarize', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId }),
-    });
-    const d = await r.json();
-    if (!r.ok) { panel.innerHTML = `<div class="pra-muted">${escapeHtml(d.error || 'Could not load summary')}</div>`; return; }
-    panel.innerHTML = `
-      <div class="ai-summary-row"><div class="ai-summary-label">Goal</div>${escapeHtml(d.goal || 'Unclear')}</div>
-      <div class="ai-summary-row"><div class="ai-summary-label">Objections</div>${escapeHtml(d.objections || 'None raised')}</div>
-      <div class="ai-summary-row"><div class="ai-summary-label">Recommendation</div>${escapeHtml(d.recommendation || '—')}</div>
-      ${d.takeover ? `<div class="ai-summary-takeover">🔥 Consider taking over — ${escapeHtml(d.takeoverReason || '')}</div>` : ''}
-    `;
-  } catch { panel.innerHTML = '<div class="pra-muted">Could not load summary.</div>'; }
-}
-async function sendComposeMessage() {
-  const body = document.getElementById('composeBody').value.trim();
-  if (!body || !selectedConvo?.contactId) return;
-  const subject = composeChannel === 'email' ? document.getElementById('composeSubject').value.trim() : undefined;
-  const fromUserId = composeChannel === 'email' ? document.getElementById('composeFromUserId')?.value : undefined;
-  const btn = document.getElementById('composeSendBtn');
-  btn.disabled = true; btn.textContent = 'Sending…';
-  const isReply = composeChannel === 'email' && composeReplyTo;
-  const r = await fetch('/api/inbox/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contactId: selectedConvo.contactId, channel: composeChannel, subject, body, fromUserId,
-      quotedHtml: isReply ? composeReplyTo.quotedHtml : undefined,
-      quotedMeta: isReply ? composeReplyTo.quotedMeta : undefined,
-    }),
-  });
-  const d = await r.json();
-  btn.disabled = false; btn.textContent = composeChannel === 'email' && composeReplyTo ? 'Reply' : 'Send';
-  if (!r.ok) { showToast(d.error || 'Send failed', true); return; }
-  showToast('Sent');
-  composeReplyTo = null;
-  // A real reply just went out -- THIS is what actually counts as
-  // responding, not merely having opened the thread earlier (see
-  // selectConversation's comment). Marks every prior unread inbound
-  // message done and moves the conversation out of Unresponded.
-  const sentContactId = selectedConvo.contactId;
-  await fetch(`/api/inbox/conversations/${sentContactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
-  // Same optimistic update + delayed refetch as ctxDoneBtn's handler, and
-  // for the identical reason (see its own comment): the server's
-  // unread_count recompute is batched, up to 5s behind (message_index.js's
-  // scheduleConversationFlush). Calling loadConversations() right away used
-  // to lose that race almost every time -- the refetch would land before
-  // unread_count actually hit 0, so the row reappeared under Unresponded
-  // looking like the reply never registered, even though it genuinely sent.
-  recentlyConfirmedDone.set(sentContactId, Date.now());
-  const inList = conversations.find(x => x.contactId === sentContactId);
-  if (inList) {
-    inList.done = true;
-    inList.unreadCount = 0;
-    if (convoFilter === 'unresponded') conversations = conversations.filter(x => x.contactId !== sentContactId);
-    renderSidebar();
-  }
-  const threadRes = await fetch('/api/inbox/contact/' + sentContactId);
-  threadItems = threadRes.ok ? (await threadRes.json()).items : [];
-  renderThread();
-  setTimeout(loadConversations, 5500, true);
-}
 
 // ── Contact details overlay ──────────────────────────────────────────────
 // Same field set as contact-detail.html's Details panel, kept in sync
@@ -2263,8 +1772,7 @@ function applyRemoteConvoUpdate(data) {
   }
   if (selectedConvo?.contactId === data.contactId) {
     selectedConvo.done = data.done;
-    const btn = document.getElementById('chatMarkDoneBtn');
-    if (btn) btn.textContent = data.done ? 'Mark Not Done' : 'Mark Done';
+    chatPanelInstance?.handleRemoteUpdate({ type: 'done', contactId: data.contactId, done: data.done });
   }
 }
 (function connectInboxEvents() {
