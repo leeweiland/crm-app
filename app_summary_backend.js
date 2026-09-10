@@ -74,7 +74,7 @@ INFO PANELS -- render each as its own clearly separated section, in this order, 
 ${rowsText}
 FOOTER BANNER TEXT (bold, centered, blue all-caps): "${content.footerLine}"
 
-Reproduce the attached logo image exactly near the top of the page, paired with the wordmark "PACIFIC RIM ATHLETICS". Render all quoted text exactly as given, legibly, with strong contrast against the background. This should look like professional, expensive sports-brand marketing collateral -- not a cartoon, not a comic strip, no speech bubbles, no childish elements.
+Reproduce the attached logo image exactly near the top of the page, unmodified, at its original proportions. Set the wordmark "PACIFIC RIM ATHLETICS" beside or below it in clean sans-serif letterforms, spelled EXACTLY as those two words -- P-A-C-I-F-I-C R-I-M A-T-H-L-E-T-I-C-S, no missing, swapped, or invented letters. Render every other quoted piece of text exactly as given too, legibly, with strong contrast against the background. This should look like professional, expensive sports-brand marketing collateral -- not a cartoon, not a comic strip, no speech bubbles, no childish elements.
 
 Brand rule, non-negotiable: this is a bodyweight/mobility/movement coaching brand, NOT a weightlifting gym -- never draw a dumbbell, barbell, weight plate, kettlebell, or any other gym-equipment icon or imagery anywhere on the page, including in the small row icons. Use simple line-icons relevant to each label's actual meaning instead (e.g. a calendar, a clock, a handshake, a flag, a location pin).`;
 }
@@ -86,6 +86,10 @@ async function generateSummaryImagePng(adminPrompt, content) {
   form.append("prompt", prompt);
   form.append("size", "1024x1536");
   form.append("quality", "high");
+  // Preserves fine detail in the attached reference image (the logo)
+  // instead of loosely reinterpreting it -- the default fidelity garbled
+  // the wordmark into misspelled letterforms in testing.
+  form.append("input_fidelity", "high");
   form.append("image[]", new Blob([getLogoBuffer()], { type: "image/png" }), "pra-logo.png");
 
   const res = await fetch("https://api.openai.com/v1/images/edits", {
