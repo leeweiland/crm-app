@@ -34,7 +34,14 @@
      name/status row) adds ~28px of padding/margin the original 170px
      estimate predates. dvh wins over vh when supported (real visible
      viewport, not mobile's "largest possible" 100vh). */
-  .convo-panel { display: flex; flex-direction: column; height: calc(100vh - 195px); height: calc(100dvh - 195px); min-height: 460px; }
+  /* overflow:hidden (not just a fixed height) -- same pattern as inbox.html's
+     .chat-shell. Without it, a flex container with overflowing children
+     doesn't actually cap at its specified height (content that wants to be
+     taller than the box grows the box instead of getting clipped/handed off
+     to an internal scroll region), confirmed live: this whole panel grew to
+     28000px+ and forced scrolling the ENTIRE page to reach the compose bar,
+     instead of just the message thread scrolling inside a fixed-height box. */
+  .convo-panel { display: flex; flex-direction: column; height: calc(100vh - 195px); height: calc(100dvh - 195px); min-height: 460px; overflow: hidden; }
   .convo-panel-title { padding: 16px 18px 0; }
   .contact-header { display: flex; align-items: center; gap: 12px; margin: 10px 0 20px; }
   .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }

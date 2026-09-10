@@ -511,7 +511,13 @@ body { margin: 0; }
    markup/CSS applies to both pages automatically. Blue (#009bff), not the
    green contact-detail.html used to carry here (--pra-blue is this app's
    current tracking-badge color everywhere else). ── */
-.chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--pra-black-soft); }
+/* min-height:0 (not just flex:1) -- a flex item's automatic minimum size
+   defaults to its CONTENT's height, not 0, so without this a long message
+   thread makes .chat-panel grow to fit everything instead of shrinking to
+   whatever height its own flex container actually has to give it. That's
+   what lets .chat-thread's own overflow-y:auto (below) scroll internally
+   with .compose-bar pinned below it, rather than the whole page scrolling. */
+.chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--pra-black-soft); }
 .chat-panel-header { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--pra-border); flex-shrink: 0; }
 .chat-panel-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; }
 .chat-panel-name-row .owner-field-select { flex: 0 0 auto; width: auto; }
