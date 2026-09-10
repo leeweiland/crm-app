@@ -74,7 +74,9 @@ INFO PANELS -- render each as its own clearly separated section, in this order, 
 ${rowsText}
 FOOTER BANNER TEXT (bold, centered, blue all-caps): "${content.footerLine}"
 
-Reproduce the attached logo image exactly near the top of the page, paired with the wordmark "PACIFIC RIM ATHLETICS". Render all quoted text exactly as given, legibly, with strong contrast against the background. This should look like professional, expensive sports-brand marketing collateral -- not a cartoon, not a comic strip, no speech bubbles, no childish elements.`;
+Reproduce the attached logo image exactly near the top of the page, paired with the wordmark "PACIFIC RIM ATHLETICS". Render all quoted text exactly as given, legibly, with strong contrast against the background. This should look like professional, expensive sports-brand marketing collateral -- not a cartoon, not a comic strip, no speech bubbles, no childish elements.
+
+Brand rule, non-negotiable: this is a bodyweight/mobility/movement coaching brand, NOT a weightlifting gym -- never draw a dumbbell, barbell, weight plate, kettlebell, or any other gym-equipment icon or imagery anywhere on the page, including in the small row icons. Use simple line-icons relevant to each label's actual meaning instead (e.g. a calendar, a clock, a handshake, a flag, a location pin).`;
 }
 
 async function generateSummaryImagePng(adminPrompt, content) {
