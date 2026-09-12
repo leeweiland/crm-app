@@ -45,6 +45,25 @@ export function googleAdsConfigured() {
   return !!(s.googleAdsCustomerId && s.googleAdsDeveloperToken && s.googleAdsRefreshToken && process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
+// Looks up the Pixel(s) already attached to the configured ad account via
+// Meta's own Graph API, using the access token already saved for Custom
+// Audiences/Conversions API -- so connecting Meta doesn't require Lee to
+// go dig the Pixel ID out of Events Manager by hand.
+async function fetchMetaAdAccountPixels() {
+  const s = getConversionSettings();
+  if (!s.metaAdAccountId) return { ok: false, reason: "no_ad_account_id" };
+  if (!s.metaAccessToken) return { ok: false, reason: "no_access_token" };
+  const acctPath = s.metaAdAccountId.startsWith("act_") ? s.metaAdAccountId : `act_${s.metaAdAccountId}`;
+  try {
+    const r = await fetch(`https://graph.facebook.com/v21.0/${acctPath}/adspixels?fields=id,name&access_token=${encodeURIComponent(s.metaAccessToken)}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, reason: d?.error?.message || `meta_http_${r.status}` };
+    return { ok: true, pixels: d.data || [] };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
 function hashPII(value) {
   const v = String(value || "").trim().toLowerCase();
   return v ? createHash("sha256").update(v).digest("hex") : null;
@@ -200,6 +219,12 @@ export async function handleConversionsRequest(req, res, url) {
     }
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === "/api/conversions/meta-pixels" && req.method === "GET") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const result = await fetchMetaAdAccountPixels();
+    return sendJson(res, 200, result);
   }
 
   if (p === "/api/conversions/test-send" && req.method === "POST") {
