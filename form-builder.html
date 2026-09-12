@@ -735,12 +735,14 @@ function renderLogicRule(field, rule, fi, ri) {
   const isAnyOf = rule.op === 'any_of' || rule.op === 'contains_any_of';
   const valueInput = isAi
     ? `<textarea class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" rows="2" placeholder="e.g. the answer indicates unemployment, financial hardship, a disability, or contains profanity" style="width:100%;flex-basis:100%;resize:vertical">${escapeHtml(rule.value || '')}</textarea>`
-    // Comma-separated, always a plain text input (even on a choice field) --
+    // Comma-separated, always a plain textarea (even on a choice field) --
     // typing "Cashier, Retail, Student" is simpler than juggling a
     // multi-select, and it still matches option labels (any_of) or
-    // substrings anywhere in the answer (contains_any_of) either way.
+    // substrings anywhere in the answer (contains_any_of) either way. A
+    // textarea (not a single-line input) so a long list wraps and stays
+    // fully visible/editable instead of scrolling off to the side.
     : isAnyOf
-      ? `<input class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" value="${escapeHtml(rule.value || '')}" placeholder="value1, value2, value3" style="width:auto;min-width:220px;flex:1"/>`
+      ? `<textarea class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" rows="1" placeholder="value1, value2, value3" style="width:100%;flex-basis:100%;resize:vertical;white-space:pre-wrap">${escapeHtml(rule.value || '')}</textarea>`
       : FIELD_META[field.type].hasOptions
         // A bare list of <option>s with none matching rule.value (e.g. it's
         // still '' because nobody has ever actually touched this dropdown)
@@ -1581,9 +1583,22 @@ function bindCanvas(canvas) {
     form.fields[+e.target.dataset.logicOpIdx].logic[+e.target.dataset.logicOpRi].op = e.target.value;
     saveDebounced(); renderCanvas();
   }));
-  canvas.querySelectorAll('[data-logic-value-idx]').forEach(el => ['input', 'change'].forEach(evt => el.addEventListener(evt, e => {
-    form.fields[+e.target.dataset.logicValueIdx].logic[+e.target.dataset.logicValueRi].value = e.target.value; saveDebounced();
-  })));
+  canvas.querySelectorAll('[data-logic-value-idx]').forEach(el => {
+    ['input', 'change'].forEach(evt => el.addEventListener(evt, e => {
+      form.fields[+e.target.dataset.logicValueIdx].logic[+e.target.dataset.logicValueRi].value = e.target.value; saveDebounced();
+    }));
+    // The any_of/contains_any_of/ai_disqualify value box is a textarea, not
+    // a single-line input, specifically so a long comma-separated list (or
+    // AI criteria) grows downward and stays fully visible instead of
+    // scrolling off to the side. Auto-grow on input, plus once up front for
+    // whatever's already saved -- resize:vertical still lets it shrink back
+    // down manually if it grew larger than needed.
+    if (el.tagName === 'TEXTAREA') {
+      const autoGrow = () => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+      el.addEventListener('input', autoGrow);
+      autoGrow();
+    }
+  });
   canvas.querySelectorAll('[data-logic-action-idx]').forEach(el => el.addEventListener('change', e => {
     form.fields[+e.target.dataset.logicActionIdx].logic[+e.target.dataset.logicActionRi].action = e.target.value;
     saveDebounced(); renderCanvas();
