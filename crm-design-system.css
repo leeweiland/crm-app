@@ -390,6 +390,13 @@ body { margin: 0; }
 .be-hex-color { display: inline-flex; align-items: center; gap: 4px; }
 .be-hex-color input[type="text"] { width: 76px; padding: 3px 6px; font-size: .78rem; }
 .be-hex-color input[type="color"] { width: 22px; height: 22px; padding: 1px; flex-shrink: 0; }
+/* Keeps the edited text visibly highlighted while the Link popover is open
+   -- the browser's native selection highlight disappears once focus moves
+   to the popover's own URL input, so this paints an independent highlight
+   over the same Range instead (see setLinkEditHighlight in
+   block-editor-client.js). No-op in a browser without Custom Highlight API
+   support -- CSS.highlights.set() there is simply never called. */
+::highlight(be-link-edit) { background-color: rgba(0,155,255,0.35); }
 .be-link-popover { display: inline-flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
 .be-link-popover input { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 4px; padding: 3px 6px; font-size: .78rem; width: 180px; }
 .be-canvas-toprow { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 6px; }

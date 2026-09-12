@@ -637,6 +637,19 @@ window.BlockEditor = (function () {
       if (!m) return '#0000ff';
       return '#' + [m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('');
     }
+    // The browser's own text-selection highlight disappears the instant
+    // focus moves to the URL input, since selection rendering only shows on
+    // whichever element actually has focus -- there's no way around that
+    // with the real Selection object. The Custom Highlight API paints an
+    // arbitrary Range's own highlight independent of focus/selection, so
+    // this stays visible for as long as the popover is open.
+    function setLinkEditHighlight(range) {
+      if (!range || !window.Highlight || !CSS.highlights) return;
+      CSS.highlights.set('be-link-edit', new Highlight(range));
+    }
+    function clearLinkEditHighlight() {
+      if (CSS.highlights) CSS.highlights.delete('be-link-edit');
+    }
     toolbar.querySelector('#beLinkBtn').addEventListener('click', () => {
       const sel = window.getSelection();
       let range = sel.rangeCount ? sel.getRangeAt(0) : null;
@@ -652,6 +665,7 @@ window.BlockEditor = (function () {
         sel.addRange(range);
       }
       savedRange = range;
+      setLinkEditHighlight(range);
       linkColorTouched = false;
       linkUrlInput.value = existingLink ? (existingLink.getAttribute('href') || '') : 'https://';
       linkColorInput.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '';
@@ -661,7 +675,7 @@ window.BlockEditor = (function () {
       linkUrlInput.select();
     });
     wireHexColorField(toolbar, 'beLinkColor', () => { linkColorTouched = true; });
-    function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; }
+    function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; clearLinkEditHighlight(); }
     toolbar.querySelector('#beLinkCancel').addEventListener('click', closeLinkPopover);
     toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
       const url = linkUrlInput.value.trim();
