@@ -103,6 +103,17 @@
   .token-editor { min-height: 20px; line-height: 1.5; cursor: text; white-space: pre-wrap; word-break: break-word; }
   .token-editor[data-multiline="true"] { min-height: 140px; }
   .token-editor:empty:before { content: attr(data-placeholder); color: #55555f; pointer-events: none; }
+  .qa-block { display: block; margin: 4px 0; }
+  /* A real flex row (not just relying on <b>/<button> happening to sit
+     inline together) -- same reasoning as .step-card-header elsewhere: a
+     long wrapped label needs the x pinned to its own top-right corner
+     without running the label text underneath it. */
+  .qa-block-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .qa-block-x { flex-shrink: 0; background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .95rem; line-height: 1.4; padding: 0 2px; }
+  .qa-block-x:hover { color: #fff; }
+  .qa-undo-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 10px 16px; font-size: .85rem; color: #fff; z-index: 900; display: flex; align-items: center; gap: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .qa-undo-btn { background: none; border: none; color: var(--pra-blue); font-weight: 700; cursor: pointer; font-size: .85rem; padding: 0; }
+  .qa-undo-btn:hover { text-decoration: underline; }
   /* Always full-width and wrapped -- never truncated, so the whole value is
      on screen with no scroll/hover/click needed. display:flex + width (not
      just white-space) is what actually lets the label wrap onto multiple
@@ -1240,17 +1251,22 @@ function tokenEditorContentHtml(value, multiline) {
       return escapeHtml(p).replace(/\n/g, ' ');
     }).join('');
   }
-  // A bold label immediately followed by its own token on the next line,
-  // then a blank line, is exactly the shape insertQaPair builds -- render
-  // THAT specific pattern as one wrapped qa-block (checked first in the
-  // split pattern, since it's a longer/more specific match starting with
-  // the same "**" as the plain-bold alternative). Anything else -- manual
-  // bold, a bare chip, plain text -- renders exactly as before.
+  // A bold label immediately followed by its own token on the next line is
+  // exactly the shape insertQaPair builds -- render THAT specific pattern
+  // as one wrapped qa-block (checked first in the split pattern, since it's
+  // a longer/more specific match starting with the same "**" as the
+  // plain-bold alternative). Anything else -- manual bold, a bare chip,
+  // plain text -- renders exactly as before. Deliberately does NOT also
+  // consume the blank line that (per insertQaPair) follows the block --
+  // that stays real, editable text (a plain <br><br> below), not baked
+  // into the block, so there's an actual cursor position to click into and
+  // type between one question and the next, not just CSS spacing with
+  // nothing behind it.
   const samples = cachedSamples || [];
-  const pattern = /(\*\*[^*]+\*\*\n\{\{[^}]+\}\}\n\n|\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g;
+  const pattern = /(\*\*[^*]+\*\*\n\{\{[^}]+\}\}|\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g;
   return str.split(pattern).map(p => {
     if (!p) return '';
-    const qaMatch = p.match(/^\*\*([^*]+)\*\*\n(\{\{[^}]+\}\})\n\n$/);
+    const qaMatch = p.match(/^\*\*([^*]+)\*\*\n(\{\{[^}]+\}\})$/);
     if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], samples));
     if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
     if (/^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
@@ -1272,13 +1288,16 @@ function getTokenEditorValue(el) {
   el.childNodes.forEach(node => {
     if (node.nodeType === Node.TEXT_NODE) out += node.textContent;
     else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Reconstructs the exact "**label**\n{{token}}\n\n" shape
+      // Reconstructs the exact "**label**\n{{token}}" shape
       // tokenEditorContentHtml's qa-block branch parses back out of this
       // same string next time it's loaded -- doesn't recurse into the
       // block's own header/chip DOM at all, so it's correct regardless of
       // what's currently shown in the chip (the real answer preview,
-      // possibly still just the label if samples hadn't loaded yet).
-      if (node.classList.contains('qa-block')) out += `**${node.dataset.qaLabel}**\n${node.dataset.qaRaw}\n\n`;
+      // possibly still just the label if samples hadn't loaded yet). The
+      // blank line after the block is separate, real <br> siblings (see
+      // insertQaPair), picked up by the plain BR branch below like any
+      // other line break -- not baked in here.
+      if (node.classList.contains('qa-block')) out += `**${node.dataset.qaLabel}**\n${node.dataset.qaRaw}`;
       else if (node.classList.contains('token-chip')) out += node.dataset.raw;
       else if (node.tagName === 'BR') out += '\n';
       // Recurses (not .textContent) so a chip typed/selected INTO a bold
@@ -1315,10 +1334,35 @@ function wireChipRemovals(root) {
       e.preventDefault(); e.stopPropagation();
       const block = x.closest('.qa-block');
       const editor = block.closest('[data-token-editor]');
+      const parent = block.parentNode, nextSibling = block.nextSibling;
       block.remove();
       editor.dispatchEvent(new Event('input', { bubbles: true }));
+      // The block itself is kept (not a clone/re-parsed copy), so undo
+      // restores it byte-for-byte including whatever answer text was
+      // showing -- inserted back at its exact original position via the
+      // sibling captured above, since removing it can shift what "the
+      // next node" means for anything inserted afterward.
+      showQaUndoToast(block, parent, nextSibling, editor);
     };
   });
+}
+let qaUndoState = null;
+function showQaUndoToast(removedBlock, parent, nextSibling, editor) {
+  if (qaUndoState) { clearTimeout(qaUndoState.timer); qaUndoState.el.remove(); }
+  const el = document.createElement('div');
+  el.className = 'qa-undo-toast';
+  el.innerHTML = `<span>Question removed.</span><button type="button" class="qa-undo-btn">Undo</button>`;
+  document.body.appendChild(el);
+  const timer = setTimeout(() => { el.remove(); qaUndoState = null; }, 8000);
+  el.querySelector('.qa-undo-btn').onclick = () => {
+    parent.insertBefore(removedBlock, nextSibling);
+    wireChipRemovals(editor);
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    clearTimeout(timer);
+    el.remove();
+    qaUndoState = null;
+  };
+  qaUndoState = { el, timer };
 }
 function insertChipAtCaret(editor, raw) {
   editor.focus();
@@ -1410,8 +1454,15 @@ function insertQaPair(editor, label, token, exampleValue) {
   const block = tmp.firstElementChild;
   range.insertNode(block);
   wireChipRemovals(editor);
-  range.setStartAfter(block);
-  range.setEndAfter(block);
+  // A real, clickable/typable blank line after the block -- not just CSS
+  // spacing with nothing behind it -- so there's an actual cursor position
+  // to add free text (a greeting, spacing, anything) between one question
+  // and the next, the same as anywhere else in this editor.
+  const br1 = document.createElement('br'), br2 = document.createElement('br');
+  block.after(br1);
+  br1.after(br2);
+  range.setStartAfter(br2);
+  range.setEndAfter(br2);
   sel.removeAllRanges();
   sel.addRange(range);
   editor.dispatchEvent(new Event('input', { bubbles: true }));
