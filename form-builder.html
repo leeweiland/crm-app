@@ -54,7 +54,7 @@
   .fb-progress span.done { background: var(--pra-blue); }
 
   .fb-block-wrap { position: relative; }
-  .fb-block { position: relative; padding: 14px 78px 14px 44px; }
+  .fb-block { position: relative; padding: 14px 20px 14px 44px; }
   .fb-block:hover, .fb-block.panel-open { background: rgba(255,255,255,0.025); }
   .fb-block.dragging { opacity: .35; }
   /* Dashed drop-position indicator, shown in the gap the dragged block
@@ -63,7 +63,12 @@
   .fb-gap.drag-target::before { content: ''; position: absolute; left: 44px; right: 44px; top: 50%; border-top: 2px dashed var(--pra-blue); }
   .fb-drag-handle { position: absolute; left: 10px; top: 18px; cursor: grab; color: var(--pra-dim); }
   .fb-drag-handle svg { width: 15px; height: 18px; overflow: visible; }
-  .fb-toolbar { position: absolute; right: 10px; top: 12px; display: flex; gap: 4px; }
+  /* Its own row, right-aligned, above the block's content -- an absolutely
+     positioned overlay here used to just sit on top of the label/text
+     whenever there were enough icons (toggle + gear + logic + trash can
+     be ~140px wide) to outgrow whatever right-padding the block reserved
+     for it, covering up wrapped text on a long label. */
+  .fb-toolbar { display: flex; justify-content: flex-end; gap: 4px; margin-bottom: 8px; }
   .fb-required-toggle { width: 30px; height: 17px; border-radius: 10px; background: var(--pra-border); position: relative; cursor: pointer; border: none; flex-shrink: 0; align-self: center; }
   .fb-required-toggle.on { background: var(--pra-blue); }
   .fb-required-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left .12s; }
@@ -296,6 +301,110 @@
 <script src="/crm-nav.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+// A headline/statement block's label is rich text (Ctrl+B/I/U), stored and
+// rendered as real HTML rather than the plain string every other field's
+// label is. Same sanitizer as forms_backend.js's (duplicated, not shared,
+// per this codebase's convention) -- matches any tag-like sequence and
+// keeps ONLY these bare tag names, discarding every attribute
+// unconditionally. That's what makes this safe against a real <script> or
+// an <img onerror=>, AND what actually needs to happen to execCommand's
+// own <span style="font-weight:normal"> -- how bolding gets UNDONE on
+// text that's already bold via CSS, e.g. a headline -- since there's no
+// allowlisted tag for "not bold" to preserve; it has to collapse to plain
+// text instead of leaking as visible raw markup. The server re-sanitizes
+// on save regardless; this just keeps what's held in memory client-side
+// safe too.
+function sanitizeRichText(raw) {
+  const ALLOWED = ['b', 'i', 'u', 'strong', 'em', 'br'];
+  return String(raw ?? '').replace(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (full, slash, tag) => {
+    const t = tag.toLowerCase();
+    return ALLOWED.includes(t) ? `<${slash}${t}>` : '';
+  });
+}
+// A block's own color/font/size override falls back to the form's theme
+// color/font, and the block type's own default CSS size, when unset.
+// Three near-identical functions (rather than one generic one) since each
+// reads a different set of field properties -- headline/statement's own
+// color/fontFamily/fontSize, a question's labelColor/labelFontFamily/etc,
+// an answer option's optionsColor/optionsFontFamily/etc.
+function textBlockStyle(f) {
+  const parts = [];
+  if (f.color) parts.push(`color:${f.color}`);
+  if (f.fontFamily && FONT_OPTIONS[f.fontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.fontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.fontFamily].googleFont, 'block-' + f.fontFamily); }
+  if (f.fontSize) parts.push(`font-size:${f.fontSize}rem`);
+  return parts.length ? ` style="${parts.join(';')}"` : '';
+}
+function labelStyle(f) {
+  const parts = [];
+  if (f.labelColor) parts.push(`color:${f.labelColor}`);
+  if (f.labelFontFamily && FONT_OPTIONS[f.labelFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.labelFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.labelFontFamily].googleFont, 'block-' + f.labelFontFamily); }
+  if (f.labelFontSize) parts.push(`font-size:${f.labelFontSize}rem`);
+  if (f.labelBold) parts.push('font-weight:800');
+  if (f.labelItalic) parts.push('font-style:italic');
+  if (f.labelUnderline) parts.push('text-decoration:underline');
+  return parts.length ? ` style="${parts.join(';')}"` : '';
+}
+function optionsStyle(f) {
+  const parts = [];
+  if (f.optionsColor) parts.push(`color:${f.optionsColor}`);
+  if (f.optionsFontFamily && FONT_OPTIONS[f.optionsFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.optionsFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.optionsFontFamily].googleFont, 'block-' + f.optionsFontFamily); }
+  if (f.optionsFontSize) parts.push(`font-size:${f.optionsFontSize}rem`);
+  if (f.optionsBold) parts.push('font-weight:800');
+  if (f.optionsItalic) parts.push('font-style:italic');
+  if (f.optionsUnderline) parts.push('text-decoration:underline');
+  return parts.length ? ` style="${parts.join(';')}"` : '';
+}
+// Shared markup + prop-name maps for the "Color / Font / Size [/ B I U]"
+// controls repeated across headline+statement (no B/I/U toggle -- those
+// two get real inline rich text instead, via wireRichTextShortcuts) and
+// every question label + answer-options group (a whole-text B/I/U toggle
+// instead of inline rich text -- label/option text doubles as data used
+// elsewhere, e.g. a Flow's payload key or a custom field's auto-generated
+// name, so it stays a plain string rather than becoming embedded HTML).
+const HEADLINE_STYLE_PROPS = { color: 'color', font: 'fontFamily', size: 'fontSize' };
+const LABEL_STYLE_PROPS = { color: 'labelColor', font: 'labelFontFamily', size: 'labelFontSize', bold: 'labelBold', italic: 'labelItalic', underline: 'labelUnderline' };
+const OPTIONS_STYLE_PROPS = { color: 'optionsColor', font: 'optionsFontFamily', size: 'optionsFontSize', bold: 'optionsBold', italic: 'optionsItalic', underline: 'optionsUnderline' };
+function styleControlsHtml(i, props, sizeDefault) {
+  const f = form.fields[i];
+  const includeToggles = !!props.bold;
+  return `
+    <div class="field">
+      <label class="pra-label">Color</label>
+      <input class="pra-input" data-style-color-idx="${i}" data-style-prop="${props.color}" value="${escapeHtml(f[props.color] || '')}" placeholder="inherit"/>
+    </div>
+    <div class="field">
+      <label class="pra-label">Font</label>
+      <select class="pra-select" data-style-font-idx="${i}" data-style-prop="${props.font}">
+        <option value="">Inherit</option>
+        ${Object.entries(FONT_OPTIONS).map(([k, fo]) => `<option value="${k}" ${f[props.font] === k ? 'selected' : ''}>${fo.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field" ${includeToggles ? '' : 'style="margin-bottom:0"'}>
+      <label class="pra-label">Size (rem)</label>
+      <input class="pra-input" type="number" min="0.5" max="4" step="0.1" data-style-size-idx="${i}" data-style-prop="${props.size}" value="${f[props.size] || ''}" placeholder="${sizeDefault}"/>
+    </div>
+    ${includeToggles ? `
+    <div class="fb-format-row" style="display:flex;gap:6px;margin-bottom:0">
+      <button type="button" class="pra-btn pra-btn-sm ${f[props.bold] ? '' : 'pra-btn-ghost'}" data-style-toggle-idx="${i}" data-style-prop="${props.bold}" style="font-weight:800" title="Bold">B</button>
+      <button type="button" class="pra-btn pra-btn-sm ${f[props.italic] ? '' : 'pra-btn-ghost'}" data-style-toggle-idx="${i}" data-style-prop="${props.italic}" style="font-style:italic" title="Italic">I</button>
+      <button type="button" class="pra-btn pra-btn-sm ${f[props.underline] ? '' : 'pra-btn-ghost'}" data-style-toggle-idx="${i}" data-style-prop="${props.underline}" style="text-decoration:underline" title="Underline">U</button>
+    </div>` : ''}
+  `;
+}
+// Applies Ctrl+B/I/U to a headline/statement contenteditable -- browsers
+// already bind these natively, but wiring them explicitly guarantees the
+// same behavior everywhere and gives a hook to save right away instead of
+// however long execCommand's own native 'input' dispatch takes.
+function wireRichTextShortcuts(el, onchange) {
+  el.addEventListener('keydown', e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const cmd = { b: 'bold', i: 'italic', u: 'underline' }[e.key.toLowerCase()];
+    if (!cmd) return;
+    e.preventDefault();
+    document.execCommand(cmd);
+    onchange();
+  });
+}
 function uid() { return 'f' + Math.random().toString(36).slice(2, 10); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
@@ -363,18 +472,26 @@ function canMapToCustomField(f) { return !NON_ANSWERABLE_TYPES.includes(f.type) 
 // sense) but its whole purpose is having logic rules built against it.
 const NO_REQUIRE = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar', 'country'];
 const NO_LOGIC = ['statement', 'page_break', 'headline', 'image', 'video', 'calendar'];
-const NO_GEAR = ['page_break', 'headline'];
+const NO_GEAR = ['page_break'];
 const VIDEO_ASPECT_PADDING = { '16:9': '56.25%', '9:16': '177.78%', '1:1': '100%', '4:3': '75%' };
 const LOGIC_OPS = [
   { value: 'equals', label: 'equals' },
   { value: 'not_equals', label: 'does not equal' },
   { value: 'contains', label: 'contains' },
+  { value: 'any_of', label: 'any of' },
   { value: 'is_answered', label: 'is answered' },
   { value: 'is_empty', label: 'is empty' },
 ];
 // Only on free-text types -- exact-match ops already cover choice/country
 // fields perfectly, and there's nothing open-ended for Claude to read.
 const AI_DISQUALIFY_TYPES = ['short_text', 'long_text'];
+// A real question can switch to any other real question type in place --
+// same id, label, required flag, logic, and contact-field mapping, so
+// whatever already reads this field by id/label (a Flow's payload token,
+// a mapped custom field) keeps working without deleting and recreating
+// anything. "country" is left out -- it's a silent auto-filled signal, not
+// a question a visitor sees or answers, and never was one.
+const CONVERTIBLE_TYPES = Object.keys(FIELD_META).filter(t => !NON_ANSWERABLE_TYPES.includes(t) && t !== 'country');
 const DEFAULT_PLACEHOLDER = { short_text: 'Type your answer', long_text: 'Type your answer', email: 'you@example.com', phone: '(555) 555-5555', first_name: 'First name', last_name: 'Last name', number: '0' };
 
 // Curated font choices — "default" and "poppins" need no extra network
@@ -511,11 +628,17 @@ function optionMarkerSvg(type) {
 function renderLogicRule(field, rule, fi, ri) {
   const needsValue = !['is_answered', 'is_empty'].includes(rule.op);
   const isAi = rule.op === 'ai_disqualify';
+  const isAnyOf = rule.op === 'any_of';
   const valueInput = isAi
     ? `<textarea class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" rows="2" placeholder="e.g. the answer indicates unemployment, financial hardship, a disability, or contains profanity" style="width:100%;flex-basis:100%;resize:vertical">${escapeHtml(rule.value || '')}</textarea>`
-    : FIELD_META[field.type].hasOptions
-      ? `<select class="pra-select" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}">${field.options.map(o => `<option value="${escapeHtml(o.label)}" ${rule.value === o.label ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}</select>`
-      : `<input class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" value="${escapeHtml(rule.value || '')}" placeholder="value" style="width:auto;min-width:110px"/>`;
+    // Comma-separated, always a plain text input (even on a choice field) --
+    // typing "Cashier, Retail, Student" is simpler than juggling a
+    // multi-select, and it still matches option labels exactly.
+    : isAnyOf
+      ? `<input class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" value="${escapeHtml(rule.value || '')}" placeholder="value1, value2, value3" style="width:auto;min-width:220px;flex:1"/>`
+      : FIELD_META[field.type].hasOptions
+        ? `<select class="pra-select" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}">${field.options.map(o => `<option value="${escapeHtml(o.label)}" ${rule.value === o.label ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}</select>`
+        : `<input class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" value="${escapeHtml(rule.value || '')}" placeholder="value" style="width:auto;min-width:110px"/>`;
   const ops = AI_DISQUALIFY_TYPES.includes(field.type) ? [...LOGIC_OPS, { value: 'ai_disqualify', label: "doesn't meet criteria (AI)" }] : LOGIC_OPS;
   return `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--pra-border)">
@@ -730,9 +853,27 @@ function renderPanel(f, i) {
         <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Only matters when width is under 100%.</div>
       </div>
     </div>`;
+  } else if (f.type === 'headline' || f.type === 'statement') {
+    gearHtml = `<div class="fb-panel">
+      ${f.type === 'statement' ? `<div class="field"><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>` : ''}
+      ${styleControlsHtml(i, HEADLINE_STYLE_PROPS, f.type === 'headline' ? '1.4' : '.95')}
+      <div class="fb-format-row" style="display:flex;gap:6px;margin-top:10px">
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-fmt-idx="${i}" data-fmt-cmd="bold" style="font-weight:800" title="Bold (Ctrl+B)">B</button>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-fmt-idx="${i}" data-fmt-cmd="italic" style="font-style:italic" title="Italic (Ctrl+I)">I</button>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-fmt-idx="${i}" data-fmt-cmd="underline" style="text-decoration:underline" title="Underline (Ctrl+U)">U</button>
+      </div>
+      <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Select some text above, then click one of these (or Ctrl+B / Ctrl+I / Ctrl+U) to format it.</div>
+    </div>`;
   } else {
     const showPlaceholder = f.type !== 'statement';
     gearHtml = `<div class="fb-panel">
+      <div class="field">
+        <label class="pra-label">Question type</label>
+        <select class="pra-select" data-changetype-idx="${i}">
+          ${CONVERTIBLE_TYPES.map(t => `<option value="${t}" ${f.type === t ? 'selected' : ''}>${FIELD_META[t].label}</option>`).join('')}
+        </select>
+        <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Switches the answer type in place -- same question, same mapped contact field, same Flow token. Nothing downstream needs to change.</div>
+      </div>
       ${showPlaceholder ? `<div class="field"><label class="pra-label">Placeholder</label><input class="pra-input" data-placeholder-idx="${i}" value="${escapeHtml(f.placeholder || '')}"/></div>` : ''}
       <div class="field" ${canMapToCustomField(f) ? '' : 'style="margin-bottom:0"'}><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
       ${canMapToCustomField(f) ? `
@@ -744,6 +885,12 @@ function renderPanel(f, i) {
             ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
           </select>
         </div>
+      ` : ''}
+      <div class="pra-label" style="margin:16px 0 8px">Question style</div>
+      ${styleControlsHtml(i, LABEL_STYLE_PROPS, '1.05')}
+      ${FIELD_META[f.type].hasOptions ? `
+        <div class="pra-label" style="margin:16px 0 8px">Answer style</div>
+        ${styleControlsHtml(i, OPTIONS_STYLE_PROPS, '1')}
       ` : ''}
     </div>`;
   }
@@ -770,7 +917,7 @@ function renderBlockBody(f, i) {
     return `<div class="fb-pagebreak-row"><div class="line"></div><span class="tag">${ICONS.page_break} Page Break</span><div class="line"></div></div>`;
   }
   if (f.type === 'headline') {
-    return `<div class="fb-headline-text" contenteditable="true" data-headline-idx="${i}">${escapeHtml(f.label)}</div>`;
+    return `<div class="fb-headline-text" contenteditable="true" data-headline-idx="${i}"${textBlockStyle(f)}>${sanitizeRichText(f.label)}</div>`;
   }
   if (f.type === 'image') {
     return `
@@ -825,11 +972,11 @@ function renderBlockBody(f, i) {
   }
   if (f.type === 'statement') {
     return `
-      <div class="fb-statement-text" contenteditable="true" data-statement-idx="${i}">${escapeHtml(f.label)}</div>
+      <div class="fb-statement-text" contenteditable="true" data-statement-idx="${i}"${textBlockStyle(f)}>${sanitizeRichText(f.label)}</div>
       <div class="fb-help" contenteditable="true" data-help-idx="${i}" data-placeholder="Add help text...">${escapeHtml(f.helpText || '')}</div>
     `;
   }
-  const labelHtml = `<span class="fb-label" contenteditable="true" data-label-idx="${i}">${escapeHtml(f.label)}</span>${req}<div class="fb-help" contenteditable="true" data-help-idx="${i}" data-placeholder="Add help text...">${escapeHtml(f.helpText || '')}</div>`;
+  const labelHtml = `<span class="fb-label" contenteditable="true" data-label-idx="${i}"${labelStyle(f)}>${escapeHtml(f.label)}</span>${req}<div class="fb-help" contenteditable="true" data-help-idx="${i}" data-placeholder="Add help text...">${escapeHtml(f.helpText || '')}</div>`;
 
   if (FIELD_META[f.type].hasOptions) {
     return `
@@ -838,7 +985,7 @@ function renderBlockBody(f, i) {
         ${f.options.map((o, oi) => `
           <div class="fb-option-row">
             <span class="fb-option-marker">${optionMarkerSvg(f.type)}</span>
-            <input class="fb-option-input" data-opt-idx="${i}" data-opt-oi="${oi}" value="${escapeHtml(o.label)}"/>
+            <input class="fb-option-input" data-opt-idx="${i}" data-opt-oi="${oi}" value="${escapeHtml(o.label)}"${optionsStyle(f)}/>
             <button class="icon-btn fb-option-del" data-opt-del-idx="${i}" data-opt-del-oi="${oi}" title="Remove option">${ICONS.trash}</button>
           </div>
         `).join('')}
@@ -887,8 +1034,8 @@ function renderCanvas() {
       <div class="fb-block-wrap">
         <div class="fb-block ${openPanel?.idx === i ? 'panel-open' : ''}" data-idx="${i}">
           <span class="fb-drag-handle" title="Drag to reorder">${ICONS.grip}</span>
-          ${renderBlockBody(f, i)}
           ${renderToolbar(f, i)}
+          ${renderBlockBody(f, i)}
         </div>
         ${renderPanel(f, i)}
       </div>
@@ -943,10 +1090,14 @@ function bindCanvas(canvas) {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
   });
   canvas.querySelectorAll('[data-statement-idx]').forEach(el => {
-    el.addEventListener('input', e => { form.fields[+e.target.dataset.statementIdx].label = e.target.textContent; saveDebounced(); });
+    const save = () => { form.fields[+el.dataset.statementIdx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
+    el.addEventListener('input', save);
+    wireRichTextShortcuts(el, save);
   });
   canvas.querySelectorAll('[data-headline-idx]').forEach(el => {
-    el.addEventListener('input', e => { form.fields[+e.target.dataset.headlineIdx].label = e.target.textContent; saveDebounced(); });
+    const save = () => { form.fields[+el.dataset.headlineIdx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
+    el.addEventListener('input', save);
+    wireRichTextShortcuts(el, save);
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
   });
   canvas.querySelectorAll('[data-help-idx]').forEach(el => {
@@ -971,6 +1122,21 @@ function bindCanvas(canvas) {
     }
     form.fields[idx].mapToCustomFieldId = e.target.value;
     saveDebounced();
+  }));
+  // Changing a question's type in place -- same id/label/required/logic/
+  // mapToCustomFieldId, so a Flow token or a mapped custom field (both key
+  // off those, never the type) keeps working with nothing else to update.
+  canvas.querySelectorAll('[data-changetype-idx]').forEach(el => el.addEventListener('change', e => {
+    const idx = +e.target.dataset.changetypeIdx;
+    const f = form.fields[idx];
+    f.type = e.target.value;
+    if (FIELD_META[f.type].hasOptions && !(f.options || []).length) f.options = [{ id: uid(), label: 'Option 1' }];
+    // An ai_disqualify rule only makes sense on a typing field -- stripped
+    // rather than left behind silently inert on, say, a multiple choice.
+    if (!AI_DISQUALIFY_TYPES.includes(f.type) && (f.logic || []).some(r => r.op === 'ai_disqualify')) {
+      f.logic = f.logic.filter(r => r.op !== 'ai_disqualify');
+    }
+    saveDebounced(); renderCanvas();
   }));
 
   // ── Calendar field's settings panel -- two separate backends being
@@ -1222,6 +1388,50 @@ function bindCanvas(canvas) {
     form.fields[+e.target.dataset.videoAlignIdx].videoAlign = e.target.value;
     saveDebounced(); renderCanvas();
   }));
+  // Generic Color/Font/Size/B-I-U controls shared by headline+statement's
+  // own style, every question's label style, and every options-having
+  // field's answer style -- data-style-prop carries which exact field
+  // property to write, so one set of listeners covers all three panels.
+  canvas.querySelectorAll('[data-style-color-idx]').forEach(el => {
+    el.addEventListener('input', e => {
+      form.fields[+e.target.dataset.styleColorIdx][e.target.dataset.styleProp] = e.target.value.trim() || undefined;
+      saveDebounced();
+    });
+    el.addEventListener('change', () => renderCanvas());
+  });
+  canvas.querySelectorAll('[data-style-font-idx]').forEach(el => el.addEventListener('change', e => {
+    form.fields[+e.target.dataset.styleFontIdx][e.target.dataset.styleProp] = e.target.value || undefined;
+    saveDebounced(); renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-style-size-idx]').forEach(el => {
+    el.addEventListener('input', e => {
+      const v = e.target.value.trim();
+      form.fields[+e.target.dataset.styleSizeIdx][e.target.dataset.styleProp] = v ? Math.max(0.5, Math.min(4, Number(v) || 0)) : undefined;
+      saveDebounced();
+    });
+    el.addEventListener('change', () => renderCanvas()); // re-render on blur, not every keystroke, so the input doesn't lose focus mid-type
+  });
+  canvas.querySelectorAll('[data-style-toggle-idx]').forEach(btn => btn.addEventListener('click', () => {
+    const idx = +btn.dataset.styleToggleIdx, prop = btn.dataset.styleProp;
+    form.fields[idx][prop] = !form.fields[idx][prop];
+    saveDebounced(); renderCanvas();
+  }));
+  // Format buttons apply to whichever headline/statement contenteditable
+  // they sit under -- mousedown preventDefault keeps the text selection
+  // alive through the click (a button click would otherwise steal focus
+  // and collapse it first).
+  canvas.querySelectorAll('[data-fmt-idx]').forEach(btn => {
+    const idx = btn.dataset.fmtIdx;
+    const target = canvas.querySelector(`[data-headline-idx="${idx}"], [data-statement-idx="${idx}"]`);
+    if (!target) return;
+    btn.onmousedown = e => e.preventDefault();
+    btn.onclick = () => {
+      target.focus();
+      document.execCommand(btn.dataset.fmtCmd);
+      form.fields[+idx].label = sanitizeRichText(target.innerHTML);
+      saveDebounced();
+    };
+  });
   canvas.querySelectorAll('[data-calendar-idx]').forEach(el => el.addEventListener('change', e => {
     form.fields[+e.target.dataset.calendarIdx].eventTypeSlug = e.target.value;
     saveDebounced(); renderCanvas();

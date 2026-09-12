@@ -149,6 +149,30 @@ function newForm(name) {
   };
 }
 
+// A headline/statement block's label is rich text (bold/italic/underline
+// from the builder's Ctrl+B/I/U), not the plain string every other field's
+// label is -- stored and rendered as real HTML, so it has to be sanitized
+// down to an explicit allowlist before it's trusted anywhere, since this
+// flows straight into a PUBLIC page via innerHTML. Matches any tag-like
+// sequence and keeps ONLY these bare tag names, discarding every attribute
+// unconditionally (so a real <script>, an <img onerror=>, or the browser's
+// own <span style="font-weight:normal"> -- what execCommand('bold')
+// actually produces when un-bolding text that's already bold via CSS, e.g.
+// a headline -- all collapse to their inner text instead of ever becoming
+// live markup or leaking as visible raw-tag text). This is an allowlist,
+// not a blocklist trying to catch every dangerous pattern. Idempotent, so
+// re-running it on already-sanitized input is harmless.
+function sanitizeRichText(raw) {
+  const ALLOWED = ["b", "i", "u", "strong", "em", "br"];
+  return String(raw ?? "").replace(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (full, slash, tag) => {
+    const t = tag.toLowerCase();
+    return ALLOWED.includes(t) ? `<${slash}${t}>` : "";
+  });
+}
+function sanitizeRichTextFields(fields) {
+  return fields.map(f => (f.type === "headline" || f.type === "statement") ? { ...f, label: sanitizeRichText(f.label) } : f);
+}
+
 function publicForm(form) {
   // Strips internal routing config (defaultStatus/addTagIds/addListIds) —
   // the public renderer only needs what it displays and submits against.
@@ -159,7 +183,7 @@ function publicForm(form) {
   // out of the page source and word their answer to dodge it.
   return {
     id: form.id, name: form.name, theme: form.theme,
-    fields: form.fields.map(f => {
+    fields: sanitizeRichTextFields(form.fields).map(f => {
       if (!(f.logic || []).some(r => r.op === "ai_disqualify")) return f;
       return { ...f, logic: f.logic.map(r => r.op === "ai_disqualify" ? { ...r, value: undefined } : r) };
     }),
@@ -205,6 +229,10 @@ function evalRuleServerSide(rule, value) {
   if (rule.op === "equals") return Array.isArray(value) ? value.includes(target) : String(value || "") === target;
   if (rule.op === "not_equals") return Array.isArray(value) ? !value.includes(target) : String(value || "") !== target;
   if (rule.op === "contains") return Array.isArray(value) ? value.includes(target) : String(value || "").includes(target);
+  if (rule.op === "any_of") {
+    const candidates = String(target || "").split(",").map(s => s.trim()).filter(Boolean);
+    return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.includes(String(value || ""));
+  }
   return false;
 }
 
@@ -514,6 +542,7 @@ export async function handleFormsRequest(req, res, url) {
       if (!form) return sendJson(res, 404, { error: "Form not found" });
       const body = await readJsonBody(req);
       if ("status" in body && !["draft", "published"].includes(body.status)) return sendJson(res, 400, { error: "status must be 'draft' or 'published'" });
+      if ("fields" in body) body.fields = sanitizeRichTextFields(body.fields);
       for (const k of ["name", "status", "fields", "settings", "theme"]) if (k in body) form[k] = body[k];
       form.updatedAt = new Date().toISOString();
       writeJson(FORMS_FILE, forms);

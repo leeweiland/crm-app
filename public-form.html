@@ -81,6 +81,54 @@ try { if (window.self !== window.top) document.documentElement.classList.add('pf
 </div>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+// A headline/statement block's label is rich text (bold/italic/underline
+// set in the builder), stored and rendered as real HTML. Same sanitizer as
+// forms_backend.js's/form-builder.html's (duplicated per this codebase's
+// convention) -- matches any tag-like sequence and keeps ONLY these bare
+// tag names, discarding every attribute unconditionally (so a real
+// <script>, or execCommand's own <span style="font-weight:normal"> from
+// un-bolding already-bold text, collapses to plain text instead of ever
+// running or leaking as visible raw markup). The server already sanitizes
+// on save; this re-sanitizes defensively before it's ever put into
+// innerHTML on this PUBLIC page, in case of old data or a future code
+// path that skips that.
+function sanitizeRichText(raw) {
+  const ALLOWED = ['b', 'i', 'u', 'strong', 'em', 'br'];
+  return String(raw ?? '').replace(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (full, slash, tag) => {
+    const t = tag.toLowerCase();
+    return ALLOWED.includes(t) ? `<${slash}${t}>` : '';
+  });
+}
+// A block's own color/font/size override, same three near-identical
+// functions as form-builder.html's -- falls back to the form's theme
+// color/font, and the block type's own default CSS size, when unset.
+function textBlockStyle(f) {
+  const parts = [];
+  if (f.color) parts.push(`color:${f.color}`);
+  if (f.fontFamily && FONT_OPTIONS[f.fontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.fontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.fontFamily].googleFont, 'block-' + f.fontFamily); }
+  if (f.fontSize) parts.push(`font-size:${f.fontSize}rem`);
+  return parts.length ? ` style="${parts.join(';')}"` : '';
+}
+function labelStyle(f) {
+  const parts = [];
+  if (f.labelColor) parts.push(`color:${f.labelColor}`);
+  if (f.labelFontFamily && FONT_OPTIONS[f.labelFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.labelFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.labelFontFamily].googleFont, 'block-' + f.labelFontFamily); }
+  if (f.labelFontSize) parts.push(`font-size:${f.labelFontSize}rem`);
+  if (f.labelBold) parts.push('font-weight:800');
+  if (f.labelItalic) parts.push('font-style:italic');
+  if (f.labelUnderline) parts.push('text-decoration:underline');
+  return parts.length ? ` style="${parts.join(';')}"` : '';
+}
+function optionsStyle(f) {
+  const parts = [];
+  if (f.optionsColor) parts.push(`color:${f.optionsColor}`);
+  if (f.optionsFontFamily && FONT_OPTIONS[f.optionsFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.optionsFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.optionsFontFamily].googleFont, 'block-' + f.optionsFontFamily); }
+  if (f.optionsFontSize) parts.push(`font-size:${f.optionsFontSize}rem`);
+  if (f.optionsBold) parts.push('font-weight:800');
+  if (f.optionsItalic) parts.push('font-style:italic');
+  if (f.optionsUnderline) parts.push('text-decoration:underline');
+  return parts.length ? ` style="${parts.join(';')}"` : '';
+}
 
 // ── Auto-height for the inline embed ────────────────────────────────────
 // forms-widget.js's iframe starts at a fixed fallback height; without this,
@@ -270,10 +318,10 @@ function renderProgress() {
 function renderField(f) {
   const req = f.required ? '<span class="pf-required">*</span>' : '';
   if (f.type === 'statement') {
-    return `<div class="pf-field"><div class="pf-statement">${escapeHtml(f.label)}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}</div>`;
+    return `<div class="pf-field"><div class="pf-statement"${textBlockStyle(f)}>${sanitizeRichText(f.label)}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}</div>`;
   }
   if (f.type === 'headline') {
-    return `<div class="pf-field"><div class="pf-headline">${escapeHtml(f.label)}</div></div>`;
+    return `<div class="pf-field"><div class="pf-headline"${textBlockStyle(f)}>${sanitizeRichText(f.label)}</div></div>`;
   }
   if (f.type === 'image') {
     if (!f.src) return '';
@@ -302,26 +350,26 @@ function renderField(f) {
   // rule on it (equals/contains -> hide_next or redirect) works as a
   // country screen through the exact same mechanism as every other field.
   if (f.type === 'country') return '';
-  const label = `<div class="pf-label">${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
+  const label = `<div class="pf-label"${labelStyle(f)}>${escapeHtml(f.label)}${req}</div>${f.helpText ? `<div class="pf-help">${escapeHtml(f.helpText)}</div>` : ''}`;
   const val = answers[f.id];
   if (f.type === 'long_text') {
     return `<div class="pf-field">${label}<textarea class="pra-textarea" rows="4" data-field="${f.id}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(val || '')}</textarea><div class="pf-error" id="err-${f.id}"></div></div>`;
   }
   if (f.type === 'dropdown') {
-    return `<div class="pf-field">${label}<select class="pra-select" data-field="${f.id}">
+    return `<div class="pf-field">${label}<select class="pra-select" data-field="${f.id}"${optionsStyle(f)}>
       <option value="">Select…</option>
       ${f.options.map(o => `<option value="${escapeHtml(o.label)}" ${val === o.label ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
     </select><div class="pf-error" id="err-${f.id}"></div></div>`;
   }
   if (f.type === 'multiple_choice') {
     return `<div class="pf-field">${label}${f.options.map(o => `
-      <label class="pf-choice-row"><input type="radio" name="f-${f.id}" data-field="${f.id}" value="${escapeHtml(o.label)}" ${val === o.label ? 'checked' : ''}/> ${escapeHtml(o.label)}</label>
+      <label class="pf-choice-row"><input type="radio" name="f-${f.id}" data-field="${f.id}" value="${escapeHtml(o.label)}" ${val === o.label ? 'checked' : ''}/> <span${optionsStyle(f)}>${escapeHtml(o.label)}</span></label>
     `).join('')}<div class="pf-error" id="err-${f.id}"></div></div>`;
   }
   if (f.type === 'checkboxes') {
     const arr = Array.isArray(val) ? val : [];
     return `<div class="pf-field">${label}${f.options.map(o => `
-      <label class="pf-choice-row"><input type="checkbox" data-field="${f.id}" value="${escapeHtml(o.label)}" ${arr.includes(o.label) ? 'checked' : ''}/> ${escapeHtml(o.label)}</label>
+      <label class="pf-choice-row"><input type="checkbox" data-field="${f.id}" value="${escapeHtml(o.label)}" ${arr.includes(o.label) ? 'checked' : ''}/> <span${optionsStyle(f)}>${escapeHtml(o.label)}</span></label>
     `).join('')}<div class="pf-error" id="err-${f.id}"></div></div>`;
   }
   const inputType = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
@@ -449,6 +497,10 @@ function evalCondition(rule, value, fieldId) {
   if (rule.op === 'equals') return Array.isArray(value) ? value.includes(target) : String(value || '') === target;
   if (rule.op === 'not_equals') return Array.isArray(value) ? !value.includes(target) : String(value || '') !== target;
   if (rule.op === 'contains') return Array.isArray(value) ? value.includes(target) : String(value || '').includes(target);
+  if (rule.op === 'any_of') {
+    const candidates = String(target || '').split(',').map(s => s.trim()).filter(Boolean);
+    return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.includes(String(value || ''));
+  }
   return false;
 }
 function matchingRule(fields, action) {
