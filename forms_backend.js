@@ -225,17 +225,24 @@ async function askClaudeYesNo(systemPrompt, userText) {
 function evalRuleServerSide(rule, value) {
   if (rule.op === "is_answered") return Array.isArray(value) ? value.length > 0 : !!String(value || "").trim();
   if (rule.op === "is_empty") return Array.isArray(value) ? value.length === 0 : !String(value || "").trim();
-  const target = rule.value;
-  if (rule.op === "equals") return Array.isArray(value) ? value.includes(target) : String(value || "") === target;
-  if (rule.op === "not_equals") return Array.isArray(value) ? !value.includes(target) : String(value || "") !== target;
-  if (rule.op === "contains") return Array.isArray(value) ? value.includes(target) : String(value || "").includes(target);
+  // Case-insensitive from here down -- matches the client-side evalCondition
+  // in public-form.html (a respondent typing "Unemployed" should trip the
+  // same rule as "unemployed"), which matters here since this function is
+  // what actually re-verifies a country field's rules server-side.
+  const lc = (s) => String(s ?? "").toLowerCase();
+  const target = lc(rule.value);
+  const arr = Array.isArray(value) ? value.map(lc) : null;
+  const scalar = arr ? "" : lc(value);
+  if (rule.op === "equals") return arr ? arr.includes(target) : scalar === target;
+  if (rule.op === "not_equals") return arr ? !arr.includes(target) : scalar !== target;
+  if (rule.op === "contains") return arr ? arr.includes(target) : scalar.includes(target);
   if (rule.op === "any_of") {
-    const candidates = String(target || "").split(",").map(s => s.trim()).filter(Boolean);
-    return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.includes(String(value || ""));
+    const candidates = target.split(",").map(s => s.trim()).filter(Boolean);
+    return arr ? arr.some(v => candidates.includes(v)) : candidates.includes(scalar);
   }
   if (rule.op === "contains_any_of") {
-    const candidates = String(target || "").split(",").map(s => s.trim()).filter(Boolean);
-    return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.some(c => String(value || "").includes(c));
+    const candidates = target.split(",").map(s => s.trim()).filter(Boolean);
+    return arr ? arr.some(v => candidates.includes(v)) : candidates.some(c => scalar.includes(c));
   }
   return false;
 }
