@@ -111,14 +111,14 @@ function textBlockStyle(f) {
   const parts = [];
   if (f.color) parts.push(`color:${f.color}`);
   if (f.fontFamily && FONT_OPTIONS[f.fontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.fontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.fontFamily].googleFont, 'block-' + f.fontFamily); }
-  if (f.fontSize) parts.push(`font-size:${f.fontSize}rem`);
+  if (f.fontSize) parts.push(`font-size:${f.fontSize}pt`);
   return parts.length ? ` style="${parts.join(';')}"` : '';
 }
 function labelStyle(f) {
   const parts = [];
   if (f.labelColor) parts.push(`color:${f.labelColor}`);
   if (f.labelFontFamily && FONT_OPTIONS[f.labelFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.labelFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.labelFontFamily].googleFont, 'block-' + f.labelFontFamily); }
-  if (f.labelFontSize) parts.push(`font-size:${f.labelFontSize}rem`);
+  if (f.labelFontSize) parts.push(`font-size:${f.labelFontSize}pt`);
   if (f.labelBold) parts.push('font-weight:800');
   if (f.labelItalic) parts.push('font-style:italic');
   if (f.labelUnderline) parts.push('text-decoration:underline');
@@ -128,7 +128,7 @@ function optionsStyle(f) {
   const parts = [];
   if (f.optionsColor) parts.push(`color:${f.optionsColor}`);
   if (f.optionsFontFamily && FONT_OPTIONS[f.optionsFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.optionsFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.optionsFontFamily].googleFont, 'block-' + f.optionsFontFamily); }
-  if (f.optionsFontSize) parts.push(`font-size:${f.optionsFontSize}rem`);
+  if (f.optionsFontSize) parts.push(`font-size:${f.optionsFontSize}pt`);
   if (f.optionsBold) parts.push('font-weight:800');
   if (f.optionsItalic) parts.push('font-style:italic');
   if (f.optionsUnderline) parts.push('text-decoration:underline');

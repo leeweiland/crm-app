@@ -344,14 +344,14 @@ function textBlockStyle(f) {
   const parts = [];
   if (f.color) parts.push(`color:${f.color}`);
   if (f.fontFamily && FONT_OPTIONS[f.fontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.fontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.fontFamily].googleFont, 'block-' + f.fontFamily); }
-  if (f.fontSize) parts.push(`font-size:${f.fontSize}rem`);
+  if (f.fontSize) parts.push(`font-size:${f.fontSize}pt`);
   return parts.length ? ` style="${parts.join(';')}"` : '';
 }
 function labelStyle(f) {
   const parts = [];
   if (f.labelColor) parts.push(`color:${f.labelColor}`);
   if (f.labelFontFamily && FONT_OPTIONS[f.labelFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.labelFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.labelFontFamily].googleFont, 'block-' + f.labelFontFamily); }
-  if (f.labelFontSize) parts.push(`font-size:${f.labelFontSize}rem`);
+  if (f.labelFontSize) parts.push(`font-size:${f.labelFontSize}pt`);
   if (f.labelBold) parts.push('font-weight:800');
   if (f.labelItalic) parts.push('font-style:italic');
   if (f.labelUnderline) parts.push('text-decoration:underline');
@@ -361,7 +361,7 @@ function optionsStyle(f) {
   const parts = [];
   if (f.optionsColor) parts.push(`color:${f.optionsColor}`);
   if (f.optionsFontFamily && FONT_OPTIONS[f.optionsFontFamily]) { parts.push(`font-family:${FONT_OPTIONS[f.optionsFontFamily].stack}`); loadGoogleFont(FONT_OPTIONS[f.optionsFontFamily].googleFont, 'block-' + f.optionsFontFamily); }
-  if (f.optionsFontSize) parts.push(`font-size:${f.optionsFontSize}rem`);
+  if (f.optionsFontSize) parts.push(`font-size:${f.optionsFontSize}pt`);
   if (f.optionsBold) parts.push('font-weight:800');
   if (f.optionsItalic) parts.push('font-style:italic');
   if (f.optionsUnderline) parts.push('text-decoration:underline');
@@ -405,17 +405,40 @@ function closeFmtPopover() { if (fmtPopoverEl) { fmtPopoverEl.remove(); fmtPopov
 document.addEventListener('mousedown', e => {
   if (fmtPopoverEl && !fmtPopoverEl.contains(e.target) && !e.target.closest('[data-headline-idx],[data-statement-idx],[data-label-idx],.fb-option-input')) closeFmtPopover();
 });
-function openFmtPopover(rect, i, props, sizeDefault, mode, target) {
+// Preserves the actual text selection (inline mode only) across clicking
+// into the popover's own controls -- focusing a <select>/<input> collapses
+// a contenteditable's native selection, which would otherwise both drop
+// the visual highlight AND make execCommand act on nothing. Re-captured
+// after every execCommand too, since wrapping the selection in a new
+// <b>/<i>/<u> restructures the DOM the old Range pointed into.
+let savedRange = null;
+function restoreSavedSelection() {
+  if (!savedRange) return;
+  try { const s = window.getSelection(); s.removeAllRanges(); s.addRange(savedRange); } catch {}
+}
+function captureSelection(target) {
+  const s = window.getSelection();
+  if (s.rangeCount && target.contains(s.anchorNode)) savedRange = s.getRangeAt(0).cloneRange();
+}
+// Pulls the raw CSS text back out of a `styleFn`'s ` style="..."` output so
+// it can be applied straight to a live element's .style.cssText, instead
+// of re-rendering the whole canvas (which would replace this popover's
+// anchor node and force it closed) just to preview a style change.
+function applyLiveStyle(el, styleFn, f) {
+  const m = styleFn(f).match(/style="([^"]*)"/);
+  el.style.cssText = m ? m[1] : '';
+}
+function openFmtPopover(rect, i, props, sizeDefault, mode, target, styleFn, getTargets) {
   closeFmtPopover();
   const f = form.fields[i];
+  const effectiveFont = f[props.font] || form.theme.fontFamily || 'default';
   const pop = document.createElement('div');
   pop.className = 'fb-fmt-popover';
   pop.innerHTML = `
     <select class="pra-select" data-fp-font>
-      <option value="">Inherit</option>
-      ${Object.entries(FONT_OPTIONS).map(([k, fo]) => { loadGoogleFont(fo.googleFont, 'preview-' + k); return `<option value="${k}" style="font-family:${fo.stack}" ${f[props.font] === k ? 'selected' : ''}>${fo.label}</option>`; }).join('')}
+      ${Object.entries(FONT_OPTIONS).map(([k, fo]) => { loadGoogleFont(fo.googleFont, 'preview-' + k); return `<option value="${k}" style="font-family:${fo.stack}" ${effectiveFont === k ? 'selected' : ''}>${fo.label}</option>`; }).join('')}
     </select>
-    <input class="pra-input" type="number" min="0.5" max="4" step="0.1" data-fp-size value="${f[props.size] || ''}" placeholder="${sizeDefault}"/>
+    <input class="pra-input" type="number" min="6" max="96" step="1" data-fp-size value="${f[props.size] || ''}" placeholder="${sizeDefault}pt"/>
     <input class="pra-input" data-fp-color value="${escapeHtml(f[props.color] || '')}" placeholder="inherit"/>
     <button type="button" class="fb-fmt-btn ${mode === 'whole' && f[props.bold] ? 'on' : ''}" data-fp-cmd="bold" title="Bold${mode === 'inline' ? ' (Ctrl+B)' : ''}"><b>B</b></button>
     <button type="button" class="fb-fmt-btn ${mode === 'whole' && f[props.italic] ? 'on' : ''}" data-fp-cmd="italic" title="Italic${mode === 'inline' ? ' (Ctrl+I)' : ''}"><i>I</i></button>
@@ -425,39 +448,42 @@ function openFmtPopover(rect, i, props, sizeDefault, mode, target) {
   fmtPopoverEl = pop;
   pop.style.top = Math.max(8, rect.top - pop.offsetHeight - 8) + 'px';
   pop.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
-  // Font/Size/Color are block-level, so applying them re-renders the
-  // canvas -- which replaces this popover's anchor DOM node, so the
-  // popover closes itself rather than risk acting on a stale reference.
+  // Every control here applies live (no re-render, no closing) and stays
+  // open across repeated adjustments -- pick a font, nudge the size,
+  // still-open to also toggle italic, all in one sitting.
+  const afterChange = () => {
+    getTargets(i).forEach(el => applyLiveStyle(el, styleFn, f));
+    if (mode === 'inline') { target.focus(); restoreSavedSelection(); }
+  };
   pop.querySelector('[data-fp-font]').onchange = e => {
-    form.fields[i][props.font] = e.target.value || undefined;
-    saveDebounced(); closeFmtPopover(); renderCanvas();
+    form.fields[i][props.font] = e.target.value; saveDebounced(); afterChange();
   };
   pop.querySelector('[data-fp-size]').onchange = e => {
     const v = e.target.value.trim();
-    form.fields[i][props.size] = v ? Math.max(0.5, Math.min(4, Number(v) || 0)) : undefined;
-    saveDebounced(); closeFmtPopover(); renderCanvas();
+    form.fields[i][props.size] = v ? Math.max(6, Math.min(96, Number(v) || 0)) : undefined;
+    saveDebounced(); afterChange();
   };
   pop.querySelector('[data-fp-color]').onchange = e => {
-    form.fields[i][props.color] = e.target.value.trim() || undefined;
-    saveDebounced(); closeFmtPopover(); renderCanvas();
+    form.fields[i][props.color] = e.target.value.trim() || undefined; saveDebounced(); afterChange();
   };
-  // B/I/U stays open across repeated clicks in 'inline' mode (no
-  // re-render -- execCommand already updates the live contenteditable
-  // directly), so bolding then italicizing different selections in one
-  // sitting doesn't require reopening the popover each time.
   pop.querySelectorAll('[data-fp-cmd]').forEach(btn => {
     btn.onmousedown = e => e.preventDefault(); // keep the text selection/focus alive through the click
     btn.onclick = () => {
       const cmd = btn.dataset.fpCmd;
       if (mode === 'inline') {
         target.focus();
+        restoreSavedSelection();
         document.execCommand(cmd);
         form.fields[i].label = sanitizeRichText(target.innerHTML);
         saveDebounced();
+        captureSelection(target); // the wrap just restructured the DOM -- grab the fresh range
+        restoreSavedSelection();
       } else {
         const prop = props[cmd];
         form.fields[i][prop] = !form.fields[i][prop];
-        saveDebounced(); closeFmtPopover(); renderCanvas();
+        saveDebounced();
+        btn.classList.toggle('on', !!form.fields[i][prop]);
+        getTargets(i).forEach(el => applyLiveStyle(el, styleFn, f));
       }
     };
   });
@@ -468,15 +494,19 @@ function wireSelectionFmtTrigger(el, i, props, sizeDefault) {
   const trigger = () => {
     const sel = window.getSelection();
     if (!sel.rangeCount || sel.isCollapsed || !el.contains(sel.anchorNode)) return;
-    openFmtPopover(sel.getRangeAt(0).getBoundingClientRect(), i, props, sizeDefault, 'inline', el);
+    savedRange = sel.getRangeAt(0).cloneRange();
+    openFmtPopover(sel.getRangeAt(0).getBoundingClientRect(), i, props, sizeDefault, 'inline', el, textBlockStyle, () => [el]);
   };
   el.addEventListener('mouseup', trigger);
   el.addEventListener('keyup', e => { if (e.shiftKey) trigger(); });
 }
-// Opens the popover in 'whole' mode on focusing a question label or
-// answer option -- no selection needed, since these style the whole text.
-function wireFocusFmtTrigger(el, i, props, sizeDefault) {
-  el.addEventListener('focus', () => openFmtPopover(el.getBoundingClientRect(), i, props, sizeDefault, 'whole', el));
+// Opens the popover in 'whole' mode on focusing a question label (styles
+// just that one element) or an answer option (styles every option on this
+// same field, since Font/Size/Color/B-I-U apply to the whole answer set,
+// not one choice at a time) -- no selection needed either way, since
+// these are whole-text properties, not inline rich text.
+function wireFocusFmtTrigger(el, i, props, sizeDefault, styleFn, getTargets) {
+  el.addEventListener('focus', () => openFmtPopover(el.getBoundingClientRect(), i, props, sizeDefault, 'whole', el, styleFn, getTargets));
 }
 function uid() { return 'f' + Math.random().toString(36).slice(2, 10); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
@@ -1155,21 +1185,21 @@ function bindCanvas(canvas) {
     const idx = +el.dataset.labelIdx;
     el.addEventListener('input', e => { form.fields[idx].label = e.target.textContent; saveDebounced(); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
-    wireFocusFmtTrigger(el, idx, LABEL_STYLE_PROPS, '1.05');
+    wireFocusFmtTrigger(el, idx, LABEL_STYLE_PROPS, '13', labelStyle, () => [el]);
   });
   canvas.querySelectorAll('[data-statement-idx]').forEach(el => {
     const idx = +el.dataset.statementIdx;
     const save = () => { form.fields[idx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
     el.addEventListener('input', save);
     wireRichTextShortcuts(el, save);
-    wireSelectionFmtTrigger(el, idx, HEADLINE_STYLE_PROPS, '.95');
+    wireSelectionFmtTrigger(el, idx, HEADLINE_STYLE_PROPS, '11');
   });
   canvas.querySelectorAll('[data-headline-idx]').forEach(el => {
     const idx = +el.dataset.headlineIdx;
     const save = () => { form.fields[idx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
     el.addEventListener('input', save);
     wireRichTextShortcuts(el, save);
-    wireSelectionFmtTrigger(el, idx, HEADLINE_STYLE_PROPS, '1.4');
+    wireSelectionFmtTrigger(el, idx, HEADLINE_STYLE_PROPS, '17');
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
   });
   canvas.querySelectorAll('[data-help-idx]').forEach(el => {
@@ -1408,7 +1438,7 @@ function bindCanvas(canvas) {
     el.addEventListener('input', e => {
       form.fields[idx].options[+e.target.dataset.optOi].label = e.target.value; saveDebounced();
     });
-    wireFocusFmtTrigger(el, idx, OPTIONS_STYLE_PROPS, '1');
+    wireFocusFmtTrigger(el, idx, OPTIONS_STYLE_PROPS, '12', optionsStyle, () => document.querySelectorAll(`[data-opt-idx="${idx}"]`));
   });
   canvas.querySelectorAll('[data-video-url-idx]').forEach(el => {
     el.addEventListener('input', e => { form.fields[+e.target.dataset.videoUrlIdx].videoUrl = e.target.value; saveDebounced(); });
