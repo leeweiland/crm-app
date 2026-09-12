@@ -216,6 +216,10 @@
               <button class="pra-btn pra-btn-sm" id="saveMetaTokensBtn">Save Meta</button>
             </div>
             <div class="pra-muted" id="metaFetchMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+            <div id="metaPixelPicker" style="display:none;gap:8px;margin-top:6px">
+              <select class="pra-select" id="metaPixelPickerSelect" style="flex:1"></select>
+              <button class="pra-btn pra-btn-sm" id="metaPixelPickerUseBtn">Use This</button>
+            </div>
             <div class="pra-muted" id="metaTokensMsg" style="font-size:.8rem;min-height:1em"></div>
           </div>
 
@@ -886,6 +890,8 @@ document.getElementById('saveGoogleTokensBtn').onclick = async () => {
 };
 document.getElementById('fetchMetaPixelBtn').onclick = async () => {
   const msg = document.getElementById('metaFetchMsg');
+  const picker = document.getElementById('metaPixelPicker');
+  picker.style.display = 'none';
   msg.textContent = 'Fetching from Meta...';
   const adAccountId = document.getElementById('convMetaAdAccountId').value.trim();
   if (!adAccountId) { msg.textContent = 'Enter an Ad Account ID first.'; return; }
@@ -898,8 +904,14 @@ document.getElementById('fetchMetaPixelBtn').onclick = async () => {
     msg.textContent = `Found "${d.pixels[0].name}" (${d.pixels[0].id}) -- click Save Meta to connect.`;
     return;
   }
-  const choice = prompt('Multiple pixels found on this ad account -- paste the ID of the one to use:\n\n' + d.pixels.map(p => `${p.id}  —  ${p.name}`).join('\n'));
-  if (choice) { document.getElementById('convMetaPixelId').value = choice.trim(); msg.textContent = 'Pixel ID set -- click Save Meta to connect.'; }
+  msg.textContent = `Found ${d.pixels.length} pixels on this ad account -- pick one:`;
+  document.getElementById('metaPixelPickerSelect').innerHTML = d.pixels.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.id)})</option>`).join('');
+  picker.style.display = 'flex';
+};
+document.getElementById('metaPixelPickerUseBtn').onclick = () => {
+  document.getElementById('convMetaPixelId').value = document.getElementById('metaPixelPickerSelect').value;
+  document.getElementById('metaPixelPicker').style.display = 'none';
+  document.getElementById('metaFetchMsg').textContent = 'Pixel ID set -- click Save Meta to connect.';
 };
 document.getElementById('saveConversionEventsBtn').onclick = async () => {
   const rows = [...document.querySelectorAll('#conversionEventRows [data-conv-event-row]')];
