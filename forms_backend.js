@@ -448,43 +448,6 @@ export async function handleFormsRequest(req, res, url) {
     }
 
     const result = upsertContactFromSubmission(form, cleanAnswers);
-    // Retroactively attribute every anonymous page visit this browser made
-    // BEFORE this submission (the ad click that brought them here, any
-    // pages they browsed) to the contact just created/matched -- see
-    // claimVisitorHistory's own comment for why.
-    if (result?.contact.id && vid) claimVisitorHistory(vid, result.contact.id);
-    const responses = readJson(RESPONSES_FILE, []);
-    const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, submittedAt: new Date().toISOString() };
-    responses.push(response);
-    writeJson(RESPONSES_FILE, responses);
-
-    if (result?.contact.id) {
-      // Log the submission itself as an inbound Inbox activity -- otherwise
-      // a form fill only shows up as a contact getting created/updated,
-      // with no trace in the conversation thread that they reached out.
-      const answerSummary = form.fields
-        .filter(f => ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "")
-        .map(f => `${f.label || f.type}: ${Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id]}`)
-        .join(" · ");
-      logMessage({
-        channel: "form", direction: "inbound", contactId: result.contact.id,
-        sourceType: "form", sourceId: form.id,
-        subject: `Form: ${form.name}`, body: answerSummary, bodyPreview: answerSummary.slice(0, 200),
-        status: "received",
-      });
-      fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
-      fireWorkflowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
-      // Labeled by field label (not raw field id) so a flow's {{payload.x}}
-      // tokens -- and the "pull sample data" picker -- show real, readable
-      // field names instead of opaque uuids.
-      const labeledAnswers = {};
-      form.fields.forEach(f => {
-        if (ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "") {
-          labeledAnswers[f.label || f.type] = Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id];
-        }
-      });
-      fireFlowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id, payload: labeledAnswers });
-    }
 
     // contactId is returned so the form iframe (public-form.html, itself
     // served from the CRM's own origin) can hand it off to the PARENT page
@@ -492,7 +455,64 @@ export async function handleFormsRequest(req, res, url) {
     // (see tracking_backend.js/track.js): a cookie set from a response on
     // this origin would never be visible to document.cookie on the Framer
     // site the iframe is embedded in.
-    return sendJson(res, 200, { ok: true, contactId: result?.contact.id || null, confirmationMessage: form.settings.confirmationMessage, redirectUrl: form.settings.redirectUrl || null });
+    //
+    // Sent BEFORE the bookkeeping below (writing to RESPONSES_FILE, logging,
+    // firing triggers) -- none of it changes what the visitor sees redirect
+    // to, so there's no reason the redirect should wait on it. On a form
+    // with a lot of history (RESPONSES_FILE only ever grows, one entry per
+    // submission ever taken) that write alone was adding real, and
+    // needlessly felt, latency to every single submission.
+    sendJson(res, 200, { ok: true, contactId: result?.contact.id || null, confirmationMessage: form.settings.confirmationMessage, redirectUrl: form.settings.redirectUrl || null });
+
+    // setImmediate, not just "unawaited code after sendJson" -- Node is
+    // single-threaded, so synchronous work placed right after sendJson()
+    // still runs before the process ever yields to actually flush the
+    // response over the socket, gaining nothing. Deferring to the next
+    // event-loop tick lets the redirect the visitor is waiting on go out
+    // first, THEN does this bookkeeping (none of which affects what they
+    // see) -- writing to RESPONSES_FILE (which only ever grows, one entry
+    // per submission ever taken) was adding real, needlessly felt latency
+    // to every single submission otherwise.
+    setImmediate(() => {
+      // Retroactively attribute every anonymous page visit this browser made
+      // BEFORE this submission (the ad click that brought them here, any
+      // pages they browsed) to the contact just created/matched -- see
+      // claimVisitorHistory's own comment for why.
+      if (result?.contact.id && vid) claimVisitorHistory(vid, result.contact.id);
+      const responses = readJson(RESPONSES_FILE, []);
+      const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, submittedAt: new Date().toISOString() };
+      responses.push(response);
+      writeJson(RESPONSES_FILE, responses);
+
+      if (result?.contact.id) {
+        // Log the submission itself as an inbound Inbox activity -- otherwise
+        // a form fill only shows up as a contact getting created/updated,
+        // with no trace in the conversation thread that they reached out.
+        const answerSummary = form.fields
+          .filter(f => ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "")
+          .map(f => `${f.label || f.type}: ${Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id]}`)
+          .join(" · ");
+        logMessage({
+          channel: "form", direction: "inbound", contactId: result.contact.id,
+          sourceType: "form", sourceId: form.id,
+          subject: `Form: ${form.name}`, body: answerSummary, bodyPreview: answerSummary.slice(0, 200),
+          status: "received",
+        });
+        fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
+        fireWorkflowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
+        // Labeled by field label (not raw field id) so a flow's {{payload.x}}
+        // tokens -- and the "pull sample data" picker -- show real, readable
+        // field names instead of opaque uuids.
+        const labeledAnswers = {};
+        form.fields.forEach(f => {
+          if (ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "") {
+            labeledAnswers[f.label || f.type] = Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id];
+          }
+        });
+        fireFlowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id, payload: labeledAnswers });
+      }
+    });
+    return true;
   }
 
   // Clean public URL (/f/:id) -- just hands back the same static SPA shell
