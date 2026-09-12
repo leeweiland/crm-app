@@ -31,6 +31,10 @@
   .step-card.skipped { border-style: dashed; }
   .step-card.skipped .step-type, .step-card.skipped .step-summary { opacity: .45; }
   .skip-badge { color: #ffc107; font-weight: 700; letter-spacing: .02em; }
+  .sample-fields-list { margin-top: 6px; max-height: 180px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 6px; }
+  .sample-field-row { padding: 7px 10px; font-size: .78rem; border-bottom: 1px solid var(--pra-border); word-break: break-word; }
+  .sample-field-row:last-child { border-bottom: none; }
+  .sample-field-row code { color: var(--pra-blue); }
   .ab-canvas-wrap { position: relative; overflow: hidden; padding: 20px 0; height: 68vh; border: 1px solid var(--pra-border); border-radius: 10px; background-image: radial-gradient(var(--pra-border) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
   .ab-canvas-wrap.panning { cursor: grabbing; }
   .ab-canvas-zoom-layer { transform-origin: 0 0; }
@@ -83,9 +87,17 @@
   .token-editor { min-height: 20px; line-height: 1.5; cursor: text; white-space: pre-wrap; word-break: break-word; }
   .token-editor[data-multiline="true"] { min-height: 140px; }
   .token-editor:empty:before { content: attr(data-placeholder); color: #55555f; pointer-events: none; }
-  .token-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 1px 4px 1px 7px; margin: 0 1px; font-size: .78rem; font-family: var(--font-secondary); white-space: nowrap; vertical-align: baseline; }
+  .token-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 1px 4px 1px 7px; margin: 0 1px; font-size: .78rem; font-family: var(--font-secondary); white-space: nowrap; vertical-align: baseline; cursor: pointer; }
   .token-chip-label { pointer-events: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .token-chip-x { flex-shrink: 0; }
+  /* A truncated label only shows its first few words -- hover (or click, to
+     keep it open without holding the mouse there) grows the chip onto its
+     own full-width line so the whole value is readable instead of guessing
+     from "...". display:flex (not just width) is what actually lets the
+     label wrap into multiple lines -- inline-flex sizes to its content
+     first regardless of white-space, so width alone wouldn't do it. */
+  .token-chip:hover, .token-chip.expanded { display: flex; width: 100%; white-space: normal; }
+  .token-chip:hover .token-chip-label, .token-chip.expanded .token-chip-label { overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word; }
   .token-chip-x { background: none; border: none; color: var(--pra-blue); cursor: pointer; font-size: .95rem; line-height: 1; padding: 0 1px; opacity: .75; }
   .token-chip-x:hover { opacity: 1; }
   .token-insert-btn { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -467,7 +479,8 @@ async function pullSampleData(forWebhook) {
   }
   const keys = sampleKeys(samples);
   resultEl.innerHTML = `
-    <div class="pra-muted" style="font-size:.76rem;margin-top:10px">Found ${samples.length} recent submission${samples.length > 1 ? 's' : ''}. Fields: ${keys.map(k => `<code>${escapeHtml(k)}</code>`).join(', ')}</div>
+    <div class="pra-muted" style="font-size:.76rem;margin-top:10px">Found ${samples.length} recent submission${samples.length > 1 ? 's' : ''}. Available fields:</div>
+    <div class="sample-fields-list">${keys.map(k => `<div class="sample-field-row"><code>${escapeHtml(k)}</code></div>`).join('')}</div>
   `;
 }
 document.getElementById('pullSampleBtn').onclick = () => pullSampleData(true);
@@ -1065,7 +1078,8 @@ function tokenLabel(raw) {
   return pm ? pm[1] : m[1];
 }
 function chipHtml(raw) {
-  return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(tokenLabel(raw))}</span><button type="button" class="token-chip-x" tabindex="-1">&times;</button></span>`;
+  const label = tokenLabel(raw);
+  return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}" title="${escapeHtml(label)}"><span class="token-chip-label">${escapeHtml(label)}</span><button type="button" class="token-chip-x" tabindex="-1">&times;</button></span>`;
 }
 // **bold** markers only apply on the multiline field (Send Email's Body) --
 // see the toggleBoldSelection/insertQaPair comments for why this is a plain
@@ -1119,6 +1133,19 @@ function wireChipRemovals(root) {
       chip.remove();
       editor.dispatchEvent(new Event('input', { bubbles: true }));
     };
+  });
+  // Click toggles a persistent expand (hover alone collapses the instant the
+  // mouse leaves, too fast to actually read a long value) -- excludes the x
+  // button above so removing a chip doesn't also toggle it on the way out.
+  root.querySelectorAll('.token-chip').forEach(chip => {
+    if (chip.dataset.expandWired) return;
+    chip.dataset.expandWired = '1';
+    chip.addEventListener('mousedown', (e) => { if (!e.target.closest('.token-chip-x')) e.preventDefault(); });
+    chip.addEventListener('click', (e) => {
+      if (e.target.closest('.token-chip-x')) return;
+      e.stopPropagation();
+      chip.classList.toggle('expanded');
+    });
   });
 }
 function insertChipAtCaret(editor, raw) {
