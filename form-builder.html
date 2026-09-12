@@ -93,6 +93,19 @@
   .fb-statement-text:hover, .fb-statement-text:focus { border-bottom-color: var(--pra-border); }
   .fb-headline-text { font-family: var(--font-primary); font-weight: 800; font-size: 1.4rem; line-height: 1.25; outline: none; border-bottom: 1px dashed transparent; }
   .fb-headline-text:hover, .fb-headline-text:focus { border-bottom-color: var(--pra-border); }
+  /* Floating format popover -- appears on selecting text in a headline/
+     statement (styles the block, formats just the selection) or on
+     focusing a question label/answer option (styles that whole text,
+     no partial-selection formatting there -- see openFmtPopover). */
+  .fb-fmt-popover { position: fixed; z-index: 9999; display: flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 8px; padding: 6px; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+  .fb-fmt-popover select.pra-select { width: 118px; height: 30px; padding: 4px 6px; font-size: .78rem; }
+  .fb-fmt-popover input.pra-input { height: 30px; padding: 4px 6px; font-size: .78rem; box-sizing: border-box; }
+  .fb-fmt-popover input[data-fp-size] { width: 48px; }
+  .fb-fmt-popover input[data-fp-color] { width: 66px; }
+  .fb-fmt-btn { width: 28px; height: 30px; border-radius: 6px; border: 1px solid var(--pra-border); background: var(--pra-black-soft); color: var(--pra-dim); font-size: .82rem; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: var(--font-secondary); flex-shrink: 0; }
+  .fb-fmt-btn:hover { color: #fff; border-color: var(--pra-blue); }
+  .fb-fmt-btn.on { color: #fff; border-color: var(--pra-blue); background: var(--pra-blue-dim); }
+  .fb-fmt-btn b, .fb-fmt-btn i, .fb-fmt-btn u { pointer-events: none; }
 
   .fb-image-block, .fb-video-block { margin-top: 4px; }
   .fb-image-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 30px; border: 1px dashed var(--pra-border); border-radius: 8px; color: var(--pra-dim); font-size: .8rem; }
@@ -364,33 +377,6 @@ function optionsStyle(f) {
 const HEADLINE_STYLE_PROPS = { color: 'color', font: 'fontFamily', size: 'fontSize' };
 const LABEL_STYLE_PROPS = { color: 'labelColor', font: 'labelFontFamily', size: 'labelFontSize', bold: 'labelBold', italic: 'labelItalic', underline: 'labelUnderline' };
 const OPTIONS_STYLE_PROPS = { color: 'optionsColor', font: 'optionsFontFamily', size: 'optionsFontSize', bold: 'optionsBold', italic: 'optionsItalic', underline: 'optionsUnderline' };
-function styleControlsHtml(i, props, sizeDefault) {
-  const f = form.fields[i];
-  const includeToggles = !!props.bold;
-  return `
-    <div class="field">
-      <label class="pra-label">Color</label>
-      <input class="pra-input" data-style-color-idx="${i}" data-style-prop="${props.color}" value="${escapeHtml(f[props.color] || '')}" placeholder="inherit"/>
-    </div>
-    <div class="field">
-      <label class="pra-label">Font</label>
-      <select class="pra-select" data-style-font-idx="${i}" data-style-prop="${props.font}">
-        <option value="">Inherit</option>
-        ${Object.entries(FONT_OPTIONS).map(([k, fo]) => `<option value="${k}" ${f[props.font] === k ? 'selected' : ''}>${fo.label}</option>`).join('')}
-      </select>
-    </div>
-    <div class="field" ${includeToggles ? '' : 'style="margin-bottom:0"'}>
-      <label class="pra-label">Size (rem)</label>
-      <input class="pra-input" type="number" min="0.5" max="4" step="0.1" data-style-size-idx="${i}" data-style-prop="${props.size}" value="${f[props.size] || ''}" placeholder="${sizeDefault}"/>
-    </div>
-    ${includeToggles ? `
-    <div class="fb-format-row" style="display:flex;gap:6px;margin-bottom:0">
-      <button type="button" class="pra-btn pra-btn-sm ${f[props.bold] ? '' : 'pra-btn-ghost'}" data-style-toggle-idx="${i}" data-style-prop="${props.bold}" style="font-weight:800" title="Bold">B</button>
-      <button type="button" class="pra-btn pra-btn-sm ${f[props.italic] ? '' : 'pra-btn-ghost'}" data-style-toggle-idx="${i}" data-style-prop="${props.italic}" style="font-style:italic" title="Italic">I</button>
-      <button type="button" class="pra-btn pra-btn-sm ${f[props.underline] ? '' : 'pra-btn-ghost'}" data-style-toggle-idx="${i}" data-style-prop="${props.underline}" style="text-decoration:underline" title="Underline">U</button>
-    </div>` : ''}
-  `;
-}
 // Applies Ctrl+B/I/U to a headline/statement contenteditable -- browsers
 // already bind these natively, but wiring them explicitly guarantees the
 // same behavior everywhere and gives a hook to save right away instead of
@@ -404,6 +390,93 @@ function wireRichTextShortcuts(el, onchange) {
     document.execCommand(cmd);
     onchange();
   });
+}
+// ── Floating format popover -- appears when you select text in a headline/
+// statement (mode 'inline': Font/Size/Color style the whole block, B/I/U
+// format just the selection via execCommand) or focus a question label or
+// answer option (mode 'whole': same Font/Size/Color, but B/I/U toggle the
+// whole text -- there's no partial-selection formatting for those, since
+// the label/option text is also used as data elsewhere, e.g. a Flow
+// payload key, so it can't become embedded HTML). Same floating-popover
+// pattern as flow-builder.html's token-insert popover: a fixed-position
+// div appended to body, closed on an outside mousedown.
+let fmtPopoverEl = null;
+function closeFmtPopover() { if (fmtPopoverEl) { fmtPopoverEl.remove(); fmtPopoverEl = null; } }
+document.addEventListener('mousedown', e => {
+  if (fmtPopoverEl && !fmtPopoverEl.contains(e.target) && !e.target.closest('[data-headline-idx],[data-statement-idx],[data-label-idx],.fb-option-input')) closeFmtPopover();
+});
+function openFmtPopover(rect, i, props, sizeDefault, mode, target) {
+  closeFmtPopover();
+  const f = form.fields[i];
+  const pop = document.createElement('div');
+  pop.className = 'fb-fmt-popover';
+  pop.innerHTML = `
+    <select class="pra-select" data-fp-font>
+      <option value="">Inherit</option>
+      ${Object.entries(FONT_OPTIONS).map(([k, fo]) => { loadGoogleFont(fo.googleFont, 'preview-' + k); return `<option value="${k}" style="font-family:${fo.stack}" ${f[props.font] === k ? 'selected' : ''}>${fo.label}</option>`; }).join('')}
+    </select>
+    <input class="pra-input" type="number" min="0.5" max="4" step="0.1" data-fp-size value="${f[props.size] || ''}" placeholder="${sizeDefault}"/>
+    <input class="pra-input" data-fp-color value="${escapeHtml(f[props.color] || '')}" placeholder="inherit"/>
+    <button type="button" class="fb-fmt-btn ${mode === 'whole' && f[props.bold] ? 'on' : ''}" data-fp-cmd="bold" title="Bold${mode === 'inline' ? ' (Ctrl+B)' : ''}"><b>B</b></button>
+    <button type="button" class="fb-fmt-btn ${mode === 'whole' && f[props.italic] ? 'on' : ''}" data-fp-cmd="italic" title="Italic${mode === 'inline' ? ' (Ctrl+I)' : ''}"><i>I</i></button>
+    <button type="button" class="fb-fmt-btn ${mode === 'whole' && f[props.underline] ? 'on' : ''}" data-fp-cmd="underline" title="Underline${mode === 'inline' ? ' (Ctrl+U)' : ''}"><u>U</u></button>
+  `;
+  document.body.appendChild(pop);
+  fmtPopoverEl = pop;
+  pop.style.top = Math.max(8, rect.top - pop.offsetHeight - 8) + 'px';
+  pop.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+  // Font/Size/Color are block-level, so applying them re-renders the
+  // canvas -- which replaces this popover's anchor DOM node, so the
+  // popover closes itself rather than risk acting on a stale reference.
+  pop.querySelector('[data-fp-font]').onchange = e => {
+    form.fields[i][props.font] = e.target.value || undefined;
+    saveDebounced(); closeFmtPopover(); renderCanvas();
+  };
+  pop.querySelector('[data-fp-size]').onchange = e => {
+    const v = e.target.value.trim();
+    form.fields[i][props.size] = v ? Math.max(0.5, Math.min(4, Number(v) || 0)) : undefined;
+    saveDebounced(); closeFmtPopover(); renderCanvas();
+  };
+  pop.querySelector('[data-fp-color]').onchange = e => {
+    form.fields[i][props.color] = e.target.value.trim() || undefined;
+    saveDebounced(); closeFmtPopover(); renderCanvas();
+  };
+  // B/I/U stays open across repeated clicks in 'inline' mode (no
+  // re-render -- execCommand already updates the live contenteditable
+  // directly), so bolding then italicizing different selections in one
+  // sitting doesn't require reopening the popover each time.
+  pop.querySelectorAll('[data-fp-cmd]').forEach(btn => {
+    btn.onmousedown = e => e.preventDefault(); // keep the text selection/focus alive through the click
+    btn.onclick = () => {
+      const cmd = btn.dataset.fpCmd;
+      if (mode === 'inline') {
+        target.focus();
+        document.execCommand(cmd);
+        form.fields[i].label = sanitizeRichText(target.innerHTML);
+        saveDebounced();
+      } else {
+        const prop = props[cmd];
+        form.fields[i][prop] = !form.fields[i][prop];
+        saveDebounced(); closeFmtPopover(); renderCanvas();
+      }
+    };
+  });
+}
+// Opens the popover in 'inline' mode when a real (non-collapsed) text
+// selection lands inside this headline/statement contenteditable.
+function wireSelectionFmtTrigger(el, i, props, sizeDefault) {
+  const trigger = () => {
+    const sel = window.getSelection();
+    if (!sel.rangeCount || sel.isCollapsed || !el.contains(sel.anchorNode)) return;
+    openFmtPopover(sel.getRangeAt(0).getBoundingClientRect(), i, props, sizeDefault, 'inline', el);
+  };
+  el.addEventListener('mouseup', trigger);
+  el.addEventListener('keyup', e => { if (e.shiftKey) trigger(); });
+}
+// Opens the popover in 'whole' mode on focusing a question label or
+// answer option -- no selection needed, since these style the whole text.
+function wireFocusFmtTrigger(el, i, props, sizeDefault) {
+  el.addEventListener('focus', () => openFmtPopover(el.getBoundingClientRect(), i, props, sizeDefault, 'whole', el));
 }
 function uid() { return 'f' + Math.random().toString(36).slice(2, 10); }
 function openModal(id) { document.getElementById(id).classList.add('show'); }
@@ -853,16 +926,12 @@ function renderPanel(f, i) {
         <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Only matters when width is under 100%.</div>
       </div>
     </div>`;
-  } else if (f.type === 'headline' || f.type === 'statement') {
+  } else if (f.type === 'statement') {
+    // Font/Size/Color/B-I-U all live in the floating popover that appears
+    // on selecting text in the block itself now (see openTextFmtPopover) --
+    // Help text is the only thing left that actually belongs in a panel.
     gearHtml = `<div class="fb-panel">
-      ${f.type === 'statement' ? `<div class="field"><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>` : ''}
-      ${styleControlsHtml(i, HEADLINE_STYLE_PROPS, f.type === 'headline' ? '1.4' : '.95')}
-      <div class="fb-format-row" style="display:flex;gap:6px;margin-top:10px">
-        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-fmt-idx="${i}" data-fmt-cmd="bold" style="font-weight:800" title="Bold (Ctrl+B)">B</button>
-        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-fmt-idx="${i}" data-fmt-cmd="italic" style="font-style:italic" title="Italic (Ctrl+I)">I</button>
-        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-fmt-idx="${i}" data-fmt-cmd="underline" style="text-decoration:underline" title="Underline (Ctrl+U)">U</button>
-      </div>
-      <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Select some text above, then click one of these (or Ctrl+B / Ctrl+I / Ctrl+U) to format it.</div>
+      <div class="field" style="margin-bottom:0"><label class="pra-label">Help text</label><input class="pra-input" data-help-input-idx="${i}" value="${escapeHtml(f.helpText || '')}"/></div>
     </div>`;
   } else {
     const showPlaceholder = f.type !== 'statement';
@@ -885,12 +954,6 @@ function renderPanel(f, i) {
             ${allCustomFields.map(cf => `<option value="${cf.id}" ${f.mapToCustomFieldId === cf.id ? 'selected' : ''}>${escapeHtml(cf.label)}</option>`).join('')}
           </select>
         </div>
-      ` : ''}
-      <div class="pra-label" style="margin:16px 0 8px">Question style</div>
-      ${styleControlsHtml(i, LABEL_STYLE_PROPS, '1.05')}
-      ${FIELD_META[f.type].hasOptions ? `
-        <div class="pra-label" style="margin:16px 0 8px">Answer style</div>
-        ${styleControlsHtml(i, OPTIONS_STYLE_PROPS, '1')}
       ` : ''}
     </div>`;
   }
@@ -1086,18 +1149,24 @@ function activateRawEmbeds(root) {
 function bindCanvas(canvas) {
   // ── Text edits: update state + save only, never re-render (keeps cursor). ──
   canvas.querySelectorAll('[data-label-idx]').forEach(el => {
-    el.addEventListener('input', e => { form.fields[+e.target.dataset.labelIdx].label = e.target.textContent; saveDebounced(); });
+    const idx = +el.dataset.labelIdx;
+    el.addEventListener('input', e => { form.fields[idx].label = e.target.textContent; saveDebounced(); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+    wireFocusFmtTrigger(el, idx, LABEL_STYLE_PROPS, '1.05');
   });
   canvas.querySelectorAll('[data-statement-idx]').forEach(el => {
-    const save = () => { form.fields[+el.dataset.statementIdx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
+    const idx = +el.dataset.statementIdx;
+    const save = () => { form.fields[idx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
     el.addEventListener('input', save);
     wireRichTextShortcuts(el, save);
+    wireSelectionFmtTrigger(el, idx, HEADLINE_STYLE_PROPS, '.95');
   });
   canvas.querySelectorAll('[data-headline-idx]').forEach(el => {
-    const save = () => { form.fields[+el.dataset.headlineIdx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
+    const idx = +el.dataset.headlineIdx;
+    const save = () => { form.fields[idx].label = sanitizeRichText(el.innerHTML); saveDebounced(); };
     el.addEventListener('input', save);
     wireRichTextShortcuts(el, save);
+    wireSelectionFmtTrigger(el, idx, HEADLINE_STYLE_PROPS, '1.4');
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
   });
   canvas.querySelectorAll('[data-help-idx]').forEach(el => {
@@ -1331,9 +1400,13 @@ function bindCanvas(canvas) {
   }));
   canvas.querySelectorAll('[data-alt-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.altIdx].alt = e.target.value; saveDebounced(); }));
   canvas.querySelectorAll('[data-imglink-idx]').forEach(el => el.addEventListener('input', e => { form.fields[+e.target.dataset.imglinkIdx].link = e.target.value; saveDebounced(); }));
-  canvas.querySelectorAll('[data-opt-idx]').forEach(el => el.addEventListener('input', e => {
-    form.fields[+e.target.dataset.optIdx].options[+e.target.dataset.optOi].label = e.target.value; saveDebounced();
-  }));
+  canvas.querySelectorAll('[data-opt-idx]').forEach(el => {
+    const idx = +el.dataset.optIdx;
+    el.addEventListener('input', e => {
+      form.fields[idx].options[+e.target.dataset.optOi].label = e.target.value; saveDebounced();
+    });
+    wireFocusFmtTrigger(el, idx, OPTIONS_STYLE_PROPS, '1');
+  });
   canvas.querySelectorAll('[data-video-url-idx]').forEach(el => {
     el.addEventListener('input', e => { form.fields[+e.target.dataset.videoUrlIdx].videoUrl = e.target.value; saveDebounced(); });
     el.addEventListener('change', () => renderCanvas()); // re-render on blur to refresh the embed preview
@@ -1388,50 +1461,6 @@ function bindCanvas(canvas) {
     form.fields[+e.target.dataset.videoAlignIdx].videoAlign = e.target.value;
     saveDebounced(); renderCanvas();
   }));
-  // Generic Color/Font/Size/B-I-U controls shared by headline+statement's
-  // own style, every question's label style, and every options-having
-  // field's answer style -- data-style-prop carries which exact field
-  // property to write, so one set of listeners covers all three panels.
-  canvas.querySelectorAll('[data-style-color-idx]').forEach(el => {
-    el.addEventListener('input', e => {
-      form.fields[+e.target.dataset.styleColorIdx][e.target.dataset.styleProp] = e.target.value.trim() || undefined;
-      saveDebounced();
-    });
-    el.addEventListener('change', () => renderCanvas());
-  });
-  canvas.querySelectorAll('[data-style-font-idx]').forEach(el => el.addEventListener('change', e => {
-    form.fields[+e.target.dataset.styleFontIdx][e.target.dataset.styleProp] = e.target.value || undefined;
-    saveDebounced(); renderCanvas();
-  }));
-  canvas.querySelectorAll('[data-style-size-idx]').forEach(el => {
-    el.addEventListener('input', e => {
-      const v = e.target.value.trim();
-      form.fields[+e.target.dataset.styleSizeIdx][e.target.dataset.styleProp] = v ? Math.max(0.5, Math.min(4, Number(v) || 0)) : undefined;
-      saveDebounced();
-    });
-    el.addEventListener('change', () => renderCanvas()); // re-render on blur, not every keystroke, so the input doesn't lose focus mid-type
-  });
-  canvas.querySelectorAll('[data-style-toggle-idx]').forEach(btn => btn.addEventListener('click', () => {
-    const idx = +btn.dataset.styleToggleIdx, prop = btn.dataset.styleProp;
-    form.fields[idx][prop] = !form.fields[idx][prop];
-    saveDebounced(); renderCanvas();
-  }));
-  // Format buttons apply to whichever headline/statement contenteditable
-  // they sit under -- mousedown preventDefault keeps the text selection
-  // alive through the click (a button click would otherwise steal focus
-  // and collapse it first).
-  canvas.querySelectorAll('[data-fmt-idx]').forEach(btn => {
-    const idx = btn.dataset.fmtIdx;
-    const target = canvas.querySelector(`[data-headline-idx="${idx}"], [data-statement-idx="${idx}"]`);
-    if (!target) return;
-    btn.onmousedown = e => e.preventDefault();
-    btn.onclick = () => {
-      target.focus();
-      document.execCommand(btn.dataset.fmtCmd);
-      form.fields[+idx].label = sanitizeRichText(target.innerHTML);
-      saveDebounced();
-    };
-  });
   canvas.querySelectorAll('[data-calendar-idx]').forEach(el => el.addEventListener('change', e => {
     form.fields[+e.target.dataset.calendarIdx].eventTypeSlug = e.target.value;
     saveDebounced(); renderCanvas();
