@@ -1025,10 +1025,13 @@ function renderBlockBody(f, i) {
     return `
       <div class="fb-image-block">
         ${picked ? `<div class="scheduling-inline-widget" data-url="${escapeHtml(url)}" style="min-width:280px;height:clamp(560px, 70vh, 820px)"></div>` : `<div class="fb-image-placeholder">${ICONS.date}<span>Pick which booking page to embed</span></div>`}
-        <select class="pra-select" style="margin-top:8px" data-calendar-idx="${i}">
-          <option value="">Choose an event type…</option>
-          ${allEventTypes.map(e => `<option value="${escapeHtml(e.slug)}" ${f.eventTypeSlug === e.slug ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
-        </select>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <select class="pra-select" style="flex:1" data-calendar-idx="${i}">
+            <option value="">Choose an event type…</option>
+            ${allEventTypes.map(e => `<option value="${escapeHtml(e.slug)}" ${f.eventTypeSlug === e.slug ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
+          </select>
+          ${picked ? `<button class="icon-btn ${openPanel?.idx === i && openPanel?.kind === 'gear' ? 'on' : ''}" data-panel-idx="${i}" data-panel-kind="gear" title="Calendar design options (hours, buffers, questions)">${ICONS.gear}</button>` : ''}
+        </div>
         ${!allEventTypes.length ? `<div class="pra-muted" style="font-size:.78rem;margin-top:6px">No event types yet — create one in <a class="pra-link" href="/scheduling.html" target="_blank">Calendars</a> first.</div>` : ''}
       </div>
     `;
