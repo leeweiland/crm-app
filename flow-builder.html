@@ -114,16 +114,22 @@
   .qa-undo-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 10px 16px; font-size: .85rem; color: #fff; z-index: 900; display: flex; align-items: center; gap: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
   .qa-undo-btn { background: none; border: none; color: var(--pra-blue); font-weight: 700; cursor: pointer; font-size: .85rem; padding: 0; }
   .qa-undo-btn:hover { text-decoration: underline; }
-  /* Always full-width and wrapped -- never truncated, so the whole value is
-     on screen with no scroll/hover/click needed. display:flex + width (not
-     just white-space) is what actually lets the label wrap onto multiple
-     lines -- inline-flex sizes to its content first regardless of
-     white-space, so width alone wouldn't do it. */
-  .token-chip { display: flex; align-items: flex-start; gap: 4px; width: 100%; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 3px 4px 3px 7px; margin: 2px 0; font-size: .78rem; font-family: var(--font-secondary); white-space: normal; }
-  .token-chip-label { pointer-events: none; word-break: break-word; }
-  .token-chip-x { flex-shrink: 0; margin-top: 1px; }
-  .token-chip-x { background: none; border: none; color: var(--pra-blue); cursor: pointer; font-size: .95rem; line-height: 1; padding: 0 1px; opacity: .75; }
+  /* Compact by default -- an inline pill that truncates a too-long value,
+     meant to sit alongside other chips/free text as part of ONE line
+     (Subject, To/From, a short contact field). .token-chip-expand below is
+     the opt-in for fields whose whole point is showing one long value in
+     full (custom fields, a Q&A block's answer) -- see tokenEditorHtml's
+     expand option. */
+  .token-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 1px 4px 1px 7px; margin: 0 1px; font-size: .78rem; font-family: var(--font-secondary); white-space: nowrap; vertical-align: baseline; }
+  .token-chip-label { pointer-events: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .token-chip-x { flex-shrink: 0; background: none; border: none; color: var(--pra-blue); cursor: pointer; font-size: .95rem; line-height: 1; padding: 0 1px; opacity: .75; }
   .token-chip-x:hover { opacity: 1; }
+  /* display:flex + width (not just white-space) is what actually lets the
+     label wrap onto multiple lines -- inline-flex sizes to its content
+     first regardless of white-space, so width alone wouldn't do it. */
+  .token-chip.token-chip-expand { display: flex; align-items: flex-start; width: 100%; margin: 2px 0; padding: 3px 4px 3px 7px; white-space: normal; }
+  .token-chip.token-chip-expand .token-chip-label { overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word; }
+  .token-chip.token-chip-expand .token-chip-x { margin-top: 1px; }
   .token-insert-btn { grid-area: 1 / 1; position: sticky; top: 8px; align-self: start; justify-self: end; margin: 6px 6px 0 0; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 2; }
   .token-insert-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   /* Bold sits to the LEFT of the existing "+" token button, same box --
@@ -826,20 +832,16 @@ function sheetColHeaderRowHtml(header, value, index) {
 // hunting for the right one in a dropdown per row.
 function customFieldsGridHtml(customFields) {
   return allCustomFields.map(f => `
-    <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap">${tokenEditorHtml(customFields[f.id] || '', { placeholder: '{{payload.Field Name}}', attrs: `data-cf-field-id="${f.id}"` })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+    <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap">${tokenEditorHtml(customFields[f.id] || '', { placeholder: '{{payload.Field Name}}', attrs: `data-cf-field-id="${f.id}"`, expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
   `).join('');
 }
 // Same shape as customFieldsGridHtml above, but against ActiveCampaign's own
 // field list (allAcCustomFields) instead of this CRM's -- distinct data
 // attribute so its save handler doesn't collide with the CRM version's.
 function acCustomFieldsGridHtml(customFields) {
-  const rows = [];
-  for (let i = 0; i < allAcCustomFields.length; i += 2) {
-    rows.push(`<div class="field-row">${allAcCustomFields.slice(i, i + 2).map(f => `
-      <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap">${tokenEditorHtml(customFields[f.id] || '', { placeholder: '{{payload.Field Name}}', attrs: `data-ac-cf-field-id="${f.id}"` })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-    `).join('')}</div>`);
-  }
-  return rows.join('');
+  return allAcCustomFields.map(f => `
+    <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label><div class="token-input-wrap">${tokenEditorHtml(customFields[f.id] || '', { placeholder: '{{payload.Field Name}}', attrs: `data-ac-cf-field-id="${f.id}"`, expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+  `).join('');
 }
 
 function openStepConfigModal(step, isNew) {
@@ -1022,7 +1024,7 @@ function openStepConfigModal(step, isNew) {
       <div class="field">
         <label class="pra-label">Body</label>
         <div class="pra-muted" style="font-size:.74rem;margin-bottom:4px">Click a field below to insert it as a formatted question/answer pair (bold label, the value, a blank line) -- or select text and hit <b>B</b> to bold it yourself.</div>
-        <div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"' })}<button class="token-bold-btn" type="button" data-bold-btn title="Bold selected text">B</button><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
+        <div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"', expand: true })}<button class="token-bold-btn" type="button" data-bold-btn title="Bold selected text">B</button><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
       </div>
     `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
@@ -1186,7 +1188,8 @@ function chipHtml(raw, opts = {}) {
   const label = tokenLabel(raw);
   const display = opts.display || label;
   const removeBtn = opts.noRemove ? '' : `<button type="button" class="token-chip-x" tabindex="-1">&times;</button>`;
-  return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(display)}</span>${removeBtn}</span>`;
+  const cls = 'token-chip' + (opts.expand ? ' token-chip-expand' : '');
+  return `<span class="${cls}" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(display)}</span>${removeBtn}</span>`;
 }
 // A Q&A block (bold question label, then its answer's own chip right
 // below) is one connected unit -- wrapping it means ONE x removes the
@@ -1198,7 +1201,7 @@ function chipHtml(raw, opts = {}) {
 // refreshQaBlockAnswers), so it may briefly show the label until real
 // sample data finishes loading.
 function qaBlockHtml(label, raw, exampleValue) {
-  const chip = chipHtml(raw, { noRemove: true, display: exampleValue });
+  const chip = chipHtml(raw, { noRemove: true, display: exampleValue, expand: true });
   return `<div class="qa-block" contenteditable="false" data-qa-label="${escapeHtml(label)}" data-qa-raw="${escapeHtml(raw)}"><div class="qa-block-header"><b>${escapeHtml(label)}</b><button type="button" class="qa-block-x" tabindex="-1" title="Remove this question and its answer">&times;</button></div>${chip}</div>`;
 }
 // Looks up the real answer value for a {{token}} against whatever samples
@@ -1242,12 +1245,12 @@ async function refreshQaBlockAnswers(root) {
 // **bold** markers only apply on the multiline field (Send Email's Body) --
 // see the toggleBoldSelection/insertQaPair comments for why this is a plain
 // markdown-style marker in the saved string rather than real stored HTML.
-function tokenEditorContentHtml(value, multiline) {
+function tokenEditorContentHtml(value, multiline, expand) {
   const str = String(value || '');
   if (!multiline) {
     return str.split(/(\{\{[^}]+\}\})/g).map(p => {
       if (!p) return '';
-      if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
+      if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand });
       return escapeHtml(p).replace(/\n/g, ' ');
     }).join('');
   }
@@ -1268,7 +1271,7 @@ function tokenEditorContentHtml(value, multiline) {
     if (!p) return '';
     const qaMatch = p.match(/^\*\*([^*]+)\*\*\n(\{\{[^}]+\}\})$/);
     if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], samples));
-    if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
+    if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand });
     if (/^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
     return escapeHtml(p).replace(/\n/g, '<br>');
   }).join('');
@@ -1277,9 +1280,13 @@ function tokenEditorContentHtml(value, multiline) {
 // but as a contenteditable div instead of a real <input>/<textarea>, so
 // {{token}} runs can render as chips inline with free-typed text. Real
 // <input> placeholder text doesn't work on a div, hence data-placeholder +
-// the :empty:before CSS rule instead.
-function tokenEditorHtml(value, { placeholder = '', multiline = false, attrs = '' } = {}) {
-  return `<div class="pra-input token-editor" contenteditable="true" data-token-editor ${multiline ? 'data-multiline="true"' : ''} data-placeholder="${escapeHtml(placeholder)}" ${attrs}>${tokenEditorContentHtml(value, multiline)}</div>`;
+// the :empty:before CSS rule instead. expand: true is for fields whose
+// whole point is showing one long value in full (custom fields, a Q&A
+// block's answer) -- everything else (Subject, To/From, a short contact
+// field) defaults to a compact inline pill, since those are meant to read
+// as one concatenated line, not stack a chip onto its own row.
+function tokenEditorHtml(value, { placeholder = '', multiline = false, attrs = '', expand = false } = {}) {
+  return `<div class="pra-input token-editor" contenteditable="true" data-token-editor ${multiline ? 'data-multiline="true"' : ''} data-placeholder="${escapeHtml(placeholder)}" ${attrs}>${tokenEditorContentHtml(value, multiline, expand)}</div>`;
 }
 // Inverse of tokenEditorContentHtml -- walks the live DOM back into the raw
 // {{token}}-bearing string that actually gets saved to step.config.
