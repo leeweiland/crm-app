@@ -350,7 +350,7 @@ function renderEventTypesTable() {
   const eventTypes = [...eventTypesCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
   body.innerHTML = eventTypes.map(et => `
     <tr>
-      <td>${escapeHtml(et.name)}</td>
+      <td><a class="pra-link" href="/scheduling-editor.html?id=${et.id}">${escapeHtml(et.name)}</a></td>
       <td>${et.durationMinutes} min</td>
       <td>${escapeHtml(calendarsState[et.calendarId]?.name || (et.calendarEmail || 'Default'))}</td>
       <td>${escapeHtml(et.location?.type || '')}</td>
@@ -358,6 +358,7 @@ function renderEventTypesTable() {
       <td><div class="link-row"><code>/book/${escapeHtml(et.slug)}</code><a class="pra-link" href="/book/${escapeHtml(et.slug)}" target="_blank">Open</a></div></td>
       <td style="white-space:nowrap">
         <a class="pra-btn pra-btn-outline pra-btn-sm" href="/scheduling-editor.html?id=${et.id}">Design</a>
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/book/${escapeHtml(et.slug)}" target="_blank">View</a>
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/scheduling-editor.html?id=${et.id}&embed=1">Embed</a>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${et.id}">Delete</button>
       </td>
