@@ -96,7 +96,7 @@ function renderFlowsTable() {
   const sorted = [...flowsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
   body.innerHTML = sorted.map(f => `
     <tr>
-      <td class="clickable" onclick="location.href='/flow-builder.html?id=${f.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(f.name)}</td>
+      <td class="clickable"><a href="/flow-builder.html?id=${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
       <td class="pra-muted">${TRIGGER_LABELS[f.trigger?.type] || ''}</td>
       <td><button class="active-toggle${f.active ? ' on' : ''}" data-id="${f.id}" data-active="${f.active}"></button></td>
       <td>${f.totalRuns}${f.activeRuns ? ` <span class="pra-muted">(${f.activeRuns} active)</span>` : ''}</td>

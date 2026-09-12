@@ -93,7 +93,7 @@ function renderFormsTable() {
   const sorted = [...formsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
   body.innerHTML = sorted.map(f => `
     <tr>
-      <td class="clickable" onclick="location.href='/form-builder.html?id=${f.id}'" style="cursor:pointer">${escapeHtml(f.name)}</td>
+      <td class="clickable"><a href="/form-builder.html?id=${f.id}" style="color:inherit;text-decoration:none">${escapeHtml(f.name)}</a></td>
       <td><span class="status-pill status-${f.status}">${f.status}</span></td>
       <td>${f.responseCount}</td>
       <td class="pra-muted">${fmtDate(f.updatedAt)}</td>

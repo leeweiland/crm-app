@@ -143,7 +143,7 @@ function renderAutomationsTable() {
   if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No automations yet.</td></tr>'; return; }
   body.innerHTML = rows.map(a => `
     <tr>
-      <td class="clickable" onclick="location.href='/automation-builder.html?id=${a.id}'" style="cursor:pointer;color:var(--pra-blue)">${escapeHtml(a.name)}</td>
+      <td class="clickable"><a href="/automation-builder.html?id=${a.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(a.name)}</a></td>
       <td class="pra-muted">${escapeHtml(triggerSummary(a))}</td>
       <td><button class="active-toggle${a.active ? ' on' : ''}" data-id="${a.id}" data-active="${a.active}"></button></td>
       <td>${Object.values(a.steps || {}).filter(s => s.type === 'send_email').length}</td>
