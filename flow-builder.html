@@ -31,10 +31,13 @@
   .step-card.skipped { border-style: dashed; }
   .step-card.skipped .step-type, .step-card.skipped .step-summary { opacity: .45; }
   .skip-badge { color: #ffc107; font-weight: 700; letter-spacing: .02em; }
-  .sample-fields-list { margin-top: 6px; max-height: 180px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 6px; }
+  .sample-fields-list { margin-top: 6px; max-height: 220px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 6px; }
   .sample-field-row { padding: 7px 10px; font-size: .78rem; border-bottom: 1px solid var(--pra-border); word-break: break-word; }
   .sample-field-row:last-child { border-bottom: none; }
-  .sample-field-row code { color: var(--pra-blue); }
+  .sample-field-row code { display: block; color: var(--pra-blue); margin-bottom: 2px; }
+  .sample-field-value { color: #fff; }
+  .sample-picker-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .sample-picker-list button.active { border-color: var(--pra-blue); color: var(--pra-blue); }
   .ab-canvas-wrap { position: relative; overflow: hidden; padding: 20px 0; height: 68vh; border: 1px solid var(--pra-border); border-radius: 10px; background-image: radial-gradient(var(--pra-border) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
   .ab-canvas-wrap.panning { cursor: grabbing; }
   .ab-canvas-zoom-layer { transform-origin: 0 0; }
@@ -54,9 +57,15 @@
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s, opacity .12s; cursor: grab; }
   .step-card:hover { border-color: var(--pra-blue); }
   .step-card.dragging { opacity: .35; cursor: grabbing; }
-  .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
+  /* A real flex row, not .step-actions floating absolute over the text --
+     absolute positioning meant a long type label (e.g. "SKIPPED - Add/
+     Update Contact (ActiveCampaign)") ran straight under the toggle/delete
+     buttons instead of making room for them, which also made it look (and
+     may have made it actually hard) to hit the toggle precisely. */
+  .step-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .step-card .step-type { flex: 1; min-width: 0; font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
   .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
-  .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
+  .step-card .step-actions { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
   .step-card .step-actions button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .8rem; }
   .step-card .step-actions button:hover { color: #fff; }
   .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; transition: border-color .12s, color .12s, background .12s, transform .12s; }
@@ -316,11 +325,13 @@ function stepCardHtml(stepId, isLast) {
   const countLabel = step.type === 'delay' ? `${count} waiting` : `${count} here`;
   return `
     <div class="step-card${step.skipped ? ' skipped' : ''}" data-open-step="${stepId}" data-drag-step="${stepId}" draggable="true">
-      <div class="step-actions">
-        <button class="skip-toggle${step.skipped ? ' on' : ''}" data-skip="${stepId}" title="${step.skipped ? 'Skipped -- runs jump straight past this step. Click to re-enable.' : 'Skip this step -- runs jump straight past it without deleting it.'}"></button>
-        <button data-delete="${stepId}" title="Delete">&times;</button>
+      <div class="step-card-header">
+        <div class="step-type">${step.skipped ? '<span class="skip-badge">SKIPPED</span> &middot; ' : ''}${TYPE_LABELS[step.type]} &middot; ${count > 0 ? `<span style="color:#009bff">${countLabel}</span>` : countLabel}</div>
+        <div class="step-actions">
+          <button class="skip-toggle${step.skipped ? ' on' : ''}" data-skip="${stepId}" title="${step.skipped ? 'Skipped -- runs jump straight past this step. Click to re-enable.' : 'Skip this step -- runs jump straight past it without deleting it.'}"></button>
+          <button data-delete="${stepId}" title="Delete">&times;</button>
+        </div>
       </div>
-      <div class="step-type">${step.skipped ? '<span class="skip-badge">SKIPPED</span> &middot; ' : ''}${TYPE_LABELS[step.type]} &middot; ${count > 0 ? `<span style="color:#009bff">${countLabel}</span>` : countLabel}</div>
       <div class="step-summary">${stepSummary(step)}</div>
     </div>
   `;
@@ -456,32 +467,90 @@ document.getElementById('copyWebhookUrlBtn').onclick = () => {
 
 // ── Pull Sample Data — same idea as Zapier's "test trigger": fetch the
 // last few real hits and use them instead of guessing field names blind.
-async function fetchSamples(force) {
-  if (cachedSamples && !force) return cachedSamples;
+// fetchRawSamples always returns the actual recent hits (for the picker
+// below to choose from); fetchSamples is what every example/token preview
+// elsewhere in the builder actually calls -- once a specific submission is
+// picked and saved, it returns ONLY that one, never blended with other
+// recent hits, so the builder previews one real, coherent submission
+// instead of Frankensteining fields from different people's answers.
+let cachedRawSamples = null;
+async function fetchRawSamples(force) {
+  if (cachedRawSamples && !force) return cachedRawSamples;
   const r = await fetch(`/api/flows/${flow.id}/samples`);
-  cachedSamples = r.ok ? (await r.json()).samples : [];
-  return cachedSamples;
+  cachedRawSamples = r.ok ? (await r.json()).samples : [];
+  return cachedRawSamples;
+}
+async function fetchSamples(force) {
+  if (flow.trigger?.config?.selectedSample) return [flow.trigger.config.selectedSample];
+  return fetchRawSamples(force);
 }
 function sampleKeys(samples) {
   const keys = [];
   samples.forEach(s => Object.keys(s).forEach(k => { if (!keys.includes(k)) keys.push(k); }));
   return keys;
 }
+// Best-effort human label for a submission button -- name if we can find
+// one, else email, else just its position ("Submission 3").
+function sampleLabel(sample, idx) {
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
+  const findVal = (names) => { for (const k of Object.keys(sample)) { if (names.includes(norm(k)) && sample[k]) return sample[k]; } return ''; };
+  const name = [findVal(['firstname', 'fname']), findVal(['lastname', 'lname'])].filter(Boolean).join(' ');
+  return escapeHtml(name || findVal(['email', 'emailaddress']) || `Submission ${idx + 1}`);
+}
+function submissionFieldsHtml(sample) {
+  return Object.entries(sample).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `
+    <div class="sample-field-row"><code>${escapeHtml(k)}</code><div class="sample-field-value">${escapeHtml(String(v))}</div></div>
+  `).join('');
+}
+function renderSamplePicker(resultEl, samples, forWebhook) {
+  const previewId = forWebhook ? 'samplePreview' : 'samplePreviewAlt';
+  const selected = flow.trigger?.config?.selectedSample;
+  resultEl.innerHTML = `
+    ${selected ? `
+      <div class="pra-muted" style="font-size:.76rem;margin-top:10px">Locked to one submission below -- only its data populates examples/tokens elsewhere in this flow, not a blend of recent ones.</div>
+      <div class="sample-fields-list">${submissionFieldsHtml(selected)}</div>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" data-clear-sample style="margin-top:8px">Use recent submissions instead</button>
+    ` : ''}
+    <div class="pra-muted" style="font-size:.76rem;margin-top:10px">Found ${samples.length} recent submission${samples.length > 1 ? 's' : ''} -- pick one to use:</div>
+    <div class="sample-picker-list">${samples.map((s, i) => `<button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-pick-sample="${i}">${sampleLabel(s, i)}</button>`).join('')}</div>
+    <div id="${previewId}"></div>
+  `;
+  resultEl.querySelectorAll('[data-pick-sample]').forEach(btn => btn.onclick = () => {
+    resultEl.querySelectorAll('[data-pick-sample]').forEach(b => b.classList.toggle('active', b === btn));
+    const sample = samples[Number(btn.dataset.pickSample)];
+    const previewEl = resultEl.querySelector('#' + previewId);
+    previewEl.innerHTML = `
+      <div class="sample-fields-list" style="margin-top:8px">${submissionFieldsHtml(sample)}</div>
+      <button class="pra-btn pra-btn-sm" type="button" style="margin-top:8px" data-use-sample>Use this submission</button>
+    `;
+    previewEl.querySelector('[data-use-sample]').onclick = () => {
+      flow.trigger.config = { ...(flow.trigger.config || {}), selectedSample: sample };
+      cachedSamples = null;
+      saveDebounced();
+      showToast('Using this submission');
+      renderSamplePicker(resultEl, samples, forWebhook);
+    };
+  });
+  resultEl.querySelectorAll('[data-clear-sample]').forEach(btn => btn.onclick = () => {
+    const cfg = { ...(flow.trigger.config || {}) };
+    delete cfg.selectedSample;
+    flow.trigger.config = cfg;
+    cachedSamples = null;
+    saveDebounced();
+    renderSamplePicker(resultEl, samples, forWebhook);
+  });
+}
 async function pullSampleData(forWebhook) {
   const btn = document.getElementById(forWebhook ? 'pullSampleBtn' : 'pullSampleBtnAlt');
   const resultEl = document.getElementById(forWebhook ? 'sampleDataResult' : 'sampleDataResultAlt');
   btn.disabled = true; btn.textContent = 'Fetching…';
-  const samples = await fetchSamples(true);
+  const samples = await fetchRawSamples(true);
   btn.disabled = false; btn.textContent = '↻ Pull Sample Data';
   if (!samples.length) {
     resultEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;margin-top:8px">No submissions yet — trigger it for real once, then try again.</div>';
     return;
   }
-  const keys = sampleKeys(samples);
-  resultEl.innerHTML = `
-    <div class="pra-muted" style="font-size:.76rem;margin-top:10px">Found ${samples.length} recent submission${samples.length > 1 ? 's' : ''}. Available fields:</div>
-    <div class="sample-fields-list">${keys.map(k => `<div class="sample-field-row"><code>${escapeHtml(k)}</code></div>`).join('')}</div>
-  `;
+  renderSamplePicker(resultEl, samples, forWebhook);
 }
 document.getElementById('pullSampleBtn').onclick = () => pullSampleData(true);
 document.getElementById('pullSampleBtnAlt').onclick = () => pullSampleData(false);
@@ -489,6 +558,7 @@ document.getElementById('pullSampleBtnAlt').onclick = () => pullSampleData(false
 function openTriggerModal() {
   const trig = flow.trigger || { type: 'webhook', config: {} };
   cachedSamples = null;
+  cachedRawSamples = null;
   document.getElementById('sampleDataResult').innerHTML = '';
   document.getElementById('sampleDataResultAlt').innerHTML = '';
   document.getElementById('triggerType').value = trig.type;
@@ -523,9 +593,21 @@ document.getElementById('triggerType').addEventListener('change', updateTriggerF
 document.getElementById('saveTriggerBtn').onclick = async () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
+  const oldConfig = flow.trigger?.config || {};
   let config = type === 'form_submitted' ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : {};
   if (type === 'webhook') {
-    config = { webhookToken: flow.trigger?.type === 'webhook' ? flow.trigger.config?.webhookToken : undefined };
+    config = { webhookToken: flow.trigger?.type === 'webhook' ? oldConfig.webhookToken : undefined };
+  }
+  // This rebuild only knows about the fields the form itself edits (target/
+  // webhookToken) -- without carrying these two forward, just clicking Save
+  // here (changing nothing else) would silently throw away captured
+  // samples or a submission locked in via Pull Sample Data. Gated on the
+  // trigger TYPE staying the same -- a genuine type switch (webhook ->
+  // form, etc.) means the old samples/selection are a different shape
+  // entirely and shouldn't carry over.
+  if (flow.trigger?.type === type) {
+    if (oldConfig.samples) config.samples = oldConfig.samples;
+    if (oldConfig.selectedSample) config.selectedSample = oldConfig.selectedSample;
   }
   flow.trigger = { type, config };
   closeModal('triggerModal');
