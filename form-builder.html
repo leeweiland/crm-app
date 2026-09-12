@@ -732,12 +732,13 @@ function optionMarkerSvg(type) {
 function renderLogicRule(field, rule, fi, ri) {
   const needsValue = !['is_answered', 'is_empty'].includes(rule.op);
   const isAi = rule.op === 'ai_disqualify';
-  const isAnyOf = rule.op === 'any_of';
+  const isAnyOf = rule.op === 'any_of' || rule.op === 'contains_any_of';
   const valueInput = isAi
     ? `<textarea class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" rows="2" placeholder="e.g. the answer indicates unemployment, financial hardship, a disability, or contains profanity" style="width:100%;flex-basis:100%;resize:vertical">${escapeHtml(rule.value || '')}</textarea>`
     // Comma-separated, always a plain text input (even on a choice field) --
     // typing "Cashier, Retail, Student" is simpler than juggling a
-    // multi-select, and it still matches option labels exactly.
+    // multi-select, and it still matches option labels (any_of) or
+    // substrings anywhere in the answer (contains_any_of) either way.
     : isAnyOf
       ? `<input class="pra-input" data-logic-value-idx="${fi}" data-logic-value-ri="${ri}" value="${escapeHtml(rule.value || '')}" placeholder="value1, value2, value3" style="width:auto;min-width:220px;flex:1"/>`
       : FIELD_META[field.type].hasOptions

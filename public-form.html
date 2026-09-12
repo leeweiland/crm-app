@@ -511,6 +511,14 @@ function evalCondition(rule, value, fieldId) {
     const candidates = String(target || '').split(',').map(s => s.trim()).filter(Boolean);
     return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.includes(String(value || ''));
   }
+  if (rule.op === 'contains_any_of') {
+    // Same comma-separated list as any_of, but each candidate just needs to
+    // appear ANYWHERE in the answer -- "unemployed, disabled, retired"
+    // catches "currently unemployed and looking" the way any_of's exact
+    // match never would.
+    const candidates = String(target || '').split(',').map(s => s.trim()).filter(Boolean);
+    return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.some(c => String(value || '').includes(c));
+  }
   return false;
 }
 function matchingRule(fields, action) {

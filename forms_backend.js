@@ -233,6 +233,10 @@ function evalRuleServerSide(rule, value) {
     const candidates = String(target || "").split(",").map(s => s.trim()).filter(Boolean);
     return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.includes(String(value || ""));
   }
+  if (rule.op === "contains_any_of") {
+    const candidates = String(target || "").split(",").map(s => s.trim()).filter(Boolean);
+    return Array.isArray(value) ? value.some(v => candidates.includes(v)) : candidates.some(c => String(value || "").includes(c));
+  }
   return false;
 }
 
