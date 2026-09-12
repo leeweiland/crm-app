@@ -219,7 +219,20 @@ async function advanceFlowRun(run, flow) {
   while (run.status === "active" && run.currentStepId && guard++ < 200) {
     const step = flow.steps[run.currentStepId];
     if (!step) { completeRun(run); return; }
-    run.history.push({ stepId: step.id, at: new Date().toISOString() });
+    run.history.push({ stepId: step.id, at: new Date().toISOString(), skipped: !!step.skipped });
+    if (step.skipped) {
+      // Bypasses the step's action (and, for filter/delay, the thing that
+      // would otherwise end or pause the run) entirely -- the toggle in
+      // flow-builder.html is meant to "smoothly skip" a step without
+      // deleting it, so a skipped filter can't dead-end the run and a
+      // skipped delay doesn't pause it. if_then has no single "next" to
+      // fall through to, so a skipped one just always takes its YES path
+      // (or NO if that's the only one wired) rather than stalling.
+      run.currentStepId = step.type === "if_then" ? (step.yesStepId || step.noStepId || null) : (step.nextStepId || null);
+      if (!run.currentStepId) { completeRun(run); return; }
+      saveRun(run);
+      continue;
+    }
     const contact = getContact(run.contactId);
     const ctx = {
       contact, payload: run.triggerPayload || {},

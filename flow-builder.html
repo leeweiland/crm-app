@@ -14,6 +14,23 @@
   .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
   .active-toggle.on { background: var(--pra-green); }
   .active-toggle.on::after { left: 20px; }
+  .skip-toggle { width: 32px; height: 18px; border-radius: 9px; border: none; cursor: pointer; position: relative; padding: 0; flex-shrink: 0; transition: background .15s; }
+  .skip-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .skip-toggle.on::after { left: 16px; }
+  /* .step-card .step-actions button {background:none} (below) outranks the
+     plain .skip-toggle/.skip-toggle.on selectors above on specificity (2
+     classes+1 element beats 1-2 classes alone) and was silently winning,
+     leaving the track always transparent regardless of state -- these
+     re-scoped rules add enough specificity to actually take effect. */
+  .step-card .step-actions .skip-toggle { background: var(--pra-border); }
+  .step-card .step-actions .skip-toggle.on { background: #ffc107; }
+  /* Only the text dims, not .step-actions (the toggle itself) -- opacity on
+     the whole card would dim the toggle along with it, since a child's own
+     opacity:1 can't undo an ancestor's, making the control it needs to stay
+     clickable/legible on harder to see and hit right when it matters most. */
+  .step-card.skipped { border-style: dashed; }
+  .step-card.skipped .step-type, .step-card.skipped .step-summary { opacity: .45; }
+  .skip-badge { color: #ffc107; font-weight: 700; letter-spacing: .02em; }
   .ab-canvas-wrap { position: relative; overflow: hidden; padding: 20px 0; height: 68vh; border: 1px solid var(--pra-border); border-radius: 10px; background-image: radial-gradient(var(--pra-border) 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
   .ab-canvas-wrap.panning { cursor: grabbing; }
   .ab-canvas-zoom-layer { transform-origin: 0 0; }
@@ -286,11 +303,12 @@ function stepCardHtml(stepId, isLast) {
   const count = runCounts[stepId] || 0;
   const countLabel = step.type === 'delay' ? `${count} waiting` : `${count} here`;
   return `
-    <div class="step-card" data-open-step="${stepId}" data-drag-step="${stepId}" draggable="true">
+    <div class="step-card${step.skipped ? ' skipped' : ''}" data-open-step="${stepId}" data-drag-step="${stepId}" draggable="true">
       <div class="step-actions">
+        <button class="skip-toggle${step.skipped ? ' on' : ''}" data-skip="${stepId}" title="${step.skipped ? 'Skipped -- runs jump straight past this step. Click to re-enable.' : 'Skip this step -- runs jump straight past it without deleting it.'}"></button>
         <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
-      <div class="step-type">${TYPE_LABELS[step.type]} &middot; ${count > 0 ? `<span style="color:#009bff">${countLabel}</span>` : countLabel}</div>
+      <div class="step-type">${step.skipped ? '<span class="skip-badge">SKIPPED</span> &middot; ' : ''}${TYPE_LABELS[step.type]} &middot; ${count > 0 ? `<span style="color:#009bff">${countLabel}</span>` : countLabel}</div>
       <div class="step-summary">${stepSummary(step)}</div>
     </div>
   `;
@@ -344,10 +362,16 @@ function render() {
   `;
   document.getElementById('triggerCardBtn').onclick = openTriggerModal;
   canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {
-    if (e.target.closest('[data-delete]')) return;
+    if (e.target.closest('[data-delete], [data-skip]')) return;
     editStep(card.dataset.openStep);
   }));
   canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => { e.stopPropagation(); deleteStep(btn.dataset.delete); });
+  canvas.querySelectorAll('[data-skip]').forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    const step = flow.steps[btn.dataset.skip];
+    step.skipped = !step.skipped;
+    render(); saveDebounced();
+  });
   canvas.querySelectorAll('[data-path]').forEach(btn => btn.onclick = () => {
     pendingAddPath = btn.dataset.path;
     pendingAddAfter = btn.dataset.after || null;
