@@ -1277,7 +1277,12 @@ async function openTokenPopover(btn, input) {
 function wireTokenButtons(root) {
   wireTokenEditors(root);
   root.querySelectorAll('[data-token-btn]').forEach(btn => {
-    const input = btn.previousElementSibling;
+    // Not btn.previousElementSibling -- true for every field except Body,
+    // the one field with a Bold button also sitting in .token-input-wrap
+    // between the editor and this button, which previousElementSibling
+    // would resolve to instead of the editor. Same lookup the Bold button
+    // itself already uses correctly, just below.
+    const input = btn.parentElement.querySelector('[data-token-editor]');
     btn.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected when the button itself is clicked
     btn.onclick = () => openTokenPopover(btn, input);
   });
