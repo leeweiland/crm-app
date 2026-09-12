@@ -274,6 +274,48 @@ async function loadRefs() {
   if (themeRes.ok) orgEmailTheme = (await themeRes.json()).theme;
 }
 
+// Fetches the real Custom Audiences from the connected Facebook ad account
+// (facebook_backend.js already exposed this, it just wasn't wired into the
+// step editor) and fills the dropdown -- selecting one just fills in the
+// existing Name/ID text fields below it, so the save handler doesn't need
+// to change at all and typing an ID by hand (an audience outside the first
+// 200, or Facebook unreachable) still works exactly as before.
+async function loadFacebookAudienceOptions(currentAudienceId) {
+  const select = document.getElementById('cfgFbAudienceSelect');
+  if (!select) return;
+  if (!facebookIsConfigured) {
+    select.innerHTML = '<option value="">Connect Facebook in Settings -> Tracking first</option>';
+    select.disabled = true;
+    return;
+  }
+  let d;
+  try {
+    const r = await fetch('/api/facebook/audiences');
+    d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.reason || 'request failed');
+  } catch (e) {
+    if (!select.isConnected) return; // step type changed / modal closed while this was in flight
+    select.innerHTML = `<option value="">Couldn't load audiences (${escapeHtml(d?.reason || e.message)}) -- enter an ID below</option>`;
+    select.disabled = true;
+    return;
+  }
+  if (!select.isConnected) return;
+  const audiences = d.audiences || [];
+  if (!audiences.length) {
+    select.innerHTML = '<option value="">No custom audiences found in your ad account</option>';
+    select.disabled = true;
+    return;
+  }
+  select.innerHTML = '<option value="">Pick an audience to fill in the fields below…</option>' +
+    audiences.map(a => `<option value="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" ${String(a.id) === String(currentAudienceId) ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+  select.disabled = false;
+  select.onchange = () => {
+    if (!select.value) return;
+    document.getElementById('cfgFbId').value = select.value;
+    document.getElementById('cfgFbName').value = select.options[select.selectedIndex].dataset.name || '';
+  };
+}
+
 function stepSummary(step) {
   if (step.type === 'send_email') return `Subject: ${escapeHtml(step.config.subject || '(empty)')}`;
   if (step.type === 'wait') return `Wait ${step.config.amount || 0} ${step.config.unit || 'minutes'}`;
@@ -666,9 +708,13 @@ function openStepConfigModal(step, isNew) {
   } else if (step.type === 'add_to_facebook_audience') {
     body.innerHTML = `
       ${facebookIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Facebook isn\'t configured yet -- add FACEBOOK_ACCESS_TOKEN and FACEBOOK_AD_ACCOUNT_ID to .env. The step still saves and will start working once those are set.</div>'}
+      <div class="field"><label class="pra-label">Custom Audience</label>
+        <select class="pra-select" id="cfgFbAudienceSelect"><option value="">Loading audiences…</option></select>
+      </div>
       <div class="field"><label class="pra-label">Audience Name (for display)</label><input class="pra-input" id="cfgFbName" value="${escapeHtml(step.config.audienceName || '')}"/></div>
-      <div class="field"><label class="pra-label">Custom Audience ID</label><input class="pra-input" id="cfgFbId" value="${escapeHtml(step.config.audienceId || '')}" placeholder="From Facebook Ads Manager"/></div>
+      <div class="field"><label class="pra-label">Custom Audience ID</label><input class="pra-input" id="cfgFbId" value="${escapeHtml(step.config.audienceId || '')}" placeholder="From Facebook Ads Manager, or pick one above"/></div>
     `;
+    loadFacebookAudienceOptions(step.config.audienceId);
   } else if (step.type === 'condition') {
     const c = step.config.filter?.all?.[0] || { field: 'status', op: 'eq', value: '' };
     body.innerHTML = `
