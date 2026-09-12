@@ -43,6 +43,11 @@ try { if (window.self !== window.top) document.documentElement.classList.add('pf
        a screen where every pixel matters. Negative-margin just this field
        back out to the true edge instead of shrinking the calendar inside it. */
     .pf-field:has(.scheduling-inline-widget) { margin-left: -20px; margin-right: -20px; }
+    /* The video's Width/Alignment gear-panel setting is a desktop choice --
+       on a phone it always fills the full width, no side gaps, regardless
+       of what was configured. !important is required to beat the inline
+       style textBlockStyle-style sizing sets per-field above. */
+    .pf-video-sizer { width: 100% !important; margin-left: 0 !important; margin-right: 0 !important; }
   }
   .pf-card .pra-input, .pf-card .pra-select, .pf-card .pra-textarea, .pf-card .pra-btn, .pf-choice-row { border-radius: calc(var(--pf-radius, 12px) * .65); }
   .pf-progress { display: flex; gap: 6px; margin-bottom: 24px; }
@@ -331,12 +336,17 @@ function renderField(f) {
   if (f.type === 'video') {
     const width = f.videoWidth || 100;
     const align = f.videoAlign || 'center';
+    // The width/alignment setting is a desktop-layout choice -- on a phone
+    // there's no room to waste on side gaps, so .pf-video-sizer's own
+    // mobile media query overrides these to full width regardless (an
+    // !important is the only way to win over this inline style at that
+    // breakpoint, since inline style otherwise beats any stylesheet rule).
     const sizeStyle = `width:${width}%;${align === 'right' ? 'margin-left:auto' : align === 'center' ? 'margin-left:auto;margin-right:auto' : ''}`;
-    if (isHtmlEmbed(f.videoUrl)) return `<div class="pf-field"><div style="${sizeStyle}"><div class="pf-raw-embed">${f.videoUrl}</div></div></div>`;
+    if (isHtmlEmbed(f.videoUrl)) return `<div class="pf-field"><div class="pf-video-sizer" style="${sizeStyle}"><div class="pf-raw-embed">${f.videoUrl}</div></div></div>`;
     const wistiaId = wistiaIdFromInput(f.videoUrl);
     if (!wistiaId) return '';
     const padTop = VIDEO_ASPECT_PADDING[f.videoAspect] || VIDEO_ASPECT_PADDING['16:9'];
-    return `<div class="pf-field"><div style="${sizeStyle}"><div class="pf-video-embed" style="padding-top:${padTop}"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div></div>`;
+    return `<div class="pf-field"><div class="pf-video-sizer" style="${sizeStyle}"><div class="pf-video-embed" style="padding-top:${padTop}"><iframe src="https://fast.wistia.net/embed/iframe/${wistiaId}" allow="autoplay; fullscreen" allowfullscreen></iframe></div></div></div>`;
   }
   if (f.type === 'calendar') {
     if (!f.eventTypeSlug) return '';
@@ -544,6 +554,16 @@ function updateNextVisibility() {
   // finish something -- they answered, in full, and were screened out.
   const backBtn = document.getElementById('pfBack');
   if (backBtn) backBtn.style.display = hiddenByRule ? 'none' : '';
+  // On the last step, the button defaults to the Submit label -- but a
+  // redirect rule already short-circuits the click handler before it ever
+  // calls submit() (see pfNext.onclick), so a disqualifying answer here
+  // never actually submits the form no matter what the button says. This
+  // just keeps the LABEL honest about that: showing "Submit" right before
+  // silently redirecting instead reads as a broken submit button, not a
+  // deliberate screen.
+  const isLast = stepIndex === steps.length - 1;
+  const willRedirect = !!matchingRule(fields, 'redirect');
+  btn.textContent = willRedirect ? 'Next' : (isLast ? (form.settings.submitButtonText || 'Submit') : 'Next');
 }
 
 function validateStep(fields) {
