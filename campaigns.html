@@ -111,7 +111,7 @@ function renderCampaignsTable() {
   if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No campaigns match.</td></tr>'; return; }
   body.innerHTML = rows.map((c, idx) => `
     <tr>
-      <td class="clickable"><a href="/campaign-builder.html?id=${c.id}" style="color:inherit;text-decoration:none">${escapeHtml(c.name)}</a></td>
+      <td class="clickable"><a href="/campaign-builder.html?id=${c.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(c.name)}</a></td>
       <td><span class="status-pill status-${c.status}">${c.status}</span></td>
       <td class="pra-muted">${escapeHtml(c.subject || '')}</td>
       <td>${c.stats?.sent ?? 0}</td>

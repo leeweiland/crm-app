@@ -433,7 +433,7 @@ async function loadAgents() {
     if (a.targeting?.coverForUserIds?.length) targeting.push('covers ' + a.targeting.coverForUserIds.length + ' user(s)');
     return `
     <tr>
-      <td class="clickable" style="cursor:pointer" data-edit="${a.id}">${escapeHtml(a.name)}</td>
+      <td class="clickable" style="cursor:pointer;color:var(--pra-blue)" data-edit="${a.id}">${escapeHtml(a.name)}</td>
       <td><span class="agent-active-pill ${a.active ? 'agent-on' : 'agent-off'}">${a.active ? 'AI Active' : 'Off'}</span>${a.aiAssist ? '<span class="agent-active-pill agent-on" style="margin-left:4px">AI Assist</span>' : ''}</td>
       <td class="pra-muted" style="font-size:.8rem">${targeting.length ? escapeHtml(targeting.join(' · ')) : 'All leads'}</td>
       <td class="pra-muted">${fmtDate(a.updatedAt)}</td>
