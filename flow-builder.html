@@ -91,31 +91,35 @@
      other rows never makes it look like the recommended step "unselected". */
   .move-runs-option.selected { background: rgba(0,155,255,0.18); color: var(--pra-blue); border-left-color: var(--pra-blue); }
   .move-runs-option.selected:hover { background: rgba(0,155,255,0.26); }
-  .token-input-wrap { position: relative; }
-  .token-input-wrap > input, .token-input-wrap > textarea, .token-input-wrap > .token-editor { padding-right: 32px; width: 100%; }
+  /* display:grid + every child sharing grid-area 1/1 stacks them the same
+     way position:absolute used to -- but grid items (unlike absolutely
+     positioned ones) can also be position:sticky, which is what actually
+     lets the +/B buttons below stay pinned near the top of the modal's
+     scroll viewport (its nearest scrolling ancestor) instead of scrolling
+     out of reach once a field's content -- a long chip, or the Body editor
+     stacked with many Q&A blocks -- pushes well past one screen. */
+  .token-input-wrap { position: relative; display: grid; }
+  .token-input-wrap > input, .token-input-wrap > textarea, .token-input-wrap > .token-editor { grid-area: 1 / 1; padding-right: 32px; width: 100%; }
   .token-editor { min-height: 20px; line-height: 1.5; cursor: text; white-space: pre-wrap; word-break: break-word; }
   .token-editor[data-multiline="true"] { min-height: 140px; }
   .token-editor:empty:before { content: attr(data-placeholder); color: #55555f; pointer-events: none; }
-  .token-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 1px 4px 1px 7px; margin: 0 1px; font-size: .78rem; font-family: var(--font-secondary); white-space: nowrap; vertical-align: baseline; cursor: pointer; }
-  .token-chip-label { pointer-events: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .token-chip-x { flex-shrink: 0; }
-  /* A truncated label only shows its first few words -- hover (or click, to
-     keep it open without holding the mouse there) grows the chip onto its
-     own full-width line so the whole value is readable instead of guessing
-     from "...". display:flex (not just width) is what actually lets the
-     label wrap into multiple lines -- inline-flex sizes to its content
-     first regardless of white-space, so width alone wouldn't do it. */
-  .token-chip:hover, .token-chip.expanded { display: flex; width: 100%; white-space: normal; }
-  .token-chip:hover .token-chip-label, .token-chip.expanded .token-chip-label { overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word; }
+  /* Always full-width and wrapped -- never truncated, so the whole value is
+     on screen with no scroll/hover/click needed. display:flex + width (not
+     just white-space) is what actually lets the label wrap onto multiple
+     lines -- inline-flex sizes to its content first regardless of
+     white-space, so width alone wouldn't do it. */
+  .token-chip { display: flex; align-items: flex-start; gap: 4px; width: 100%; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 3px 4px 3px 7px; margin: 2px 0; font-size: .78rem; font-family: var(--font-secondary); white-space: normal; }
+  .token-chip-label { pointer-events: none; word-break: break-word; }
+  .token-chip-x { flex-shrink: 0; margin-top: 1px; }
   .token-chip-x { background: none; border: none; color: var(--pra-blue); cursor: pointer; font-size: .95rem; line-height: 1; padding: 0 1px; opacity: .75; }
   .token-chip-x:hover { opacity: 1; }
-  .token-insert-btn { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .token-insert-btn { grid-area: 1 / 1; position: sticky; top: 8px; align-self: start; justify-self: end; margin: 6px 6px 0 0; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 2; }
   .token-insert-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   /* Bold sits to the LEFT of the existing "+" token button, same box --
      only the Body field of Send Email gets one (see wireTokenButtons),
      so the extra right-padding only needs to apply where that button
      actually exists. */
-  .token-bold-btn { position: absolute; top: 6px; right: 34px; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-weight: 700; font-size: .8rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .token-bold-btn { grid-area: 1 / 1; position: sticky; top: 8px; align-self: start; justify-self: end; margin: 6px 34px 0 0; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-weight: 700; font-size: .8rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 2; }
   .token-bold-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .token-input-wrap:has(.token-bold-btn) > .token-editor { padding-right: 62px; }
   .token-popover { z-index: 700; width: 300px; max-height: 320px; overflow-y: auto; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); padding: 4px; }
@@ -1041,6 +1045,7 @@ function openStepConfigModal(step, isNew) {
   // in whatever step-type body was just rendered -- harmless no-op for a
   // step type with none.
   wireTokenButtons(body);
+  refreshQaBlockAnswers(body);
 
   document.getElementById('saveStepBtn').onclick = () => {
     if (step.type === 'filter' || step.type === 'if_then') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
@@ -1159,22 +1164,97 @@ function tokenLabel(raw) {
   const pm = m[1].match(/^payload\.(.+)$/);
   return pm ? pm[1] : m[1];
 }
-function chipHtml(raw) {
+// opts.display overrides what the chip SHOWS (the Q&A block below uses
+// this to show the actual answer value instead of restating the question
+// that's already right above it) -- data-raw stays the real {{token}}
+// regardless, so what actually gets saved and resolved at send time is
+// completely unaffected either way. No title attribute -- the chip is
+// always fully expanded/wrapped now (see .token-chip), so a hover tooltip
+// would just be redundant with what's already fully on screen.
+function chipHtml(raw, opts = {}) {
   const label = tokenLabel(raw);
-  return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}" title="${escapeHtml(label)}"><span class="token-chip-label">${escapeHtml(label)}</span><button type="button" class="token-chip-x" tabindex="-1">&times;</button></span>`;
+  const display = opts.display || label;
+  const removeBtn = opts.noRemove ? '' : `<button type="button" class="token-chip-x" tabindex="-1">&times;</button>`;
+  return `<span class="token-chip" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(display)}</span>${removeBtn}</span>`;
+}
+// A Q&A block (bold question label, then its answer's own chip right
+// below) is one connected unit -- wrapping it means ONE x removes the
+// label and the chip together, instead of the chip's own x leaving an
+// orphaned bold label behind (see wireChipRemovals' .qa-block-x handler).
+// The chip inside it shows the resolved ANSWER, not the label the bold
+// text already states -- exampleValue is looked up synchronously against
+// whatever's cached right now (see tokenEditorContentHtml/
+// refreshQaBlockAnswers), so it may briefly show the label until real
+// sample data finishes loading.
+function qaBlockHtml(label, raw, exampleValue) {
+  const chip = chipHtml(raw, { noRemove: true, display: exampleValue });
+  return `<div class="qa-block" contenteditable="false" data-qa-label="${escapeHtml(label)}" data-qa-raw="${escapeHtml(raw)}"><div class="qa-block-header"><b>${escapeHtml(label)}</b><button type="button" class="qa-block-x" tabindex="-1" title="Remove this question and its answer">&times;</button></div>${chip}</div>`;
+}
+// Looks up the real answer value for a {{token}} against whatever samples
+// are passed in (cachedSamples when nothing else is specified) -- same
+// field-matching rules as getAvailableTokens' exampleFor, just standalone
+// and synchronous so a chip can show it immediately at render time instead
+// of waiting on a fetch.
+function exampleValueForToken(raw, samples) {
+  const m = raw.match(/^\{\{(.+)\}\}$/);
+  if (!m) return null;
+  const key = m[1];
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z]/g, '');
+  const KNOWN_MATCH = { first: ['firstname', 'fname'], last: ['lastname', 'lname'], email: ['email', 'emailaddress'], phone: ['phone', 'phonenumber', 'mobile', 'mobilenumber'] };
+  if (KNOWN_MATCH[key]) {
+    for (const s of samples) for (const k of Object.keys(s)) if (KNOWN_MATCH[key].includes(norm(k)) && s[k] !== undefined && s[k] !== '') return String(s[k]);
+    return null;
+  }
+  const pm = key.match(/^payload\.(.+)$/);
+  if (!pm) return null; // e.g. {{timestamp}}, stamped at run time -- no sample value
+  for (const s of samples) if (s[pm[1]] !== undefined && s[pm[1]] !== '') return String(s[pm[1]]);
+  return null;
+}
+// Q&A block chips render synchronously off whatever's already cached (see
+// tokenEditorContentHtml), so opening the modal never blocks on a fetch --
+// if real sample data wasn't cached yet at that instant (the common case:
+// nothing else has touched fetchSamples this page load), this catches up
+// once it loads. Only touches each chip's own label/title, never the DOM
+// node itself, so it can't disturb the user's cursor or any edits made in
+// the meantime.
+async function refreshQaBlockAnswers(root) {
+  if (!root.querySelector('.qa-block')) return;
+  const samples = await fetchSamples(false);
+  if (!samples.length) return;
+  root.querySelectorAll('.qa-block').forEach(block => {
+    const val = exampleValueForToken(block.dataset.qaRaw, samples);
+    if (val == null) return;
+    const label = block.querySelector('.token-chip-label');
+    if (label.textContent !== val) label.textContent = val;
+  });
 }
 // **bold** markers only apply on the multiline field (Send Email's Body) --
 // see the toggleBoldSelection/insertQaPair comments for why this is a plain
 // markdown-style marker in the saved string rather than real stored HTML.
 function tokenEditorContentHtml(value, multiline) {
-  const pattern = multiline ? /(\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g : /(\{\{[^}]+\}\})/g;
-  const parts = String(value || '').split(pattern);
-  return parts.map(p => {
+  const str = String(value || '');
+  if (!multiline) {
+    return str.split(/(\{\{[^}]+\}\})/g).map(p => {
+      if (!p) return '';
+      if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
+      return escapeHtml(p).replace(/\n/g, ' ');
+    }).join('');
+  }
+  // A bold label immediately followed by its own token on the next line,
+  // then a blank line, is exactly the shape insertQaPair builds -- render
+  // THAT specific pattern as one wrapped qa-block (checked first in the
+  // split pattern, since it's a longer/more specific match starting with
+  // the same "**" as the plain-bold alternative). Anything else -- manual
+  // bold, a bare chip, plain text -- renders exactly as before.
+  const samples = cachedSamples || [];
+  const pattern = /(\*\*[^*]+\*\*\n\{\{[^}]+\}\}\n\n|\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g;
+  return str.split(pattern).map(p => {
     if (!p) return '';
+    const qaMatch = p.match(/^\*\*([^*]+)\*\*\n(\{\{[^}]+\}\})\n\n$/);
+    if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], samples));
     if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p);
-    if (multiline && /^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
-    const esc = escapeHtml(p);
-    return multiline ? esc.replace(/\n/g, '<br>') : esc.replace(/\n/g, ' ');
+    if (/^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
+    return escapeHtml(p).replace(/\n/g, '<br>');
   }).join('');
 }
 // Renders the same visual "input" as before (same .pra-input box styling)
@@ -1192,7 +1272,14 @@ function getTokenEditorValue(el) {
   el.childNodes.forEach(node => {
     if (node.nodeType === Node.TEXT_NODE) out += node.textContent;
     else if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.classList.contains('token-chip')) out += node.dataset.raw;
+      // Reconstructs the exact "**label**\n{{token}}\n\n" shape
+      // tokenEditorContentHtml's qa-block branch parses back out of this
+      // same string next time it's loaded -- doesn't recurse into the
+      // block's own header/chip DOM at all, so it's correct regardless of
+      // what's currently shown in the chip (the real answer preview,
+      // possibly still just the label if samples hadn't loaded yet).
+      if (node.classList.contains('qa-block')) out += `**${node.dataset.qaLabel}**\n${node.dataset.qaRaw}\n\n`;
+      else if (node.classList.contains('token-chip')) out += node.dataset.raw;
       else if (node.tagName === 'BR') out += '\n';
       // Recurses (not .textContent) so a chip typed/selected INTO a bold
       // run still round-trips as its real {{token}}, not the chip's
@@ -1216,18 +1303,21 @@ function wireChipRemovals(root) {
       editor.dispatchEvent(new Event('input', { bubbles: true }));
     };
   });
-  // Click toggles a persistent expand (hover alone collapses the instant the
-  // mouse leaves, too fast to actually read a long value) -- excludes the x
-  // button above so removing a chip doesn't also toggle it on the way out.
-  root.querySelectorAll('.token-chip').forEach(chip => {
-    if (chip.dataset.expandWired) return;
-    chip.dataset.expandWired = '1';
-    chip.addEventListener('mousedown', (e) => { if (!e.target.closest('.token-chip-x')) e.preventDefault(); });
-    chip.addEventListener('click', (e) => {
-      if (e.target.closest('.token-chip-x')) return;
-      e.stopPropagation();
-      chip.classList.toggle('expanded');
-    });
+  // Removes the WHOLE question/answer block (bold label + its chip), not
+  // just the chip -- a Q&A block is one connected unit now (see
+  // qaBlockHtml), so "delete this question" shouldn't leave the label
+  // behind the way the chip's own x above would if it existed inside one.
+  root.querySelectorAll('.qa-block-x').forEach(x => {
+    if (x.dataset.wired) return;
+    x.dataset.wired = '1';
+    x.onmousedown = (e) => e.preventDefault();
+    x.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const block = x.closest('.qa-block');
+      const editor = block.closest('[data-token-editor]');
+      block.remove();
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    };
   });
 }
 function insertChipAtCaret(editor, raw) {
@@ -1304,16 +1394,26 @@ function toggleBoldSelection(editor) {
   editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 // The Body field's own token-popover action (see openTokenPopover) --
-// inserts "**Question Label**", a line break, the answer's own {{token}}
-// chip, then a blank line, so clicking straight down the list of available
-// fields builds exactly the "Question (bold) / Answer / blank line" layout
-// without the user hand-typing ** markers or line breaks themselves.
-function insertQaPair(editor, label, token) {
-  insertBoldTextAtCaret(editor, label);
-  insertLineBreak(editor);
-  insertChipAtCaret(editor, token);
-  insertLineBreak(editor);
-  insertLineBreak(editor);
+// inserts one wrapped question/answer block (see qaBlockHtml) so clicking
+// straight down the list of available fields builds the "Question (bold) /
+// Answer" layout, with a single x to remove a whole question, without the
+// user hand-typing ** markers or line breaks themselves.
+function insertQaPair(editor, label, token, exampleValue) {
+  editor.focus();
+  const sel = window.getSelection();
+  let range;
+  if (sel.rangeCount && editor.contains(sel.anchorNode)) range = sel.getRangeAt(0);
+  else { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
+  range.deleteContents();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = qaBlockHtml(label, token, exampleValue);
+  const block = tmp.firstElementChild;
+  range.insertNode(block);
+  wireChipRemovals(editor);
+  range.setStartAfter(block);
+  range.setEndAfter(block);
+  sel.removeAllRanges();
+  sel.addRange(range);
   editor.dispatchEvent(new Event('input', { bubbles: true }));
 }
 function insertLineBreak(editor) {
@@ -1401,7 +1501,7 @@ async function openTokenPopover(btn, input) {
     item.onmousedown = (e) => e.preventDefault(); // keep `input` focused/selected through the click
     item.onclick = () => {
       const opt = options.find(o => o.token === item.dataset.token);
-      if (multiline && opt) insertQaPair(input, opt.label, opt.token);
+      if (multiline && opt) insertQaPair(input, opt.label, opt.token, opt.example);
       else insertChipAtCaret(input, item.dataset.token);
       closeTokenPopover();
     };
