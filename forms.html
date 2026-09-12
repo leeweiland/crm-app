@@ -99,6 +99,8 @@ function renderFormsTable() {
       <td class="pra-muted">${fmtDate(f.updatedAt)}</td>
       <td style="white-space:nowrap">
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/form-builder.html?id=${f.id}" onclick="event.stopPropagation()">Edit</a>
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/f/${f.id}" target="_blank" onclick="event.stopPropagation()">View</a>
+        <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/form-builder.html?id=${f.id}&embed=1" onclick="event.stopPropagation()">Embed</a>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${f.id}">Delete</button>
       </td>
     </tr>

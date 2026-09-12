@@ -1850,6 +1850,10 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.onclick = () 
 (async function init() {
   await loadRefs();
   await loadForm();
+  // Same ?embed=1 convention as scheduling-editor.html -- lets the Forms
+  // list page link straight to "Embed" without duplicating this modal's
+  // markup/logic there.
+  if (new URLSearchParams(location.search).get('embed') === '1') openEmbedModal();
 })();
 </script>
 </body>
