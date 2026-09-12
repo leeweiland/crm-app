@@ -206,19 +206,27 @@
               <div class="platform-box-title">Meta</div>
               <span id="metaConfigBadge" class="platform-status-pill not-connected">Not Connected</span>
             </div>
-            <div class="field"><label class="pra-label">Pixel ID</label><input class="pra-input" id="convMetaPixelId" placeholder="From Events Manager → Data Sources"/></div>
+            <div class="field"><label class="pra-label">Online Pixel ID</label><input class="pra-input" id="convMetaPixelIdOnline" placeholder="From Events Manager → Data Sources"/></div>
+            <div class="field"><label class="pra-label">Gym Pixel ID</label><input class="pra-input" id="convMetaPixelIdGym" placeholder="From Events Manager → Data Sources"/></div>
             <div class="field"><label class="pra-label">Access Token</label><input class="pra-input" type="password" id="convMetaAccessToken" autocomplete="off" placeholder="Paste access token"/></div>
             <div class="field"><label class="pra-label">Test Event Code (optional)</label><input class="pra-input" id="convMetaTestCode" placeholder="From Events Manager → Test Events"/></div>
             <div class="field"><label class="pra-label">Ad Account ID</label><input class="pra-input" id="convMetaAdAccountId" placeholder="From Ads Manager, e.g. 1234567890"/></div>
-            <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Same access token also powers "Add to Custom Audience" automation steps -- needs the ads_management permission, not just Conversions API access.</div>
+            <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Same access token also powers "Add to Custom Audience" automation steps -- needs the ads_management permission, not just Conversions API access. Leads/bookings/sales route to whichever pixel matches the contact's Online/Gym type.</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="fetchMetaPixelBtn">Fetch Pixel ID from Meta</button>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="fetchMetaPixelBtn">Fetch Pixels from Meta</button>
               <button class="pra-btn pra-btn-sm" id="saveMetaTokensBtn">Save Meta</button>
             </div>
             <div class="pra-muted" id="metaFetchMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
-            <div id="metaPixelPicker" style="display:none;gap:8px;margin-top:6px">
-              <select class="pra-select" id="metaPixelPickerSelect" style="flex:1"></select>
-              <button class="pra-btn pra-btn-sm" id="metaPixelPickerUseBtn">Use This</button>
+            <div id="metaPixelPicker" style="display:none;flex-direction:column;gap:8px;margin-top:6px">
+              <div style="display:flex;gap:8px;align-items:center">
+                <label class="pra-label" style="width:70px;flex-shrink:0">Online</label>
+                <select class="pra-select" id="metaPixelPickerOnline" style="flex:1"></select>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <label class="pra-label" style="width:70px;flex-shrink:0">Gym</label>
+                <select class="pra-select" id="metaPixelPickerGym" style="flex:1"></select>
+              </div>
+              <button class="pra-btn pra-btn-sm" id="metaPixelPickerUseBtn" style="align-self:flex-start">Use These</button>
             </div>
             <div class="pra-muted" id="metaTokensMsg" style="font-size:.8rem;min-height:1em"></div>
           </div>
@@ -248,6 +256,7 @@
         <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Fires against both platforms regardless of the event's own toggles, so you can check the connection before wiring anything real.</div>
         <div class="field-row">
           <div class="field"><label class="pra-label">Event</label><select class="pra-select" id="testEventSelect"></select></div>
+          <div class="field"><label class="pra-label">Meta Pixel</label><select class="pra-select" id="testEventProgramType"><option value="online">Online</option><option value="gym">Gym</option></select></div>
           <div class="field"><label class="pra-label">Test email</label><input class="pra-input" id="testEventEmail" placeholder="you@example.com"/></div>
         </div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="sendTestEventBtn">Send Test Event</button>
@@ -841,7 +850,8 @@ async function loadConversionSettings() {
   const r = await fetch('/api/conversions/settings');
   if (!r.ok) return;
   const s = await r.json();
-  document.getElementById('convMetaPixelId').value = s.metaPixelId || '';
+  document.getElementById('convMetaPixelIdOnline').value = s.metaPixelIdOnline || '';
+  document.getElementById('convMetaPixelIdGym').value = s.metaPixelIdGym || '';
   document.getElementById('convMetaTestCode').value = s.metaTestEventCode || '';
   document.getElementById('convMetaAdAccountId').value = s.metaAdAccountId || '';
   document.getElementById('convGoogleCustomerId').value = s.googleAdsCustomerId || '';
@@ -865,7 +875,8 @@ document.getElementById('addConversionEventBtn').onclick = () => {
 };
 document.getElementById('saveMetaTokensBtn').onclick = async () => {
   const body = {
-    metaPixelId: document.getElementById('convMetaPixelId').value.trim(),
+    metaPixelIdOnline: document.getElementById('convMetaPixelIdOnline').value.trim(),
+    metaPixelIdGym: document.getElementById('convMetaPixelIdGym').value.trim(),
     metaTestEventCode: document.getElementById('convMetaTestCode').value.trim(),
     metaAdAccountId: document.getElementById('convMetaAdAccountId').value.trim(),
   };
@@ -899,19 +910,27 @@ document.getElementById('fetchMetaPixelBtn').onclick = async () => {
   const d = await r.json().catch(() => ({}));
   if (!d.ok) { msg.textContent = 'Could not fetch: ' + (d.reason || 'unknown error'); return; }
   if (!d.pixels.length) { msg.textContent = 'No pixels found on this ad account -- create one in Events Manager.'; return; }
-  if (d.pixels.length === 1) {
-    document.getElementById('convMetaPixelId').value = d.pixels[0].id;
-    msg.textContent = `Found "${d.pixels[0].name}" (${d.pixels[0].id}) -- click Save Meta to connect.`;
-    return;
-  }
-  msg.textContent = `Found ${d.pixels.length} pixels on this ad account -- pick one:`;
-  document.getElementById('metaPixelPickerSelect').innerHTML = d.pixels.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.id)})</option>`).join('');
+  msg.textContent = `Found ${d.pixels.length} pixel${d.pixels.length === 1 ? '' : 's'} on this ad account -- assign Online and Gym below:`;
+  const options = d.pixels.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${escapeHtml(p.id)})</option>`).join('');
+  const onlineSel = document.getElementById('metaPixelPickerOnline');
+  const gymSel = document.getElementById('metaPixelPickerGym');
+  onlineSel.innerHTML = options;
+  gymSel.innerHTML = options;
+  // Best-effort pre-select by name match (this account's pixels happen to
+  // be named "Online"/"PRA" for gym) -- still just a picker default, not
+  // assumed correct, since pixel naming isn't guaranteed on every account.
+  const byNameGuess = (list, needle) => list.find(p => p.name.toLowerCase().includes(needle));
+  const onlineGuess = byNameGuess(d.pixels, 'online');
+  const gymGuess = byNameGuess(d.pixels, 'pra') || byNameGuess(d.pixels, 'gym');
+  if (onlineGuess) onlineSel.value = onlineGuess.id;
+  if (gymGuess) gymSel.value = gymGuess.id;
   picker.style.display = 'flex';
 };
 document.getElementById('metaPixelPickerUseBtn').onclick = () => {
-  document.getElementById('convMetaPixelId').value = document.getElementById('metaPixelPickerSelect').value;
+  document.getElementById('convMetaPixelIdOnline').value = document.getElementById('metaPixelPickerOnline').value;
+  document.getElementById('convMetaPixelIdGym').value = document.getElementById('metaPixelPickerGym').value;
   document.getElementById('metaPixelPicker').style.display = 'none';
-  document.getElementById('metaFetchMsg').textContent = 'Pixel ID set -- click Save Meta to connect.';
+  document.getElementById('metaFetchMsg').textContent = 'Pixel IDs set -- click Save Meta to connect.';
 };
 document.getElementById('saveConversionEventsBtn').onclick = async () => {
   const rows = [...document.querySelectorAll('#conversionEventRows [data-conv-event-row]')];
@@ -931,9 +950,10 @@ document.getElementById('saveConversionEventsBtn').onclick = async () => {
 document.getElementById('sendTestEventBtn').onclick = async () => {
   const eventKey = document.getElementById('testEventSelect').value;
   const email = document.getElementById('testEventEmail').value.trim();
+  const programType = document.getElementById('testEventProgramType').value;
   if (!eventKey || !email) { showToast('Pick an event and enter a test email', true); return; }
   document.getElementById('testEventResult').textContent = 'Sending...';
-  const r = await fetch('/api/conversions/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventKey, email }) });
+  const r = await fetch('/api/conversions/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventKey, email, programType }) });
   const d = await r.json().catch(() => ({}));
   document.getElementById('testEventResult').textContent = JSON.stringify(d, null, 2);
 };

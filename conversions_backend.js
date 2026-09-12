@@ -21,7 +21,13 @@ function readSettings() {
 export function getConversionSettings() {
   const c = readSettings().conversions || {};
   return {
-    metaPixelId: c.metaPixelId || process.env.META_PIXEL_ID || "",
+    // Two pixels, not one -- Online (coaching) and Gym are separate
+    // businesses on the same ad account, each needing its own optimization
+    // signal in Meta Ads Manager, matching the Online/Gym split already
+    // used everywhere else in this app (contact.programType, the Ads
+    // Dashboard's Online/Gym sheet prefixes, segment conditions, etc).
+    metaPixelIdOnline: c.metaPixelIdOnline || c.metaPixelId || process.env.META_PIXEL_ID_ONLINE || process.env.META_PIXEL_ID || "",
+    metaPixelIdGym: c.metaPixelIdGym || process.env.META_PIXEL_ID_GYM || "",
     metaAccessToken: c.metaAccessToken || process.env.META_ACCESS_TOKEN || "",
     // Same access token as above is used for both the Conversions API push
     // here and facebook_backend.js's Custom Audiences sync -- one Meta
@@ -38,7 +44,7 @@ export function getConversionSettings() {
 }
 export function metaConfigured() {
   const s = getConversionSettings();
-  return !!(s.metaPixelId && s.metaAccessToken);
+  return !!((s.metaPixelIdOnline || s.metaPixelIdGym) && s.metaAccessToken);
 }
 export function googleAdsConfigured() {
   const s = getConversionSettings();
@@ -72,9 +78,14 @@ function getContact(id) {
   return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null;
 }
 
-async function pushMetaConversion(eventDef, { email, phone }) {
+async function pushMetaConversion(eventDef, { email, phone, programType }) {
   const s = getConversionSettings();
   if (!metaConfigured()) return { ok: false, reason: "meta_not_configured" };
+  // gym only when explicitly gym -- unknown/missing programType (e.g. a
+  // manual test-send) falls back to Online rather than silently going
+  // nowhere, matching how the rest of the app treats an unset programType.
+  const pixelId = programType === "gym" ? s.metaPixelIdGym : s.metaPixelIdOnline;
+  if (!pixelId) return { ok: false, reason: programType === "gym" ? "gym_pixel_not_configured" : "online_pixel_not_configured" };
   const userData = {};
   if (email) userData.em = [hashPII(email)];
   if (phone) userData.ph = [hashPII(String(phone).replace(/\D/g, ""))];
@@ -90,7 +101,7 @@ async function pushMetaConversion(eventDef, { email, phone }) {
     ...(s.metaTestEventCode ? { test_event_code: s.metaTestEventCode } : {}),
   };
   try {
-    const r = await fetch(`https://graph.facebook.com/v21.0/${s.metaPixelId}/events?access_token=${encodeURIComponent(s.metaAccessToken)}`, {
+    const r = await fetch(`https://graph.facebook.com/v21.0/${pixelId}/events?access_token=${encodeURIComponent(s.metaAccessToken)}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const d = await r.json().catch(() => ({}));
@@ -163,7 +174,7 @@ export async function pushConversionEvent(eventKey, contactId) {
   if (!eventDef) return { ok: false, reason: "unknown_event" };
   const contact = getContact(contactId);
   if (!contact) return { ok: false, reason: "contact_not_found" };
-  const identifiers = { email: contact.email, phone: contact.phone };
+  const identifiers = { email: contact.email, phone: contact.phone, programType: contact.programType };
 
   const results = {};
   if (eventDef.sendToMeta) results.meta = await pushMetaConversion(eventDef, identifiers);
@@ -188,7 +199,7 @@ export async function handleConversionsRequest(req, res, url) {
     // actually types a new one (see POST below), so this never needs to
     // round-trip the real token back into the browser.
     return sendJson(res, 200, {
-      metaPixelId: s.metaPixelId, metaAccessTokenSet: !!s.metaAccessToken, metaTestEventCode: s.metaTestEventCode, metaAdAccountId: s.metaAdAccountId,
+      metaPixelIdOnline: s.metaPixelIdOnline, metaPixelIdGym: s.metaPixelIdGym, metaAccessTokenSet: !!s.metaAccessToken, metaTestEventCode: s.metaTestEventCode, metaAdAccountId: s.metaAdAccountId,
       googleAdsCustomerId: s.googleAdsCustomerId, googleAdsDeveloperTokenSet: !!s.googleAdsDeveloperToken, googleAdsRefreshTokenSet: !!s.googleAdsRefreshToken,
       events: s.events,
       metaConfigured: metaConfigured(), googleAdsConfigured: googleAdsConfigured(),
@@ -200,7 +211,7 @@ export async function handleConversionsRequest(req, res, url) {
     const body = await readJsonBody(req);
     const all = readSettings();
     all.conversions = all.conversions || {};
-    for (const k of ["metaPixelId", "metaTestEventCode", "googleAdsCustomerId", "metaAdAccountId"]) if (k in body) all.conversions[k] = String(body[k]).trim();
+    for (const k of ["metaPixelIdOnline", "metaPixelIdGym", "metaTestEventCode", "googleAdsCustomerId", "metaAdAccountId"]) if (k in body) all.conversions[k] = String(body[k]).trim();
     // Secret fields only overwrite when a real (non-empty) value is sent --
     // an empty string means "left blank in the masked field", not "clear it".
     for (const k of ["metaAccessToken", "googleAdsDeveloperToken", "googleAdsRefreshToken"]) {
@@ -229,7 +240,7 @@ export async function handleConversionsRequest(req, res, url) {
 
   if (p === "/api/conversions/test-send" && req.method === "POST") {
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
-    const { eventKey, email, phone } = await readJsonBody(req);
+    const { eventKey, email, phone, programType } = await readJsonBody(req);
     const s = getConversionSettings();
     const eventDef = s.events.find(e => e.key === eventKey);
     if (!eventDef) return sendJson(res, 400, { error: "Unknown event" });
@@ -237,7 +248,7 @@ export async function handleConversionsRequest(req, res, url) {
     // Fires both platforms regardless of the event's own enabled toggles --
     // this is a connectivity/payload check, not a real send.
     const results = {};
-    results.meta = await pushMetaConversion(eventDef, { email, phone });
+    results.meta = await pushMetaConversion(eventDef, { email, phone, programType });
     results.google = await pushGoogleConversion(eventDef, { email, phone });
     return sendJson(res, 200, { ok: true, results });
   }
