@@ -141,7 +141,7 @@
       <div class="tab-panel active" id="tab-overview">
         <div class="rep-section">
           <div class="rep-section-title">Ads</div>
-          <div class="rep-grid" id="overviewAdsGrid"></div>
+          <div class="ads-cards" id="overviewAdsCards"></div>
         </div>
         <div class="rep-section">
           <div class="rep-section-title">Email</div>
@@ -444,11 +444,9 @@ async function loadOverview() {
   grid('workflowsGrid', SMS_LABELS, workflows, 'stat-card-workflows');
   const adsR = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);
   const ads = adsR.ok ? await adsR.json() : { ok: false };
-  grid('overviewAdsGrid',
-    { spend: 'Spend', emails: 'Leads', closes: 'Closes', coll: 'Collected' },
-    ads.ok ? { spend: fmtMoney(ads.combined.spend), emails: ads.combined.emails, closes: ads.combined.closes, coll: fmtMoney(ads.combined.coll) } : { spend: '—', emails: '—', closes: '—', coll: '—' },
-    'stat-card-ads'
-  );
+  document.getElementById('overviewAdsCards').innerHTML = ads.ok
+    ? adsSegmentCardHtml('Online', ads.online) + adsSegmentCardHtml('Gym', ads.gym) + adsSegmentCardHtml('Combined', ads.combined)
+    : '<div class="pra-muted">Could not load ads data.</div>';
 }
 
 // ── Email / SMS daily charts ────────────────────────────────────────────
