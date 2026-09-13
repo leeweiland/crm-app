@@ -291,6 +291,7 @@
       </div>
 
       <div class="tab-panel" id="tab-responses">
+        <div id="backfillMatchWrap" style="margin-bottom:10px"></div>
         <div class="pra-panel" style="padding:8px 20px" id="responsesList"><div class="pra-muted" style="padding:16px 0">Loading…</div></div>
       </div>
 
@@ -1839,6 +1840,26 @@ document.getElementById('copyEmbedBtn').onclick = () => {
 };
 
 // ── Responses tab ────────────────────────────────────────────────────────
+// Only relevant for a form with a calendar step -- see backfill-contact-
+// matches' own comment in forms_backend.js for what it does and why it's
+// safe to click more than once (it only ever fills in a currently-null
+// contactId, never touches an already-matched response).
+function renderBackfillMatchButton() {
+  const wrap = document.getElementById('backfillMatchWrap');
+  if (!form.fields.some(f => f.type === 'calendar' && f.eventTypeSlug)) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="backfillMatchBtn">Match old responses to bookings</button> <span class="pra-muted" id="backfillMatchMsg" style="font-size:.78rem;margin-left:8px"></span>`;
+  document.getElementById('backfillMatchBtn').onclick = async () => {
+    const btn = document.getElementById('backfillMatchBtn');
+    const msg = document.getElementById('backfillMatchMsg');
+    btn.disabled = true; btn.textContent = 'Matching…';
+    const r = await fetch(`/api/forms/${form.id}/backfill-contact-matches`, { method: 'POST' });
+    const d = await r.json();
+    btn.disabled = false; btn.textContent = 'Match old responses to bookings';
+    if (!r.ok) { msg.textContent = d.error || 'Something went wrong.'; return; }
+    msg.textContent = d.totalUnmatched === 0 ? 'Nothing unmatched.' : `Matched ${d.matched} of ${d.totalUnmatched} unmatched response${d.totalUnmatched === 1 ? '' : 's'}.`;
+    loadResponses();
+  };
+}
 async function loadResponses() {
   const wrap = document.getElementById('responsesList');
   const r = await fetch(`/api/forms/${form.id}/responses`);
@@ -1944,7 +1965,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.onclick = () 
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-  if (btn.dataset.tab === 'responses') loadResponses();
+  if (btn.dataset.tab === 'responses') { renderBackfillMatchButton(); loadResponses(); }
   if (btn.dataset.tab === 'dropoffs') loadDropoffs();
 });
 

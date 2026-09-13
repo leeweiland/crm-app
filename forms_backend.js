@@ -9,6 +9,7 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_backend.js";
+import { EVENT_TYPES_FILE, BOOKINGS_FILE } from "./scheduling_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -644,6 +645,67 @@ export async function handleFormsRequest(req, res, url) {
     const responses = readJson(RESPONSES_FILE, []);
     writeJson(RESPONSES_FILE, responses.filter(r => !(r.formId === deleteResponseMatch[1] && r.id === deleteResponseMatch[2])));
     return sendJson(res, 200, { ok: true });
+  }
+
+  // One-time backfill for responses left "Unmatched" by the bug just fixed
+  // above (a form with a calendar step but no email/phone field of its own
+  // never matched a contact on submit, even though the booking itself
+  // already created/matched one). Only ever SETS contactId on a response
+  // that currently has none -- never touches an already-matched response,
+  // so this is safe to re-run and only moves rows toward more-matched, never
+  // the other direction. Correlates by timing (the booking always completes
+  // moments before this form's own submit fires -- see public-form.html's
+  // Next handler) and, when more than one booking falls in that window,
+  // disambiguates by how many of the response's own answers show up in that
+  // booking's formAnswers. Never guesses: a response with no confident
+  // single candidate is left Unmatched rather than risk a wrong contact.
+  const backfillMatch = p.match(/^\/api\/forms\/([^/]+)\/backfill-contact-matches$/);
+  if (backfillMatch && req.method === "POST") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === backfillMatch[1]);
+    if (!form) return sendJson(res, 404, { error: "Form not found" });
+    const calField = form.fields.find(f => f.type === "calendar" && f.eventTypeSlug);
+    if (!calField) return sendJson(res, 400, { error: "This form has no calendar step, so there's nothing to match against." });
+    const et = readJson(EVENT_TYPES_FILE, []).find(e => e.slug === calField.eventTypeSlug);
+    if (!et) return sendJson(res, 400, { error: "The calendar step's event type couldn't be found." });
+
+    const responses = readJson(RESPONSES_FILE, []);
+    const unmatched = responses.filter(r => r.formId === form.id && !r.contactId);
+    const bookings = readJson(BOOKINGS_FILE, []).filter(b => b.eventTypeId === et.id);
+    const claimedBookingIds = new Set();
+    let matched = 0;
+    const matches = [];
+    for (const resp of unmatched) {
+      const respTime = new Date(resp.submittedAt).getTime();
+      const candidates = bookings.filter(b => {
+        if (claimedBookingIds.has(b.id)) return false;
+        const delta = respTime - new Date(b.createdAt).getTime();
+        return delta >= 0 && delta <= 10 * 60 * 1000; // booking completes shortly BEFORE this form's own submit, within 10 minutes
+      });
+      if (!candidates.length) continue;
+      const scored = candidates.map(b => {
+        const fa = b.formAnswers || {};
+        let score = 0;
+        for (const f of form.fields) {
+          if (!f.label) continue;
+          const v = resp.answers[f.id];
+          if (v === undefined || v === "") continue;
+          const flat = Array.isArray(v) ? v.join(", ") : v;
+          if (fa[f.label] === flat) score++;
+        }
+        return { b, score, delta: respTime - new Date(b.createdAt).getTime() };
+      }).sort((x, y) => y.score - x.score || x.delta - y.delta);
+      const best = scored[0];
+      // Ambiguous -- two candidates equally close with equally many
+      // matching answers -- skip rather than guess.
+      if (scored.length > 1 && scored[1].score === best.score && scored[1].delta === best.delta) continue;
+      resp.contactId = best.b.contactId;
+      claimedBookingIds.add(best.b.id);
+      matches.push({ responseId: resp.id, contactId: best.b.contactId, bookingId: best.b.id });
+      matched++;
+    }
+    if (matched) writeJson(RESPONSES_FILE, responses);
+    return sendJson(res, 200, { totalUnmatched: unmatched.length, matched, stillUnmatched: unmatched.length - matched, matches });
   }
 
   // One row per step (same page_break split as public-form.html's own
