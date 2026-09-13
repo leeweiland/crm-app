@@ -1015,7 +1015,14 @@ export async function handleSchedulingRequest(req, res, url) {
     const startDate = new Date(booking.startAt), endDate = new Date(booking.endAt);
     return sendJson(res, 200, {
       ok: true,
-      booking: { id: booking.id, startAt: booking.startAt, endAt: booking.endAt, timezone: booking.timezone, cancelToken: booking.cancelToken },
+      // name/email/phone are just echoed back to the same visitor who just
+      // typed them into this booking form -- not a new exposure -- so that
+      // when this booking is embedded as a form's own calendar step (see
+      // public-form.html's bookCalendarStep), the outer form's OWN submit
+      // can identify the SAME contact just created/matched here instead of
+      // failing to match one (the outer form itself often has no email/
+      // phone field at all -- see forms_backend.js's upsertContactFromSubmission).
+      booking: { id: booking.id, startAt: booking.startAt, endAt: booking.endAt, timezone: booking.timezone, cancelToken: booking.cancelToken, name: booking.name, email: booking.email, phone: booking.phone },
       eventType: publicEventType(et),
       addToCalendar: {
         google: buildGoogleCalendarLink({ summary: et.name, description: notes || "", start: startDate, end: endDate, timezone: booking.timezone }),

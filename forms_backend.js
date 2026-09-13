@@ -317,15 +317,29 @@ function validateAnswers(fields, answers) {
 // manual importer does — matched by email first, then phone, so a repeat
 // submission (or a contact who already exists from another channel) merges
 // instead of duplicating. Returns null if the form carried neither an email
-// nor a phone field with a value, since there's nothing to key a contact on.
-function upsertContactFromSubmission(form, answers) {
+// nor a phone field with a value AND no bookedIdentity fallback applies,
+// since there's nothing to key a contact on.
+//
+// bookedIdentity is the real name/email/phone a visitor just typed into an
+// in-form calendar step's OWN booking form (public-form.html's
+// bookCalendarStep forwards it from scheduling_backend.js's booking
+// response) -- used ONLY as a fallback for whichever of email/phone/name
+// this form has no dedicated field for, so a funnel that collects identity
+// exclusively through its trailing calendar step (e.g. "ONLINE APP") still
+// matches the SAME contact scheduling_backend.js already created/matched
+// for that booking, instead of this function failing to match any contact
+// at all (confirmed live 2026-09-13: every response on that form showed
+// "Unmatched" despite a real contact existing from the booking).
+function upsertContactFromSubmission(form, answers, bookedIdentity) {
   const emailField = form.fields.find(f => f.type === "email");
   const phoneField = form.fields.find(f => f.type === "phone");
   const firstField = form.fields.find(f => f.type === "first_name");
   const lastField = form.fields.find(f => f.type === "last_name");
-  const email = emailField ? String(answers[emailField.id] || "").trim().toLowerCase() : "";
-  const phone = phoneField ? String(answers[phoneField.id] || "").trim() : "";
+  const email = emailField ? String(answers[emailField.id] || "").trim().toLowerCase() : String(bookedIdentity?.email || "").trim().toLowerCase();
+  const phone = phoneField ? String(answers[phoneField.id] || "").trim() : String(bookedIdentity?.phone || "").trim();
   if (!email && !phone) return null;
+  const [bookedFirst, ...bookedRest] = String(bookedIdentity?.name || "").trim().split(/\s+/);
+  const bookedLast = bookedRest.join(" ");
 
   const contacts = readJson(CONTACTS_FILE, []);
   let contact = findContactMatch(contacts, email, phone);
@@ -349,7 +363,9 @@ function upsertContactFromSubmission(form, answers) {
 
   if (contact) {
     if (firstField && answers[firstField.id]) contact.first = answers[firstField.id];
+    else if (!firstField && bookedFirst) contact.first = bookedFirst;
     if (lastField && answers[lastField.id]) contact.last = answers[lastField.id];
+    else if (!lastField && bookedLast) contact.last = bookedLast;
     if (email) contact.email = email;
     if (phone) contact.phone = phone;
     contact.customFields = { ...contact.customFields, ...customFields };
@@ -369,7 +385,7 @@ function upsertContactFromSubmission(form, answers) {
   } else {
     contact = {
       id: randomUUID(), type: "lead", accountName: "",
-      first: firstField ? (answers[firstField.id] || "") : "", last: lastField ? (answers[lastField.id] || "") : "",
+      first: firstField ? (answers[firstField.id] || "") : bookedFirst || "", last: lastField ? (answers[lastField.id] || "") : bookedLast || "",
       email, phone, status: form.settings.defaultStatus || "", tags: [], listIds: [], customFields,
       source: "form", ownerId: null, emailOptOut: false, smsOptOut: false,
       externalIds: { acContactId: null, closeLeadId: null },
@@ -474,7 +490,7 @@ export async function handleFormsRequest(req, res, url) {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
-    const { answers, vid } = await readJsonBody(req);
+    const { answers, vid, bookedIdentity } = await readJsonBody(req);
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);
     if (validationError) return sendJson(res, 400, { error: validationError });
@@ -486,7 +502,7 @@ export async function handleFormsRequest(req, res, url) {
       return sendJson(res, 403, { error: "This submission doesn't meet the requirements to continue." });
     }
 
-    const result = upsertContactFromSubmission(form, cleanAnswers);
+    const result = upsertContactFromSubmission(form, cleanAnswers, bookedIdentity && typeof bookedIdentity === "object" ? bookedIdentity : null);
 
     // contactId is returned so the form iframe (public-form.html, itself
     // served from the CRM's own origin) can hand it off to the PARENT page
