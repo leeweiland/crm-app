@@ -121,6 +121,11 @@
      full (custom fields, a Q&A block's answer) -- see tokenEditorHtml's
      expand option. */
   .token-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; box-sizing: border-box; background: rgba(0,155,255,0.16); border: 1px solid var(--pra-blue); color: var(--pra-blue); border-radius: 5px; padding: 1px 4px 1px 7px; margin: 0 1px; font-size: .78rem; font-family: var(--font-secondary); white-space: nowrap; vertical-align: baseline; }
+  .token-chip-text { display: flex; flex-direction: column; min-width: 0; }
+  /* Display-only context (chipHtml's showQuestion) -- names the field
+     above its answer for a standalone expand chip, which has no separate
+     bold label elsewhere saying what it is (unlike a qa-block's chip). */
+  .token-chip-question { font-size: .66rem; text-transform: uppercase; letter-spacing: .02em; opacity: .6; line-height: 1.3; }
   .token-chip-label { pointer-events: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .token-chip-x { flex-shrink: 0; background: none; border: none; color: var(--pra-blue); cursor: pointer; font-size: .95rem; line-height: 1; padding: 0 1px; opacity: .75; }
   .token-chip-x:hover { opacity: 1; }
@@ -128,8 +133,17 @@
      label wrap onto multiple lines -- inline-flex sizes to its content
      first regardless of white-space, so width alone wouldn't do it. */
   .token-chip.token-chip-expand { display: flex; align-items: flex-start; width: 100%; margin: 2px 0; padding: 3px 4px 3px 7px; white-space: normal; }
+  .token-chip.token-chip-expand .token-chip-text { flex: 1; }
   .token-chip.token-chip-expand .token-chip-label { overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word; }
   .token-chip.token-chip-expand .token-chip-x { margin-top: 1px; }
+  /* No match found for this {{token}} in the currently selected submission
+     (chipHtml's unresolved option / refreshChipAnswers) -- amber instead
+     of the usual blue, plus a warning glyph, so a field that silently
+     fell back to just naming itself (no real answer) actually stands out
+     instead of looking like every other resolved chip. */
+  .token-chip.token-chip-unresolved { border-color: #ffc107; background: rgba(255,193,7,0.14); }
+  .token-chip.token-chip-unresolved .token-chip-label { color: #ffc107; }
+  .token-chip-warn { flex-shrink: 0; color: #ffc107; font-size: .85rem; line-height: 1.4; cursor: default; }
   .token-insert-btn { grid-area: 1 / 1; position: sticky; top: 8px; align-self: start; justify-self: end; margin: 6px 6px 0 0; width: 22px; height: 22px; border-radius: 5px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 2; }
   .token-insert-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   /* Bold sits to the LEFT of the existing "+" token button, same box --
@@ -295,7 +309,6 @@ const flowId = new URLSearchParams(location.search).get('id');
 let flow = null, runCounts = {};
 let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [], allAcLists = [], allAcAutomations = [], allAcCustomFields = [], acIsConfigured = false;
 let saveTimer, editingStepId = null, pendingAddPath = null, pendingAddAfter = null, pendingAddBefore = null;
-let cachedSamples = null;
 
 async function loadRefs() {
   const [listsRes, tagsRes, statusesRes, formsRes, eventTypesRes, autosRes, wfRes, fieldsRes, sheetsRes, convRes, acRes] = await Promise.all([
@@ -507,6 +520,17 @@ async function fetchSamples(force) {
   if (flow.trigger?.config?.selectedSample) return [flow.trigger.config.selectedSample];
   return fetchRawSamples(force);
 }
+// Synchronous mirror of fetchSamples, for the initial render pass
+// (tokenEditorContentHtml) which can't await a real fetch without
+// blocking the modal open -- reads whatever's already resolved/cached
+// right now. If nothing's cached yet (nothing's touched fetchSamples this
+// page load), this correctly comes back empty and every chip shows
+// unresolved until refreshChipAnswers' real, awaited fetch catches up
+// moments later -- expected, not a bug: there's nothing to show yet.
+function cachedSamplesSync() {
+  if (flow.trigger?.config?.selectedSample) return [flow.trigger.config.selectedSample];
+  return cachedRawSamples || [];
+}
 function sampleKeys(samples) {
   const keys = [];
   samples.forEach(s => Object.keys(s).forEach(k => { if (!keys.includes(k)) keys.push(k); }));
@@ -548,7 +572,6 @@ function renderSamplePicker(resultEl, samples, forWebhook) {
     `;
     previewEl.querySelector('[data-use-sample]').onclick = () => {
       flow.trigger.config = { ...(flow.trigger.config || {}), selectedSample: sample };
-      cachedSamples = null;
       saveDebounced();
       showToast('Using this submission');
       renderSamplePicker(resultEl, samples, forWebhook);
@@ -558,7 +581,6 @@ function renderSamplePicker(resultEl, samples, forWebhook) {
     const cfg = { ...(flow.trigger.config || {}) };
     delete cfg.selectedSample;
     flow.trigger.config = cfg;
-    cachedSamples = null;
     saveDebounced();
     renderSamplePicker(resultEl, samples, forWebhook);
   });
@@ -580,7 +602,6 @@ document.getElementById('pullSampleBtnAlt').onclick = () => pullSampleData(false
 
 function openTriggerModal() {
   const trig = flow.trigger || { type: 'webhook', config: {} };
-  cachedSamples = null;
   cachedRawSamples = null;
   document.getElementById('sampleDataResult').innerHTML = '';
   document.getElementById('sampleDataResultAlt').innerHTML = '';
@@ -1187,12 +1208,25 @@ function tokenLabel(raw) {
 // completely unaffected either way. No title attribute -- the chip is
 // always fully expanded/wrapped now (see .token-chip), so a hover tooltip
 // would just be redundant with what's already fully on screen.
+// opts.showQuestion adds a dim first row naming the field above the answer
+// -- for a standalone expand chip (custom fields, Google Sheet columns)
+// there's no separate bold label elsewhere on the page saying what this
+// is, unlike a qa-block's chip which sits right under its own bold
+// question already (qaBlockHtml below never sets this, to avoid saying
+// the same thing twice). Display-only: data-raw/what actually gets saved
+// is just the {{token}} either way.
+// opts.unresolved flags a chip whose {{token}} found no match in the
+// currently selected submission (see exampleValueForToken) -- shown in
+// amber with a warning icon instead of silently just falling back to
+// showing the field's own name with no indication anything's off.
 function chipHtml(raw, opts = {}) {
   const label = tokenLabel(raw);
   const display = opts.display || label;
   const removeBtn = opts.noRemove ? '' : `<button type="button" class="token-chip-x" tabindex="-1">&times;</button>`;
-  const cls = 'token-chip' + (opts.expand ? ' token-chip-expand' : '');
-  return `<span class="${cls}" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-label">${escapeHtml(display)}</span>${removeBtn}</span>`;
+  const cls = 'token-chip' + (opts.expand ? ' token-chip-expand' : '') + (opts.unresolved ? ' token-chip-unresolved' : '');
+  const questionRow = opts.showQuestion ? `<span class="token-chip-question">${escapeHtml(label)}</span>` : '';
+  const warnIcon = opts.unresolved ? `<span class="token-chip-warn" title="No matching data in the currently selected submission -- may be stale or renamed">&#9888;</span>` : '';
+  return `<span class="${cls}" contenteditable="false" data-raw="${escapeHtml(raw)}"><span class="token-chip-text">${questionRow}<span class="token-chip-label">${escapeHtml(display)}</span></span>${warnIcon}${removeBtn}</span>`;
 }
 // A Q&A block (bold question label, then its answer's own chip right
 // below) is one connected unit -- wrapping it means ONE x removes the
@@ -1204,14 +1238,14 @@ function chipHtml(raw, opts = {}) {
 // refreshChipAnswers), so it may briefly show the label until real
 // sample data finishes loading.
 function qaBlockHtml(label, raw, exampleValue) {
-  const chip = chipHtml(raw, { noRemove: true, display: exampleValue, expand: true });
+  const chip = chipHtml(raw, { noRemove: true, display: exampleValue, expand: true, unresolved: exampleValue == null });
   return `<div class="qa-block" contenteditable="false" data-qa-label="${escapeHtml(label)}" data-qa-raw="${escapeHtml(raw)}"><div class="qa-block-header"><b>${escapeHtml(label)}</b><button type="button" class="qa-block-x" tabindex="-1" title="Remove this question and its answer">&times;</button></div>${chip}</div>`;
 }
 // Looks up the real answer value for a {{token}} against whatever samples
-// are passed in (cachedSamples when nothing else is specified) -- same
-// field-matching rules as getAvailableTokens' exampleFor, just standalone
-// and synchronous so a chip can show it immediately at render time instead
-// of waiting on a fetch.
+// are passed in (cachedSamplesSync() when nothing else is specified) --
+// same field-matching rules as getAvailableTokens' exampleFor, just
+// standalone and synchronous so a chip can show it immediately at render
+// time instead of waiting on a fetch.
 function exampleValueForToken(raw, samples) {
   const m = raw.match(/^\{\{(.+)\}\}$/);
   if (!m) return null;
@@ -1237,23 +1271,47 @@ function exampleValueForToken(raw, samples) {
   for (const s of samples) for (const k of Object.keys(s)) if (norm(k) === targetNorm && s[k] !== undefined && s[k] !== '') return String(s[k]);
   return null;
 }
+// Applies a resolved answer (or the lack of one) to an already-rendered
+// chip -- updates the label text, and toggles the amber "unresolved"
+// state + warning icon to match. Shared by the initial sync render's
+// unresolved flag (chipHtml's own opts) and this async catch-up pass, so
+// a chip that resolves late (real sample data loads after first paint)
+// clears its warning the same way one that stops resolving (switching to
+// a submission that doesn't have this field) gains one.
+function applyChipResolution(chip, val) {
+  if (!chip) return;
+  const label = chip.querySelector('.token-chip-label');
+  if (val != null && label && label.textContent !== val) label.textContent = val;
+  chip.classList.toggle('token-chip-unresolved', val == null);
+  let warn = chip.querySelector('.token-chip-warn');
+  if (val == null) {
+    if (!warn) {
+      warn = document.createElement('span');
+      warn.className = 'token-chip-warn';
+      warn.title = 'No matching data in the currently selected submission -- may be stale or renamed';
+      warn.innerHTML = '&#9888;';
+      chip.insertBefore(warn, chip.querySelector('.token-chip-x'));
+    }
+  } else if (warn) {
+    warn.remove();
+  }
+}
 // Every expanded chip (a Q&A block's answer, a custom field, a Google
 // Sheet column) renders synchronously off whatever's already cached (see
 // tokenEditorContentHtml), so opening the modal never blocks on a fetch --
 // if real sample data wasn't cached yet at that instant (the common case:
-// nothing else has touched fetchSamples this page load), this catches up
-// once it loads. Only touches each chip's own label text, never the DOM
-// node itself, so it can't disturb the user's cursor or any edits made in
-// the meantime.
+// nothing else has touched fetchSamples this page load, or a different
+// submission was just picked in the trigger), this catches up once it
+// loads. Also the ONLY thing that re-checks resolution after that initial
+// paint -- switching to a different submission doesn't re-render every
+// step's already-built DOM (most aren't even open), so a stale chip only
+// gets corrected/flagged the next time its own step's modal opens and
+// this runs again, which is by design (see openStepConfigModal).
 async function refreshChipAnswers(root) {
   if (!root.querySelector('.qa-block, .token-chip-expand')) return;
   const samples = await fetchSamples(false);
-  if (!samples.length) return;
   root.querySelectorAll('.qa-block').forEach(block => {
-    const val = exampleValueForToken(block.dataset.qaRaw, samples);
-    if (val == null) return;
-    const label = block.querySelector('.token-chip-label');
-    if (label.textContent !== val) label.textContent = val;
+    applyChipResolution(block.querySelector('.token-chip'), exampleValueForToken(block.dataset.qaRaw, samples));
   });
   // Same idea, for an expanded chip that ISN'T part of a qa-block (custom
   // fields, Google Sheet columns, or a bare chip typed into Body outside
@@ -1261,10 +1319,7 @@ async function refreshChipAnswers(root) {
   // with no separate bold label naming the field the way a qa-block has.
   root.querySelectorAll('.token-chip-expand').forEach(chip => {
     if (chip.closest('.qa-block')) return;
-    const val = exampleValueForToken(chip.dataset.raw, samples);
-    if (val == null) return;
-    const label = chip.querySelector('.token-chip-label');
-    if (label.textContent !== val) label.textContent = val;
+    applyChipResolution(chip, exampleValueForToken(chip.dataset.raw, samples));
   });
 }
 // **bold** markers only apply on the multiline field (Send Email's Body) --
@@ -1278,11 +1333,14 @@ function tokenEditorContentHtml(value, multiline, expand) {
   // field's real <label>/the bold question above it already says what it
   // is. Falls back to the label (chipHtml's own default) wherever no
   // sample has a value for that field yet.
-  const samples = expand ? (cachedSamples || []) : [];
+  const samples = expand ? cachedSamplesSync() : [];
   if (!multiline) {
     return str.split(/(\{\{[^}]+\}\})/g).map(p => {
       if (!p) return '';
-      if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand, display: expand ? exampleValueForToken(p, samples) : null });
+      if (/^\{\{[^}]+\}\}$/.test(p)) {
+        const val = expand ? exampleValueForToken(p, samples) : null;
+        return chipHtml(p, { expand, display: val, showQuestion: expand, unresolved: expand && val == null });
+      }
       return escapeHtml(p).replace(/\n/g, ' ');
     }).join('');
   }
@@ -1299,13 +1357,16 @@ function tokenEditorContentHtml(value, multiline, expand) {
   // nothing behind it. A qa-block's own answer always resolves regardless
   // of the expand flag -- that's Send Email Body's whole point, not
   // conditional on how this particular call was invoked.
-  const qaSamples = cachedSamples || [];
+  const qaSamples = cachedSamplesSync();
   const pattern = /(\*\*[^*]+\*\*\n\{\{[^}]+\}\}|\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g;
   return str.split(pattern).map(p => {
     if (!p) return '';
     const qaMatch = p.match(/^\*\*([^*]+)\*\*\n(\{\{[^}]+\}\})$/);
     if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], qaSamples));
-    if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand, display: expand ? exampleValueForToken(p, samples) : null });
+    if (/^\{\{[^}]+\}\}$/.test(p)) {
+      const val = expand ? exampleValueForToken(p, samples) : null;
+      return chipHtml(p, { expand, display: val, showQuestion: expand, unresolved: expand && val == null });
+    }
     if (/^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
     return escapeHtml(p).replace(/\n/g, '<br>');
   }).join('');
@@ -1437,7 +1498,7 @@ function insertChipAtCaret(editor, raw) {
 // click path was the one spot that never got that treatment.
 function replaceChipContent(editor, raw, exampleValue) {
   editor.focus();
-  editor.innerHTML = chipHtml(raw, { expand: true, display: exampleValue });
+  editor.innerHTML = chipHtml(raw, { expand: true, display: exampleValue, showQuestion: true, unresolved: exampleValue == null });
   wireChipRemovals(editor);
   const range = document.createRange();
   range.selectNodeContents(editor);
