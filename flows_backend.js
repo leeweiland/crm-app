@@ -7,6 +7,7 @@ import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
+import { claimVisitorHistory } from "./tracking_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -314,6 +315,16 @@ async function advanceFlowRun(run, flow) {
           writeJson(CONTACTS_FILE, contacts);
         }
         run.contactId = workingContact.id;
+        // Same claim-back as forms_backend.js/scheduling_backend.js, just
+        // sourced from the raw webhook payload instead of a JSON body --
+        // this is the only contact-creation path that had never done this,
+        // so a webhook-driven lead's prior ad click/page visits (and thus
+        // its whole attribution/reporting story) went permanently unclaimed.
+        // Needs the landing page's form to actually submit a field named
+        // "vid" (case-insensitive) carrying its crm_vid cookie -- nothing
+        // downstream can invent that value if the form never sends it.
+        const vidKey = Object.keys(ctx.payload).find(k => k.toLowerCase() === "vid");
+        if (vidKey) claimVisitorHistory(ctx.payload[vidKey], workingContact.id);
       }
       const prevStatus = workingContact.status;
       for (const field of ["first", "last", "email", "phone", "programType"]) {

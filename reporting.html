@@ -217,18 +217,7 @@
         <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
         <div class="pra-panel" style="padding:0;overflow-x:auto">
           <table class="pra-table" style="width:100%;min-width:900px">
-            <thead><tr>
-              <th class="sortable" data-sort="source" style="text-align:left;padding:12px 16px">Source</th>
-              <th class="sortable" data-sort="adGroup" style="text-align:left;padding:12px 16px">Ad Set/Group</th>
-              <th class="sortable" data-sort="campaign" style="text-align:left;padding:12px 16px">Campaign</th>
-              <th class="sortable" data-sort="revenue" style="text-align:right;padding:12px 16px">Revenue</th>
-              <th class="sortable" data-sort="sales" style="text-align:right;padding:12px 16px">Sales</th>
-              <th class="sortable" data-sort="costPerSale" style="text-align:right;padding:12px 16px">$/Sale</th>
-              <th class="sortable" data-sort="bookings" style="text-align:right;padding:12px 16px">Bookings</th>
-              <th class="sortable" data-sort="costPerBooking" style="text-align:right;padding:12px 16px">$/Booking</th>
-              <th class="sortable" data-sort="leads" style="text-align:right;padding:12px 16px">Emails</th>
-              <th class="sortable" data-sort="costPerLead" style="text-align:right;padding:12px 16px">$/Email</th>
-            </tr></thead>
+            <thead><tr id="adsReportHeaderRow"></tr></thead>
             <tbody id="adsReportBody"></tbody>
           </table>
         </div>
@@ -241,8 +230,8 @@
             <div style="padding:12px"><input class="pra-input" id="journeySearch" placeholder="Search contacts..."/></div>
             <div id="journeyContactList"><div class="pra-muted" style="padding:12px">Type a name or email to find a contact.</div></div>
           </div>
-          <div class="pra-panel" style="padding:20px;min-height:200px">
-            <div class="journey-subtabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+          <div class="pra-panel" style="padding:20px;height:75vh;height:75dvh;display:flex;flex-direction:column">
+            <div class="journey-subtabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;flex-shrink:0">
               <button class="journey-subtab-btn active" data-subtab="all">All</button>
               <button class="journey-subtab-btn" data-subtab="click">Clicks</button>
               <button class="journey-subtab-btn" data-subtab="ad">Ads</button>
@@ -250,7 +239,7 @@
               <button class="journey-subtab-btn" data-subtab="email">Emails</button>
               <button class="journey-subtab-btn" data-subtab="sms">SMS</button>
             </div>
-            <div id="journeyTimeline" class="pra-muted">Select a contact to see their journey.</div>
+            <div id="journeyTimeline" class="pra-muted" style="flex:1;overflow-y:auto">Select a contact to see their journey.</div>
           </div>
         </div>
       </div>
@@ -600,6 +589,15 @@ async function loadSortPreference() {
     const prefs = (await r.json()).user?.preferences || {};
     if (prefs.attributionSort?.field) attributionSort = prefs.attributionSort;
     if (prefs.adsReportSort?.field) adsReportSort = prefs.adsReportSort;
+    if (Array.isArray(prefs.adsReportColumnOrder)) {
+      // Filter out any removed keys, then append any new columns (like this
+      // change's Spent/Clicks) that a saved order predates -- otherwise a
+      // schema change would silently hide a column for anyone with a saved
+      // order until they happened to notice and reorder again.
+      const saved = prefs.adsReportColumnOrder.filter(k => ADS_REPORT_COLUMNS[k]);
+      const missing = ADS_REPORT_DEFAULT_ORDER.filter(k => !saved.includes(k));
+      adsReportColumnOrder = [...saved, ...missing];
+    }
   } catch {}
 }
 function saveSortPreference() {
@@ -627,62 +625,114 @@ async function openAttributionDrilldown(el, stage) {
 }
 
 // ── Ads Report (per-source hierarchy + cost-per-lead/booking/sale) ──────
+// Column set + order are both dynamic (not static <th> markup) so the
+// order can be dragged and persisted per-user, same preferences endpoint
+// the sort already uses.
+const ADS_REPORT_COLUMNS = {
+  source:         { label: 'Source', align: 'left' },
+  adGroup:        { label: 'Ad Set/Group', align: 'left' },
+  campaign:       { label: 'Campaign', align: 'left' },
+  spend:          { label: 'Spent', align: 'right' },
+  revenue:        { label: 'Revenue', align: 'right' },
+  sales:          { label: 'Sales', align: 'right' },
+  costPerSale:    { label: '$/Sale', align: 'right' },
+  bookings:       { label: 'Bookings', align: 'right' },
+  costPerBooking: { label: '$/Booking', align: 'right' },
+  leads:          { label: 'Emails', align: 'right' },
+  costPerLead:    { label: '$/Email', align: 'right' },
+  visits:         { label: 'Clicks', align: 'right' },
+};
+const ADS_REPORT_DEFAULT_ORDER = Object.keys(ADS_REPORT_COLUMNS);
 let allAdsReportRows = [];
 let adsReportSort = { field: 'leads', dir: -1 };
+let adsReportColumnOrder = [...ADS_REPORT_DEFAULT_ORDER];
+let adsReportDragKey = null;
 async function loadAdsReportTable() {
   const body = document.getElementById('adsReportBody');
   const msg = document.getElementById('adsReportMsg');
-  body.innerHTML = `<tr><td colspan="10" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
   msg.textContent = '';
   const r = await fetch(`/api/reporting/ads-report?start=${currentStart}&end=${currentEnd}`);
-  if (!r.ok) { body.innerHTML = `<tr><td colspan="10" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
   const d = await r.json();
   allAdsReportRows = d.rows;
   if (d.spendError) msg.textContent = `Note: some ad spend may be missing (${d.spendError}).`;
   renderAdsReportTable();
 }
+function renderAdsReportHeader() {
+  const tr = document.getElementById('adsReportHeaderRow');
+  tr.innerHTML = adsReportColumnOrder.map(key => {
+    const col = ADS_REPORT_COLUMNS[key];
+    if (!col) return '';
+    const isSorted = adsReportSort.field === key;
+    const arrow = isSorted ? `<span class="sort-arrow">${adsReportSort.dir === 1 ? '▲' : '▼'}</span>` : '';
+    return `<th class="sortable${isSorted ? ' sorted' : ''}" draggable="true" data-col="${key}" style="text-align:${col.align};padding:12px 16px;cursor:grab;user-select:none">${col.label}${arrow}</th>`;
+  }).join('');
+  tr.querySelectorAll('th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.col;
+      if (adsReportSort.field === key) adsReportSort.dir *= -1;
+      else adsReportSort = { field: key, dir: ['source', 'adGroup', 'campaign'].includes(key) ? 1 : -1 };
+      renderAdsReportHeader();
+      renderAdsReportTable();
+      fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adsReportSort }) });
+    });
+    th.addEventListener('dragstart', (e) => { adsReportDragKey = th.dataset.col; e.dataTransfer.effectAllowed = 'move'; });
+    th.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    th.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const targetKey = th.dataset.col;
+      if (!adsReportDragKey || adsReportDragKey === targetKey) return;
+      const from = adsReportColumnOrder.indexOf(adsReportDragKey);
+      const to = adsReportColumnOrder.indexOf(targetKey);
+      adsReportColumnOrder.splice(from, 1);
+      adsReportColumnOrder.splice(to, 0, adsReportDragKey);
+      adsReportDragKey = null;
+      renderAdsReportHeader();
+      renderAdsReportTable();
+      fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adsReportColumnOrder }) });
+    });
+  });
+}
 function renderAdsReportTable() {
   const body = document.getElementById('adsReportBody');
-  if (!allAdsReportRows.length) { body.innerHTML = `<tr><td colspan="10" class="pra-muted" style="padding:16px">No tracked sources in this range.</td></tr>`; return; }
+  if (!allAdsReportRows.length) { body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">No tracked sources in this range.</td></tr>`; return; }
   const { field, dir } = adsReportSort;
   const textFields = ['source', 'adGroup', 'campaign'];
   const rows = [...allAdsReportRows].sort((a, b) => {
-    let av = a[field], bv = b[field], cv = b[field];
+    let av = a[field], cv = b[field];
     if (textFields.includes(field)) { av = String(av).toLowerCase(); cv = String(cv).toLowerCase(); }
     else { av = av ?? -1; cv = cv ?? -1; }
     return av < cv ? -dir : av > cv ? dir : 0;
-  });
-  document.querySelectorAll('#tab-adsreport th.sortable').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.sort === field);
-    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
-    if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
   });
   const money = (n) => n == null ? '—' : fmtMoney(n);
   const countCell = (n, stage, key) => n > 0
     ? `<td style="text-align:right;padding:10px 16px"><button class="pra-link" style="background:none;border:none;cursor:pointer;font:inherit" data-drill-el="${escapeHtml(key)}" data-drill-stage="${stage}">${n}</button></td>`
     : `<td style="text-align:right;padding:10px 16px;color:var(--pra-dim)">0</td>`;
+  function cellFor(key, row) {
+    switch (key) {
+      case 'source': return `<td style="padding:10px 16px;font-weight:600">${escapeHtml(row.source)}<div class="pra-muted" style="font-size:.72rem;font-weight:400">${escapeHtml(row.platform)}</div></td>`;
+      case 'adGroup': return `<td style="padding:10px 16px">${escapeHtml(row.adGroup)}</td>`;
+      case 'campaign': return `<td style="padding:10px 16px">${escapeHtml(row.campaign)}</td>`;
+      case 'spend': return `<td style="text-align:right;padding:10px 16px">${fmtMoney(row.spend)}</td>`;
+      case 'revenue': return `<td style="text-align:right;padding:10px 16px">${fmtMoney(row.revenue)}</td>`;
+      case 'sales': return `<td style="text-align:right;padding:10px 16px">${row.sales}</td>`;
+      case 'costPerSale': return `<td style="text-align:right;padding:10px 16px">${money(row.costPerSale)}</td>`;
+      case 'bookings': return countCell(row.bookings, 'bookings', row.key);
+      case 'costPerBooking': return `<td style="text-align:right;padding:10px 16px">${money(row.costPerBooking)}</td>`;
+      case 'leads': return countCell(row.leads, 'optIns', row.key);
+      case 'costPerLead': return `<td style="text-align:right;padding:10px 16px">${money(row.costPerLead)}</td>`;
+      case 'visits': return `<td style="text-align:right;padding:10px 16px">${row.visits}</td>`;
+      default: return '';
+    }
+  }
   body.innerHTML = rows.map(row => `
     <tr style="border-top:1px solid var(--pra-border)">
-      <td style="padding:10px 16px;font-weight:600">${escapeHtml(row.source)}<div class="pra-muted" style="font-size:.72rem;font-weight:400">${escapeHtml(row.platform)}</div></td>
-      <td style="padding:10px 16px">${escapeHtml(row.adGroup)}</td>
-      <td style="padding:10px 16px">${escapeHtml(row.campaign)}</td>
-      <td style="text-align:right;padding:10px 16px">${fmtMoney(row.revenue)}</td>
-      <td style="text-align:right;padding:10px 16px">${row.sales}</td>
-      <td style="text-align:right;padding:10px 16px">${money(row.costPerSale)}</td>
-      ${countCell(row.bookings, 'bookings', row.key)}
-      <td style="text-align:right;padding:10px 16px">${money(row.costPerBooking)}</td>
-      ${countCell(row.leads, 'optIns', row.key)}
-      <td style="text-align:right;padding:10px 16px">${money(row.costPerLead)}</td>
+      ${adsReportColumnOrder.map(key => cellFor(key, row)).join('')}
     </tr>
   `).join('');
   body.querySelectorAll('[data-drill-el]').forEach(btn => btn.onclick = () => openAttributionDrilldown(btn.dataset.drillEl, btn.dataset.drillStage));
 }
-document.querySelectorAll('#tab-adsreport th.sortable').forEach(th => th.addEventListener('click', () => {
-  if (adsReportSort.field === th.dataset.sort) adsReportSort.dir *= -1;
-  else adsReportSort = { field: th.dataset.sort, dir: ['source', 'adGroup', 'campaign'].includes(th.dataset.sort) ? 1 : -1 };
-  renderAdsReportTable();
-  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adsReportSort }) });
-}));
 
 // ── Customer Journeys ────────────────────────────────────────────────────
 let activeJourneyContactId = null, journeySubtab = 'all', currentJourneyItems = [];
@@ -764,6 +814,7 @@ function renderJourneyTimeline() {
 
 (async function init() {
   await loadSortPreference();
+  renderAdsReportHeader();
   await initPeriodSelector();
   applyPeriod();
 })();
