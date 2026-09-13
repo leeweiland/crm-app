@@ -1238,7 +1238,7 @@ function chipHtml(raw, opts = {}) {
 // refreshChipAnswers), so it may briefly show the label until real
 // sample data finishes loading.
 function qaBlockHtml(label, raw, exampleValue) {
-  const chip = chipHtml(raw, { noRemove: true, display: exampleValue, expand: true, unresolved: exampleValue == null });
+  const chip = chipHtml(raw, { noRemove: true, display: exampleValue, expand: true, unresolved: exampleValue == null && !isRuntimeOnlyToken(raw) });
   return `<div class="qa-block" contenteditable="false" data-qa-label="${escapeHtml(label)}" data-qa-raw="${escapeHtml(raw)}"><div class="qa-block-header"><b>${escapeHtml(label)}</b><button type="button" class="qa-block-x" tabindex="-1" title="Remove this question and its answer">&times;</button></div>${chip}</div>`;
 }
 // Looks up the real answer value for a {{token}} against whatever samples
@@ -1254,10 +1254,26 @@ function exampleValueForToken(raw, samples) {
   const KNOWN_MATCH = { first: ['firstname', 'fname'], last: ['lastname', 'lname'], email: ['email', 'emailaddress'], phone: ['phone', 'phonenumber', 'mobile', 'mobilenumber'] };
   if (KNOWN_MATCH[key]) {
     for (const s of samples) for (const k of Object.keys(s)) if (KNOWN_MATCH[key].includes(norm(k)) && s[k] !== undefined && s[k] !== '') return String(s[k]);
+    // A booking-triggered flow's sample (flows_backend.js's /samples
+    // endpoint, booking_created branch) only ever has one combined "Name"
+    // field, never separate first/last -- confirmed live: {{first}}/
+    // {{last}} showed unresolved on a real booking even though the sample
+    // plainly had "Name": "Charles Carr". Split it as a fallback instead of
+    // treating a name that's genuinely there as missing just because this
+    // trigger type doesn't break it into parts the way a form submission's
+    // fields do.
+    if (key === 'first' || key === 'last') {
+      for (const s of samples) for (const k of Object.keys(s)) {
+        if (norm(k) === 'name' && s[k] !== undefined && s[k] !== '') {
+          const parts = String(s[k]).trim().split(/\s+/);
+          return key === 'first' ? parts[0] : (parts.slice(1).join(' ') || parts[0]);
+        }
+      }
+    }
     return null;
   }
   const pm = key.match(/^payload\.(.+)$/);
-  if (!pm) return null; // e.g. {{timestamp}}, stamped at run time -- no sample value
+  if (!pm) return null; // e.g. {{timestamp}}, stamped at run time -- no sample value (see isRuntimeOnlyToken)
   // Not a plain s[pm[1]] lookup -- an exact-property match breaks the
   // instant a form question's wording drifts even slightly from when the
   // token was first saved (a collapsed double space, a curly vs straight
@@ -1271,6 +1287,17 @@ function exampleValueForToken(raw, samples) {
   for (const s of samples) for (const k of Object.keys(s)) if (norm(k) === targetNorm && s[k] !== undefined && s[k] !== '') return String(s[k]);
   return null;
 }
+// {{timestamp}} is stamped from run.enteredAt when the flow actually
+// executes (flows_backend.js) -- it's never part of any submitted
+// form/booking, so exampleValueForToken correctly never finds a sample
+// value for it. That's expected, not a real problem the way a genuinely
+// missing payload field is -- confirmed live: it was tripping the same
+// amber "unresolved" warning as an actual stale/renamed field, on every
+// single flow, always, since there's structurally no sample data for it
+// to ever match. Chip callers check this before deciding to warn.
+function isRuntimeOnlyToken(raw) {
+  return raw === '{{timestamp}}';
+}
 // Applies a resolved answer (or the lack of one) to an already-rendered
 // chip -- updates the label text, and toggles the amber "unresolved"
 // state + warning icon to match. Shared by the initial sync render's
@@ -1280,11 +1307,12 @@ function exampleValueForToken(raw, samples) {
 // a submission that doesn't have this field) gains one.
 function applyChipResolution(chip, val) {
   if (!chip) return;
+  const warnable = val == null && !isRuntimeOnlyToken(chip.dataset.raw);
   const label = chip.querySelector('.token-chip-label');
   if (val != null && label && label.textContent !== val) label.textContent = val;
-  chip.classList.toggle('token-chip-unresolved', val == null);
+  chip.classList.toggle('token-chip-unresolved', warnable);
   let warn = chip.querySelector('.token-chip-warn');
-  if (val == null) {
+  if (warnable) {
     if (!warn) {
       warn = document.createElement('span');
       warn.className = 'token-chip-warn';
@@ -1339,7 +1367,7 @@ function tokenEditorContentHtml(value, multiline, expand) {
       if (!p) return '';
       if (/^\{\{[^}]+\}\}$/.test(p)) {
         const val = expand ? exampleValueForToken(p, samples) : null;
-        return chipHtml(p, { expand, display: val, showQuestion: expand, unresolved: expand && val == null });
+        return chipHtml(p, { expand, display: val, showQuestion: expand, unresolved: expand && val == null && !isRuntimeOnlyToken(p) });
       }
       return escapeHtml(p).replace(/\n/g, ' ');
     }).join('');
@@ -1365,7 +1393,7 @@ function tokenEditorContentHtml(value, multiline, expand) {
     if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], qaSamples));
     if (/^\{\{[^}]+\}\}$/.test(p)) {
       const val = expand ? exampleValueForToken(p, samples) : null;
-      return chipHtml(p, { expand, display: val, showQuestion: expand, unresolved: expand && val == null });
+      return chipHtml(p, { expand, display: val, showQuestion: expand, unresolved: expand && val == null && !isRuntimeOnlyToken(p) });
     }
     if (/^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
     return escapeHtml(p).replace(/\n/g, '<br>');
@@ -1498,7 +1526,7 @@ function insertChipAtCaret(editor, raw) {
 // click path was the one spot that never got that treatment.
 function replaceChipContent(editor, raw, exampleValue) {
   editor.focus();
-  editor.innerHTML = chipHtml(raw, { expand: true, display: exampleValue, showQuestion: true, unresolved: exampleValue == null });
+  editor.innerHTML = chipHtml(raw, { expand: true, display: exampleValue, showQuestion: true, unresolved: exampleValue == null && !isRuntimeOnlyToken(raw) });
   wireChipRemovals(editor);
   const range = document.createRange();
   range.selectNodeContents(editor);

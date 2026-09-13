@@ -137,6 +137,27 @@ function columnLetter(n) {
   return s || "A";
 }
 
+// Read-the-count-then-write-that-row is two separate round trips, not one
+// atomic operation -- two flow runs (e.g. two real bookings/submissions
+// landing close together, or someone testing the flow while a real one
+// fires) can both read the SAME "current last row" before either has
+// written, both compute the SAME nextRow, and the second PUT silently
+// overwrites the first's row instead of erroring -- confirmed live: a real
+// booking's row was simply never on the sheet (verified via direct read),
+// while a bunch of near-simultaneous test rows from the same window were.
+// perSheetQueue below serializes every append for the SAME spreadsheet+tab
+// through this one Node process so the read-then-write sequence can never
+// interleave with another one -- doesn't help across multiple server
+// instances, but this app runs as one, so that's the actual failure mode
+// this closes.
+const perSheetQueue = new Map();
+function withSheetLock(key, fn) {
+  const prev = perSheetQueue.get(key) || Promise.resolve();
+  const settled = prev.catch(() => {});
+  const result = settled.then(fn);
+  perSheetQueue.set(key, result.catch(() => {}));
+  return result;
+}
 // Deliberately NOT the Sheets API's own values.append endpoint -- append
 // finds "the table" by scanning from the given range until it hits the
 // first blank row, so on any real-world sheet with a stray blank row
@@ -148,25 +169,27 @@ function columnLetter(n) {
 // data (Google preserves gap rows as [] within the array), regardless of
 // any gaps earlier in the sheet.
 async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
-  const accessToken = await getSheetsAccessToken();
-  const endCol = columnLetter(rowValues.length);
-  const colRange = encodeURIComponent(`'${sheetName}'!A:${endCol}`);
-  const colRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${colRange}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const colData = await colRes.json();
-  if (!colRes.ok) throw new Error("Sheets read failed: " + JSON.stringify(colData));
-  const nextRow = (colData.values?.length || 0) + 1;
+  return withSheetLock(`${spreadsheetId}::${sheetName}`, async () => {
+    const accessToken = await getSheetsAccessToken();
+    const endCol = columnLetter(rowValues.length);
+    const colRange = encodeURIComponent(`'${sheetName}'!A:${endCol}`);
+    const colRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${colRange}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const colData = await colRes.json();
+    if (!colRes.ok) throw new Error("Sheets read failed: " + JSON.stringify(colData));
+    const nextRow = (colData.values?.length || 0) + 1;
 
-  const writeRange = encodeURIComponent(`'${sheetName}'!A${nextRow}:${endCol}${nextRow}`);
-  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ values: [rowValues] }),
+    const writeRange = encodeURIComponent(`'${sheetName}'!A${nextRow}:${endCol}${nextRow}`);
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [rowValues] }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error("Sheets write failed: " + JSON.stringify(d));
+    return d;
   });
-  const d = await r.json();
-  if (!r.ok) throw new Error("Sheets write failed: " + JSON.stringify(d));
-  return d;
 }
 
 // {{first}}/{{email}}/{{customFields.x}} resolve against the contact;
