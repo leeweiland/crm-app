@@ -820,10 +820,10 @@ async function deleteStep(stepId) {
 }
 
 function sheetColRowHtml(value) {
-  return `<div class="sheet-col-row" data-sheet-col-row><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}} {{last}}, {{email}}, {{payload.message}}…', attrs: 'data-sheet-col' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
+  return `<div class="sheet-col-row" data-sheet-col-row><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}} {{last}}, {{email}}, {{payload.message}}…', attrs: 'data-sheet-col', expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
 }
 function sheetColHeaderRowHtml(header, value, index) {
-  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}}, static text, …', attrs: 'data-sheet-col' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>`;
+  return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}}, static text, …', attrs: 'data-sheet-col', expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>`;
 }
 // Every custom field the account has, shown all at once (two per row, same
 // 50%-width pairing as First/Last etc above) instead of an "add a row, pick
@@ -922,6 +922,7 @@ function openStepConfigModal(step, isNew) {
       }
       wrap.querySelectorAll('[data-sheet-col-row]').forEach(wireSheetColRow);
       wireTokenButtons(wrap); // renderSheetColumns rebuilds these rows after body's own wireTokenButtons(body) already ran, so they need their own pass
+      refreshChipAnswers(wrap);
     }
     document.getElementById('addSheetColBtn').onclick = () => {
       document.getElementById('sheetColRows').insertAdjacentHTML('beforeend', sheetColRowHtml(''));
@@ -1058,7 +1059,7 @@ function openStepConfigModal(step, isNew) {
   // in whatever step-type body was just rendered -- harmless no-op for a
   // step type with none.
   wireTokenButtons(body);
-  refreshQaBlockAnswers(body);
+  refreshChipAnswers(body);
 
   document.getElementById('saveStepBtn').onclick = () => {
     if (step.type === 'filter' || step.type === 'if_then') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
@@ -1198,7 +1199,7 @@ function chipHtml(raw, opts = {}) {
 // The chip inside it shows the resolved ANSWER, not the label the bold
 // text already states -- exampleValue is looked up synchronously against
 // whatever's cached right now (see tokenEditorContentHtml/
-// refreshQaBlockAnswers), so it may briefly show the label until real
+// refreshChipAnswers), so it may briefly show the label until real
 // sample data finishes loading.
 function qaBlockHtml(label, raw, exampleValue) {
   const chip = chipHtml(raw, { noRemove: true, display: exampleValue, expand: true });
@@ -1224,15 +1225,16 @@ function exampleValueForToken(raw, samples) {
   for (const s of samples) if (s[pm[1]] !== undefined && s[pm[1]] !== '') return String(s[pm[1]]);
   return null;
 }
-// Q&A block chips render synchronously off whatever's already cached (see
+// Every expanded chip (a Q&A block's answer, a custom field, a Google
+// Sheet column) renders synchronously off whatever's already cached (see
 // tokenEditorContentHtml), so opening the modal never blocks on a fetch --
 // if real sample data wasn't cached yet at that instant (the common case:
 // nothing else has touched fetchSamples this page load), this catches up
-// once it loads. Only touches each chip's own label/title, never the DOM
+// once it loads. Only touches each chip's own label text, never the DOM
 // node itself, so it can't disturb the user's cursor or any edits made in
 // the meantime.
-async function refreshQaBlockAnswers(root) {
-  if (!root.querySelector('.qa-block')) return;
+async function refreshChipAnswers(root) {
+  if (!root.querySelector('.qa-block, .token-chip-expand')) return;
   const samples = await fetchSamples(false);
   if (!samples.length) return;
   root.querySelectorAll('.qa-block').forEach(block => {
@@ -1241,16 +1243,34 @@ async function refreshQaBlockAnswers(root) {
     const label = block.querySelector('.token-chip-label');
     if (label.textContent !== val) label.textContent = val;
   });
+  // Same idea, for an expanded chip that ISN'T part of a qa-block (custom
+  // fields, Google Sheet columns, or a bare chip typed into Body outside
+  // any Q&A block) -- those show their own {{token}}'s value directly,
+  // with no separate bold label naming the field the way a qa-block has.
+  root.querySelectorAll('.token-chip-expand').forEach(chip => {
+    if (chip.closest('.qa-block')) return;
+    const val = exampleValueForToken(chip.dataset.raw, samples);
+    if (val == null) return;
+    const label = chip.querySelector('.token-chip-label');
+    if (label.textContent !== val) label.textContent = val;
+  });
 }
 // **bold** markers only apply on the multiline field (Send Email's Body) --
 // see the toggleBoldSelection/insertQaPair comments for why this is a plain
 // markdown-style marker in the saved string rather than real stored HTML.
 function tokenEditorContentHtml(value, multiline, expand) {
   const str = String(value || '');
+  // Resolved once up front, used by both branches below -- an expanded
+  // chip (custom fields, Google Sheet columns, a Q&A answer) shows the
+  // actual resolved VALUE, not its own field name restated, since the
+  // field's real <label>/the bold question above it already says what it
+  // is. Falls back to the label (chipHtml's own default) wherever no
+  // sample has a value for that field yet.
+  const samples = expand ? (cachedSamples || []) : [];
   if (!multiline) {
     return str.split(/(\{\{[^}]+\}\})/g).map(p => {
       if (!p) return '';
-      if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand });
+      if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand, display: expand ? exampleValueForToken(p, samples) : null });
       return escapeHtml(p).replace(/\n/g, ' ');
     }).join('');
   }
@@ -1264,14 +1284,16 @@ function tokenEditorContentHtml(value, multiline, expand) {
   // that stays real, editable text (a plain <br><br> below), not baked
   // into the block, so there's an actual cursor position to click into and
   // type between one question and the next, not just CSS spacing with
-  // nothing behind it.
-  const samples = cachedSamples || [];
+  // nothing behind it. A qa-block's own answer always resolves regardless
+  // of the expand flag -- that's Send Email Body's whole point, not
+  // conditional on how this particular call was invoked.
+  const qaSamples = cachedSamples || [];
   const pattern = /(\*\*[^*]+\*\*\n\{\{[^}]+\}\}|\{\{[^}]+\}\}|\*\*[^*]+\*\*)/g;
   return str.split(pattern).map(p => {
     if (!p) return '';
     const qaMatch = p.match(/^\*\*([^*]+)\*\*\n(\{\{[^}]+\}\})$/);
-    if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], samples));
-    if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand });
+    if (qaMatch) return qaBlockHtml(qaMatch[1], qaMatch[2], exampleValueForToken(qaMatch[2], qaSamples));
+    if (/^\{\{[^}]+\}\}$/.test(p)) return chipHtml(p, { expand, display: expand ? exampleValueForToken(p, samples) : null });
     if (/^\*\*[^*]+\*\*$/.test(p)) return `<b>${escapeHtml(p.slice(2, -2))}</b>`;
     return escapeHtml(p).replace(/\n/g, '<br>');
   }).join('');
