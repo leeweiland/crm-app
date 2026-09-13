@@ -67,6 +67,19 @@ const TRACK_SNIPPET = `(function(){
   window.addEventListener('message', function(e){
     if (e.data && e.data.type === 'pf-identify' && e.data.contactId) setCid(e.data.contactId);
   });
+  // Fills a hidden "vid" field on any native Framer form with this visit's
+  // crm_vid, so a raw webhook lead (unlike the form-widget/booking iframes,
+  // which already pass vid on their own src URL) can still get its ad-click
+  // history claimed back once flows_backend.js resolves it to a contact.
+  // Only needs the landing page's own form to have a field literally named
+  // "vid" -- nothing here can invent that field if the form doesn't have it.
+  function fillVidFields(root){
+    var els = (root || document).querySelectorAll('[name]');
+    for (var i=0;i<els.length;i++){ if (String(els[i].name).toLowerCase() === 'vid') els[i].value = vid; }
+  }
+  fillVidFields();
+  document.addEventListener('click', function(){ fillVidFields(); }, true);
+  document.addEventListener('submit', function(e){ fillVidFields(e.target); }, true);
   fetch('${"__BASE_URL__"}/api/track/pageview', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ cid: urlCid || getCookie('crm_cid'), vid: vid, path: location.pathname, search: location.search })
