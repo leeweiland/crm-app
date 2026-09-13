@@ -1224,7 +1224,17 @@ function exampleValueForToken(raw, samples) {
   }
   const pm = key.match(/^payload\.(.+)$/);
   if (!pm) return null; // e.g. {{timestamp}}, stamped at run time -- no sample value
-  for (const s of samples) if (s[pm[1]] !== undefined && s[pm[1]] !== '') return String(s[pm[1]]);
+  // Not a plain s[pm[1]] lookup -- an exact-property match breaks the
+  // instant a form question's wording drifts even slightly from when the
+  // token was first saved (a collapsed double space, a curly vs straight
+  // apostrophe, punctuation at the end) -- confirmed live: one long
+  // question's chip kept showing the label (no answer) while every other
+  // field on the same step resolved fine, because the saved token's exact
+  // text no longer byte-matched the current sample's key. norm() strips
+  // everything but letters, same normalization the contact-field matching
+  // above already uses, so it survives that drift.
+  const targetNorm = norm(pm[1]);
+  for (const s of samples) for (const k of Object.keys(s)) if (norm(k) === targetNorm && s[k] !== undefined && s[k] !== '') return String(s[k]);
   return null;
 }
 // Every expanded chip (a Q&A block's answer, a custom field, a Google
@@ -1310,7 +1320,7 @@ function tokenEditorContentHtml(value, multiline, expand) {
 // field) defaults to a compact inline pill, since those are meant to read
 // as one concatenated line, not stack a chip onto its own row.
 function tokenEditorHtml(value, { placeholder = '', multiline = false, attrs = '', expand = false } = {}) {
-  return `<div class="pra-input token-editor" contenteditable="true" data-token-editor ${multiline ? 'data-multiline="true"' : ''} data-placeholder="${escapeHtml(placeholder)}" ${attrs}>${tokenEditorContentHtml(value, multiline, expand)}</div>`;
+  return `<div class="pra-input token-editor" contenteditable="true" data-token-editor ${multiline ? 'data-multiline="true"' : ''} ${expand ? 'data-expand="true"' : ''} data-placeholder="${escapeHtml(placeholder)}" ${attrs}>${tokenEditorContentHtml(value, multiline, expand)}</div>`;
 }
 // Inverse of tokenEditorContentHtml -- walks the live DOM back into the raw
 // {{token}}-bearing string that actually gets saved to step.config.
@@ -1409,6 +1419,30 @@ function insertChipAtCaret(editor, raw) {
   wireChipRemovals(editor);
   range.setStartAfter(chip);
   range.setEndAfter(chip);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+}
+// An expand field (custom fields, Google Sheet columns -- see
+// tokenEditorHtml's data-expand) holds exactly ONE token as the field's
+// whole value, unlike Subject/To/From where several tokens/free text
+// combine into one line -- so picking a field from the "+" popover here
+// REPLACES whatever was there before instead of inserting alongside it
+// (insertChipAtCaret, above). Without this, picking a different field
+// just appended a second chip next to the first instead of swapping it,
+// which read as "my new pick doesn't stick" once the old one was still
+// sitting there too. Also, unlike insertChipAtCaret, actually resolves and
+// shows the real answer (display), matching how this same chip already
+// renders on page load/reload (see tokenEditorContentHtml) -- the popover
+// click path was the one spot that never got that treatment.
+function replaceChipContent(editor, raw, exampleValue) {
+  editor.focus();
+  editor.innerHTML = chipHtml(raw, { expand: true, display: exampleValue });
+  wireChipRemovals(editor);
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const sel = window.getSelection();
   sel.removeAllRanges();
   sel.addRange(range);
   editor.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1584,6 +1618,7 @@ async function openTokenPopover(btn, input) {
     item.onclick = () => {
       const opt = options.find(o => o.token === item.dataset.token);
       if (multiline && opt) insertQaPair(input, opt.label, opt.token, opt.example);
+      else if (input.dataset.expand === 'true' && opt) replaceChipContent(input, opt.token, opt.example);
       else insertChipAtCaret(input, item.dataset.token);
       closeTokenPopover();
     };
