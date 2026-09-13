@@ -236,20 +236,20 @@
 
       <div class="tab-panel" id="tab-journeys">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shows every tracked touchpoint for a contact, oldest to newest -- ad/media clicks (from that platform's own tracking template or the <code>el=</code>/social shorthand tags), plus email/SMS/call/task activity.</div>
-        <div class="journey-subtabs" style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
-          <button class="journey-subtab-btn active" data-subtab="all">All</button>
-          <button class="journey-subtab-btn" data-subtab="click">Clicks</button>
-          <button class="journey-subtab-btn" data-subtab="ad">Ads</button>
-          <button class="journey-subtab-btn" data-subtab="media">Media</button>
-          <button class="journey-subtab-btn" data-subtab="email">Emails</button>
-          <button class="journey-subtab-btn" data-subtab="sms">SMS</button>
-        </div>
         <div class="journey-layout">
           <div class="pra-panel" style="padding:0;overflow-y:auto;max-height:75vh;max-height:75dvh">
             <div style="padding:12px"><input class="pra-input" id="journeySearch" placeholder="Search contacts..."/></div>
-            <div id="journeyContactList"></div>
+            <div id="journeyContactList"><div class="pra-muted" style="padding:12px">Type a name or email to find a contact.</div></div>
           </div>
           <div class="pra-panel" style="padding:20px;min-height:200px">
+            <div class="journey-subtabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+              <button class="journey-subtab-btn active" data-subtab="all">All</button>
+              <button class="journey-subtab-btn" data-subtab="click">Clicks</button>
+              <button class="journey-subtab-btn" data-subtab="ad">Ads</button>
+              <button class="journey-subtab-btn" data-subtab="media">Media</button>
+              <button class="journey-subtab-btn" data-subtab="email">Emails</button>
+              <button class="journey-subtab-btn" data-subtab="sms">SMS</button>
+            </div>
             <div id="journeyTimeline" class="pra-muted">Select a contact to see their journey.</div>
           </div>
         </div>
@@ -280,7 +280,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-  if (btn.dataset.tab === 'journeys' && !journeysLoaded) loadJourneyContacts();
 });
 
 // ── Shared date-range selector -- same preset list/math as ads_backend.js
@@ -686,7 +685,7 @@ document.querySelectorAll('#tab-adsreport th.sortable').forEach(th => th.addEven
 }));
 
 // ── Customer Journeys ────────────────────────────────────────────────────
-let journeysLoaded = false, allJourneyContacts = [], activeJourneyContactId = null, journeySubtab = 'all', currentJourneyItems = [];
+let activeJourneyContactId = null, journeySubtab = 'all', currentJourneyItems = [];
 const JOURNEY_ICONS = { email: '📧', sms: '💬', call: '☎', task: '☑', reminder: '⏰', click: '🖱' };
 document.querySelectorAll('.journey-subtab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.journey-subtab-btn').forEach(b => b.classList.remove('active'));
@@ -694,21 +693,29 @@ document.querySelectorAll('.journey-subtab-btn').forEach(btn => btn.onclick = ()
   journeySubtab = btn.dataset.subtab;
   renderJourneyTimeline();
 });
-async function loadJourneyContacts() {
-  journeysLoaded = true;
-  const r = await fetch('/api/contacts');
-  allJourneyContacts = r.ok ? (await r.json()).contacts : [];
-  renderJourneyContactList();
-}
-function renderJourneyContactList() {
-  const q = document.getElementById('journeySearch').value.trim().toLowerCase();
-  const filtered = q ? allJourneyContacts.filter(c => `${c.first} ${c.last} ${c.email || ''}`.toLowerCase().includes(q)) : allJourneyContacts;
-  document.getElementById('journeyContactList').innerHTML = filtered.slice(0, 200).map(c => `
+// Server-side search, not a client-side filter over every contact --
+// fetching all 176k+ contacts to filter in the browser was slow enough to
+// fail outright (the response got large enough to hit a JSON parse error
+// mid-transfer). Nothing loads until the user actually types something.
+let journeySearchLastReqId = 0;
+async function renderJourneyContactList() {
+  const q = document.getElementById('journeySearch').value.trim();
+  const list = document.getElementById('journeyContactList');
+  if (!q) { list.innerHTML = '<div class="pra-muted" style="padding:12px">Type a name or email to find a contact.</div>'; return; }
+  const reqId = ++journeySearchLastReqId;
+  list.innerHTML = '<div class="pra-muted" style="padding:12px">Searching…</div>';
+  const r = await fetch(`/api/contacts?q=${encodeURIComponent(q)}&limit=50`);
+  if (reqId !== journeySearchLastReqId) return; // a newer keystroke's request already landed
+  const contacts = r.ok ? (await r.json()).contacts : [];
+  list.innerHTML = contacts.map(c => `
     <div class="journey-contact-row${c.id === activeJourneyContactId ? ' active' : ''}" data-contact="${c.id}">${escapeHtml(c.first)} ${escapeHtml(c.last)}</div>
   `).join('') || '<div class="pra-muted" style="padding:12px">No contacts match.</div>';
   document.querySelectorAll('[data-contact]').forEach(row => row.onclick = () => openJourney(row.dataset.contact));
 }
-document.getElementById('journeySearch').addEventListener('input', renderJourneyContactList);
+document.getElementById('journeySearch').addEventListener('input', () => {
+  clearTimeout(window._journeySearchDebounce);
+  window._journeySearchDebounce = setTimeout(renderJourneyContactList, 250);
+});
 async function openJourney(contactId) {
   activeJourneyContactId = contactId;
   renderJourneyContactList();
