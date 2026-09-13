@@ -24,7 +24,7 @@ import { handleUploadsRequest } from "./uploads_backend.js";
 import { handleAdsRequest } from "./ads_backend.js";
 import { handleFlowsRequest } from "./flows_backend.js";
 import { handleDuplicatesRequest } from "./duplicates_backend.js";
-import { handleAiAgentsRequest } from "./ai_agents_backend.js";
+import { handleAiAgentsRequest, handleCacheRequest } from "./ai_agents_backend.js";
 import { handleAiActiveRequest } from "./ai_active_backend.js";
 import { handleBehavioralTriggersRequest } from "./behavioral_triggers_backend.js";
 import { handleConversionsRequest } from "./conversions_backend.js";
@@ -151,6 +151,7 @@ createServer(async (req, res) => {
   if (await handleFlowsRequest(req, res, url)) return;
   if (await handleDuplicatesRequest(req, res, url)) return;
   if (await handleAiAgentsRequest(req, res, url)) return;
+  if (await handleCacheRequest(req, res, url)) return;
   if (await handleAiActiveRequest(req, res, url)) return;
   if (await handleBehavioralTriggersRequest(req, res, url)) return;
   if (await handleConversionsRequest(req, res, url)) return;

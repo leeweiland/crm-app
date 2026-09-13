@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
@@ -721,4 +721,56 @@ async function handleAiAgentsCrud(req, res, url) {
   }
 
   return false;
+}
+
+// ── Cache status / sync API ───────────────────────────────────────────────────
+
+export async function handleCacheRequest(req, res, url) {
+  if (!url.pathname.startsWith("/api/cache")) return false;
+  const me = getSessionUser(req);
+  if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // GET /api/cache/status
+  if (url.pathname === "/api/cache/status" && req.method === "GET") {
+    const writingInfo = getCacheInfo(WRITING_CACHE_PATH);
+    const salesInfo   = getCacheInfo(SALES_CACHE_PATH);
+    const syncState   = readJson(CACHE_SYNC_STATE_FILE, { lastSyncAt: null });
+    return sendJson(res, 200, {
+      writing: { ...writingInfo, lastSyncAt: syncState.lastSyncAt, repo: CACHE_REPO },
+      sales:   salesInfo,
+    });
+  }
+
+  // POST /api/cache/sync-writing  (force re-pull from GitHub)
+  if (url.pathname === "/api/cache/sync-writing" && req.method === "POST") {
+    if (!process.env.GITHUB_TOKEN) return sendJson(res, 500, { error: "GITHUB_TOKEN not set" });
+    try {
+      const r = await fetch(`https://api.github.com/repos/${CACHE_REPO}/contents/chunks_cache.json`, {
+        headers: { Authorization: `token ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github.v3.raw" },
+      });
+      if (!r.ok) throw new Error(`GitHub ${r.status}: ${await r.text()}`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      writeFileSync(WRITING_CACHE_PATH, buf);
+      invalidateCache(WRITING_CACHE_PATH);
+      const now = new Date().toISOString();
+      writeJson(CACHE_SYNC_STATE_FILE, { lastSyncAt: now });
+      const info = getCacheInfo(WRITING_CACHE_PATH);
+      return sendJson(res, 200, { ok: true, lastSyncAt: now, ...info });
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    }
+  }
+
+  return false;
+}
+
+function getCacheInfo(filePath) {
+  try {
+    if (!existsSync(filePath)) return { exists: false, count: 0, sizeBytes: 0, updatedAt: null };
+    const stat = statSync(filePath);
+    const data = JSON.parse(readFileSync(filePath, "utf8"));
+    return { exists: true, count: (data.chunks || []).length, sizeBytes: stat.size, updatedAt: stat.mtime.toISOString() };
+  } catch {
+    return { exists: false, count: 0, sizeBytes: 0, updatedAt: null };
+  }
 }
