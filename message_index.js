@@ -106,7 +106,7 @@ export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
 // dashboards have always grouped (by send day, not by event day).
 export const DAILY_STATS_FILE = "crm_daily_message_stats.json";
 function dayKey(iso) { return String(iso || "").slice(0, 10); }
-function emptyDayBucket() { return { emailOut: {}, smsOut: {}, smsInCount: 0, automationEmailOut: {}, workflowSmsOut: {} }; }
+function emptyDayBucket() { return { emailOut: {}, smsOut: {}, smsInCount: 0, emailInCount: 0, automationEmailOut: {}, workflowSmsOut: {} }; }
 function bumpStatus(obj, status, delta) {
   const next = (obj[status] || 0) + delta;
   if (next > 0) obj[status] = next; else delete obj[status];
@@ -115,6 +115,8 @@ function applyDailyDelta(bucket, row, status, delta) {
   if (row.channel === "email" && row.direction === "outbound") {
     bumpStatus(bucket.emailOut, status, delta);
     if (row.sourceType === "automation_step") bumpStatus(bucket.automationEmailOut, status, delta);
+  } else if (row.channel === "email" && row.direction === "inbound") {
+    bucket.emailInCount = Math.max(0, (bucket.emailInCount || 0) + delta);
   } else if (row.channel === "sms" && row.direction === "inbound") {
     bucket.smsInCount = Math.max(0, (bucket.smsInCount || 0) + delta);
   } else if (row.channel === "sms") {

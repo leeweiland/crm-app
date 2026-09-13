@@ -434,12 +434,24 @@ function grid(el, labels, data, cardCls) {
     <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
   `).join('');
 }
+function fmtPct(n, total) { return total ? Math.round(n / total * 100) + '%' : '0%'; }
+// Sent stays a raw count (rate-of-what would be meaningless); Opened/
+// Clicked/Delivered are rates off Sent since those are what a send-quality
+// glance actually needs. SMS has no click-tracking redirect yet (see
+// sms_backend.js) -- Clicked genuinely reads 0% until that's built, not a
+// bug in this rendering.
+function renderRateCard(el, cardCls, sent, rateFields, inboundCount) {
+  const cells = [['Sent', sent], ...rateFields.map(([label, n]) => [label, fmtPct(n, sent)]), ['Inbound', inboundCount]];
+  document.getElementById(el).innerHTML = cells.map(([label, val]) => `
+    <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${val}</div></div>
+  `).join('');
+}
 async function loadOverview() {
   const r = await fetch(`/api/reporting/overview?start=${currentStart}&end=${currentEnd}`);
   if (!r.ok) return;
   const { email, sms, automations, workflows } = await r.json();
-  grid('emailGrid', EMAIL_OVERVIEW_LABELS, email, 'stat-card-email');
-  grid('smsGrid', SMS_LABELS, sms, 'stat-card-sms');
+  renderRateCard('emailGrid', 'stat-card-email', email.sent, [['Opened %', email.opened], ['Clicked %', email.clicked]], email.received);
+  renderRateCard('smsGrid', 'stat-card-sms', sms.sent, [['Delivered %', sms.delivered], ['Clicked %', sms.clicked || 0]], sms.received);
   grid('automationsGrid', EMAIL_OVERVIEW_LABELS, automations, 'stat-card-automations');
   grid('workflowsGrid', SMS_LABELS, workflows, 'stat-card-workflows');
   const adsR = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);

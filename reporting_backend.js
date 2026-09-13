@@ -44,7 +44,7 @@ function smsStatsFromMessages(messages) {
   }
   return stats;
 }
-function statsFromByStatus(byStatus) {
+function statsFromByStatus(byStatus, receivedCount) {
   const c = (statuses) => statuses.reduce((sum, s) => sum + (byStatus[s] || 0), 0);
   return {
     sent: c(["sent", "delivered", "opened", "clicked"]),
@@ -54,6 +54,7 @@ function statsFromByStatus(byStatus) {
     bounced: c(["bounced"]),
     complained: c(["complained"]),
     failed: c(["failed"]),
+    received: receivedCount || 0,
   };
 }
 function smsStatsFromByStatus(byStatus, receivedCount) {
@@ -207,8 +208,9 @@ export async function handleReportingRequest(req, res, url) {
     const { startMs, endMs } = parseRangeParams(url);
     const days = getDailyStatsInRange(startMs, endMs);
     const totalSmsIn = days.reduce((sum, d) => sum + (d.smsInCount || 0), 0);
+    const totalEmailIn = days.reduce((sum, d) => sum + (d.emailInCount || 0), 0);
     return sendJson(res, 200, {
-      email: statsFromByStatus(sumByStatus(days, "emailOut")),
+      email: statsFromByStatus(sumByStatus(days, "emailOut"), totalEmailIn),
       sms: smsStatsFromByStatus(sumByStatus(days, "smsOut"), totalSmsIn),
       campaigns: { total: readJson(CAMPAIGNS_FILE, []).length },
       automations: statsFromByStatus(sumByStatus(days, "automationEmailOut")),
