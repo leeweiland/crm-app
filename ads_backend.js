@@ -44,10 +44,10 @@ async function fetchLiveGoogleCampaigns(startStr, endStr) {
   const accessToken = await getGoogleAdsAccessToken(googleAdsRefreshToken);
   const customerId = googleAdsCustomerId.replace(/\D/g, "");
   const query = `SELECT campaign.name, metrics.cost_micros, metrics.impressions, metrics.clicks FROM campaign WHERE segments.date BETWEEN '${startStr}' AND '${endStr}'`;
-  const r = await fetch(`https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`, {
+  const r = await fetch(`https://googleads.googleapis.com/v25/customers/${customerId}/googleAds:search`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "developer-token": googleAdsDeveloperToken, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, pageSize: 500 }),
+    body: JSON.stringify({ query }),
   });
   const d = await r.json();
   if (!r.ok) throw new Error(d?.error?.[0]?.message || d?.error?.message || `google_http_${r.status}`);
