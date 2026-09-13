@@ -37,6 +37,7 @@ function googleCreds() {
 // (the business runs on Anchorage time; pure UTC "today" flips over while
 // it's still afternoon in Anchorage). ─────────────────────────────────────
 export const AD_PERIODS = [
+  { value: "today", label: "Today" },
   { value: "yesterday", label: "Yesterday" },
   { value: "last7", label: "Last 7 Days" },
   { value: "week1", label: "1st Week of the Month" },
@@ -71,6 +72,7 @@ function resolveRange(period, customStart, customEnd) {
     ];
   }
   const RANGES = {
+    today: () => [todayUTC, todayUTC],
     yesterday: () => [yesterday, yesterday],
     last7: () => [addDays(yesterday, -6), yesterday],
     week1: () => [mk(y0, m0, 1), mk(y0, m0, 7)],

@@ -64,6 +64,25 @@
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
   th.sortable.sorted .sort-arrow { opacity: 1; }
+
+  .calendar-popover { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 14px; width: 280px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .calendar-popover.show { display: block; }
+  .calendar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .calendar-month-label { font-family: var(--font-primary); font-weight: 700; font-size: .86rem; }
+  .calendar-nav-btn { background: none; border: 1px solid var(--pra-border); color: var(--pra-dim); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: .8rem; }
+  .calendar-nav-btn:hover { color: var(--pra-white); border-color: var(--pra-blue); }
+  .calendar-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: .68rem; color: var(--pra-dim); margin-bottom: 4px; }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal-day { background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .78rem; padding: 6px 0; cursor: pointer; border-radius: 6px; }
+  .cal-day:hover { background: var(--pra-blue-dim); }
+  .cal-day.other-month { color: var(--pra-dim); opacity: .4; }
+  .cal-day.today { box-shadow: inset 0 0 0 1px var(--pra-blue); }
+  .cal-day.in-range { background: var(--pra-blue-dim); border-radius: 0; }
+  .cal-day.range-start, .cal-day.range-end { background: var(--pra-blue); color: #fff; font-weight: 700; }
+  .cal-day.range-start { border-radius: 6px 0 0 6px; }
+  .cal-day.range-end { border-radius: 0 6px 6px 0; }
+  .cal-day.range-start.range-end { border-radius: 6px; }
+  .calendar-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; gap: 8px; }
 </style>
 </head>
 <body>
@@ -89,8 +108,27 @@
              lifetime timeline per contact, not a period rollup). -->
         <div class="rep-toolbar">
           <select class="pra-select" id="periodSelect"></select>
-          <input class="pra-input" type="date" id="customStart" style="display:none"/>
-          <input class="pra-input" type="date" id="customEnd" style="display:none"/>
+          <div id="customRangeWrap" style="display:none;position:relative">
+            <button class="pra-input" id="customRangeBtn" type="button" style="text-align:left;cursor:pointer;min-width:210px">Select date range...</button>
+            <div id="calendarPopover" class="calendar-popover">
+              <div class="calendar-header">
+                <button class="calendar-nav-btn" id="calPrevBtn" type="button">&larr;</button>
+                <div id="calMonthLabel" class="calendar-month-label"></div>
+                <button class="calendar-nav-btn" id="calNextBtn" type="button">&rarr;</button>
+              </div>
+              <div class="calendar-weekdays">
+                <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+              </div>
+              <div class="calendar-grid" id="calGrid"></div>
+              <div class="calendar-footer">
+                <span class="pra-muted" id="calRangeMsg" style="font-size:.76rem"></span>
+                <div style="display:flex;gap:8px">
+                  <button class="pra-btn pra-btn-ghost pra-btn-sm" id="calCancelBtn" type="button">Cancel</button>
+                  <button class="pra-btn pra-btn-sm" id="calApplyBtn" type="button">Apply</button>
+                </div>
+              </div>
+            </div>
+          </div>
           <button class="pra-btn pra-btn-sm" id="updateReportBtn">Update</button>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="refreshAdsBtn" title="Ads data comes from a Google Sheet updated separately">Refresh Data</button>
           <span class="pra-muted" id="periodRangeMsg" style="font-size:.8rem"></span>
@@ -226,6 +264,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
 // (fetched from /api/ads/periods so both stay in sync), resolved client-
 // side into concrete start/end dates and passed to every tab's endpoint. ──
 let currentPeriod = 'last30', currentStart = null, currentEnd = null;
+let customRangeStart = null, customRangeEnd = null;
 function resolvePeriodRange(period, customStartVal, customEndVal) {
   const now = new Date();
   const anchorageTodayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Anchorage', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
@@ -236,9 +275,10 @@ function resolvePeriodRange(period, customStartVal, customEndVal) {
   const mk = (yy, mm, dd) => new Date(Date.UTC(yy, mm, dd));
   const eom = (yy, mm) => new Date(Date.UTC(yy, mm + 1, 0));
   if (period === 'custom') {
-    return [new Date((customStartVal || yesterday.toISOString().slice(0, 10)) + 'T00:00:00Z'), new Date((customEndVal || yesterday.toISOString().slice(0, 10)) + 'T00:00:00Z')];
+    return [new Date((customStartVal || todayUTC.toISOString().slice(0, 10)) + 'T00:00:00Z'), new Date((customEndVal || todayUTC.toISOString().slice(0, 10)) + 'T00:00:00Z')];
   }
   const RANGES = {
+    today: () => [todayUTC, todayUTC],
     yesterday: () => [yesterday, yesterday],
     last7: () => [addDays(yesterday, -6), yesterday],
     week1: () => [mk(y0, m0, 1), mk(y0, m0, 7)],
@@ -264,15 +304,73 @@ async function initPeriodSelector() {
 function applyPeriod() {
   currentPeriod = document.getElementById('periodSelect').value;
   const isCustom = currentPeriod === 'custom';
-  document.getElementById('customStart').style.display = isCustom ? 'inline-block' : 'none';
-  document.getElementById('customEnd').style.display = isCustom ? 'inline-block' : 'none';
-  const [start, end] = resolvePeriodRange(currentPeriod, document.getElementById('customStart').value, document.getElementById('customEnd').value);
+  document.getElementById('customRangeWrap').style.display = isCustom ? 'inline-block' : 'none';
+  const [start, end] = resolvePeriodRange(currentPeriod, customRangeStart, customRangeEnd);
   currentStart = start.toISOString().slice(0, 10);
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
   loadEmailReport(); loadSmsReport(); loadAdsReport(); loadAttributionReport(); loadTeamActivityReport();
   if (document.getElementById('tab-overview').classList.contains('active')) loadOverview();
 }
+
+// ── Custom date-range calendar popover -- click start day, then end day
+// (clicking an earlier day than the current start restarts the pick rather
+// than erroring, since that's clearly what the person meant). ─────────────
+const calState = { viewYear: null, viewMonth: null, pickStart: null, pickEnd: null };
+function calFmt(y, m, d) { return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+function renderCalendar() {
+  const { viewYear, viewMonth, pickStart, pickEnd } = calState;
+  document.getElementById('calMonthLabel').textContent = new Date(viewYear, viewMonth, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const todayStr = calFmt(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) cells.push({ y: viewMonth === 0 ? viewYear - 1 : viewYear, m: viewMonth === 0 ? 11 : viewMonth - 1, d: daysInPrevMonth - i, other: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ y: viewYear, m: viewMonth, d, other: false });
+  while (cells.length % 7 !== 0) { const last = cells[cells.length - 1]; const nm = last.m === 11 ? 0 : last.m + 1; const ny = last.m === 11 ? last.y + 1 : last.y; cells.push({ y: ny, m: nm, d: cells.length - daysInMonth - firstDow + 1, other: true }); }
+  document.getElementById('calGrid').innerHTML = cells.map(c => {
+    const str = calFmt(c.y, c.m, c.d);
+    const classes = ['cal-day'];
+    if (c.other) classes.push('other-month');
+    if (str === todayStr) classes.push('today');
+    if (pickStart && str === pickStart) classes.push('range-start');
+    if (pickEnd && str === pickEnd) classes.push('range-end');
+    if (pickStart && pickEnd && str > pickStart && str < pickEnd) classes.push('in-range');
+    return `<button type="button" class="${classes.join(' ')}" data-cal-date="${str}">${c.d}</button>`;
+  }).join('');
+  const msg = document.getElementById('calRangeMsg');
+  msg.textContent = pickStart && pickEnd ? `${pickStart} to ${pickEnd}` : pickStart ? `${pickStart} — pick an end date` : 'Pick a start date';
+  document.getElementById('calGrid').querySelectorAll('[data-cal-date]').forEach(btn => btn.onclick = () => {
+    const str = btn.dataset.calDate;
+    if (!calState.pickStart || (calState.pickStart && calState.pickEnd) || str < calState.pickStart) { calState.pickStart = str; calState.pickEnd = null; }
+    else { calState.pickEnd = str; }
+    renderCalendar();
+  });
+}
+function openCalendarPopover() {
+  const base = customRangeStart ? new Date(customRangeStart + 'T00:00:00Z') : new Date();
+  calState.viewYear = base.getFullYear(); calState.viewMonth = base.getMonth();
+  calState.pickStart = customRangeStart; calState.pickEnd = customRangeEnd;
+  renderCalendar();
+  document.getElementById('calendarPopover').classList.add('show');
+}
+document.getElementById('customRangeBtn').onclick = (e) => { e.stopPropagation(); openCalendarPopover(); };
+document.getElementById('calPrevBtn').onclick = () => { calState.viewMonth--; if (calState.viewMonth < 0) { calState.viewMonth = 11; calState.viewYear--; } renderCalendar(); };
+document.getElementById('calNextBtn').onclick = () => { calState.viewMonth++; if (calState.viewMonth > 11) { calState.viewMonth = 0; calState.viewYear++; } renderCalendar(); };
+document.getElementById('calCancelBtn').onclick = () => document.getElementById('calendarPopover').classList.remove('show');
+document.getElementById('calApplyBtn').onclick = () => {
+  if (!calState.pickStart) return;
+  customRangeStart = calState.pickStart;
+  customRangeEnd = calState.pickEnd || calState.pickStart;
+  document.getElementById('customRangeBtn').textContent = `${customRangeStart} to ${customRangeEnd}`;
+  document.getElementById('calendarPopover').classList.remove('show');
+  applyPeriod();
+};
+document.addEventListener('click', (e) => {
+  const popover = document.getElementById('calendarPopover');
+  if (popover.classList.contains('show') && !popover.contains(e.target) && e.target.id !== 'customRangeBtn') popover.classList.remove('show');
+});
 
 const SENT_CATEGORY_LABELS = { human: 'Human', ai_agent: 'AI Agent', sms_sequence: 'SMS Sequence', email_automation: 'Email Automation', email_campaign: 'Campaign', legacy_import: 'Legacy Import', other: 'Other' };
 function renderTeamSentTable(tableId, rows, categories) {
