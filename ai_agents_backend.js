@@ -741,6 +741,34 @@ export async function handleCacheRequest(req, res, url) {
     });
   }
 
+  // GET /api/cache/folders  — script folder config
+  if (url.pathname === "/api/cache/folders" && req.method === "GET") {
+    return sendJson(res, 200, readJson("crm_cache_folders.json", { folders: [] }));
+  }
+  // POST /api/cache/folders
+  if (url.pathname === "/api/cache/folders" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    writeJson("crm_cache_folders.json", body);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // GET /api/cache/chunks?type=writing|sales  — returns metadata without embeddings
+  if (url.pathname === "/api/cache/chunks" && req.method === "GET") {
+    const type = url.searchParams.get("type") || "writing";
+    const filePath = type === "sales" ? SALES_CACHE_PATH : WRITING_CACHE_PATH;
+    try {
+      if (!existsSync(filePath)) return sendJson(res, 200, { chunks: [] });
+      const data = JSON.parse(readFileSync(filePath, "utf8"));
+      const chunks = (data.chunks || []).map(({ embedding: _e, text, ...meta }) => ({
+        ...meta,
+        preview: text ? text.slice(0, 120).replace(/\s+/g, " ").trim() : "",
+      }));
+      return sendJson(res, 200, { chunks });
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    }
+  }
+
   // POST /api/cache/sync-writing  (force re-pull from GitHub)
   if (url.pathname === "/api/cache/sync-writing" && req.method === "POST") {
     if (!process.env.GITHUB_TOKEN) return sendJson(res, 500, { error: "GITHUB_TOKEN not set" });

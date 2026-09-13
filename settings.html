@@ -318,31 +318,57 @@
         <div class="pra-h2" style="margin-bottom:4px">AI Cache</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:20px">Embedded knowledge the AI agents retrieve from. Pulled nightly from GitHub — sync manually if you just pushed new writing.</div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <!-- Script Folders -->
+        <div class="pra-card" style="padding:18px;margin-bottom:24px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase">Script Folders</div>
+            <button class="pra-btn pra-btn-outline" style="font-size:.78rem;padding:5px 12px" onclick="saveCacheFolders()">Save</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 2fr 120px;gap:8px;margin-bottom:8px">
+            <div class="pra-muted" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Label</div>
+            <div class="pra-muted" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Folder ID</div>
+            <div class="pra-muted" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Brand</div>
+          </div>
+          <div id="cache-folders-list" style="display:flex;flex-direction:column;gap:6px"></div>
+          <button class="pra-btn-ghost pra-btn" style="margin-top:10px;font-size:.8rem;padding:6px 12px" onclick="addCacheFolder()">+ Add Folder</button>
+          <div id="cache-folders-msg" style="font-size:.78rem;margin-top:8px;min-height:1em;color:var(--pra-dim)"></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
 
           <!-- Writing archive -->
-          <div class="pra-card" style="padding:18px">
-            <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase;margin-bottom:10px">Writing Archive</div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span id="cache-writing-dot" style="width:8px;height:8px;border-radius:50%;background:var(--pra-dim);flex-shrink:0"></span>
-              <span id="cache-writing-count" style="font-size:1.25rem;font-weight:700;color:var(--pra-white)">—</span>
-              <span class="pra-muted" style="font-size:.8rem">chunks</span>
+          <div>
+            <div class="pra-card" style="padding:16px;margin-bottom:10px">
+              <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase;margin-bottom:10px">Writing Archive</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+                <span id="cache-writing-dot" style="width:8px;height:8px;border-radius:50%;background:var(--pra-dim);flex-shrink:0"></span>
+                <span id="cache-writing-count" style="font-size:1.2rem;font-weight:700;color:var(--pra-white)">—</span>
+                <span class="pra-muted" style="font-size:.8rem">chunks</span>
+              </div>
+              <div class="pra-muted" style="font-size:.78rem;margin-bottom:3px">Last synced: <span id="cache-writing-synced">—</span></div>
+              <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Source: <a style="color:var(--pra-blue);font-family:monospace;font-size:.74rem;text-decoration:none" id="cache-writing-repo" target="_blank">—</a></div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <button class="pra-btn" id="cache-writing-btn" style="font-size:.8rem;padding:6px 14px" onclick="syncWritingCache()">Sync Now</button>
+                <span id="cache-writing-msg" style="font-size:.78rem;color:var(--pra-dim)"></span>
+              </div>
             </div>
-            <div class="pra-muted" style="font-size:.78rem;margin-bottom:4px">Last synced: <span id="cache-writing-synced">—</span></div>
-            <div class="pra-muted" style="font-size:.78rem;margin-bottom:14px">Source: <span style="color:var(--pra-blue);font-family:monospace;font-size:.74rem" id="cache-writing-repo">—</span></div>
-            <button class="pra-btn" id="cache-writing-btn" style="font-size:.8rem;padding:7px 14px" onclick="syncWritingCache()">Sync Now</button>
-            <div id="cache-writing-msg" style="font-size:.78rem;margin-top:8px;min-height:1em;color:var(--pra-dim)"></div>
+            <input class="pra-input" id="cache-writing-search" placeholder="Search writing archive…" style="margin-bottom:6px;font-size:.82rem" oninput="filterChunks('writing')">
+            <div id="cache-writing-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
           </div>
 
           <!-- Sales conversations -->
-          <div class="pra-card" style="padding:18px">
-            <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase;margin-bottom:10px">Sales Conversations</div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span id="cache-sales-dot" style="width:8px;height:8px;border-radius:50%;background:var(--pra-dim);flex-shrink:0"></span>
-              <span id="cache-sales-count" style="font-size:1.25rem;font-weight:700;color:var(--pra-white)">—</span>
-              <span class="pra-muted" style="font-size:.8rem">chunks</span>
+          <div>
+            <div class="pra-card" style="padding:16px;margin-bottom:10px">
+              <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase;margin-bottom:10px">Sales Conversations</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+                <span id="cache-sales-dot" style="width:8px;height:8px;border-radius:50%;background:var(--pra-dim);flex-shrink:0"></span>
+                <span id="cache-sales-count" style="font-size:1.2rem;font-weight:700;color:var(--pra-white)">—</span>
+                <span class="pra-muted" style="font-size:.8rem">chunks</span>
+              </div>
+              <div class="pra-muted" style="font-size:.78rem">Last updated: <span id="cache-sales-updated">—</span></div>
             </div>
-            <div class="pra-muted" style="font-size:.78rem">Last updated: <span id="cache-sales-updated">—</span></div>
+            <input class="pra-input" id="cache-sales-search" placeholder="Search sales conversations…" style="margin-bottom:6px;font-size:.82rem" oninput="filterChunks('sales')">
+            <div id="cache-sales-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
           </div>
 
         </div>
@@ -1128,6 +1154,8 @@ loadConversionSettings();
 loadAdsSettings();
 
 // ── Cache tab ──────────────────────────────────────────────────────────────────
+const _cacheChunks = { writing: [], sales: [] };
+
 function fmtTs(iso) {
   if (!iso) return 'never';
   const d = new Date(iso);
@@ -1139,6 +1167,31 @@ function fmtSize(bytes) {
   return bytes > 1e6 ? ` · ${(bytes/1e6).toFixed(1)} MB` : ` · ${(bytes/1e3).toFixed(0)} KB`;
 }
 
+function renderChunkList(type, chunks) {
+  const el = document.getElementById(`cache-${type}-list`);
+  if (!chunks.length) { el.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:8px">No results</div>'; return; }
+  el.innerHTML = chunks.map(c => {
+    const src = c.source || c.doc || c.title || c.name || '';
+    const preview = c.preview || '';
+    return `<div style="padding:8px 10px;background:var(--pra-panel-2);border:1px solid var(--pra-border);border-radius:6px">
+      <div style="font-size:.8rem;font-weight:600;color:var(--pra-white);margin-bottom:2px">${src}</div>
+      ${preview ? `<div class="pra-muted" style="font-size:.74rem;line-height:1.4">${preview}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function filterChunks(type) {
+  const q = document.getElementById(`cache-${type}-search`).value.toLowerCase();
+  const filtered = q
+    ? _cacheChunks[type].filter(c => {
+        const src = (c.source || c.doc || c.title || c.name || '').toLowerCase();
+        const pre = (c.preview || '').toLowerCase();
+        return src.includes(q) || pre.includes(q);
+      })
+    : _cacheChunks[type];
+  renderChunkList(type, filtered.slice(0, 200));
+}
+
 async function loadCacheStatus() {
   try {
     const r = await fetch('/api/cache/status');
@@ -1147,14 +1200,83 @@ async function loadCacheStatus() {
     document.getElementById('cache-writing-dot').style.background = w.count > 0 ? 'var(--pra-blue)' : 'var(--pra-dim)';
     document.getElementById('cache-writing-count').textContent = w.count.toLocaleString();
     document.getElementById('cache-writing-synced').textContent = fmtTs(w.lastSyncAt) + fmtSize(w.sizeBytes);
-    document.getElementById('cache-writing-repo').textContent = w.repo || '';
+    const repoEl = document.getElementById('cache-writing-repo');
+    repoEl.textContent = w.repo || '';
+    if (w.repo) repoEl.href = `https://github.com/${w.repo}`;
     const s = d.sales;
     document.getElementById('cache-sales-dot').style.background = s.count > 0 ? 'var(--pra-blue)' : 'var(--pra-dim)';
     document.getElementById('cache-sales-count').textContent = s.count.toLocaleString();
     document.getElementById('cache-sales-updated').textContent = fmtTs(s.updatedAt) + fmtSize(s.sizeBytes);
-  } catch (e) {
-    console.error('cache status error', e);
+  } catch(e) { console.error('cache status', e); }
+}
+
+async function loadCacheChunks(type) {
+  const listEl = document.getElementById(`cache-${type}-list`);
+  listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:8px">Loading…</div>';
+  try {
+    const r = await fetch(`/api/cache/chunks?type=${type}`);
+    const d = await r.json();
+    _cacheChunks[type] = d.chunks || [];
+    renderChunkList(type, _cacheChunks[type].slice(0, 200));
+  } catch(e) {
+    listEl.innerHTML = `<div style="color:#ff5555;font-size:.8rem;padding:8px">Error: ${e.message}</div>`;
   }
+}
+
+// ── Script Folders ─────────────────────────────────────────────────────────────
+let _cacheFolders = [];
+
+function renderCacheFolders() {
+  const el = document.getElementById('cache-folders-list');
+  if (!_cacheFolders.length) { el.innerHTML = ''; return; }
+  el.innerHTML = _cacheFolders.map((f, i) => `
+    <div style="display:grid;grid-template-columns:1fr 2fr 120px 32px;gap:8px;align-items:center">
+      <input class="pra-input" style="font-size:.82rem" value="${f.label||''}" oninput="_cacheFolders[${i}].label=this.value" placeholder="Label">
+      <input class="pra-input" style="font-size:.82rem" value="${f.folderId||''}" oninput="_cacheFolders[${i}].folderId=this.value" placeholder="Folder ID">
+      <select class="pra-input" style="font-size:.82rem" onchange="_cacheFolders[${i}].brand=this.value">
+        <option value="pra" ${f.brand==='pra'?'selected':''}>pra</option>
+        <option value="pb" ${f.brand==='pb'?'selected':''}>pb</option>
+        <option value="lw" ${f.brand==='lw'?'selected':''}>lw</option>
+      </select>
+      <button class="pra-btn-ghost pra-btn" style="padding:0;width:28px;height:28px;font-size:14px;color:#ff5555;border-color:transparent" onclick="removeCacheFolder(${i})">×</button>
+    </div>`).join('');
+}
+
+function addCacheFolder() {
+  _cacheFolders.push({ label: '', folderId: '', brand: 'pra' });
+  renderCacheFolders();
+}
+
+function removeCacheFolder(i) {
+  _cacheFolders.splice(i, 1);
+  renderCacheFolders();
+}
+
+async function saveCacheFolders() {
+  const msg = document.getElementById('cache-folders-msg');
+  try {
+    const r = await fetch('/api/cache/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folders: _cacheFolders }),
+    });
+    if (!r.ok) throw new Error(r.status);
+    msg.style.color = 'var(--pra-blue)';
+    msg.textContent = 'Saved';
+    setTimeout(() => msg.textContent = '', 2000);
+  } catch(e) {
+    msg.style.color = '#ff5555';
+    msg.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function loadCacheFolders() {
+  try {
+    const r = await fetch('/api/cache/folders');
+    const d = await r.json();
+    _cacheFolders = d.folders || [];
+    renderCacheFolders();
+  } catch(e) { console.error('cache folders', e); }
 }
 
 async function syncWritingCache() {
@@ -1170,8 +1292,9 @@ async function syncWritingCache() {
     if (!r.ok) throw new Error(d.error || r.status);
     msg.style.color = 'var(--pra-blue)';
     msg.textContent = `Done — ${d.count.toLocaleString()} chunks${fmtSize(d.sizeBytes)}`;
-    loadCacheStatus();
-  } catch (e) {
+    await loadCacheStatus();
+    await loadCacheChunks('writing');
+  } catch(e) {
     msg.style.color = '#ff5555';
     msg.textContent = 'Error: ' + e.message;
   } finally {
@@ -1180,8 +1303,12 @@ async function syncWritingCache() {
   }
 }
 
-// Load cache status when the tab is opened
-document.querySelector('[data-tab="cache"]').addEventListener('click', loadCacheStatus);
+document.querySelector('[data-tab="cache"]').addEventListener('click', () => {
+  loadCacheStatus();
+  loadCacheFolders();
+  loadCacheChunks('writing');
+  loadCacheChunks('sales');
+});
 </script>
 </body>
 </html>
