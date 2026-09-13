@@ -189,6 +189,16 @@
   .resp-row.open .resp-answers { display: block; }
   .resp-answers .qa { padding: 4px 0; }
   .resp-answers .q { color: var(--pra-dim); font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; }
+  .do-row { padding: 12px 0; border-bottom: 1px solid var(--pra-border); }
+  .do-row:last-child { border-bottom: none; }
+  .do-row.completed .do-label { color: var(--pra-green); }
+  .do-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 12px; }
+  .do-label { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+  .do-stats { font-size: .78rem; color: var(--pra-dim); white-space: nowrap; }
+  .do-bar-track { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .do-bar-fill { height: 100%; border-radius: 4px; background: var(--pra-blue); }
+  .do-row.completed .do-bar-fill { background: var(--pra-green); }
+  .do-drop { color: var(--pra-red); font-size: .76rem; margin-top: 4px; }
 
   .picker-add-select { max-width: 100%; }
   .picker-chips { margin-top: 8px; }
@@ -214,6 +224,7 @@
       <div class="tabs">
         <button class="tab-btn active" data-tab="build">Build</button>
         <button class="tab-btn" data-tab="responses">Responses</button>
+        <button class="tab-btn" data-tab="dropoffs">Drop-offs</button>
       </div>
 
       <div class="tab-panel active" id="tab-build">
@@ -279,6 +290,11 @@
 
       <div class="tab-panel" id="tab-responses">
         <div class="pra-panel" style="padding:8px 20px" id="responsesList"><div class="pra-muted" style="padding:16px 0">Loading…</div></div>
+      </div>
+
+      <div class="tab-panel" id="tab-dropoffs">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Distinct visitors who reached each step, and the percentage that dropped off before the next one. Only tracked from today onward — steps won't show history from before this feature shipped.</div>
+        <div class="pra-panel" style="padding:8px 20px" id="dropoffsList"><div class="pra-muted" style="padding:16px 0">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -1845,6 +1861,32 @@ async function loadResponses() {
   wrap.querySelectorAll('[data-resp-idx]').forEach(row => row.onclick = () => row.classList.toggle('open'));
 }
 
+// ── Drop-offs tab ────────────────────────────────────────────────────────
+async function loadDropoffs() {
+  const wrap = document.getElementById('dropoffsList');
+  const r = await fetch(`/api/forms/${form.id}/dropoffs`);
+  if (!r.ok) { wrap.innerHTML = '<div class="pra-muted" style="padding:16px 0">Could not load drop-off data.</div>'; return; }
+  const { steps, completed } = await r.json();
+  const rows = [...steps.map(s => ({ label: s.label, count: s.views })), { label: 'Completed', count: completed }];
+  const base = rows[0]?.count || 0;
+  if (!base) { wrap.innerHTML = '<div class="pra-muted" style="padding:16px 0">No visits recorded yet — this fills in once people start viewing the form.</div>'; return; }
+  wrap.innerHTML = rows.map((row, i) => {
+    const pctOfStart = Math.round((row.count / base) * 100);
+    const prev = rows[i - 1];
+    const dropFromPrev = prev && prev.count > 0 ? Math.round((1 - row.count / prev.count) * 100) : 0;
+    const isCompleted = i === rows.length - 1;
+    return `
+      <div class="do-row${isCompleted ? ' completed' : ''}">
+        <div class="do-top">
+          <span class="do-label">${escapeHtml(isCompleted ? 'Completed' : `Step ${i + 1}: ${row.label}`)}</span>
+          <span class="do-stats">${row.count} · ${pctOfStart}%</span>
+        </div>
+        <div class="do-bar-track"><div class="do-bar-fill" style="width:${pctOfStart}%"></div></div>
+        ${i > 0 && dropFromPrev > 0 ? `<div class="do-drop">&darr; ${dropFromPrev}% dropped off from the previous step</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
 // ── Left sidebar: Automate (Flows scoped to this form) ──────────────────
 // Flows already own the Google Sheets / Email Automation / SMS Sequence
 // engine (flows_backend.js) -- this is just a shortcut so "route this
@@ -1901,6 +1943,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.onclick = () 
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
   if (btn.dataset.tab === 'responses') loadResponses();
+  if (btn.dataset.tab === 'dropoffs') loadDropoffs();
 });
 
 (async function init() {

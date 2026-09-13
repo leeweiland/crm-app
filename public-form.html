@@ -248,6 +248,30 @@ let form = null, steps = [], stepIndex = 0, answers = {};
 // here so every fresh renderStep() can cancel any leftover timer first.
 let autoAdvanceTimer = null;
 
+// Per-visit id used ONLY for step-view drop-off analytics (Forms > Drop-offs
+// tab) -- deliberately separate from visitorId/vid above (that's the ad-
+// attribution identity from the parent page's cookie, blank for most direct/
+// organic traffic, which would collapse every such visitor into one "1
+// visitor" bucket). sessionStorage so a fresh tab/new visit counts as a new
+// funnel attempt, but Back/Next within one sitting still dedupes correctly.
+function stepViewSid() {
+  const key = 'pf_svid_' + formId;
+  try {
+    let v = sessionStorage.getItem(key);
+    if (!v) { v = crypto.randomUUID ? crypto.randomUUID() : (Math.random().toString(36).slice(2) + Date.now()); sessionStorage.setItem(key, v); }
+    return v;
+  } catch { return Math.random().toString(36).slice(2) + Date.now(); }
+}
+const pingedSteps = new Set();
+function pingStepView(idx) {
+  if (pingedSteps.has(idx)) return;
+  pingedSteps.add(idx);
+  fetch(`/api/public/forms/${formId}/step-view`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stepIndex: idx, sid: stepViewSid() }),
+  }).catch(() => {});
+}
+
 // Same split as form-builder.html/forms_backend.js's ANSWERABLE_TYPES.
 const NON_ANSWERABLE_TYPES = ['statement', 'headline', 'image', 'video', 'calendar', 'page_break'];
 // Same map as form-builder.html's VIDEO_ASPECT_PADDING, for the same field.videoAspect value set there.
@@ -647,6 +671,7 @@ function bookCalendarStep() {
 
 function renderStep() {
   clearTimeout(autoAdvanceTimer);
+  pingStepView(stepIndex);
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
   const card = document.getElementById('pfCard');

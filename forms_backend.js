@@ -15,6 +15,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const FORMS_FILE = "crm_forms.json";
 export const RESPONSES_FILE = "crm_form_responses.json";
+// Best-effort funnel analytics only (Forms > Drop-offs tab) -- { [formId]:
+// { [stepIndex]: [sid, sid, ...] } }, one entry per DISTINCT visitor who
+// reached that step at least once. Keyed by a client-generated sessionStorage
+// id (see public-form.html's stepViewSid), deliberately separate from the
+// vid/visitorId ad-attribution cookie since that one is blank for most
+// direct/organic traffic and would undercount every step to "1 visitor."
+export const STEP_VIEWS_FILE = "crm_form_step_views.json";
 
 // "statement"/"headline"/"image"/"video"/"calendar" are display-only content
 // blocks (no answer), "page_break" is a layout marker (splits the public
@@ -441,6 +448,27 @@ export async function handleFormsRequest(req, res, url) {
     }
   }
 
+  // Best-effort funnel beacon -- fired once per step by public-form.html's
+  // renderStep. Never blocks/errors toward the visitor either way (a bad
+  // body or an unpublished/missing form just no-ops), since this only feeds
+  // the Drop-offs tab, not the actual submission.
+  const stepViewMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/step-view$/);
+  if (stepViewMatch && req.method === "POST") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === stepViewMatch[1]);
+    if (form && form.status === "published") {
+      const { stepIndex, sid } = await readJsonBody(req).catch(() => ({}));
+      const idx = Number(stepIndex);
+      if (Number.isInteger(idx) && idx >= 0 && sid) {
+        const views = readJson(STEP_VIEWS_FILE, {});
+        const forForm = views[form.id] || (views[form.id] = {});
+        const arr = forForm[idx] || (forForm[idx] = []);
+        if (!arr.includes(sid)) { arr.push(sid); writeJson(STEP_VIEWS_FILE, views); }
+      }
+    }
+    return sendJson(res, 200, { ok: true });
+  }
+
   const submitMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/submit$/);
   if (submitMatch && req.method === "POST") {
     const forms = readJson(FORMS_FILE, []);
@@ -600,6 +628,34 @@ export async function handleFormsRequest(req, res, url) {
     const responses = readJson(RESPONSES_FILE, []);
     writeJson(RESPONSES_FILE, responses.filter(r => !(r.formId === deleteResponseMatch[1] && r.id === deleteResponseMatch[2])));
     return sendJson(res, 200, { ok: true });
+  }
+
+  // One row per step (same page_break split as public-form.html's own
+  // buildSteps) -- distinct-visitor count who ever reached it, plus the real
+  // completion count from RESPONSES_FILE as the final "Completed" row (a step
+  // can be VIEWED without the form ever being submitted, e.g. it ends in a
+  // calendar step that's abandoned before booking).
+  const dropoffsMatch = p.match(/^\/api\/forms\/([^/]+)\/dropoffs$/);
+  if (dropoffsMatch && req.method === "GET") {
+    const forms = readJson(FORMS_FILE, []);
+    const form = forms.find(f => f.id === dropoffsMatch[1]);
+    if (!form) return sendJson(res, 404, { error: "Form not found" });
+    const stepCount = form.fields.reduce((n, f) => n + (f.type === "page_break" ? 1 : 0), 0) + 1;
+    const stepLabels = [];
+    let cur = [];
+    for (const f of form.fields) {
+      if (f.type === "page_break") { stepLabels.push(cur); cur = []; continue; }
+      cur.push(f);
+    }
+    stepLabels.push(cur);
+    const views = readJson(STEP_VIEWS_FILE, {})[form.id] || {};
+    const steps = Array.from({ length: stepCount }, (_, i) => ({
+      views: (views[i] || []).length,
+      label: (stepLabels[i]?.find(f => !["statement", "headline", "image", "video", "calendar", "page_break"].includes(f.type))?.label)
+        || stepLabels[i]?.find(f => f.label)?.label || `Step ${i + 1}`,
+    }));
+    const completed = readJson(RESPONSES_FILE, []).filter(r => r.formId === form.id).length;
+    return sendJson(res, 200, { steps, completed });
   }
 
   return false;
