@@ -59,11 +59,21 @@ async function fetchLiveGoogleCampaigns(startStr, endStr) {
 // platform is configured, so fetchAdsReport can cleanly fall back to the
 // sheet's own spend numbers instead of failing the whole report.
 async function fetchLiveAdSpend(startStr, endStr) {
-  const [metaRows, googleRows] = await Promise.all([
+  // Caught independently -- one platform's failure (bad token, wrong ad
+  // account, API error) shouldn't hide the other's real status, and
+  // shouldn't silently zero out a platform that's actually configured
+  // and working.
+  const [metaSettled, googleSettled] = await Promise.allSettled([
     fetchLiveMetaCampaigns(startStr, endStr),
     fetchLiveGoogleCampaigns(startStr, endStr),
   ]);
-  if (metaRows === null && googleRows === null) return null;
+  const metaRows = metaSettled.status === "fulfilled" ? metaSettled.value : null;
+  const googleRows = googleSettled.status === "fulfilled" ? googleSettled.value : null;
+  const metaError = metaSettled.status === "rejected" ? metaSettled.reason.message : null;
+  const googleError = googleSettled.status === "rejected" ? googleSettled.reason.message : null;
+  if (metaRows === null && googleRows === null) {
+    throw new Error([metaError, googleError].filter(Boolean).join(" | ") || "neither platform configured");
+  }
   const buckets = { online: { metaSpend: 0, googleSpend: 0, spend: 0, impressions: 0, clicks: 0 }, gym: { metaSpend: 0, googleSpend: 0, spend: 0, impressions: 0, clicks: 0 } };
   (metaRows || []).forEach(row => {
     const b = buckets[categorizeCampaign(row.name)];
@@ -73,6 +83,10 @@ async function fetchLiveAdSpend(startStr, endStr) {
     const b = buckets[categorizeCampaign(row.name)];
     b.googleSpend += row.spend; b.spend += row.spend; b.impressions += row.impressions; b.clicks += row.clicks;
   });
+  // Partial errors (one platform worked, the other threw) surface here
+  // instead of vanishing -- a wrong number silently missing one platform
+  // is worse than an ugly-but-honest error string next to real data.
+  buckets.partialError = metaRows === null ? metaError : googleRows === null ? googleError : null;
   return buckets;
 }
 
@@ -210,7 +224,8 @@ async function fetchAdsReport(period, customStart, customEnd) {
   // (or whatever eventually replaces it for those fields) still supplies
   // those. If this fails or isn't configured, spend below just falls back
   // to whatever's in the sheet, same as before.
-  const liveSpendPromise = fetchLiveAdSpend(startStr, endStr).catch(() => null);
+  let liveSpendError = null;
+  const liveSpendPromise = fetchLiveAdSpend(startStr, endStr).catch(e => { liveSpendError = e.message; return null; });
 
   const { clientId, clientSecret, refreshToken } = googleCreds();
   const sheetConfigured = !!(clientId && clientSecret && refreshToken);
@@ -292,7 +307,8 @@ async function fetchAdsReport(period, customStart, customEnd) {
 
   return {
     ok: true, period, start: startStr, end: endStr, monthLabels,
-    onlineSheetExists: onlineResult.exists, gymSheetExists: gymResult.exists, liveSpendUsed: !!liveSpend,
+    onlineSheetExists: onlineResult.exists, gymSheetExists: gymResult.exists,
+    liveSpendUsed: !!liveSpend, liveSpendError: liveSpend?.partialError || liveSpendError,
     online: o, gym: g, combined,
   };
 }
