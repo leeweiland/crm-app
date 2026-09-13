@@ -100,7 +100,6 @@
           <button class="tab-btn active" data-tab="overview">Overview</button>
           <button class="tab-btn" data-tab="email">Email</button>
           <button class="tab-btn" data-tab="sms">SMS</button>
-          <button class="tab-btn" data-tab="ads">Ads</button>
           <button class="tab-btn" data-tab="attribution">Ad Attribution</button>
           <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
           <button class="tab-btn" data-tab="team">Team Activity</button>
@@ -189,13 +188,8 @@
         </div>
       </div>
 
-      <div class="tab-panel" id="tab-ads">
-        <div class="pra-muted" id="adsMsg" style="font-size:.82rem;margin-bottom:14px"></div>
-        <div class="ads-cards" id="adsCards"></div>
-      </div>
-
       <div class="tab-panel" id="tab-attribution">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Click-to-conversion attribution by source -- every tracked email/SMS/campaign link (via its <code>el=</code> tag) plus real Meta/Google ad clicks (via that platform's own tracking template) -- distinct from the Ads tab, which shows ad spend from your Google Sheet. This is conversion data from this app's own tracking: how many visits each source drove, and of the contacts who opted in, how many went on to book and enroll. Each contact is credited to their EARLIEST tracked touch, even if they clicked something else later. Click any count to see the actual contacts behind it.</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Click-to-conversion attribution by source -- every tracked email/SMS/campaign link (via its <code>el=</code> tag) plus real Meta/Google ad clicks (via that platform's own tracking template) -- distinct from the Online/Gym/Combined cards at the top of Overview, which show ad spend and conversion totals. This is conversion data from this app's own tracking: how many visits each source drove, and of the contacts who opted in, how many went on to book and enroll. Each contact is credited to their EARLIEST tracked touch, even if they clicked something else later. Click any count to see the actual contacts behind it.</div>
         <div class="pra-panel" style="padding:0;overflow-x:auto">
           <table class="pra-table" style="width:100%;min-width:640px">
             <thead><tr>
@@ -317,7 +311,7 @@ async function applyPeriod() {
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
   setReportLoading(true);
-  const tasks = [loadEmailReport(), loadSmsReport(), loadAdsReport(), loadAttributionReport(), loadTeamActivityReport()];
+  const tasks = [loadEmailReport(), loadSmsReport(), loadAttributionReport(), loadTeamActivityReport()];
   if (document.getElementById('tab-overview').classList.contains('active')) tasks.push(loadOverview());
   try { await Promise.all(tasks); } finally { setReportLoading(false); }
 }
@@ -548,21 +542,6 @@ function adsSegmentCardHtml(title, data) {
     </div>
   `;
 }
-async function loadAdsReport() {
-  const msg = document.getElementById('adsMsg');
-  const cards = document.getElementById('adsCards');
-  msg.textContent = 'Loading…';
-  const r = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);
-  const d = await r.json().catch(() => ({ ok: false, error: 'Request failed' }));
-  if (!d.ok) {
-    msg.innerHTML = `${escapeHtml(d.error || 'Could not load ads data.')} Configure this under <a class="pra-link" href="/settings.html">Settings &rarr; Ads</a>.`;
-    cards.innerHTML = '';
-    return;
-  }
-  msg.textContent = `${d.start} to ${d.end}`;
-  cards.innerHTML = adsSegmentCardHtml('Online', d.online) + adsSegmentCardHtml('Gym', d.gym) + adsSegmentCardHtml('Combined', d.combined);
-}
-
 // ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
 let allAttributionSources = [];
 let attributionSort = { field: 'visits', dir: -1 };
