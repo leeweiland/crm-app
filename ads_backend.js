@@ -16,7 +16,33 @@ function getAdsSettings() {
     sheetId: a.sheetId || DEFAULT_SHEET_ID,
     onlinePrefix: a.onlinePrefix || "ONLINE",
     gymPrefix: a.gymPrefix || "GYM",
+    // One or more Coupler.io "incoming webhook" URLs (one per data flow --
+    // e.g. separate Online/Gym or Meta/Google flows), newline or comma
+    // separated. Coupler.io flows run on their own daily schedule already;
+    // this just lets the Manual Update button ask for an out-of-schedule
+    // run up to right now, without touching that schedule.
+    couplerWebhookUrls: a.couplerWebhookUrls || "",
   };
+}
+
+// Fire-and-wait, not fire-and-forget -- the caller (the Manual Update
+// button) needs the flows to have actually STARTED before it re-reads the
+// sheet, but a Coupler.io flow run itself can take well past any request
+// timeout, so this only confirms the trigger was accepted, never waits for
+// the flow to finish. The frontend adds its own delay before re-fetching.
+async function triggerCouplerRefresh() {
+  const { couplerWebhookUrls } = getAdsSettings();
+  const urls = couplerWebhookUrls.split(/[\n,]/).map(u => u.trim()).filter(Boolean);
+  if (!urls.length) return { ok: false, reason: "no_webhooks_configured" };
+  const results = await Promise.all(urls.map(async (url) => {
+    try {
+      const r = await fetch(url, { method: "POST" });
+      return { url, ok: r.ok, status: r.status };
+    } catch (e) {
+      return { url, ok: false, reason: e.message };
+    }
+  }));
+  return { ok: results.every(r => r.ok), triggered: results };
 }
 
 // Same in-app-settings pattern as SES/Twilio (Settings -> paste into a form
@@ -186,7 +212,11 @@ export async function handleAdsRequest(req, res, url) {
 
   if (p === "/api/ads/config-status" && req.method === "GET") {
     const { clientId, clientSecret, refreshToken } = googleCreds();
-    return sendJson(res, 200, { configured: !!(clientId && clientSecret && refreshToken), tokenSaved: !!refreshToken, ...getAdsSettings() });
+    // couplerWebhookUrls holds live trigger URLs -- kept out of this
+    // any-logged-in-user endpoint the same way googleRefreshToken already
+    // is (a "was it set" boolean only, not the value itself).
+    const { couplerWebhookUrls, ...adsSettings } = getAdsSettings();
+    return sendJson(res, 200, { configured: !!(clientId && clientSecret && refreshToken), tokenSaved: !!refreshToken, couplerWebhookUrlsSet: !!couplerWebhookUrls, ...adsSettings });
   }
 
   if (p === "/api/ads/settings" && req.method === "POST") {
@@ -195,8 +225,18 @@ export async function handleAdsRequest(req, res, url) {
     const all = readSettings();
     all.ads = all.ads || {};
     for (const k of ["sheetId", "onlinePrefix", "gymPrefix", "googleRefreshToken"]) if (k in body) all.ads[k] = String(body[k]).trim();
+    // Not returned by config-status (see that handler) -- only overwrite
+    // when the admin actually typed something, same "blank means untouched"
+    // rule as every masked secret field in this app.
+    if ("couplerWebhookUrls" in body && String(body.couplerWebhookUrls).trim()) all.ads.couplerWebhookUrls = String(body.couplerWebhookUrls).trim();
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === "/api/ads/manual-update" && req.method === "POST") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const result = await triggerCouplerRefresh();
+    return sendJson(res, 200, result);
   }
 
   if (p === "/api/ads/report" && req.method === "GET") {

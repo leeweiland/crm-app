@@ -132,8 +132,7 @@
               </div>
             </div>
           </div>
-          <button class="pra-btn pra-btn-sm" id="updateReportBtn">Update</button>
-          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="refreshAdsBtn" title="Ads data comes from a Google Sheet updated separately">Refresh Data</button>
+          <button class="pra-btn pra-btn-sm" id="manualUpdateBtn" title="Re-loads this view. If a Coupler.io refresh webhook is configured (Settings -> Ads), also asks it to pull fresh ad data right now -- this doesn't replace its own automatic daily run.">Manual Update</button>
           <span class="pra-muted" id="periodRangeMsg" style="font-size:.8rem"></span>
           <span class="pra-muted" id="reportLoadingMsg" style="font-size:.8rem;display:none"><span class="rep-spin-icon">&#8635;</span> Loading&hellip;</span>
         </div>
@@ -318,10 +317,11 @@ async function applyPeriod() {
   if (document.getElementById('tab-overview').classList.contains('active')) tasks.push(loadOverview());
   try { await Promise.all(tasks); } finally { setReportLoading(false); }
 }
-function setReportLoading(loading) {
-  document.getElementById('reportLoadingMsg').style.display = loading ? 'inline' : 'none';
-  document.getElementById('updateReportBtn').disabled = loading;
-  document.getElementById('refreshAdsBtn').disabled = loading;
+function setReportLoading(loading, label) {
+  const msg = document.getElementById('reportLoadingMsg');
+  msg.style.display = loading ? 'inline' : 'none';
+  if (loading) msg.innerHTML = `<span class="rep-spin-icon">&#8635;</span> ${label || 'Loading&hellip;'}`;
+  document.getElementById('manualUpdateBtn').disabled = loading;
 }
 
 // ── Custom date-range calendar popover -- click start day, then end day
@@ -408,7 +408,23 @@ async function loadTeamActivityReport() {
   renderTeamSentTable('teamSmsTable', rows.map(row => ({ name: row.name, ...row.sms })), categories);
 }
 document.getElementById('periodSelect').addEventListener('change', applyPeriod);
-document.getElementById('updateReportBtn').onclick = applyPeriod;
+// Manual Update: triggers Coupler.io's on-demand webhook (if configured in
+// Settings -> Ads) to pull ad data up to right now, waits a bit for that
+// flow to actually land in the sheet, then re-loads everything -- one
+// button instead of the old Update/Refresh Data split, which did the same
+// re-load either way and never actually triggered a fresh pull. Doesn't
+// touch Coupler.io's own automatic daily run, which still overwrites with
+// a clean pass on its own schedule regardless of this.
+const COUPLER_SETTLE_MS = 12000;
+document.getElementById('manualUpdateBtn').onclick = async () => {
+  setReportLoading(true, 'Triggering refresh&hellip;');
+  const r = await fetch('/api/ads/manual-update', { method: 'POST' }).then(r => r.json()).catch(() => ({ ok: false }));
+  if (r.triggered?.length) {
+    setReportLoading(true, 'Pulling latest data&hellip;');
+    await new Promise(res => setTimeout(res, COUPLER_SETTLE_MS));
+  }
+  await applyPeriod();
+};
 
 const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
 const EMAIL_OVERVIEW_LABELS = { sent: 'Sent', opened: 'Opened', clicked: 'Clicked' };
@@ -495,10 +511,6 @@ async function loadAdsReport() {
   msg.textContent = `${d.start} to ${d.end}`;
   cards.innerHTML = adsSegmentCardHtml('Online', d.online) + adsSegmentCardHtml('Gym', d.gym) + adsSegmentCardHtml('Combined', d.combined);
 }
-document.getElementById('refreshAdsBtn').onclick = async () => {
-  showToast('Re-pulling from the Google Sheet -- ad spend itself only reflects what\'s in the sheet, so update that first if you need newer numbers.');
-  await applyPeriod();
-};
 
 // ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
 let allAttributionSources = [];

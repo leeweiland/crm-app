@@ -272,6 +272,11 @@
           <div class="field"><label class="pra-label">Gym tab prefix</label><input class="pra-input" id="adsGymPrefix"/></div>
         </div>
         <div class="field"><label class="pra-label">Google Sheets refresh token</label><input class="pra-input" type="password" id="adsGoogleToken" autocomplete="off" placeholder="Paste token here"/></div>
+        <div class="field">
+          <label class="pra-label">Coupler.io refresh webhook URL(s)</label>
+          <textarea class="pra-input" id="adsCouplerWebhooks" rows="3" placeholder="One per line -- from each data flow's Settings -> Webhooks in Coupler.io"></textarea>
+        </div>
+        <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Lets Reporting's "Manual Update" button ask Coupler.io to pull fresh data right now, on top of its own automatic daily run. One flow per line if you have separate Online/Gym or Meta/Google flows.</div>
         <button class="pra-btn" id="saveAdsBtn">Save</button>
         <div class="pra-muted" id="adsSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
@@ -968,6 +973,9 @@ async function loadAdsSettings() {
   document.getElementById('adsOnlinePrefix').value = a.onlinePrefix || '';
   document.getElementById('adsGymPrefix').value = a.gymPrefix || '';
   document.getElementById('adsGoogleToken').value = a.googleRefreshToken || '';
+  document.getElementById('adsCouplerWebhooks').placeholder = a.couplerWebhookUrlsSet
+    ? 'Saved — leave blank to keep it'
+    : 'One per line -- from each data flow\'s Settings -> Webhooks in Coupler.io';
 }
 document.getElementById('saveAdsBtn').onclick = async () => {
   const body = {
@@ -976,7 +984,10 @@ document.getElementById('saveAdsBtn').onclick = async () => {
     gymPrefix: document.getElementById('adsGymPrefix').value.trim(),
     googleRefreshToken: document.getElementById('adsGoogleToken').value.trim(),
   };
+  const couplerWebhooks = document.getElementById('adsCouplerWebhooks').value.trim();
+  if (couplerWebhooks) body.couplerWebhookUrls = couplerWebhooks;
   const r = await fetch('/api/ads/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('adsCouplerWebhooks').value = '';
   document.getElementById('adsSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
   if (r.ok) loadAdsSettings();
 };
