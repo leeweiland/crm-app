@@ -30,7 +30,7 @@
      panel (not tabs), canvas on the right. Share lives in the header's
      Embed modal, same pattern as scheduling-editor.html. ── */
   .fb-layout { display: flex; gap: 24px; align-items: flex-start; }
-  .fb-sidebar { width: 300px; flex-shrink: 0; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; padding-bottom: 20px; }
+  .fb-sidebar { width: 300px; flex-shrink: 0; position: sticky; top: calc(var(--fb-header-h, 140px) + 16px); max-height: calc(100vh - var(--fb-header-h, 140px) - 32px); overflow-y: auto; padding-bottom: 20px; }
   .fb-side-section { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
   .fb-side-title { font-family: var(--font-primary); font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pra-dim); margin-bottom: 12px; }
   .fb-side-section .field { margin-bottom: 12px; }
@@ -212,19 +212,21 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <a class="pra-link" href="/forms.html">&larr; Back to Forms</a>
-      <div class="fb-header" style="margin-top:14px">
-        <input class="fb-name-input" id="formName"/>
-        <button class="status-toggle-btn" id="statusToggle"></button>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="embedBtn">Embed</button>
-        <a class="pra-btn pra-btn-ghost pra-btn-sm" id="viewLink" target="_blank">View</a>
-      </div>
-      <div class="pra-muted" id="savedMsg" style="font-size:.76rem">&nbsp;</div>
+      <div class="mobile-sticky-header">
+        <a class="pra-link" href="/forms.html">&larr; Back to Forms</a>
+        <div class="fb-header" style="margin-top:14px">
+          <input class="fb-name-input" id="formName"/>
+          <button class="status-toggle-btn" id="statusToggle"></button>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="embedBtn">Embed</button>
+          <a class="pra-btn pra-btn-ghost pra-btn-sm" id="viewLink" target="_blank">View</a>
+        </div>
+        <div class="pra-muted" id="savedMsg" style="font-size:.76rem">&nbsp;</div>
 
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="build">Build</button>
-        <button class="tab-btn" data-tab="responses">Responses</button>
-        <button class="tab-btn" data-tab="dropoffs">Drop-offs</button>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="build">Build</button>
+          <button class="tab-btn" data-tab="responses">Responses</button>
+          <button class="tab-btn" data-tab="dropoffs">Drop-offs</button>
+        </div>
       </div>
 
       <div class="tab-panel active" id="tab-build">
@@ -1953,6 +1955,20 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.onclick = () 
   // list page link straight to "Embed" without duplicating this modal's
   // markup/logic there.
   if (new URLSearchParams(location.search).get('embed') === '1') openEmbedModal();
+
+  // fb-sidebar is its own sticky element (position:sticky) nested below the
+  // now-also-sticky .mobile-sticky-header -- without offsetting its `top` by
+  // the header's real height, the two stick at the same viewport position and
+  // the sidebar renders hidden underneath the header. Track the header's
+  // actual height (it can vary if the form name wraps) via ResizeObserver.
+  const stickyHeaderEl = document.querySelector('.mobile-sticky-header');
+  if (stickyHeaderEl) {
+    const syncHeaderHeight = () => {
+      document.documentElement.style.setProperty('--fb-header-h', stickyHeaderEl.getBoundingClientRect().height + 'px');
+    };
+    new ResizeObserver(syncHeaderHeight).observe(stickyHeaderEl);
+    syncHeaderHeight();
+  }
 })();
 </script>
 </body>

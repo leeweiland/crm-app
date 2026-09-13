@@ -24,14 +24,16 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <a class="pra-link" href="/campaigns.html" id="backLink">&larr; Back to Email Campaigns</a>
-      <div id="sesBanner" class="not-configured-banner" style="display:none;margin-top:12px">
-        Amazon SES isn't configured yet — you can build and save campaigns, but sending is disabled until AWS credentials are added.
-      </div>
-      <div class="cb-header" style="margin-top:14px">
-        <input class="cb-name-input" id="campaignName"/>
-        <span class="cb-status-pill" id="statusPill">draft</span>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="historyBtn" type="button">History</button>
+      <div class="mobile-sticky-header">
+        <a class="pra-link" href="/campaigns.html" id="backLink">&larr; Back to Email Campaigns</a>
+        <div id="sesBanner" class="not-configured-banner" style="display:none;margin-top:12px">
+          Amazon SES isn't configured yet — you can build and save campaigns, but sending is disabled until AWS credentials are added.
+        </div>
+        <div class="cb-header" style="margin-top:14px">
+          <input class="cb-name-input" id="campaignName"/>
+          <span class="cb-status-pill" id="statusPill">draft</span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="historyBtn" type="button">History</button>
+        </div>
       </div>
 
       <div class="cb-layout">

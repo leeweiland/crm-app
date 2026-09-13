@@ -10,7 +10,7 @@
   .ed-topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
   .ed-save-msg { font-size: .78rem; color: var(--pra-dim); }
   .ed-shell { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
-  .ed-sidebar { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; padding-bottom: 4px; }
+  .ed-sidebar { position: sticky; top: calc(var(--ed-header-h, 90px) + 20px); max-height: calc(100vh - var(--ed-header-h, 90px) - 40px); overflow-y: auto; padding-bottom: 4px; }
   .ed-hint { font-size: .72rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-preview-outer { border-radius: 14px; padding: 40px 24px; display: flex; justify-content: center; }
   .ed-main { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
@@ -152,12 +152,14 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <div class="ed-topbar">
-        <a class="pra-link" href="/scheduling.html">&larr; Back to Scheduling</a>
-        <div class="pra-h1" style="font-size:1.2rem;flex:1" id="edEventName">Loading…</div>
-        <span class="ed-save-msg" id="edSaveMsg"></span>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="edEmbedBtn">Embed</button>
-        <a class="pra-btn pra-btn-ghost pra-btn-sm" id="edViewLive" target="_blank">View Live Page</a>
+      <div class="mobile-sticky-header">
+        <div class="ed-topbar">
+          <a class="pra-link" href="/scheduling.html">&larr; Back to Scheduling</a>
+          <div class="pra-h1" style="font-size:1.2rem;flex:1" id="edEventName">Loading…</div>
+          <span class="ed-save-msg" id="edSaveMsg"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="edEmbedBtn">Embed</button>
+          <a class="pra-btn pra-btn-ghost pra-btn-sm" id="edViewLive" target="_blank">View Live Page</a>
+        </div>
       </div>
 
       <div class="ed-shell">
@@ -1208,6 +1210,21 @@ document.getElementById('copyEmbedBtn').onclick = () => {
 };
 
 init();
+
+// .ed-sidebar is its own sticky element nested below the now-also-sticky
+// .mobile-sticky-header -- offset its `top` by the header's real height so
+// the two don't stick at the same viewport position (see form-builder.html
+// for the identical fix).
+{
+  const stickyHeaderEl = document.querySelector('.mobile-sticky-header');
+  if (stickyHeaderEl) {
+    const syncHeaderHeight = () => {
+      document.documentElement.style.setProperty('--ed-header-h', stickyHeaderEl.getBoundingClientRect().height + 'px');
+    };
+    new ResizeObserver(syncHeaderHeight).observe(stickyHeaderEl);
+    syncHeaderHeight();
+  }
+}
 </script>
 </body>
 </html>

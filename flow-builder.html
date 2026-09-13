@@ -154,14 +154,16 @@
   <div class="app-shell">
     <div class="app-sidebar" id="appSidebar"></div>
     <div class="app-main">
-      <a class="pra-link" href="/flows.html">&larr; Back to Flows</a>
-      <div class="ab-header" style="margin-top:14px">
-        <input class="ab-name-input" id="flowName"/>
-        <button class="active-toggle" id="activeToggle"></button>
-        <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="viewRunsBtn">View Runs</button>
+      <div class="mobile-sticky-header">
+        <a class="pra-link" href="/flows.html">&larr; Back to Flows</a>
+        <div class="ab-header" style="margin-top:14px">
+          <input class="ab-name-input" id="flowName"/>
+          <button class="active-toggle" id="activeToggle"></button>
+          <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="viewRunsBtn">View Runs</button>
+        </div>
+        <div class="ab-savedmsg"><span id="savedMsg">&nbsp;</span></div>
       </div>
-      <div class="ab-savedmsg"><span id="savedMsg">&nbsp;</span></div>
 
       <div class="ab-canvas-wrap" id="canvasWrap">
         <div class="ab-canvas-zoom-layer" id="zoomLayer">

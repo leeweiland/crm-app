@@ -14,8 +14,16 @@
   /* Belt-and-suspenders: if the table ever overflows anyway, only its own
      panel should grow a scrollbar (it already has overflow-x:auto) -- the
      whole page must never scroll horizontally and drag the sidebar off the
-     left edge with it. */
-  html, body { overflow-x: hidden; }
+     left edge with it. Deliberately overflow-x:CLIP, not hidden -- setting
+     overflow-x:hidden forces the browser to compute overflow-y as auto too
+     (a CSS-spec cross-axis coupling that no amount of explicitly setting
+     overflow-y, even with !important, can escape on the same element),
+     which turns body into its own scroll container and breaks
+     position:sticky on .mobile-sticky-header below (it sticks relative to
+     the nearest scrolling ancestor, which was quietly becoming body
+     instead of the actual viewport). overflow-x:clip achieves the same
+     "no horizontal scroll" result without triggering that coupling. */
+  html, body { overflow-x: clip; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input { max-width: 320px; }
   .toolbar-row2 { display: flex; align-items: center; gap: 10px; }
