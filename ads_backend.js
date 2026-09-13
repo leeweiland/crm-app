@@ -4,6 +4,27 @@ import { FLOWS_FILE, RUNS_FILE } from "./flows_backend.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
+// Same real local-time-to-UTC conversion as scheduling_backend.js's
+// localTimeToUTC (copied, not imported -- small and self-contained).
+// resolveRange's own start/end already anchor to Anchorage's CALENDAR
+// DATE for whole-day sheet-row matching, but reuse UTC-midnight-of-that-
+// date-string as the instant, not true Anchorage midnight -- harmless for
+// day-granularity sheet rows, but wrong by Anchorage's 8-9hr UTC offset
+// for the millisecond-precision flow-run/contact timestamps this file
+// also needs to bucket by day. Confirmed live: a 2026-09-13T03:10Z run
+// (7:10pm Anchorage on the 12th) was being excluded from "today" (the
+// 12th) entirely because of this gap.
+function tzOffsetHours(atMs, timezone) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, timeZoneName: "shortOffset" }).formatToParts(new Date(atMs));
+  const m = (parts.find(p => p.type === "timeZoneName")?.value || "GMT-8").match(/GMT([+-]\d+)/);
+  return m ? parseInt(m[1], 10) : -8;
+}
+function anchorageMidnightUTC(dateStr) {
+  const offset = tzOffsetHours(Date.parse(dateStr + "T20:00:00Z"), "America/Anchorage");
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, mo - 1, d, -offset, 0));
+}
+
 // Spend/impressions/clicks come straight from Meta's and Google's own ad
 // APIs (see fetchLiveMetaCampaigns/fetchLiveGoogleCampaigns below), using
 // the same access token + ad account already configured for Conversions
@@ -339,10 +360,13 @@ async function fetchAdsReport(period, customStart, customEnd) {
     Object.assign(o, liveSpend.online);
     Object.assign(g, liveSpend.gym);
   }
-  // end is midnight UTC of the last day in range (matches the sheet's
-  // whole-day serial dates) -- real contact/booking timestamps have a
-  // time-of-day component, so this needs the end of that day, not its start.
-  const crmData = fetchCrmLeadsAndBookings(start.getTime(), end.getTime() + 86400000 - 1);
+  // True Anchorage-midnight-to-UTC boundaries (see anchorageMidnightUTC),
+  // not start/end's own UTC-midnight-of-the-date-string shortcut -- that
+  // shortcut is fine for the sheet's whole-day rows above, but wrong by
+  // Anchorage's UTC offset for these millisecond-precision timestamps.
+  const crmStartMs = anchorageMidnightUTC(startStr).getTime();
+  const crmEndMs = anchorageMidnightUTC(endStr).getTime() + 86400000 - 1;
+  const crmData = fetchCrmLeadsAndBookings(crmStartMs, crmEndMs);
   Object.assign(o, crmData.online);
   Object.assign(g, crmData.gym);
   const combined = {
