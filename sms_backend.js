@@ -6,8 +6,6 @@ import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
-import { appendSourceTagToSmsBody } from "./block_editor_shared.js";
-import { resolveSendSourceSlug } from "./source_names.js";
 import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
 
 export const SMS_TEMPLATES_FILE = "crm_sms_templates.json";
@@ -108,15 +106,13 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
 
   const client = getTwilioClient();
   const twilioSettings = getTwilioSettings();
-  // Tagged before both logging and sending, so the stored body matches
-  // exactly what the recipient received (same convention email_backend.js
-  // uses). "el=sms-<slug>" resolved from THIS send's own sourceType/sourceId
-  // (source_names.js), matching the el= convention already used everywhere
-  // else -- links stay real, direct, recognizable URLs.
-  const taggedBody = appendSourceTagToSmsBody(body, `sms-${resolveSendSourceSlug(sourceType, sourceId)}`);
+  // No automatic el= tagging here (unlike email_backend.js's equivalent) --
+  // links in an SMS body are sent exactly as written. The auto-tag used to
+  // overwrite any el= a template already had (URL.searchParams.set clobbers
+  // an existing value), silently stomping tags added by hand.
   const baseRow = {
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
-    to: toFormatted, from: twilioSettings.fromNumber || null, body: taggedBody || "", bodyPreview: (taggedBody || "").slice(0, 140),
+    to: toFormatted, from: twilioSettings.fromNumber || null, body: body || "", bodyPreview: (body || "").slice(0, 140),
   };
 
   if (!client) { logMessage({ ...baseRow, status: "failed", failReason: "twilio_not_configured" }); return { ok: false, reason: "twilio_not_configured" }; }
@@ -128,7 +124,7 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
     // outbound SMS sat at "queued" forever in our own records no matter
     // what actually happened on the wire.
     const msg = await client.messages.create({
-      to: toFormatted, from: twilioSettings.fromNumber, body: taggedBody,
+      to: toFormatted, from: twilioSettings.fromNumber, body,
       statusCallback: `${getPublicBaseUrl()}/api/webhooks/twilio/status`,
     });
     // Logged once with the final status/sid already known, same reasoning
