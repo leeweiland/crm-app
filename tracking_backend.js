@@ -4,6 +4,7 @@ import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 import { markContactVisitedPage } from "./contacts_backend.js";
 import { queueBehavioralTrigger, parseVisitContext } from "./behavioral_triggers_backend.js";
+import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
 const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
@@ -67,19 +68,34 @@ const TRACK_SNIPPET = `(function(){
   window.addEventListener('message', function(e){
     if (e.data && e.data.type === 'pf-identify' && e.data.contactId) setCid(e.data.contactId);
   });
-  // Fills a hidden "vid" field on any native Framer form with this visit's
-  // crm_vid, so a raw webhook lead (unlike the form-widget/booking iframes,
-  // which already pass vid on their own src URL) can still get its ad-click
-  // history claimed back once flows_backend.js resolves it to a contact.
-  // Only needs the landing page's own form to have a field literally named
-  // "vid" -- nothing here can invent that field if the form doesn't have it.
-  function fillVidFields(root){
-    var els = (root || document).querySelectorAll('[name]');
-    for (var i=0;i<els.length;i++){ if (String(els[i].name).toLowerCase() === 'vid') els[i].value = vid; }
-  }
-  fillVidFields();
-  document.addEventListener('click', function(){ fillVidFields(); }, true);
-  document.addEventListener('submit', function(e){ fillVidFields(e.target); }, true);
+  // Watches every form submit on the page (any form, anywhere on the
+  // site -- no per-form setup) and reports this visit's vid plus whatever
+  // email/phone it can find among the submitted fields straight to our own
+  // backend, entirely independent of wherever the form's own submission
+  // goes (a Framer webhook, a third party, whatever). Same approach Hyros
+  // used: observe the DOM directly instead of depending on carrying a
+  // field through someone else's integration payload.
+  function looksLikeEmail(v){ return /.+@.+\..+/.test(v); }
+  function looksLikePhone(v){ return /\d{7,}/.test(String(v).replace(/\D/g, '')); }
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!form || !form.querySelectorAll) return;
+    var email = null, phone = null;
+    var els = form.querySelectorAll('input,textarea');
+    for (var i=0;i<els.length;i++){
+      var el = els[i], val = (el.value || '').trim();
+      if (!val) continue;
+      var type = (el.type || '').toLowerCase(), name = (el.name || '').toLowerCase();
+      if (!email && (type === 'email' || name.indexOf('email') !== -1 || looksLikeEmail(val))) email = val;
+      else if (!phone && (type === 'tel' || name.indexOf('phone') !== -1) && looksLikePhone(val)) phone = val;
+    }
+    if (email || phone) {
+      fetch('${"__BASE_URL__"}/api/track/identify', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ vid: vid, email: email, phone: phone })
+      }).catch(function(){});
+    }
+  }, true);
   fetch('${"__BASE_URL__"}/api/track/pageview', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ cid: urlCid || getCookie('crm_cid'), vid: vid, path: location.pathname, search: location.search })
@@ -207,6 +223,43 @@ export async function handleTrackingRequest(req, res, url) {
     return true;
   }
 
+  // Same cross-origin preflight as pageview above -- TRACK_SNIPPET's
+  // submit listener fires this from the Framer origin.
+  if (p === "/api/track/identify" && req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST",
+      "Access-Control-Allow-Headers": "Content-Type",
+    });
+    res.end();
+    return true;
+  }
+
+  // A client-observed (vid, email/phone) pairing from ANY form submit
+  // site-wide (see TRACK_SNIPPET) -- independent of whatever that form's
+  // own submission target (a Framer webhook, a third party, etc.) actually
+  // receives. Claims immediately if a matching contact already exists;
+  // otherwise logs it so flows_backend.js's add_update_contact step can
+  // claim it moments later once the webhook itself creates/matches the
+  // contact -- covers both possible arrival orders.
+  if (p === "/api/track/identify" && req.method === "POST") {
+    let body = "";
+    await new Promise(resolve => { req.on("data", d => body += d); req.on("end", resolve); });
+    let parsed = {};
+    try { parsed = JSON.parse(body || "{}"); } catch { /* ignore malformed beacon */ }
+    const vid = parsed.vid || null;
+    const email = parsed.email ? String(parsed.email).trim().toLowerCase() : "";
+    const phone = parsed.phone ? String(parsed.phone).trim() : "";
+    if (vid && (email || phone)) {
+      recordVisitorIdentity(vid, email, phone);
+      const contacts = readJson(CONTACTS_FILE, []);
+      const match = findContactMatch(contacts, email, phone);
+      if (match) claimVisitorHistory(vid, match.id);
+    }
+    res.writeHead(204, { "Access-Control-Allow-Origin": "*" }); res.end();
+    return true;
+  }
+
   return false;
 }
 
@@ -225,5 +278,42 @@ export function claimVisitorHistory(vid, contactId) {
     if (v.visitorId === vid && !v.contactId) { v.contactId = contactId; claimed++; }
   }
   if (claimed) writeJson(PAGE_VISITS_FILE, visits);
+  return claimed;
+}
+
+const VISITOR_IDENTITIES_FILE = "crm_visitor_identities.json";
+const normPhoneDigits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+
+// A client-observed (vid, email/phone) pairing from TRACK_SNIPPET's submit
+// listener -- bridges the gap between a form submit (which only this
+// tracking script sees) and the contact that gets created/matched moments
+// later through a totally separate path (e.g. a Framer form's own
+// webhook, whose payload carries none of this). Pruned to the last 48h on
+// every write since this only has to survive that few-second race, not
+// live forever.
+export function recordVisitorIdentity(vid, email, phone) {
+  if (!vid || (!email && !phone)) return;
+  const all = readJson(VISITOR_IDENTITIES_FILE, []);
+  const cutoff = Date.now() - 48 * 3600000;
+  const fresh = all.filter(e => new Date(e.at).getTime() > cutoff);
+  fresh.push({ vid, email: email ? String(email).toLowerCase() : null, phone: phone ? normPhoneDigits(phone) : null, at: new Date().toISOString() });
+  writeJson(VISITOR_IDENTITIES_FILE, fresh);
+}
+
+// Called once a contact is created/matched (flows_backend.js's
+// add_update_contact step, for the webhook-lead path this all exists
+// for) -- finds any identity record(s) matching this email/phone and
+// claims that visitor's history onto the contact. Covers the ordering
+// where the webhook's own contact-creation runs before the identify
+// beacon got a chance to find a contact to claim against directly.
+export function claimByIdentity(email, phone, contactId) {
+  if (!contactId) return 0;
+  const all = readJson(VISITOR_IDENTITIES_FILE, []);
+  const normEmail = email ? String(email).toLowerCase() : null;
+  const normPhoneVal = phone ? normPhoneDigits(phone) : null;
+  let claimed = 0;
+  for (const e of all) {
+    if ((normEmail && e.email === normEmail) || (normPhoneVal && e.phone === normPhoneVal)) claimed += claimVisitorHistory(e.vid, contactId);
+  }
   return claimed;
 }
