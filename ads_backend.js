@@ -1,11 +1,80 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { getConversionSettings, getGoogleAdsAccessToken } from "./conversions_backend.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
-// The ad-spend numbers live in a Google Sheet. This module reads it
-// natively (same sheet, same math another internal tool already uses) so
-// the CRM's Ads tab is self-contained.
+// Spend/impressions/clicks come straight from Meta's and Google's own ad
+// APIs (see fetchLiveMetaCampaigns/fetchLiveGoogleCampaigns below), using
+// the same access token + ad account already configured for Conversions
+// API push (Settings -> Tracking -> Meta box). This used to go through a
+// Google Sheet fed by a third-party sync tool (Coupler.io) -- that tool's
+// trial expired and silently stopped pulling data, which is what actually
+// broke this, not the sheet-reading code itself. Direct API calls remove
+// that whole dependency for the numbers that matter most (spend). Leads/
+// bookings/closes/collected still come from the sheet below -- those are
+// business data (opt-ins, sales), not something Meta/Google's ad APIs
+// know about.
 const DEFAULT_SHEET_ID = "17lYaad5YG0vAVX1Mj4hKkQspAgSxBAMWuASmOPKOXLU";
+
+// Same "which program does this belong to" split as everywhere else in
+// the app (contact.programType, sheet tab prefixes) -- but here it's a
+// substring match against the actual campaign/ad-set NAME in Meta/Google's
+// own account, since that's the only signal the ad platforms themselves
+// expose. Confirmed live against this account's real campaign names
+// (GYM, ONLINE, ONLINE RETARGETING, ...) -- anything not matching "gym"
+// defaults to online rather than getting silently dropped.
+function categorizeCampaign(name) {
+  return /gym/i.test(name || "") ? "gym" : "online";
+}
+
+async function fetchLiveMetaCampaigns(startStr, endStr) {
+  const { metaAccessToken, metaAdAccountId } = getConversionSettings();
+  if (!metaAccessToken || !metaAdAccountId) return null;
+  const acctPath = metaAdAccountId.startsWith("act_") ? metaAdAccountId : `act_${metaAdAccountId}`;
+  const timeRange = encodeURIComponent(JSON.stringify({ since: startStr, until: endStr }));
+  const r = await fetch(`https://graph.facebook.com/v21.0/${acctPath}/insights?level=campaign&fields=campaign_name,spend,impressions,clicks&time_range=${timeRange}&limit=500&access_token=${encodeURIComponent(metaAccessToken)}`);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.message || `meta_http_${r.status}`);
+  return (d.data || []).map(row => ({ name: row.campaign_name, spend: Number(row.spend) || 0, impressions: Number(row.impressions) || 0, clicks: Number(row.clicks) || 0 }));
+}
+
+async function fetchLiveGoogleCampaigns(startStr, endStr) {
+  const { googleAdsCustomerId, googleAdsDeveloperToken, googleAdsRefreshToken } = getConversionSettings();
+  if (!googleAdsCustomerId || !googleAdsDeveloperToken || !googleAdsRefreshToken) return null;
+  const accessToken = await getGoogleAdsAccessToken(googleAdsRefreshToken);
+  const customerId = googleAdsCustomerId.replace(/\D/g, "");
+  const query = `SELECT campaign.name, metrics.cost_micros, metrics.impressions, metrics.clicks FROM campaign WHERE segments.date BETWEEN '${startStr}' AND '${endStr}'`;
+  const r = await fetch(`https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "developer-token": googleAdsDeveloperToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, pageSize: 500 }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.[0]?.message || d?.error?.message || `google_http_${r.status}`);
+  return (d.results || []).map(row => ({ name: row.campaign.name, spend: (Number(row.metrics.costMicros) || 0) / 1e6, impressions: Number(row.metrics.impressions) || 0, clicks: Number(row.metrics.clicks) || 0 }));
+}
+
+// Merges Meta + Google campaign rows into the Online/Gym buckets the rest
+// of this file already works in. Returns null (not thrown) when neither
+// platform is configured, so fetchAdsReport can cleanly fall back to the
+// sheet's own spend numbers instead of failing the whole report.
+async function fetchLiveAdSpend(startStr, endStr) {
+  const [metaRows, googleRows] = await Promise.all([
+    fetchLiveMetaCampaigns(startStr, endStr),
+    fetchLiveGoogleCampaigns(startStr, endStr),
+  ]);
+  if (metaRows === null && googleRows === null) return null;
+  const buckets = { online: { metaSpend: 0, googleSpend: 0, spend: 0, impressions: 0, clicks: 0 }, gym: { metaSpend: 0, googleSpend: 0, spend: 0, impressions: 0, clicks: 0 } };
+  (metaRows || []).forEach(row => {
+    const b = buckets[categorizeCampaign(row.name)];
+    b.metaSpend += row.spend; b.spend += row.spend; b.impressions += row.impressions; b.clicks += row.clicks;
+  });
+  (googleRows || []).forEach(row => {
+    const b = buckets[categorizeCampaign(row.name)];
+    b.googleSpend += row.spend; b.spend += row.spend; b.impressions += row.impressions; b.clicks += row.clicks;
+  });
+  return buckets;
+}
 
 function readSettings() {
   return readJson(INTEGRATIONS_FILE, { ads: {} });
@@ -125,6 +194,7 @@ function zero() { return { spend: 0, metaSpend: 0, googleSpend: 0, emails: 0, bo
 async function fetchAdsReport(period, customStart, customEnd) {
   const { sheetId, onlinePrefix, gymPrefix } = getAdsSettings();
   const [start, end] = resolveRange(period, customStart, customEnd);
+  const startStr = start.toISOString().slice(0, 10), endStr = end.toISOString().slice(0, 10);
 
   const monthLabels = [];
   { let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
@@ -135,57 +205,84 @@ async function fetchAdsReport(period, customStart, customEnd) {
     }
   }
 
+  // Live spend runs alongside the sheet fetch below, not instead of it --
+  // leads/bookings/closes/collected aren't ad-platform data, so the sheet
+  // (or whatever eventually replaces it for those fields) still supplies
+  // those. If this fails or isn't configured, spend below just falls back
+  // to whatever's in the sheet, same as before.
+  const liveSpendPromise = fetchLiveAdSpend(startStr, endStr).catch(() => null);
+
   const { clientId, clientSecret, refreshToken } = googleCreds();
-  if (!clientId || !clientSecret || !refreshToken) throw new Error("Google Sheets isn't connected yet -- add the refresh token in Settings -> Ads.");
+  const sheetConfigured = !!(clientId && clientSecret && refreshToken);
+  let onlineResult = { exists: false, data: zero() }, gymResult = { exists: false, data: zero() }, sheetError = null;
 
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
-  });
-  const tokenData = await tokenRes.json();
-  if (!tokenData.access_token) throw new Error("Google token refresh failed");
-  const accessToken = tokenData.access_token;
+  if (sheetConfigured) {
+    try {
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenData.access_token) throw new Error("Google token refresh failed");
+      const accessToken = tokenData.access_token;
 
-  async function fetchMonthTab(prefix, monthLabel) {
-    const sheetName = `${prefix} ${monthLabel}`;
-    const range = encodeURIComponent(`'${sheetName}'!A10:AB41`);
-    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const data = await r.json();
-    return data.values || null;
+      const fetchMonthTab = async (prefix, monthLabel) => {
+        const sheetName = `${prefix} ${monthLabel}`;
+        const range = encodeURIComponent(`'${sheetName}'!A10:AB41`);
+        const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const data = await r.json();
+        return data.values || null;
+      };
+
+      const aggregate = async (prefix) => {
+        const tabResults = await Promise.all(monthLabels.map(label => fetchMonthTab(prefix, label)));
+        const out = zero();
+        let anyExists = false;
+        tabResults.forEach(rows => {
+          if (!rows) return;
+          anyExists = true;
+          for (const row of rows) {
+            const dateSerial = row[0];
+            if (dateSerial == null || typeof dateSerial !== "number") continue;
+            const d = serialToDate(dateSerial);
+            if (d < start || d > end) continue;
+            const closes = Number(row[COLS.closes]) || 0;
+            const renewals = Number(row[COLS.renewals]) || 0;
+            out.spend += Number(row[COLS.spend]) || 0;
+            out.metaSpend += Number(row[COLS.metaSpend]) || 0;
+            out.googleSpend += Number(row[COLS.googleSpend]) || 0;
+            out.emails += Number(row[COLS.emails]) || 0;
+            out.bookM += Number(row[COLS.bookM]) || 0;
+            out.closes += closes;
+            out.sales += closes + renewals;
+            out.coll += Number(row[COLS.coll]) || 0;
+            out.all += Number(row[COLS.all]) || 0;
+          }
+        });
+        return { exists: anyExists, data: out };
+      };
+
+      [onlineResult, gymResult] = await Promise.all([aggregate(onlinePrefix), aggregate(gymPrefix)]);
+    } catch (e) {
+      sheetError = e;
+    }
   }
 
-  async function aggregate(prefix) {
-    const tabResults = await Promise.all(monthLabels.map(label => fetchMonthTab(prefix, label)));
-    const out = zero();
-    let anyExists = false;
-    tabResults.forEach(rows => {
-      if (!rows) return;
-      anyExists = true;
-      for (const row of rows) {
-        const dateSerial = row[0];
-        if (dateSerial == null || typeof dateSerial !== "number") continue;
-        const d = serialToDate(dateSerial);
-        if (d < start || d > end) continue;
-        const closes = Number(row[COLS.closes]) || 0;
-        const renewals = Number(row[COLS.renewals]) || 0;
-        out.spend += Number(row[COLS.spend]) || 0;
-        out.metaSpend += Number(row[COLS.metaSpend]) || 0;
-        out.googleSpend += Number(row[COLS.googleSpend]) || 0;
-        out.emails += Number(row[COLS.emails]) || 0;
-        out.bookM += Number(row[COLS.bookM]) || 0;
-        out.closes += closes;
-        out.sales += closes + renewals;
-        out.coll += Number(row[COLS.coll]) || 0;
-        out.all += Number(row[COLS.all]) || 0;
-      }
-    });
-    return { exists: anyExists, data: out };
+  const liveSpend = await liveSpendPromise;
+  if (!liveSpend && (!sheetConfigured || sheetError)) {
+    throw sheetError || new Error("Neither Meta/Google Ads API access (Settings -> Tracking) nor the Ads Google Sheet (Settings -> Ads) is configured.");
   }
 
-  const [onlineResult, gymResult] = await Promise.all([aggregate(onlinePrefix), aggregate(gymPrefix)]);
   const o = onlineResult.data, g = gymResult.data;
+  if (liveSpend) {
+    // Overwrites spend/metaSpend/googleSpend with live numbers; leaves
+    // emails/bookM/closes/sales/coll/all (not ad-platform data) exactly as
+    // the sheet reported, or at zero if the sheet itself isn't available.
+    Object.assign(o, liveSpend.online);
+    Object.assign(g, liveSpend.gym);
+  }
   const combined = {
     spend: o.spend + g.spend, metaSpend: o.metaSpend + g.metaSpend, googleSpend: o.googleSpend + g.googleSpend,
     emails: o.emails + g.emails,
@@ -194,8 +291,8 @@ async function fetchAdsReport(period, customStart, customEnd) {
   };
 
   return {
-    ok: true, period, start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10), monthLabels,
-    onlineSheetExists: onlineResult.exists, gymSheetExists: gymResult.exists,
+    ok: true, period, start: startStr, end: endStr, monthLabels,
+    onlineSheetExists: onlineResult.exists, gymSheetExists: gymResult.exists, liveSpendUsed: !!liveSpend,
     online: o, gym: g, combined,
   };
 }
