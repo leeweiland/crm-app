@@ -314,61 +314,110 @@
         <div class="pra-muted" id="passwordMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
-      <div class="tab-panel pra-panel" id="tab-cache" style="padding:22px">
-        <div class="pra-h2" style="margin-bottom:4px">AI Cache</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:20px">Embedded knowledge the AI agents retrieve from. Pulled nightly from GitHub — sync manually if you just pushed new writing.</div>
+      <div class="tab-panel" id="tab-cache" style="display:none;height:calc(100vh - 160px);min-height:400px">
+        <style>
+          #tab-cache { flex-direction:column; }
+          #tab-cache.active { display:flex !important; }
+          .cc-panels { flex:1; display:flex; gap:14px; min-height:0; overflow:hidden; }
+          .cc-panel { flex:1; min-width:0; background:var(--pra-panel); border:1px solid var(--pra-border); border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+          .cc-head { flex-shrink:0; padding:14px 14px 0; display:flex; flex-direction:column; gap:9px; }
+          .cc-list { flex:1; overflow-y:auto; padding:0 14px; margin:6px 0; scrollbar-width:thin; scrollbar-color:#1a2a3a transparent; }
+          .cc-list::-webkit-scrollbar { width:5px; }
+          .cc-list::-webkit-scrollbar-thumb { background:#1a2a3a; border-radius:3px; }
+          .cc-foot { flex-shrink:0; padding:0 14px 14px; display:flex; flex-direction:column; gap:8px; }
+          .cc-sec { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--pra-dim); display:flex; align-items:center; gap:8px; }
+          .cc-badge { background:var(--pra-panel-2); color:var(--pra-blue); font-size:9px; font-weight:700; padding:2px 7px; border-radius:10px; }
+          .cc-badge.green { color:#3fb950; background:#0d2016; }
+          .cc-status { font-size:12px; color:#aaa; padding:7px 10px; background:var(--pra-panel-2); border-radius:6px; border:1px solid var(--pra-border); display:flex; align-items:center; gap:6px; }
+          .cc-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:#3fb950; }
+          .cc-dot.grey { background:#444; }
+          .cc-item { font-size:11px; color:#ccc; padding:3px 7px; background:var(--pra-panel-2); border-radius:4px; display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; margin-bottom:2px; }
+          .cc-item-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+          .cc-item-sub { font-size:10px; color:var(--pra-dim); flex-shrink:0; }
+          .cc-brand { font-size:9px; font-weight:700; padding:1px 5px; border-radius:8px; flex-shrink:0; text-transform:uppercase; }
+          .cc-brand.pra { background:#0d2016; color:#3fb950; }
+          .cc-brand.pb { background:#0d1c2a; color:#99d9ff; }
+          .cc-brand.lw { background:#0c1a2e; color:var(--pra-blue); }
+          .cc-sort { display:flex; gap:4px; flex-shrink:0; }
+          .cc-sort-btn { padding:3px 9px; background:var(--pra-panel-2); border:1px solid var(--pra-border); border-radius:4px; color:var(--pra-dim); font-size:10px; font-weight:700; cursor:pointer; font-family:inherit; letter-spacing:.03em; transition:all .15s; }
+          .cc-sort-btn:hover { color:#ccc; }
+          .cc-sort-btn.active { border-color:var(--pra-blue); color:#fff; background:rgba(0,155,255,.08); }
+          .cc-rebuild { padding:6px 14px; background:var(--pra-blue); color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; transition:background .15s; align-self:flex-start; }
+          .cc-rebuild:hover { background:#33b0ff; }
+          .cc-rebuild:disabled { background:var(--pra-panel-2); color:var(--pra-dim); cursor:default; }
+          .cc-schedule { display:flex; align-items:center; gap:10px; padding:7px 10px; background:var(--pra-panel-2); border:1px solid var(--pra-border); border-radius:6px; }
+          .cc-sched-label { font-size:11px; color:#888; flex:1; }
+          .cc-sched-cron { font-size:10px; font-family:monospace; color:var(--pra-blue); }
+          .cc-ftable { width:100%; border-collapse:collapse; font-size:11px; }
+          .cc-ftable th { font-size:9px; font-weight:700; color:#444; text-transform:uppercase; letter-spacing:.05em; padding:4px 6px; text-align:left; border-bottom:1px solid var(--pra-border); }
+          .cc-ftable td { padding:4px 6px; border-bottom:1px solid rgba(255,255,255,.03); vertical-align:middle; }
+          .cc-ftable tr:last-child td { border-bottom:none; }
+          .cc-ftable input[type=text] { width:100%; background:var(--pra-panel); border:1px solid var(--pra-border); border-radius:4px; color:#e0e0e0; font-size:11px; padding:3px 6px; outline:none; font-family:inherit; }
+          .cc-ftable input:focus { border-color:var(--pra-blue); }
+          .cc-ftable select { background:var(--pra-panel); border:1px solid var(--pra-border); border-radius:4px; color:#e0e0e0; font-size:11px; padding:3px 6px; outline:none; font-family:inherit; cursor:pointer; }
+          .cc-factions { display:flex; gap:7px; align-items:center; }
+          .cc-add { padding:4px 10px; background:var(--pra-panel-2); border:1px solid var(--pra-border); border-radius:4px; color:#ccc; font-size:11px; cursor:pointer; font-family:inherit; transition:all .15s; }
+          .cc-add:hover { border-color:var(--pra-blue); color:#fff; }
+          .cc-save { padding:5px 14px; background:#3fb950; color:#0d2016; border:none; border-radius:5px; font-size:11px; font-weight:700; cursor:pointer; }
+          .cc-save:hover { background:#52c463; }
+          .cc-savestatus { font-size:11px; color:#3fb950; display:none; }
+          .cc-savestatus.show { display:inline; }
+          .cc-savestatus.err { color:#f85149; }
+          .cc-delrow { background:none; border:none; color:var(--pra-dim); cursor:pointer; font-size:15px; padding:0 3px; line-height:1; transition:color .15s; }
+          .cc-delrow:hover { color:#f85149; }
+          .cc-divider { height:1px; background:var(--pra-border); flex-shrink:0; margin:2px 0; }
+          .cc-search { width:100%; background:var(--pra-panel-2); border:1px solid var(--pra-border); border-radius:6px; color:#e0e0e0; font-size:11px; padding:5px 9px; outline:none; font-family:inherit; flex-shrink:0; }
+          .cc-search:focus { border-color:var(--pra-blue); }
+        </style>
 
-        <!-- Script Folders -->
-        <div class="pra-card" style="padding:18px;margin-bottom:24px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-            <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase">Script Folders</div>
-            <button class="pra-btn pra-btn-outline" style="font-size:.78rem;padding:5px 12px" onclick="saveCacheFolders()">Save</button>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 2fr 120px;gap:8px;margin-bottom:8px">
-            <div class="pra-muted" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Label</div>
-            <div class="pra-muted" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Folder ID</div>
-            <div class="pra-muted" style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Brand</div>
-          </div>
-          <div id="cache-folders-list" style="display:flex;flex-direction:column;gap:6px"></div>
-          <button class="pra-btn-ghost pra-btn" style="margin-top:10px;font-size:.8rem;padding:6px 12px" onclick="addCacheFolder()">+ Add Folder</button>
-          <div id="cache-folders-msg" style="font-size:.78rem;margin-top:8px;min-height:1em;color:var(--pra-dim)"></div>
-        </div>
+        <div class="cc-panels">
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-
-          <!-- Writing archive -->
-          <div>
-            <div class="pra-card" style="padding:16px;margin-bottom:10px">
-              <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase;margin-bottom:10px">Writing Archive</div>
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-                <span id="cache-writing-dot" style="width:8px;height:8px;border-radius:50%;background:var(--pra-dim);flex-shrink:0"></span>
-                <span id="cache-writing-count" style="font-size:1.2rem;font-weight:700;color:var(--pra-white)">—</span>
-                <span class="pra-muted" style="font-size:.8rem">chunks</span>
+          <!-- LEFT: Writing Archive -->
+          <div class="cc-panel">
+            <div class="cc-head">
+              <div class="cc-sec">Writing Archive <span class="cc-badge green" id="cc-writing-badge">—</span></div>
+              <div class="cc-status"><span class="cc-dot grey" id="cc-writing-dot"></span><span id="cc-writing-status">Loading…</span></div>
+              <div class="cc-sort">
+                <button class="cc-sort-btn active" id="cc-sort-az" onclick="setCacheSort('az')">A–Z</button>
+                <button class="cc-sort-btn" id="cc-sort-src" onclick="setCacheSort('src')">By Source</button>
               </div>
-              <div class="pra-muted" style="font-size:.78rem;margin-bottom:3px">Last synced: <span id="cache-writing-synced">—</span></div>
-              <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Source: <a style="color:var(--pra-blue);font-family:monospace;font-size:.74rem;text-decoration:none" id="cache-writing-repo" target="_blank">—</a></div>
-              <div style="display:flex;align-items:center;gap:10px">
-                <button class="pra-btn" id="cache-writing-btn" style="font-size:.8rem;padding:6px 14px" onclick="syncWritingCache()">Sync Now</button>
-                <span id="cache-writing-msg" style="font-size:.78rem;color:var(--pra-dim)"></span>
+              <input class="cc-search" id="cc-writing-search" placeholder="Search…" oninput="filterWritingChunks()">
+            </div>
+            <div class="cc-list" id="cc-writing-list"></div>
+            <div class="cc-foot">
+              <button class="cc-rebuild" id="cc-writing-btn" onclick="syncWritingCache()">🔄 Sync Now</button>
+              <div class="cc-schedule">
+                <div><div class="cc-sched-label">Auto-sync · nightly from GitHub</div><div class="cc-sched-cron" id="cc-writing-repo-link">—</div></div>
+              </div>
+              <div id="cache-writing-msg" style="font-size:.78rem;min-height:1em;color:var(--pra-dim)"></div>
+            </div>
+          </div>
+
+          <!-- RIGHT: Sales Conversations + Script Folders -->
+          <div class="cc-panel">
+            <div class="cc-head">
+              <div class="cc-sec">Sales Conversations <span class="cc-badge green" id="cc-sales-badge">—</span></div>
+              <div class="cc-status"><span class="cc-dot grey" id="cc-sales-dot"></span><span id="cc-sales-status">Loading…</span></div>
+              <div class="cc-sec" style="margin-top:2px">Script Folders <span class="cc-badge">Config</span></div>
+              <table class="cc-ftable">
+                <thead><tr><th>Label</th><th>Folder ID</th><th>Brand</th><th></th></tr></thead>
+                <tbody id="cc-folders-tbody"></tbody>
+              </table>
+              <div class="cc-factions">
+                <button class="cc-add" onclick="addCacheFolder()">+ Add Folder</button>
+                <button class="cc-save" onclick="saveCacheFolders()">Save</button>
+                <span class="cc-savestatus" id="cc-folders-msg"></span>
+              </div>
+              <div class="cc-divider"></div>
+              <div class="cc-sec">Cached Docs</div>
+              <input class="cc-search" id="cc-sales-search" placeholder="Search…" oninput="filterSalesChunks()">
+            </div>
+            <div class="cc-list" id="cc-sales-list"></div>
+            <div class="cc-foot">
+              <div class="cc-schedule">
+                <div><div class="cc-sched-label">Last updated</div><div class="cc-sched-cron" id="cc-sales-updated">—</div></div>
               </div>
             </div>
-            <input class="pra-input" id="cache-writing-search" placeholder="Search writing archive…" style="margin-bottom:6px;font-size:.82rem" oninput="filterChunks('writing')">
-            <div id="cache-writing-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
-          </div>
-
-          <!-- Sales conversations -->
-          <div>
-            <div class="pra-card" style="padding:16px;margin-bottom:10px">
-              <div style="font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--pra-dim);text-transform:uppercase;margin-bottom:10px">Sales Conversations</div>
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-                <span id="cache-sales-dot" style="width:8px;height:8px;border-radius:50%;background:var(--pra-dim);flex-shrink:0"></span>
-                <span id="cache-sales-count" style="font-size:1.2rem;font-weight:700;color:var(--pra-white)">—</span>
-                <span class="pra-muted" style="font-size:.8rem">chunks</span>
-              </div>
-              <div class="pra-muted" style="font-size:.78rem">Last updated: <span id="cache-sales-updated">—</span></div>
-            </div>
-            <input class="pra-input" id="cache-sales-search" placeholder="Search sales conversations…" style="margin-bottom:6px;font-size:.82rem" oninput="filterChunks('sales')">
-            <div id="cache-sales-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:3px"></div>
           </div>
 
         </div>
@@ -1154,42 +1203,57 @@ loadConversionSettings();
 loadAdsSettings();
 
 // ── Cache tab ──────────────────────────────────────────────────────────────────
-const _cacheChunks = { writing: [], sales: [] };
+const _cc = { writing: [], sales: [], sort: 'az' };
 
-function fmtTs(iso) {
-  if (!iso) return 'never';
+function ccFmtTs(iso) {
+  if (!iso) return '—';
   const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' +
-    d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' ' +
+    d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
 }
-function fmtSize(bytes) {
-  if (!bytes) return '';
-  return bytes > 1e6 ? ` · ${(bytes/1e6).toFixed(1)} MB` : ` · ${(bytes/1e3).toFixed(0)} KB`;
-}
+function ccFmtSize(b) { return b > 1e6 ? ` · ${(b/1e6).toFixed(1)} MB` : b > 1e3 ? ` · ${(b/1e3).toFixed(0)} KB` : ''; }
 
-function renderChunkList(type, chunks) {
-  const el = document.getElementById(`cache-${type}-list`);
-  if (!chunks.length) { el.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:8px">No results</div>'; return; }
+function ccSrc(c) { return c.source || c.doc || c.title || c.name || ''; }
+
+function renderWritingList(chunks) {
+  const el = document.getElementById('cc-writing-list');
+  if (!chunks.length) { el.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">No results</div>'; return; }
   el.innerHTML = chunks.map(c => {
-    const src = c.source || c.doc || c.title || c.name || '';
-    const preview = c.preview || '';
-    return `<div style="padding:8px 10px;background:var(--pra-panel-2);border:1px solid var(--pra-border);border-radius:6px">
-      <div style="font-size:.8rem;font-weight:600;color:var(--pra-white);margin-bottom:2px">${src}</div>
-      ${preview ? `<div class="pra-muted" style="font-size:.74rem;line-height:1.4">${preview}</div>` : ''}
-    </div>`;
+    const src = ccSrc(c);
+    return `<div class="cc-item"><span class="cc-item-name">${src}</span>${c.preview ? `<span class="cc-item-sub" title="${c.preview.replace(/"/g,'')}">${c.preview.slice(0,40)}…</span>` : ''}</div>`;
   }).join('');
 }
 
-function filterChunks(type) {
-  const q = document.getElementById(`cache-${type}-search`).value.toLowerCase();
-  const filtered = q
-    ? _cacheChunks[type].filter(c => {
-        const src = (c.source || c.doc || c.title || c.name || '').toLowerCase();
-        const pre = (c.preview || '').toLowerCase();
-        return src.includes(q) || pre.includes(q);
-      })
-    : _cacheChunks[type];
-  renderChunkList(type, filtered.slice(0, 200));
+function renderSalesList(chunks) {
+  const el = document.getElementById('cc-sales-list');
+  if (!chunks.length) { el.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">No results</div>'; return; }
+  // Group by source/doc
+  const seen = new Set(); const grouped = [];
+  chunks.forEach(c => { const k = ccSrc(c); if (!seen.has(k)) { seen.add(k); grouped.push(c); } });
+  el.innerHTML = grouped.map(c => {
+    const src = ccSrc(c);
+    const brand = (c.brand || 'pra').toLowerCase();
+    return `<div class="cc-item"><span class="cc-brand ${brand}">${brand}</span><span class="cc-item-name">${src}</span></div>`;
+  }).join('');
+}
+
+function filterWritingChunks() {
+  const q = document.getElementById('cc-writing-search').value.toLowerCase();
+  let list = q ? _cc.writing.filter(c => ccSrc(c).toLowerCase().includes(q) || (c.preview||'').toLowerCase().includes(q)) : _cc.writing;
+  if (_cc.sort === 'az') list = [...list].sort((a,b) => ccSrc(a).localeCompare(ccSrc(b)));
+  renderWritingList(list.slice(0, 300));
+}
+
+function filterSalesChunks() {
+  const q = document.getElementById('cc-sales-search').value.toLowerCase();
+  const list = q ? _cc.sales.filter(c => ccSrc(c).toLowerCase().includes(q) || (c.preview||'').toLowerCase().includes(q)) : _cc.sales;
+  renderSalesList(list.slice(0, 300));
+}
+
+function setCacheSort(s) {
+  _cc.sort = s;
+  document.querySelectorAll('.cc-sort-btn').forEach(b => b.classList.toggle('active', b.id === `cc-sort-${s}`));
+  filterWritingChunks();
 }
 
 async function loadCacheStatus() {
@@ -1197,110 +1261,85 @@ async function loadCacheStatus() {
     const r = await fetch('/api/cache/status');
     const d = await r.json();
     const w = d.writing;
-    document.getElementById('cache-writing-dot').style.background = w.count > 0 ? 'var(--pra-blue)' : 'var(--pra-dim)';
-    document.getElementById('cache-writing-count').textContent = w.count.toLocaleString();
-    document.getElementById('cache-writing-synced').textContent = fmtTs(w.lastSyncAt) + fmtSize(w.sizeBytes);
-    const repoEl = document.getElementById('cache-writing-repo');
-    repoEl.textContent = w.repo || '';
-    if (w.repo) repoEl.href = `https://github.com/${w.repo}`;
+    document.getElementById('cc-writing-dot').className = 'cc-dot' + (w.count > 0 ? '' : ' grey');
+    document.getElementById('cc-writing-badge').textContent = w.count.toLocaleString() + ' chunks';
+    document.getElementById('cc-writing-status').textContent = `${w.count.toLocaleString()} cached · last synced ${ccFmtTs(w.lastSyncAt)}${ccFmtSize(w.sizeBytes)}`;
+    document.getElementById('cc-writing-repo-link').textContent = w.repo || '';
     const s = d.sales;
-    document.getElementById('cache-sales-dot').style.background = s.count > 0 ? 'var(--pra-blue)' : 'var(--pra-dim)';
-    document.getElementById('cache-sales-count').textContent = s.count.toLocaleString();
-    document.getElementById('cache-sales-updated').textContent = fmtTs(s.updatedAt) + fmtSize(s.sizeBytes);
+    document.getElementById('cc-sales-dot').className = 'cc-dot' + (s.count > 0 ? '' : ' grey');
+    document.getElementById('cc-sales-badge').textContent = s.count.toLocaleString() + ' chunks';
+    document.getElementById('cc-sales-status').textContent = `${s.count.toLocaleString()} cached · updated ${ccFmtTs(s.updatedAt)}${ccFmtSize(s.sizeBytes)}`;
+    document.getElementById('cc-sales-updated').textContent = ccFmtTs(s.updatedAt);
   } catch(e) { console.error('cache status', e); }
 }
 
 async function loadCacheChunks(type) {
-  const listEl = document.getElementById(`cache-${type}-list`);
-  listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:8px">Loading…</div>';
+  const listId = type === 'writing' ? 'cc-writing-list' : 'cc-sales-list';
+  document.getElementById(listId).innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Loading…</div>';
   try {
     const r = await fetch(`/api/cache/chunks?type=${type}`);
     const d = await r.json();
-    _cacheChunks[type] = d.chunks || [];
-    renderChunkList(type, _cacheChunks[type].slice(0, 200));
+    _cc[type] = d.chunks || [];
+    if (type === 'writing') filterWritingChunks();
+    else filterSalesChunks();
   } catch(e) {
-    listEl.innerHTML = `<div style="color:#ff5555;font-size:.8rem;padding:8px">Error: ${e.message}</div>`;
+    document.getElementById(listId).innerHTML = `<div style="color:#f85149;font-size:.8rem;padding:6px">Error: ${e.message}</div>`;
   }
 }
 
-// ── Script Folders ─────────────────────────────────────────────────────────────
-let _cacheFolders = [];
+// ── Script Folders ──────────────────────────────────────────────────────────────
+let _ccFolders = [];
 
-function renderCacheFolders() {
-  const el = document.getElementById('cache-folders-list');
-  if (!_cacheFolders.length) { el.innerHTML = ''; return; }
-  el.innerHTML = _cacheFolders.map((f, i) => `
-    <div style="display:grid;grid-template-columns:1fr 2fr 120px 32px;gap:8px;align-items:center">
-      <input class="pra-input" style="font-size:.82rem" value="${f.label||''}" oninput="_cacheFolders[${i}].label=this.value" placeholder="Label">
-      <input class="pra-input" style="font-size:.82rem" value="${f.folderId||''}" oninput="_cacheFolders[${i}].folderId=this.value" placeholder="Folder ID">
-      <select class="pra-input" style="font-size:.82rem" onchange="_cacheFolders[${i}].brand=this.value">
-        <option value="pra" ${f.brand==='pra'?'selected':''}>pra</option>
-        <option value="pb" ${f.brand==='pb'?'selected':''}>pb</option>
-        <option value="lw" ${f.brand==='lw'?'selected':''}>lw</option>
-      </select>
-      <button class="pra-btn-ghost pra-btn" style="padding:0;width:28px;height:28px;font-size:14px;color:#ff5555;border-color:transparent" onclick="removeCacheFolder(${i})">×</button>
-    </div>`).join('');
+function renderCcFolders() {
+  const tb = document.getElementById('cc-folders-tbody');
+  tb.innerHTML = _ccFolders.map((f,i) => `<tr>
+    <td><input type="text" value="${f.label||''}" oninput="_ccFolders[${i}].label=this.value" placeholder="Label"></td>
+    <td><input type="text" value="${f.folderId||''}" oninput="_ccFolders[${i}].folderId=this.value" placeholder="Folder ID" style="width:100%"></td>
+    <td><select onchange="_ccFolders[${i}].brand=this.value">
+      <option value="pra" ${f.brand==='pra'?'selected':''}>pra</option>
+      <option value="pb"  ${f.brand==='pb'?'selected':''}>pb</option>
+      <option value="lw"  ${f.brand==='lw'?'selected':''}>lw</option>
+    </select></td>
+    <td><button class="cc-delrow" onclick="removeCcFolder(${i})">×</button></td>
+  </tr>`).join('');
 }
 
-function addCacheFolder() {
-  _cacheFolders.push({ label: '', folderId: '', brand: 'pra' });
-  renderCacheFolders();
-}
-
-function removeCacheFolder(i) {
-  _cacheFolders.splice(i, 1);
-  renderCacheFolders();
-}
+function addCacheFolder() { _ccFolders.push({label:'',folderId:'',brand:'pra'}); renderCcFolders(); }
+function removeCcFolder(i) { _ccFolders.splice(i,1); renderCcFolders(); }
 
 async function saveCacheFolders() {
-  const msg = document.getElementById('cache-folders-msg');
+  const msg = document.getElementById('cc-folders-msg');
   try {
-    const r = await fetch('/api/cache/folders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folders: _cacheFolders }),
-    });
+    const r = await fetch('/api/cache/folders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folders:_ccFolders})});
     if (!r.ok) throw new Error(r.status);
-    msg.style.color = 'var(--pra-blue)';
-    msg.textContent = 'Saved';
-    setTimeout(() => msg.textContent = '', 2000);
-  } catch(e) {
-    msg.style.color = '#ff5555';
-    msg.textContent = 'Error: ' + e.message;
-  }
+    msg.className = 'cc-savestatus show'; msg.textContent = 'Saved';
+    setTimeout(() => { msg.className = 'cc-savestatus'; msg.textContent = ''; }, 2000);
+  } catch(e) { msg.className = 'cc-savestatus show err'; msg.textContent = 'Error: '+e.message; }
 }
 
 async function loadCacheFolders() {
   try {
-    const r = await fetch('/api/cache/folders');
-    const d = await r.json();
-    _cacheFolders = d.folders || [];
-    renderCacheFolders();
-  } catch(e) { console.error('cache folders', e); }
+    const d = await fetch('/api/cache/folders').then(r=>r.json());
+    _ccFolders = d.folders || [];
+    renderCcFolders();
+  } catch(e) { console.error('cache folders',e); }
 }
 
 async function syncWritingCache() {
-  const btn = document.getElementById('cache-writing-btn');
+  const btn = document.getElementById('cc-writing-btn');
   const msg = document.getElementById('cache-writing-msg');
-  btn.disabled = true;
-  btn.textContent = 'Syncing…';
-  msg.textContent = 'Pulling from GitHub…';
-  msg.style.color = 'var(--pra-dim)';
+  btn.disabled = true; btn.textContent = '⏳ Syncing…';
+  msg.style.color = 'var(--pra-dim)'; msg.textContent = 'Pulling from GitHub…';
   try {
-    const r = await fetch('/api/cache/sync-writing', { method: 'POST' });
+    const r = await fetch('/api/cache/sync-writing',{method:'POST'});
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.status);
-    msg.style.color = 'var(--pra-blue)';
-    msg.textContent = `Done — ${d.count.toLocaleString()} chunks${fmtSize(d.sizeBytes)}`;
+    if (!r.ok) throw new Error(d.error||r.status);
+    msg.style.color = '#3fb950';
+    msg.textContent = `Done — ${d.count.toLocaleString()} chunks${ccFmtSize(d.sizeBytes)}`;
     await loadCacheStatus();
     await loadCacheChunks('writing');
-  } catch(e) {
-    msg.style.color = '#ff5555';
-    msg.textContent = 'Error: ' + e.message;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Sync Now';
-  }
+  } catch(e) { msg.style.color = '#f85149'; msg.textContent = 'Error: '+e.message; }
+  finally { btn.disabled = false; btn.textContent = '🔄 Sync Now'; }
 }
 
 document.querySelector('[data-tab="cache"]').addEventListener('click', () => {
