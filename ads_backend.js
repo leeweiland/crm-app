@@ -1,5 +1,7 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
 import { getConversionSettings, getGoogleAdsAccessToken } from "./conversions_backend.js";
+import { CONTACTS_FILE } from "./segments_shared.js";
+import { BOOKINGS_FILE } from "./scheduling_backend.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
@@ -87,6 +89,46 @@ async function fetchLiveAdSpend(startStr, endStr) {
   // instead of vanishing -- a wrong number silently missing one platform
   // is worse than an ugly-but-honest error string next to real data.
   buckets.partialError = metaRows === null ? metaError : googleRows === null ? googleError : null;
+  return buckets;
+}
+
+// Same Online/Gym split as everywhere else in the app (contact.programType).
+function categorizeContact(contact) {
+  return contact?.programType === "gym" ? "gym" : "online";
+}
+
+// Leads/bookings/applications used to come from the sheet's "NEW CRM"
+// columns, which literally meant this app (vehosted.com is a custom
+// domain pointing at this same crm-app) -- so this reads this app's own
+// contacts/bookings directly instead of a spreadsheet snapshot of itself.
+// Mirrors the sheet's own asymmetry: Online's column tracked real
+// bookings, Gym's tracked applications -- there's no per-status-change
+// timestamp on a contact, so "applications made in this window" is
+// approximated as gym contacts currently sitting at APPLICATION whose
+// updatedAt falls in range, not a perfect "became an application on this
+// exact day" count.
+function fetchCrmLeadsAndBookings(startMs, endMs) {
+  const contacts = readJson(CONTACTS_FILE, []).filter(c => !c.testContact);
+  const contactsById = new Map(contacts.map(c => [c.id, c]));
+  const bookings = readJson(BOOKINGS_FILE, []);
+  const buckets = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
+
+  for (const c of contacts) {
+    const createdMs = new Date(c.createdAt).getTime();
+    if (createdMs >= startMs && createdMs <= endMs) buckets[categorizeContact(c)].emails++;
+  }
+  for (const b of bookings) {
+    const createdMs = new Date(b.createdAt).getTime();
+    if (createdMs < startMs || createdMs > endMs) continue;
+    const contact = contactsById.get(b.contactId);
+    if (contact?.testContact) continue;
+    if (categorizeContact(contact) === "online") buckets.online.bookM++;
+  }
+  for (const c of contacts) {
+    if (categorizeContact(c) !== "gym" || c.status !== "APPLICATION") continue;
+    const updatedMs = new Date(c.updatedAt || c.createdAt).getTime();
+    if (updatedMs >= startMs && updatedMs <= endMs) buckets.gym.bookM++;
+  }
   return buckets;
 }
 
@@ -293,11 +335,17 @@ async function fetchAdsReport(period, customStart, customEnd) {
   const o = onlineResult.data, g = gymResult.data;
   if (liveSpend) {
     // Overwrites spend/metaSpend/googleSpend with live numbers; leaves
-    // emails/bookM/closes/sales/coll/all (not ad-platform data) exactly as
-    // the sheet reported, or at zero if the sheet itself isn't available.
+    // closes/sales/coll/all (not ad-platform, not yet migrated off the
+    // sheet) exactly as the sheet reported, or at zero if unavailable.
     Object.assign(o, liveSpend.online);
     Object.assign(g, liveSpend.gym);
   }
+  // end is midnight UTC of the last day in range (matches the sheet's
+  // whole-day serial dates) -- real contact/booking timestamps have a
+  // time-of-day component, so this needs the end of that day, not its start.
+  const crmData = fetchCrmLeadsAndBookings(start.getTime(), end.getTime() + 86400000 - 1);
+  Object.assign(o, crmData.online);
+  Object.assign(g, crmData.gym);
   const combined = {
     spend: o.spend + g.spend, metaSpend: o.metaSpend + g.metaSpend, googleSpend: o.googleSpend + g.googleSpend,
     emails: o.emails + g.emails,
