@@ -367,9 +367,15 @@ document.getElementById('calApplyBtn').onclick = () => {
   document.getElementById('calendarPopover').classList.remove('show');
   applyPeriod();
 };
+// Clicks inside the popover never reach this listener -- a day click
+// re-renders calGrid (replacing the clicked button), so by the time this
+// document-level handler runs, e.target is a detached node and
+// popover.contains(e.target) would wrongly read false, closing the
+// popover on every day pick instead of selecting it.
+document.getElementById('calendarPopover').addEventListener('click', (e) => e.stopPropagation());
 document.addEventListener('click', (e) => {
   const popover = document.getElementById('calendarPopover');
-  if (popover.classList.contains('show') && !popover.contains(e.target) && e.target.id !== 'customRangeBtn') popover.classList.remove('show');
+  if (popover.classList.contains('show') && e.target.id !== 'customRangeBtn') popover.classList.remove('show');
 });
 
 const SENT_CATEGORY_LABELS = { human: 'Human', ai_agent: 'AI Agent', sms_sequence: 'SMS Sequence', email_automation: 'Email Automation', email_campaign: 'Campaign', legacy_import: 'Legacy Import', other: 'Other' };
