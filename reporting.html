@@ -83,6 +83,9 @@
   .cal-day.range-end { border-radius: 0 6px 6px 0; }
   .cal-day.range-start.range-end { border-radius: 6px; }
   .calendar-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; gap: 8px; }
+  #reportLoadingMsg { color: var(--pra-blue); }
+  @keyframes rep-spin { to { transform: rotate(360deg); } }
+  .rep-spin-icon { display: inline-block; animation: rep-spin 0.8s linear infinite; }
 </style>
 </head>
 <body>
@@ -132,6 +135,7 @@
           <button class="pra-btn pra-btn-sm" id="updateReportBtn">Update</button>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="refreshAdsBtn" title="Ads data comes from a Google Sheet updated separately">Refresh Data</button>
           <span class="pra-muted" id="periodRangeMsg" style="font-size:.8rem"></span>
+          <span class="pra-muted" id="reportLoadingMsg" style="font-size:.8rem;display:none"><span class="rep-spin-icon">&#8635;</span> Loading&hellip;</span>
         </div>
       </div>
 
@@ -301,7 +305,7 @@ async function initPeriodSelector() {
   const { periods } = r.ok ? await r.json() : { periods: [] };
   document.getElementById('periodSelect').innerHTML = periods.map(p => `<option value="${p.value}" ${p.value === currentPeriod ? 'selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
 }
-function applyPeriod() {
+async function applyPeriod() {
   currentPeriod = document.getElementById('periodSelect').value;
   const isCustom = currentPeriod === 'custom';
   document.getElementById('customRangeWrap').style.display = isCustom ? 'inline-block' : 'none';
@@ -309,8 +313,15 @@ function applyPeriod() {
   currentStart = start.toISOString().slice(0, 10);
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
-  loadEmailReport(); loadSmsReport(); loadAdsReport(); loadAttributionReport(); loadTeamActivityReport();
-  if (document.getElementById('tab-overview').classList.contains('active')) loadOverview();
+  setReportLoading(true);
+  const tasks = [loadEmailReport(), loadSmsReport(), loadAdsReport(), loadAttributionReport(), loadTeamActivityReport()];
+  if (document.getElementById('tab-overview').classList.contains('active')) tasks.push(loadOverview());
+  try { await Promise.all(tasks); } finally { setReportLoading(false); }
+}
+function setReportLoading(loading) {
+  document.getElementById('reportLoadingMsg').style.display = loading ? 'inline' : 'none';
+  document.getElementById('updateReportBtn').disabled = loading;
+  document.getElementById('refreshAdsBtn').disabled = loading;
 }
 
 // ── Custom date-range calendar popover -- click start day, then end day
@@ -484,8 +495,9 @@ async function loadAdsReport() {
   msg.textContent = `${d.start} to ${d.end}`;
   cards.innerHTML = adsSegmentCardHtml('Online', d.online) + adsSegmentCardHtml('Gym', d.gym) + adsSegmentCardHtml('Combined', d.combined);
 }
-document.getElementById('refreshAdsBtn').onclick = () => {
-  showToast('Ads data updates from the Google Sheet -- refresh it there, then click Update here to re-pull.');
+document.getElementById('refreshAdsBtn').onclick = async () => {
+  showToast('Re-pulling from the Google Sheet -- ad spend itself only reflects what\'s in the sheet, so update that first if you need newer numbers.');
+  await applyPeriod();
 };
 
 // ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
