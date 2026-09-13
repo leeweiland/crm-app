@@ -76,6 +76,55 @@ async function fetchLiveGoogleCampaigns(startStr, endStr) {
   return (d.results || []).map(row => ({ name: row.campaign.name, spend: (Number(row.metrics.costMicros) || 0) / 1e6, impressions: Number(row.metrics.impressions) || 0, clicks: Number(row.metrics.clicks) || 0 }));
 }
 
+// Ad-level (not campaign-level) spend, WITH the adset/campaign names Meta's
+// own Insights API already returns alongside it -- one call gets the full
+// hierarchy + spend per ad, no separate Graph API object lookups needed.
+// Keyed by ad_id, which is exactly the h_ad_id value this account's Meta
+// URL Parameters template captures (Settings -> Tracking), so this maps
+// 1:1 onto attributionKeyForVisit's meta-ad:<id> keys.
+export async function fetchLiveMetaAdLevel(startStr, endStr) {
+  const { metaAccessToken, metaAdAccountId } = getConversionSettings();
+  if (!metaAccessToken || !metaAdAccountId) return null;
+  const acctPath = metaAdAccountId.startsWith("act_") ? metaAdAccountId : `act_${metaAdAccountId}`;
+  const timeRange = encodeURIComponent(JSON.stringify({ since: startStr, until: endStr }));
+  const r = await fetch(`https://graph.facebook.com/v21.0/${acctPath}/insights?level=ad&fields=ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks&time_range=${timeRange}&limit=500&access_token=${encodeURIComponent(metaAccessToken)}`);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.message || `meta_http_${r.status}`);
+  const byAdId = new Map();
+  for (const row of d.data || []) {
+    byAdId.set(String(row.ad_id), { name: row.ad_name || row.ad_id, adGroup: row.adset_name || "", campaign: row.campaign_name || "", spend: Number(row.spend) || 0, impressions: Number(row.impressions) || 0, clicks: Number(row.clicks) || 0 });
+  }
+  return byAdId;
+}
+
+// Same idea for Google -- ad_group_ad gives the ad's own id (matches this
+// account's h_ad_id=creative template value), its ad group name (Google's
+// "adset" equivalent), campaign name, and cost in one GAQL query.
+export async function fetchLiveGoogleAdLevel(startStr, endStr) {
+  const { googleAdsCustomerId, googleAdsDeveloperToken, googleAdsRefreshToken } = getConversionSettings();
+  if (!googleAdsCustomerId || !googleAdsDeveloperToken || !googleAdsRefreshToken) return null;
+  const accessToken = await getGoogleAdsAccessToken(googleAdsRefreshToken);
+  const customerId = googleAdsCustomerId.replace(/\D/g, "");
+  const query = `SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group.name, campaign.name, metrics.cost_micros, metrics.impressions, metrics.clicks FROM ad_group_ad WHERE segments.date BETWEEN '${startStr}' AND '${endStr}'`;
+  const r = await fetch(`https://googleads.googleapis.com/v25/customers/${customerId}/googleAds:search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "developer-token": googleAdsDeveloperToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.[0]?.message || d?.error?.message || `google_http_${r.status}`);
+  const byAdId = new Map();
+  for (const row of d.results || []) {
+    const id = String(row.adGroupAd.ad.id);
+    const existing = byAdId.get(id) || { name: row.adGroupAd.ad.name || id, adGroup: row.adGroup.name || "", campaign: row.campaign.name || "", spend: 0, impressions: 0, clicks: 0 };
+    existing.spend += (Number(row.metrics.costMicros) || 0) / 1e6;
+    existing.impressions += Number(row.metrics.impressions) || 0;
+    existing.clicks += Number(row.metrics.clicks) || 0;
+    byAdId.set(id, existing);
+  }
+  return byAdId;
+}
+
 // Merges Meta + Google campaign rows into the Online/Gym buckets the rest
 // of this file already works in. Returns null (not thrown) when neither
 // platform is configured, so fetchAdsReport can cleanly fall back to the

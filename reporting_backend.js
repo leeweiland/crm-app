@@ -8,6 +8,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
+import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel } from "./ads_backend.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -141,16 +142,29 @@ function workflowStepSourceIds(workflow) {
 // numeric ids, not human-readable names -- there's no lookup back to "what
 // this ad was called" without pulling that from Meta/Google's own APIs,
 // a separate integration this doesn't attempt.
+// Single-letter shorthand params -- for contexts where a long el=
+// descriptive tag isn't practical (an Instagram/TikTok bio link, a
+// character-capped Twitter/X post, a YouTube description line). Checked
+// only after el= and the ad-platform h_ad_id fallback, since those are
+// this app's primary conventions -- these are additional, not a
+// replacement.
+const SOCIAL_PARAM_PLATFORM = { e: "email", s: "sms", y: "youtube", f: "facebook", i: "instagram", l: "linkedin", x: "twitter", t: "tiktok" };
 function attributionKeyForVisit(v) {
   if (v.el) return v.el;
   if (!v.search) return null;
   let params;
   try { params = new URLSearchParams(v.search); } catch { return null; }
   const hAdId = params.get("h_ad_id");
-  if (!hAdId) return null;
-  if (params.get("fbc_id")) return `meta-ad:${hAdId}`;
-  if (params.get("gc_id")) return `google-ad:${hAdId}`;
-  return `ad:${hAdId}`;
+  if (hAdId) {
+    if (params.get("fbc_id")) return `meta-ad:${hAdId}`;
+    if (params.get("gc_id")) return `google-ad:${hAdId}`;
+    return `ad:${hAdId}`;
+  }
+  for (const [param, platform] of Object.entries(SOCIAL_PARAM_PLATFORM)) {
+    const val = params.get(param);
+    if (val) return `${platform}:${val}`;
+  }
+  return null;
 }
 
 export function computeAttribution(startMs, endMs) {
@@ -215,6 +229,95 @@ export function computeAttribution(startMs, endMs) {
   }).sort((a, b) => b.visits - a.visits);
 
   return { sources, byElStage };
+}
+
+function slugify(s) {
+  return String(s || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "untitled";
+}
+// Hyphens/underscores -> spaces, each word capitalized -- "3-day-vsl-promo"
+// reads as "3 Day Vsl Promo". Numeric ad IDs pass through unchanged (no
+// word boundaries to fix), which is the honest fallback when Meta/Google
+// insights didn't resolve a real ad name for that id.
+function niceTitle(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return s;
+  return s.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/\b\w/g, c => c.toUpperCase());
+}
+// Reverse-maps an el=email-<slug>/sms-<slug> tag back to the campaign/
+// automation/workflow's CURRENT name, by slugifying every current name the
+// same way resolveSendSourceSlug does at send time and matching against
+// it. Approximate by nature -- a source renamed since it sent won't match
+// its own historical el= tags anymore -- but exact for the common case
+// (most aren't renamed), with no per-send historical name to fall back on.
+function buildSlugNameIndex() {
+  const idx = new Map();
+  for (const c of readJson(CAMPAIGNS_FILE, [])) idx.set(slugify(c.name), c.name);
+  for (const a of readJson(AUTOMATIONS_FILE, [])) idx.set(slugify(a.name), a.name);
+  for (const w of readJson(WORKFLOWS_FILE, [])) idx.set(slugify(w.name), w.name);
+  return idx;
+}
+const SOCIAL_PLATFORM_LABEL = { email: "Email", sms: "SMS", youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", linkedin: "LinkedIn", twitter: "Twitter", tiktok: "TikTok" };
+// Turns one attribution key into {title, adGroup, campaign, spend,
+// platform} for the Ads Report table -- title is always something a
+// human can read, adGroup/campaign are "—" when that hierarchy genuinely
+// doesn't apply (an email/SMS/social source isn't inside a Meta ad set or
+// Google ad group), not when data is merely missing.
+function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
+  if (key.startsWith("meta-ad:")) {
+    const id = key.slice(8);
+    const info = metaAdMap?.get(id);
+    return { title: info?.name || id, adGroup: info?.adGroup || "—", campaign: info?.campaign || "—", spend: info?.spend || 0, platform: "Meta" };
+  }
+  if (key.startsWith("google-ad:")) {
+    const id = key.slice(10);
+    const info = googleAdMap?.get(id);
+    return { title: info?.name || id, adGroup: info?.adGroup || "—", campaign: info?.campaign || "—", spend: info?.spend || 0, platform: "Google" };
+  }
+  if (key.startsWith("ad:")) {
+    return { title: key.slice(3), adGroup: "—", campaign: "—", spend: 0, platform: "Ad" };
+  }
+  if (key.startsWith("email-") || key.startsWith("sms-")) {
+    const isEmail = key.startsWith("email-");
+    const slug = key.slice(isEmail ? 6 : 4);
+    return { title: niceTitle(slug), adGroup: "—", campaign: slugIndex.get(slug) || "—", spend: 0, platform: isEmail ? "Email" : "SMS" };
+  }
+  const socialMatch = key.match(/^(email|sms|youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
+  if (socialMatch) {
+    const [, platform, val] = socialMatch;
+    return { title: niceTitle(val), adGroup: "—", campaign: "—", spend: 0, platform: SOCIAL_PLATFORM_LABEL[platform] };
+  }
+  return { title: niceTitle(key), adGroup: "—", campaign: "—", spend: 0, platform: "Other" };
+}
+
+const money = (n) => (n && isFinite(n)) ? Math.round(n * 100) / 100 : null;
+// Combines computeAttribution's real lead/booking counts (per source) with
+// ad-hierarchy names and per-ad spend from Meta/Google's own APIs. Revenue/
+// Sales/$-per-Sale are placeholders (0/null) until a real sales data
+// source is connected -- not computed from anything today, deliberately,
+// rather than showing a number that would just be wrong.
+export async function computeAdsReport(startMs, endMs, startStr, endStr) {
+  const { sources } = computeAttribution(startMs, endMs);
+  const [metaSettled, googleSettled] = await Promise.allSettled([
+    fetchLiveMetaAdLevel(startStr, endStr),
+    fetchLiveGoogleAdLevel(startStr, endStr),
+  ]);
+  const metaAdMap = metaSettled.status === "fulfilled" ? metaSettled.value : null;
+  const googleAdMap = googleSettled.status === "fulfilled" ? googleSettled.value : null;
+  const spendError = [metaSettled, googleSettled].find(s => s.status === "rejected")?.reason?.message || null;
+  const slugIndex = buildSlugNameIndex();
+
+  const rows = sources.map(s => {
+    const meta = sourceMeta(s.el, metaAdMap, googleAdMap, slugIndex);
+    return {
+      source: meta.title, platform: meta.platform, adGroup: meta.adGroup, campaign: meta.campaign,
+      leads: s.optIns, costPerLead: s.optIns ? money(meta.spend / s.optIns) : null,
+      bookings: s.bookings, costPerBooking: s.bookings ? money(meta.spend / s.bookings) : null,
+      revenue: 0, sales: 0, costPerSale: null,
+      spend: money(meta.spend), visits: s.visits, uniqueVisitors: s.uniqueVisitors,
+      key: s.el,
+    };
+  });
+  return { rows, spendError };
 }
 
 // Shared with ads_backend.js's period presets on the frontend -- the
@@ -343,6 +446,40 @@ export async function handleReportingRequest(req, res, url) {
     const contacts = readJson(CONTACTS_FILE, []);
     const byId = new Map(contacts.map(c => [c.id, c]));
     return sendJson(res, 200, { contacts: [...bucket].map(id => byId.get(id)).filter(Boolean) });
+  }
+
+  // One contact's own tracked page visits, formatted as journey-timeline
+  // "click" items -- kept separate from inbox_backend.js's /api/inbox/
+  // contact/:id (which only ever returns message-log items) rather than
+  // widening that endpoint's shape, since Inbox itself has no use for
+  // click events and this avoids any risk to that page. No ad-hierarchy
+  // lookup here (that's Ads Report's job, and needs a live Meta/Google
+  // call) -- a single contact's journey just needs a readable label,
+  // reusing niceTitle for that, not a full spend/campaign resolution.
+  const journeyClicksMatch = p.match(/^\/api\/reporting\/contact-clicks\/([^/]+)$/);
+  if (journeyClicksMatch && req.method === "GET") {
+    const contactId = journeyClicksMatch[1];
+    const visits = readJson(PAGE_VISITS_FILE, []).filter(v => v.contactId === contactId);
+    const clicks = visits.map(v => {
+      const key = attributionKeyForVisit(v);
+      if (!key) return null;
+      const isAd = /^(meta-ad|google-ad|ad):/.test(key);
+      const socialMatch = key.match(/^(youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
+      const label = isAd ? `${key.startsWith("meta-ad:") ? "Meta" : key.startsWith("google-ad:") ? "Google" : "Ad"} — ${key.split(":")[1]}`
+        : socialMatch ? `${SOCIAL_PLATFORM_LABEL[socialMatch[1]]} — ${niceTitle(socialMatch[2])}`
+        : niceTitle(key.replace(/^(email|sms)[-:]/, ""));
+      const category = isAd ? "ad" : socialMatch ? "media" : (key.startsWith("email") ? "email" : key.startsWith("sms") ? "sms" : "other");
+      return { at: v.at, path: v.path, key, label, category };
+    }).filter(Boolean);
+    return sendJson(res, 200, { clicks });
+  }
+
+  if (p === "/api/reporting/ads-report" && req.method === "GET") {
+    const { startMs, endMs } = parseRangeParams(url);
+    const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
+    const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+    const { rows, spendError } = await computeAdsReport(startMs, endMs, startStr, endStr);
+    return sendJson(res, 200, { rows, spendError, start: startStr, end: endStr });
   }
 
   const campaignMatch = p.match(/^\/api\/reporting\/campaigns\/([^/]+)$/);

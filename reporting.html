@@ -44,6 +44,12 @@
   .journey-icon.sms { background: rgba(57,255,20,0.15); color: var(--pra-green); }
   .journey-icon.call { background: rgba(255,59,59,0.15); color: var(--pra-red); }
   .journey-icon.task, .journey-icon.reminder { background: rgba(255,193,7,0.15); color: #ffc107; }
+  .journey-icon.click { background: rgba(57,255,20,0.18); color: #39ff14; box-shadow: 0 0 6px rgba(57,255,20,0.4); }
+  .journey-timeline-item.click-item { background: rgba(57,255,20,0.06); border-radius: 6px; }
+  .journey-timeline-item.click-item .journey-click-label { color: #39ff14; font-weight: 700; text-shadow: 0 0 4px rgba(57,255,20,0.35); }
+  .journey-subtab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .78rem; padding: 6px 14px; border-radius: 8px; cursor: pointer; }
+  .journey-subtab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
+  .journey-subtab-btn.active[data-subtab="click"], .journey-subtab-btn.active[data-subtab="ad"], .journey-subtab-btn.active[data-subtab="media"] { color: #39ff14; border-color: #39ff14; background: rgba(57,255,20,0.1); }
   .ads-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
   @media (max-width: 900px) { .ads-cards { grid-template-columns: 1fr; } }
   .ads-segment-card { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
@@ -101,6 +107,7 @@
           <button class="tab-btn" data-tab="email">Email</button>
           <button class="tab-btn" data-tab="sms">SMS</button>
           <button class="tab-btn" data-tab="attribution">Ad Attribution</button>
+          <button class="tab-btn" data-tab="adsreport">Ads Report</button>
           <button class="tab-btn" data-tab="journeys">Customer Journeys</button>
           <button class="tab-btn" data-tab="team">Team Activity</button>
         </div>
@@ -205,8 +212,38 @@
         </div>
       </div>
 
+      <div class="tab-panel" id="tab-adsreport">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">One row per source -- a specific Meta/Google ad, or an email/SMS/social tag -- with its ad group/campaign hierarchy where that applies, and leads/bookings/sales it drove. Revenue/Sales/$-per-Sale read $0 until a real sales data source is connected (see Settings). Click any Leads or Bookings count to see the contacts behind it.</div>
+        <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
+        <div class="pra-panel" style="padding:0;overflow-x:auto">
+          <table class="pra-table" style="width:100%;min-width:900px">
+            <thead><tr>
+              <th class="sortable" data-sort="source" style="text-align:left;padding:12px 16px">Source</th>
+              <th class="sortable" data-sort="adGroup" style="text-align:left;padding:12px 16px">Ad Set/Group</th>
+              <th class="sortable" data-sort="campaign" style="text-align:left;padding:12px 16px">Campaign</th>
+              <th class="sortable" data-sort="revenue" style="text-align:right;padding:12px 16px">Revenue</th>
+              <th class="sortable" data-sort="sales" style="text-align:right;padding:12px 16px">Sales</th>
+              <th class="sortable" data-sort="costPerSale" style="text-align:right;padding:12px 16px">$/Sale</th>
+              <th class="sortable" data-sort="bookings" style="text-align:right;padding:12px 16px">Bookings</th>
+              <th class="sortable" data-sort="costPerBooking" style="text-align:right;padding:12px 16px">$/Booking</th>
+              <th class="sortable" data-sort="leads" style="text-align:right;padding:12px 16px">Leads</th>
+              <th class="sortable" data-sort="costPerLead" style="text-align:right;padding:12px 16px">$/Lead</th>
+            </tr></thead>
+            <tbody id="adsReportBody"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="tab-panel" id="tab-journeys">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shows every tracked email/SMS/call/task touchpoint for a contact, oldest to newest. Ad-click-level attribution (which ad/creative brought them in) isn't tracked yet -- that needs the click-ID capture work discussed separately.</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shows every tracked touchpoint for a contact, oldest to newest -- ad/media clicks (from that platform's own tracking template or the <code>el=</code>/social shorthand tags), plus email/SMS/call/task activity.</div>
+        <div class="journey-subtabs" style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+          <button class="journey-subtab-btn active" data-subtab="all">All</button>
+          <button class="journey-subtab-btn" data-subtab="click">Clicks</button>
+          <button class="journey-subtab-btn" data-subtab="ad">Ads</button>
+          <button class="journey-subtab-btn" data-subtab="media">Media</button>
+          <button class="journey-subtab-btn" data-subtab="email">Emails</button>
+          <button class="journey-subtab-btn" data-subtab="sms">SMS</button>
+        </div>
         <div class="journey-layout">
           <div class="pra-panel" style="padding:0;overflow-y:auto;max-height:75vh;max-height:75dvh">
             <div style="padding:12px"><input class="pra-input" id="journeySearch" placeholder="Search contacts..."/></div>
@@ -311,7 +348,7 @@ async function applyPeriod() {
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
   setReportLoading(true);
-  const tasks = [loadEmailReport(), loadSmsReport(), loadAttributionReport(), loadTeamActivityReport()];
+  const tasks = [loadEmailReport(), loadSmsReport(), loadAttributionReport(), loadAdsReportTable(), loadTeamActivityReport()];
   if (document.getElementById('tab-overview').classList.contains('active')) tasks.push(loadOverview());
   try { await Promise.all(tasks); } finally { setReportLoading(false); }
 }
@@ -594,8 +631,9 @@ async function loadSortPreference() {
   try {
     const r = await fetch('/api/auth/me');
     if (!r.ok) return;
-    const saved = (await r.json()).user?.preferences?.attributionSort;
-    if (saved?.field) attributionSort = saved;
+    const prefs = (await r.json()).user?.preferences || {};
+    if (prefs.attributionSort?.field) attributionSort = prefs.attributionSort;
+    if (prefs.adsReportSort?.field) adsReportSort = prefs.adsReportSort;
   } catch {}
 }
 function saveSortPreference() {
@@ -622,9 +660,73 @@ async function openAttributionDrilldown(el, stage) {
   `).join('');
 }
 
+// ── Ads Report (per-source hierarchy + cost-per-lead/booking/sale) ──────
+let allAdsReportRows = [];
+let adsReportSort = { field: 'leads', dir: -1 };
+async function loadAdsReportTable() {
+  const body = document.getElementById('adsReportBody');
+  const msg = document.getElementById('adsReportMsg');
+  body.innerHTML = `<tr><td colspan="10" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
+  msg.textContent = '';
+  const r = await fetch(`/api/reporting/ads-report?start=${currentStart}&end=${currentEnd}`);
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="10" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
+  const d = await r.json();
+  allAdsReportRows = d.rows;
+  if (d.spendError) msg.textContent = `Note: some ad spend may be missing (${d.spendError}).`;
+  renderAdsReportTable();
+}
+function renderAdsReportTable() {
+  const body = document.getElementById('adsReportBody');
+  if (!allAdsReportRows.length) { body.innerHTML = `<tr><td colspan="10" class="pra-muted" style="padding:16px">No tracked sources in this range.</td></tr>`; return; }
+  const { field, dir } = adsReportSort;
+  const textFields = ['source', 'adGroup', 'campaign'];
+  const rows = [...allAdsReportRows].sort((a, b) => {
+    let av = a[field], bv = b[field], cv = b[field];
+    if (textFields.includes(field)) { av = String(av).toLowerCase(); cv = String(cv).toLowerCase(); }
+    else { av = av ?? -1; cv = cv ?? -1; }
+    return av < cv ? -dir : av > cv ? dir : 0;
+  });
+  document.querySelectorAll('#tab-adsreport th.sortable').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === field);
+    const existing = th.querySelector('.sort-arrow'); if (existing) existing.remove();
+    if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
+  });
+  const money = (n) => n == null ? '—' : fmtMoney(n);
+  const countCell = (n, stage, key) => n > 0
+    ? `<td style="text-align:right;padding:10px 16px"><button class="pra-link" style="background:none;border:none;cursor:pointer;font:inherit" data-drill-el="${escapeHtml(key)}" data-drill-stage="${stage}">${n}</button></td>`
+    : `<td style="text-align:right;padding:10px 16px;color:var(--pra-dim)">0</td>`;
+  body.innerHTML = rows.map(row => `
+    <tr style="border-top:1px solid var(--pra-border)">
+      <td style="padding:10px 16px;font-weight:600">${escapeHtml(row.source)}<div class="pra-muted" style="font-size:.72rem;font-weight:400">${escapeHtml(row.platform)}</div></td>
+      <td style="padding:10px 16px">${escapeHtml(row.adGroup)}</td>
+      <td style="padding:10px 16px">${escapeHtml(row.campaign)}</td>
+      <td style="text-align:right;padding:10px 16px">${fmtMoney(row.revenue)}</td>
+      <td style="text-align:right;padding:10px 16px">${row.sales}</td>
+      <td style="text-align:right;padding:10px 16px">${money(row.costPerSale)}</td>
+      ${countCell(row.bookings, 'bookings', row.key)}
+      <td style="text-align:right;padding:10px 16px">${money(row.costPerBooking)}</td>
+      ${countCell(row.leads, 'optIns', row.key)}
+      <td style="text-align:right;padding:10px 16px">${money(row.costPerLead)}</td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('[data-drill-el]').forEach(btn => btn.onclick = () => openAttributionDrilldown(btn.dataset.drillEl, btn.dataset.drillStage));
+}
+document.querySelectorAll('#tab-adsreport th.sortable').forEach(th => th.addEventListener('click', () => {
+  if (adsReportSort.field === th.dataset.sort) adsReportSort.dir *= -1;
+  else adsReportSort = { field: th.dataset.sort, dir: ['source', 'adGroup', 'campaign'].includes(th.dataset.sort) ? 1 : -1 };
+  renderAdsReportTable();
+  fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adsReportSort }) });
+}));
+
 // ── Customer Journeys ────────────────────────────────────────────────────
-let journeysLoaded = false, allJourneyContacts = [], activeJourneyContactId = null;
-const JOURNEY_ICONS = { email: '📧', sms: '💬', call: '☎', task: '☑', reminder: '⏰' };
+let journeysLoaded = false, allJourneyContacts = [], activeJourneyContactId = null, journeySubtab = 'all', currentJourneyItems = [];
+const JOURNEY_ICONS = { email: '📧', sms: '💬', call: '☎', task: '☑', reminder: '⏰', click: '🖱' };
+document.querySelectorAll('.journey-subtab-btn').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('.journey-subtab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  journeySubtab = btn.dataset.subtab;
+  renderJourneyTimeline();
+});
 async function loadJourneyContacts() {
   journeysLoaded = true;
   const r = await fetch('/api/contacts');
@@ -643,18 +745,39 @@ document.getElementById('journeySearch').addEventListener('input', renderJourney
 async function openJourney(contactId) {
   activeJourneyContactId = contactId;
   renderJourneyContactList();
-  const r = await fetch('/api/inbox/contact/' + contactId);
   const timeline = document.getElementById('journeyTimeline');
-  if (!r.ok) { timeline.innerHTML = '<div class="pra-muted">Could not load.</div>'; return; }
-  const { items } = await r.json();
-  const sorted = [...items].sort((a, b) => new Date(a.at) - new Date(b.at));
-  timeline.innerHTML = sorted.length ? sorted.map(item => {
-    let preview = '';
-    if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
+  timeline.innerHTML = '<div class="pra-muted">Loading…</div>';
+  const [msgRes, clickRes] = await Promise.all([
+    fetch('/api/inbox/contact/' + contactId),
+    fetch('/api/reporting/contact-clicks/' + contactId),
+  ]);
+  if (!msgRes.ok) { timeline.innerHTML = '<div class="pra-muted">Could not load.</div>'; return; }
+  const { items } = await msgRes.json();
+  const { clicks } = clickRes.ok ? await clickRes.json() : { clicks: [] };
+  const clickItems = clicks.map(c => ({ itemType: 'click', category: c.category, at: c.at, title: c.label, path: c.path }));
+  currentJourneyItems = [...items, ...clickItems].sort((a, b) => new Date(a.at) - new Date(b.at));
+  renderJourneyTimeline();
+}
+function renderJourneyTimeline() {
+  const timeline = document.getElementById('journeyTimeline');
+  const filtered = currentJourneyItems.filter(item => {
+    if (journeySubtab === 'all') return true;
+    if (journeySubtab === 'click') return item.itemType === 'click';
+    if (journeySubtab === 'ad') return item.itemType === 'click' && item.category === 'ad';
+    if (journeySubtab === 'media') return item.itemType === 'click' && item.category === 'media';
+    if (journeySubtab === 'email') return item.itemType === 'email';
+    if (journeySubtab === 'sms') return item.itemType === 'sms';
+    return true;
+  });
+  timeline.innerHTML = filtered.length ? filtered.map(item => {
+    const isClick = item.itemType === 'click';
+    let preview;
+    if (isClick) preview = `<span class="journey-click-label">Clicked: ${escapeHtml(item.title)}</span>${item.path ? ` <span class="pra-muted" style="font-size:.78rem">(${escapeHtml(item.path)})</span>` : ''}`;
+    else if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
     else if (item.itemType === 'call') preview = `${escapeHtml(item.direction || '')} call${item.duration ? ', ' + item.duration + 'min' : ''}`;
     else preview = escapeHtml(item.title || '');
     return `
-      <div class="journey-timeline-item">
+      <div class="journey-timeline-item${isClick ? ' click-item' : ''}">
         <div class="journey-icon ${item.itemType}">${JOURNEY_ICONS[item.itemType] || '•'}</div>
         <div style="flex:1">
           <div style="font-size:.86rem">${preview}</div>
@@ -662,7 +785,7 @@ async function openJourney(contactId) {
         </div>
       </div>
     `;
-  }).join('') : '<div class="pra-muted">No activity yet.</div>';
+  }).join('') : '<div class="pra-muted">No activity in this filter.</div>';
 }
 
 (async function init() {
