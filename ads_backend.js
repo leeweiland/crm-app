@@ -1,7 +1,6 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
 import { getConversionSettings, getGoogleAdsAccessToken } from "./conversions_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
-import { BOOKINGS_FILE } from "./scheduling_backend.js";
+import { FLOWS_FILE, RUNS_FILE } from "./flows_backend.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
@@ -92,42 +91,42 @@ async function fetchLiveAdSpend(startStr, endStr) {
   return buckets;
 }
 
-// Same Online/Gym split as everywhere else in the app (contact.programType).
-function categorizeContact(contact) {
-  return contact?.programType === "gym" ? "gym" : "online";
-}
-
 // Leads/bookings/applications used to come from the sheet's "NEW CRM"
 // columns, which literally meant this app (vehosted.com is a custom
 // domain pointing at this same crm-app) -- so this reads this app's own
-// contacts/bookings directly instead of a spreadsheet snapshot of itself.
-// Mirrors the sheet's own asymmetry: Online's column tracked real
-// bookings, Gym's tracked applications -- there's no per-status-change
-// timestamp on a contact, so "applications made in this window" is
-// approximated as gym contacts currently sitting at APPLICATION whose
-// updatedAt falls in range, not a perfect "became an application on this
-// exact day" count.
+// data directly instead of a spreadsheet snapshot of itself.
+//
+// Counting new contacts (by createdAt) badly undercounted leads: confirmed
+// live against real lead-notification emails that most "new leads" are
+// actually EXISTING contacts re-matched by email/phone (repeat form
+// fills, already-imported people) -- their createdAt is from whenever
+// they first appeared, not today, even though a real lead event happened
+// today. The dedicated intake flows ("1 ONLINE LEAD", "1 GYM LEAD", "2
+// GYM APPLICATION", "2 ONLINE BOOKING" -- confirmed live, these are this
+// account's actual flow names) log a run with its own enteredAt on EVERY
+// trigger firing, new-contact-or-not, so counting runs is the accurate
+// "how many lead/application/booking events happened today" signal.
+// Matched by name substring, not hardcoded flow IDs, so this doesn't
+// silently go stale if a flow gets rebuilt with a new ID.
 function fetchCrmLeadsAndBookings(startMs, endMs) {
-  const contacts = readJson(CONTACTS_FILE, []).filter(c => !c.testContact);
-  const contactsById = new Map(contacts.map(c => [c.id, c]));
-  const bookings = readJson(BOOKINGS_FILE, []);
+  const flows = readJson(FLOWS_FILE, []);
+  const runs = readJson(RUNS_FILE, []);
   const buckets = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
 
-  for (const c of contacts) {
-    const createdMs = new Date(c.createdAt).getTime();
-    if (createdMs >= startMs && createdMs <= endMs) buckets[categorizeContact(c)].emails++;
-  }
-  for (const b of bookings) {
-    const createdMs = new Date(b.createdAt).getTime();
-    if (createdMs < startMs || createdMs > endMs) continue;
-    const contact = contactsById.get(b.contactId);
-    if (contact?.testContact) continue;
-    if (categorizeContact(contact) === "online") buckets.online.bookM++;
-  }
-  for (const c of contacts) {
-    if (categorizeContact(c) !== "gym" || c.status !== "APPLICATION") continue;
-    const updatedMs = new Date(c.updatedAt || c.createdAt).getTime();
-    if (updatedMs >= startMs && updatedMs <= endMs) buckets.gym.bookM++;
+  const findFlowId = (needle) => flows.find(f => (f.name || "").toUpperCase().includes(needle))?.id || null;
+  const counters = [
+    { flowId: findFlowId("ONLINE LEAD"), bucket: "online", field: "emails" },
+    { flowId: findFlowId("GYM LEAD"), bucket: "gym", field: "emails" },
+    { flowId: findFlowId("ONLINE BOOKING"), bucket: "online", field: "bookM" },
+    { flowId: findFlowId("GYM APPLICATION"), bucket: "gym", field: "bookM" },
+  ].filter(c => c.flowId);
+
+  for (const run of runs) {
+    const enteredMs = new Date(run.enteredAt).getTime();
+    if (enteredMs < startMs || enteredMs > endMs) continue;
+    for (const c of counters) {
+      if (run.flowId === c.flowId) buckets[c.bucket][c.field]++;
+    }
   }
   return buckets;
 }
