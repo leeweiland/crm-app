@@ -83,23 +83,34 @@ function excludeTestContacts(messages) {
 function statsFromSources(sourceType, sourceIds, startMs, endMs, statsFn) {
   const messages = sourceIds.flatMap(id => excludeTestContacts(getMessagesForSource(sourceType, id)))
     .filter(m => { const t = new Date(m.sentAt || 0).getTime(); return t >= startMs && t <= endMs; });
-  return { stats: (statsFn || statsFromMessages)(messages), contactIds: new Set(messages.map(m => m.contactId).filter(Boolean)) };
+  return { stats: (statsFn || statsFromMessages)(messages), messages };
 }
 
-// "Reply" = an inbound message (same channel) in-range from a contact who
-// received one of these sends in-range -- not tied to that specific send,
-// just "did this person write back during this window." contactIds is
-// already the exact recipient set statsFromSources just computed, so this
-// only touches those contacts' own message files, never a wider scan.
-function countReplies(contactIds, channel, startMs, endMs) {
-  if (!contactIds.size) return 0;
+// "Reply" = a contact who received one of these sends wrote back
+// afterward. Two things confirmed live as necessary, not optional: an
+// inbound message only counts if it landed AFTER that contact's own
+// (earliest in-range) send -- otherwise an unrelated inbound email from
+// earlier the same day counted as a "reply" to a send it predates -- and
+// at most ONE reply per contact, not one per inbound message -- otherwise
+// a single back-and-forth conversation with one contact could inflate
+// Replies past the number of people actually reached, or even past Sent
+// itself (confirmed live: 17 sent showed 20 replies before this fix).
+function countReplies(sentMessages, channel, endMs) {
+  const earliestSendByContact = new Map();
+  for (const m of sentMessages) {
+    if (!m.contactId) continue;
+    const t = new Date(m.sentAt || 0).getTime();
+    const existing = earliestSendByContact.get(m.contactId);
+    if (existing === undefined || t < existing) earliestSendByContact.set(m.contactId, t);
+  }
   let replies = 0;
-  for (const contactId of contactIds) {
-    for (const m of getContactMessages(contactId)) {
-      if (m.channel !== channel || m.direction !== "inbound") continue;
+  for (const [contactId, sentAtMs] of earliestSendByContact) {
+    const replied = getContactMessages(contactId).some(m => {
+      if (m.channel !== channel || m.direction !== "inbound") return false;
       const t = new Date(m.createdAt).getTime();
-      if (t >= startMs && t <= endMs) replies++;
-    }
+      return t > sentAtMs && t <= endMs;
+    });
+    if (replied) replies++;
   }
   return replies;
 }
@@ -353,9 +364,9 @@ export async function handleReportingRequest(req, res, url) {
     const workflowData = statsFromSources("workflow_step", workflowStepIds, startMs, endMs, smsStatsFromMessages);
 
     return sendJson(res, 200, {
-      campaigns: { ...campaignData.stats, replies: countReplies(campaignData.contactIds, "email", startMs, endMs) },
-      automations: { ...automationData.stats, replies: countReplies(automationData.contactIds, "email", startMs, endMs) },
-      workflows: { ...workflowData.stats, replies: countReplies(workflowData.contactIds, "sms", startMs, endMs) },
+      campaigns: { ...campaignData.stats, replies: countReplies(campaignData.messages, "email", endMs) },
+      automations: { ...automationData.stats, replies: countReplies(automationData.messages, "email", endMs) },
+      workflows: { ...workflowData.stats, replies: countReplies(workflowData.messages, "sms", endMs) },
     });
   }
 
