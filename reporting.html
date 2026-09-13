@@ -144,16 +144,20 @@
           <div class="ads-cards" id="overviewAdsCards"></div>
         </div>
         <div class="rep-section">
-          <div class="rep-section-title">Email</div>
-          <div class="rep-grid" id="emailGrid"></div>
+          <div class="rep-section-title" style="display:flex;align-items:center;gap:10px">Email 1:1 <select class="pra-select" id="emailOneToOneUser" style="font-size:.7rem;padding:3px 8px"></select></div>
+          <div class="rep-grid" id="emailOneToOneGrid"></div>
+        </div>
+        <div class="rep-section">
+          <div class="rep-section-title">Email Campaigns</div>
+          <div class="rep-grid" id="campaignsGrid"></div>
         </div>
         <div class="rep-section">
           <div class="rep-section-title">Email Automations</div>
           <div class="rep-grid" id="automationsGrid"></div>
         </div>
         <div class="rep-section">
-          <div class="rep-section-title">SMS</div>
-          <div class="rep-grid" id="smsGrid"></div>
+          <div class="rep-section-title" style="display:flex;align-items:center;gap:10px">SMS 1:1 <select class="pra-select" id="smsOneToOneUser" style="font-size:.7rem;padding:3px 8px"></select></div>
+          <div class="rep-grid" id="smsOneToOneGrid"></div>
         </div>
         <div class="rep-section">
           <div class="rep-section-title">SMS Sequences</div>
@@ -439,21 +443,58 @@ function fmtPct(n, total) { return total ? Math.round(n / total * 100) + '%' : '
 // Clicked/Delivered are rates off Sent since those are what a send-quality
 // glance actually needs. SMS has no click-tracking redirect yet (see
 // sms_backend.js) -- Clicked genuinely reads 0% until that's built, not a
-// bug in this rendering.
-function renderRateCard(el, cardCls, sent, rateFields, inboundCount) {
-  const cells = [['Sent', sent], ...rateFields.map(([label, n]) => [label, fmtPct(n, sent)]), ['Inbound', inboundCount]];
+// bug in this rendering. lastLabel/lastValue is the trailing raw-count
+// cell -- "Inbound" for the 1:1 cards, "Replies" for bulk sends.
+function renderRateCard(el, cardCls, sent, rateFields, lastLabel, lastValue) {
+  const cells = [['Sent', sent], ...rateFields.map(([label, n]) => [label, fmtPct(n, sent)]), [lastLabel, lastValue]];
   document.getElementById(el).innerHTML = cells.map(([label, val]) => `
     <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${val}</div></div>
   `).join('');
 }
+// 1:1 cards: just Sent + Inbound, no rate -- "how much back-and-forth is
+// happening," not a send-quality metric like the bulk sections above.
+function renderSentInboundCard(el, cardCls, sent, inbound) {
+  document.getElementById(el).innerHTML = [['Sent', sent], ['Inbound', inbound]].map(([label, val]) => `
+    <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${val}</div></div>
+  `).join('');
+}
+// ── Per-user 1:1 filter (Email/SMS) -- fetched once, selector just
+// re-sums the already-fetched rows client-side, no re-fetch on change. ──
+let sentByUserRows = [];
+function populateUserSelector(selectId, currentValue) {
+  const sel = document.getElementById(selectId);
+  const keep = currentValue ?? sel.value ?? 'all';
+  sel.innerHTML = '<option value="all">All Users</option>' + sentByUserRows.map(r => `<option value="${r.userId}">${escapeHtml(r.name)}</option>`).join('');
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : 'all';
+}
+function renderOneToOneCards() {
+  const emailSel = document.getElementById('emailOneToOneUser').value;
+  const smsSel = document.getElementById('smsOneToOneUser').value;
+  const emailRows = emailSel === 'all' ? sentByUserRows : sentByUserRows.filter(r => r.userId === emailSel);
+  const smsRows = smsSel === 'all' ? sentByUserRows : sentByUserRows.filter(r => r.userId === smsSel);
+  const sum = (rows, fn) => rows.reduce((s, r) => s + fn(r), 0);
+  renderSentInboundCard('emailOneToOneGrid', 'stat-card-email', sum(emailRows, r => r.email.human || 0), sum(emailRows, r => r.emailReceived || 0));
+  renderSentInboundCard('smsOneToOneGrid', 'stat-card-sms', sum(smsRows, r => r.sms.human || 0), sum(smsRows, r => r.smsReceived || 0));
+}
+document.getElementById('emailOneToOneUser').addEventListener('change', renderOneToOneCards);
+document.getElementById('smsOneToOneUser').addEventListener('change', renderOneToOneCards);
 async function loadOverview() {
   const r = await fetch(`/api/reporting/overview?start=${currentStart}&end=${currentEnd}`);
-  if (!r.ok) return;
-  const { email, sms, automations, workflows } = await r.json();
-  renderRateCard('emailGrid', 'stat-card-email', email.sent, [['Opened %', email.opened], ['Clicked %', email.clicked]], email.received);
-  renderRateCard('smsGrid', 'stat-card-sms', sms.sent, [['Delivered %', sms.delivered], ['Clicked %', sms.clicked || 0]], sms.received);
-  grid('automationsGrid', EMAIL_OVERVIEW_LABELS, automations, 'stat-card-automations');
-  grid('workflowsGrid', SMS_LABELS, workflows, 'stat-card-workflows');
+  if (r.ok) {
+    const { campaigns, automations, workflows } = await r.json();
+    renderRateCard('campaignsGrid', 'stat-card-email', campaigns.sent, [['Open %', campaigns.opened], ['Click %', campaigns.clicked]], 'Replies', campaigns.replies);
+    renderRateCard('automationsGrid', 'stat-card-automations', automations.sent, [['Open %', automations.opened], ['Click %', automations.clicked]], 'Replies', automations.replies);
+    renderRateCard('workflowsGrid', 'stat-card-workflows', workflows.sent, [['Delivered %', workflows.delivered], ['Click %', 0]], 'Inbound', workflows.replies);
+  }
+  const userR = await fetch(`/api/reporting/sent-by-user?start=${currentStart}&end=${currentEnd}`);
+  if (userR.ok) {
+    sentByUserRows = (await userR.json()).rows;
+    populateUserSelector('emailOneToOneUser');
+    populateUserSelector('smsOneToOneUser');
+  } else {
+    sentByUserRows = []; // non-admin: 1:1 cards just render as zero, same graceful degradation as Team Activity
+  }
+  renderOneToOneCards();
   const adsR = await fetch(`/api/ads/report?period=${currentPeriod}&start=${currentStart}&end=${currentEnd}`);
   const ads = adsR.ok ? await adsR.json() : { ok: false };
   document.getElementById('overviewAdsCards').innerHTML = ads.ok

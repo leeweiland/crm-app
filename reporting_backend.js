@@ -74,6 +74,41 @@ function excludeTestContacts(messages) {
   return messages.filter(m => !testIds.has(m.contactId));
 }
 
+// Aggregate Sent/Opened/Clicked across every campaign (or every automation
+// step) at once, filtered to the selected range -- same per-source-file
+// reads the single-campaign/automation report pages already use (see
+// getMessagesForSource's own comment on why this is never a message-log
+// scan), just summed across all of them instead of one at a time.
+function statsFromSources(sourceType, sourceIds, startMs, endMs, statsFn) {
+  const messages = sourceIds.flatMap(id => excludeTestContacts(getMessagesForSource(sourceType, id)))
+    .filter(m => { const t = new Date(m.sentAt || 0).getTime(); return t >= startMs && t <= endMs; });
+  return { stats: (statsFn || statsFromMessages)(messages), contactIds: new Set(messages.map(m => m.contactId).filter(Boolean)) };
+}
+
+// "Reply" = an inbound message (same channel) in-range from a contact who
+// received one of these sends in-range -- not tied to that specific send,
+// just "did this person write back during this window." contactIds is
+// already the exact recipient set statsFromSources just computed, so this
+// only touches those contacts' own message files, never a wider scan.
+function countReplies(contactIds, channel, startMs, endMs) {
+  if (!contactIds.size) return 0;
+  let replies = 0;
+  for (const contactId of contactIds) {
+    for (const m of getContactMessages(contactId)) {
+      if (m.channel !== channel || m.direction !== "inbound") continue;
+      const t = new Date(m.createdAt).getTime();
+      if (t >= startMs && t <= endMs) replies++;
+    }
+  }
+  return replies;
+}
+function automationStepSourceIds(automation) {
+  return Object.keys(automation.steps || {}).map(stepId => `${automation.id}:${stepId}`);
+}
+function workflowStepSourceIds(workflow) {
+  return (workflow.steps || []).map(s => `${workflow.id}:${s.id}`);
+}
+
 // Click-to-conversion attribution, grouped by the el= source tag every
 // tracked link (email/SMS/ads/social, see source_names.js and the Ad
 // Platform Link Tracking settings) already carries. Distinct from the
@@ -206,15 +241,18 @@ export async function handleReportingRequest(req, res, url) {
 
   if (p === "/api/reporting/overview" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
-    const days = getDailyStatsInRange(startMs, endMs);
-    const totalSmsIn = days.reduce((sum, d) => sum + (d.smsInCount || 0), 0);
-    const totalEmailIn = days.reduce((sum, d) => sum + (d.emailInCount || 0), 0);
+
+    const campaignIds = readJson(CAMPAIGNS_FILE, []).map(c => c.id);
+    const campaignData = statsFromSources("campaign", campaignIds, startMs, endMs, statsFromMessages);
+    const automationStepIds = readJson(AUTOMATIONS_FILE, []).flatMap(automationStepSourceIds);
+    const automationData = statsFromSources("automation_step", automationStepIds, startMs, endMs, statsFromMessages);
+    const workflowStepIds = readJson(WORKFLOWS_FILE, []).flatMap(workflowStepSourceIds);
+    const workflowData = statsFromSources("workflow_step", workflowStepIds, startMs, endMs, smsStatsFromMessages);
+
     return sendJson(res, 200, {
-      email: statsFromByStatus(sumByStatus(days, "emailOut"), totalEmailIn),
-      sms: smsStatsFromByStatus(sumByStatus(days, "smsOut"), totalSmsIn),
-      campaigns: { total: readJson(CAMPAIGNS_FILE, []).length },
-      automations: statsFromByStatus(sumByStatus(days, "automationEmailOut")),
-      workflows: smsStatsFromByStatus(sumByStatus(days, "workflowSmsOut"), 0),
+      campaigns: { ...campaignData.stats, replies: countReplies(campaignData.contactIds, "email", startMs, endMs) },
+      automations: { ...automationData.stats, replies: countReplies(automationData.contactIds, "email", startMs, endMs) },
+      workflows: { ...workflowData.stats, replies: countReplies(workflowData.contactIds, "sms", startMs, endMs) },
     });
   }
 
@@ -233,7 +271,7 @@ export async function handleReportingRequest(req, res, url) {
     const { startMs, endMs } = parseRangeParams(url);
     const OWNED_CONTACT_SCAN_CAP = 300;
     const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
-    const allContacts = readJson(CONTACTS_FILE, []);
+    const allContacts = readJson(CONTACTS_FILE, []).filter((c) => !c.testContact);
     const rows = users.map((u) => {
       const contacts = allContacts
         .filter((c) => c.ownerId === u.id)
@@ -241,12 +279,17 @@ export async function handleReportingRequest(req, res, url) {
         .slice(0, OWNED_CONTACT_SCAN_CAP);
       const email = emptySentCounts();
       const sms = emptySentCounts();
+      // Inbound only ever counted from these SAME owned/real contacts --
+      // never a raw mailbox/phone-line count, which would pull in whatever
+      // unrelated mail a connected inbox happens to receive.
+      let emailReceived = 0, smsReceived = 0;
       for (const c of contacts) {
         for (const m of getContactMessages(c.id)) {
-          if (m.direction !== "outbound") continue;
           if (m.channel !== "email" && m.channel !== "sms") continue;
           const t = new Date(m.createdAt).getTime();
           if (!(t >= startMs && t <= endMs)) continue;
+          if (m.direction === "inbound") { if (m.channel === "email") emailReceived++; else smsReceived++; continue; }
+          if (m.direction !== "outbound") continue;
           const cat = sentCategoryForSourceType(m.sourceType);
           // Bulk-migrated history (Close/AC/Hyros) is attributed to whoever
           // owns the contact TODAY, which has nothing to do with who
@@ -261,7 +304,7 @@ export async function handleReportingRequest(req, res, url) {
           bucket.total++;
         }
       }
-      return { userId: u.id, name: `${u.first} ${u.last}`.trim(), email, sms, scannedContacts: contacts.length };
+      return { userId: u.id, name: `${u.first} ${u.last}`.trim(), email, sms, emailReceived, smsReceived, scannedContacts: contacts.length };
     });
     return sendJson(res, 200, { rows, categories: SENT_CATEGORIES });
   }
