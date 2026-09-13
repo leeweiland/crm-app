@@ -199,6 +199,27 @@
   .do-bar-fill { height: 100%; border-radius: 4px; background: var(--pra-blue); }
   .do-row.completed .do-bar-fill { background: var(--pra-green); }
   .do-drop { color: var(--pra-red); font-size: .76rem; margin-top: 4px; }
+  .do-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .do-toolbar select { max-width: 220px; }
+  /* Same date-range picker as reporting.html's Ads Report tab, same classes/behavior. */
+  .calendar-popover { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 50; background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 14px; width: 280px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .calendar-popover.show { display: block; }
+  .calendar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .calendar-month-label { font-family: var(--font-primary); font-weight: 700; font-size: .86rem; }
+  .calendar-nav-btn { background: none; border: 1px solid var(--pra-border); color: var(--pra-dim); border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: .8rem; }
+  .calendar-nav-btn:hover { color: var(--pra-white); border-color: var(--pra-blue); }
+  .calendar-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: .68rem; color: var(--pra-dim); margin-bottom: 4px; }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal-day { background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .78rem; padding: 6px 0; cursor: pointer; border-radius: 6px; }
+  .cal-day:hover { background: var(--pra-blue-dim); }
+  .cal-day.other-month { color: var(--pra-dim); opacity: .4; }
+  .cal-day.today { box-shadow: inset 0 0 0 1px var(--pra-blue); }
+  .cal-day.in-range { background: var(--pra-blue-dim); border-radius: 0; }
+  .cal-day.range-start, .cal-day.range-end { background: var(--pra-blue); color: #fff; font-weight: 700; }
+  .cal-day.range-start { border-radius: 6px 0 0 6px; }
+  .cal-day.range-end { border-radius: 0 6px 6px 0; }
+  .cal-day.range-start.range-end { border-radius: 6px; }
+  .calendar-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; gap: 8px; }
 
   .picker-add-select { max-width: 100%; }
   .picker-chips { margin-top: 8px; }
@@ -297,6 +318,31 @@
 
       <div class="tab-panel" id="tab-dropoffs">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Distinct visitors who reached each step, and the percentage that dropped off before the next one. Only tracked from today onward — steps won't show history from before this feature shipped.</div>
+        <div class="do-toolbar">
+          <select class="pra-select" id="doPeriodSelect"></select>
+          <div id="doCustomRangeWrap" style="display:none;position:relative">
+            <button class="pra-input" id="doCustomRangeBtn" type="button" style="text-align:left;cursor:pointer;min-width:210px">Select date range...</button>
+            <div id="doCalendarPopover" class="calendar-popover">
+              <div class="calendar-header">
+                <button class="calendar-nav-btn" id="doCalPrevBtn" type="button">&larr;</button>
+                <div id="doCalMonthLabel" class="calendar-month-label"></div>
+                <button class="calendar-nav-btn" id="doCalNextBtn" type="button">&rarr;</button>
+              </div>
+              <div class="calendar-weekdays">
+                <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+              </div>
+              <div class="calendar-grid" id="doCalGrid"></div>
+              <div class="calendar-footer">
+                <span class="pra-muted" id="doCalRangeMsg" style="font-size:.76rem"></span>
+                <div style="display:flex;gap:8px">
+                  <button class="pra-btn pra-btn-ghost pra-btn-sm" id="doCalCancelBtn" type="button">Cancel</button>
+                  <button class="pra-btn pra-btn-sm" id="doCalApplyBtn" type="button">Apply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <span class="pra-muted" id="doPeriodRangeMsg" style="font-size:.8rem"></span>
+        </div>
         <div class="pra-panel" style="padding:8px 20px" id="dropoffsList"><div class="pra-muted" style="padding:16px 0">Loading…</div></div>
       </div>
     </div>
@@ -1885,9 +1931,122 @@ async function loadResponses() {
 }
 
 // ── Drop-offs tab ────────────────────────────────────────────────────────
+// Same period dropdown + custom-range calendar popover as reporting.html's
+// Ads Report tab (same /api/ads/periods list, same resolvePeriodRange math,
+// same calendar markup/classes) -- namespaced with a "do" prefix throughout
+// since it lives on a different page, not because the behavior differs.
+let doPeriod = 'last30', doStart = null, doEnd = null;
+let doCustomStart = null, doCustomEnd = null;
+let doPeriodInited = false;
+function doResolvePeriodRange(period, customStartVal, customEndVal) {
+  const now = new Date();
+  const anchorageTodayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Anchorage', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  const todayUTC = new Date(anchorageTodayStr + 'T00:00:00Z');
+  const yesterday = new Date(todayUTC.getTime() - 86400000);
+  const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
+  const y0 = yesterday.getUTCFullYear(), m0 = yesterday.getUTCMonth();
+  const mk = (yy, mm, dd) => new Date(Date.UTC(yy, mm, dd));
+  const eom = (yy, mm) => new Date(Date.UTC(yy, mm + 1, 0));
+  if (period === 'custom') {
+    return [new Date((customStartVal || todayUTC.toISOString().slice(0, 10)) + 'T00:00:00Z'), new Date((customEndVal || todayUTC.toISOString().slice(0, 10)) + 'T00:00:00Z')];
+  }
+  const RANGES = {
+    today: () => [todayUTC, todayUTC],
+    yesterday: () => [yesterday, yesterday],
+    last7: () => [addDays(yesterday, -6), yesterday],
+    week1: () => [mk(y0, m0, 1), mk(y0, m0, 7)],
+    week2: () => [mk(y0, m0, 8), mk(y0, m0, 14)],
+    week3: () => [mk(y0, m0, 15), mk(y0, m0, 21)],
+    week4: () => [mk(y0, m0, 22), mk(y0, m0, 28)],
+    week5: () => [mk(y0, m0, 29), eom(y0, m0)],
+    month: () => [mk(y0, m0, 1), eom(y0, m0)],
+    last30: () => [addDays(yesterday, -29), yesterday],
+    last60: () => [addDays(yesterday, -59), yesterday],
+    last90: () => [addDays(yesterday, -89), yesterday],
+    last180: () => [addDays(yesterday, -179), yesterday],
+    last365: () => [addDays(yesterday, -364), yesterday],
+    lastyear: () => [mk(y0, 0, 1), yesterday],
+  };
+  return (RANGES[period] || RANGES.last30)();
+}
+async function doInitPeriodSelector() {
+  const r = await fetch('/api/ads/periods');
+  const { periods } = r.ok ? await r.json() : { periods: [] };
+  document.getElementById('doPeriodSelect').innerHTML = periods.map(p => `<option value="${p.value}" ${p.value === doPeriod ? 'selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
+}
+function doApplyPeriod() {
+  doPeriod = document.getElementById('doPeriodSelect').value;
+  const isCustom = doPeriod === 'custom';
+  document.getElementById('doCustomRangeWrap').style.display = isCustom ? 'inline-block' : 'none';
+  const [start, end] = doResolvePeriodRange(doPeriod, doCustomStart, doCustomEnd);
+  doStart = start.toISOString().slice(0, 10);
+  doEnd = end.toISOString().slice(0, 10);
+  document.getElementById('doPeriodRangeMsg').textContent = `${doStart} to ${doEnd}`;
+  loadDropoffs();
+}
+document.getElementById('doPeriodSelect').addEventListener('change', doApplyPeriod);
+
+const doCalState = { viewYear: null, viewMonth: null, pickStart: null, pickEnd: null };
+function doCalFmt(y, m, d) { return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+function doRenderCalendar() {
+  const { viewYear, viewMonth, pickStart, pickEnd } = doCalState;
+  document.getElementById('doCalMonthLabel').textContent = new Date(viewYear, viewMonth, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const todayStr = doCalFmt(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) cells.push({ y: viewMonth === 0 ? viewYear - 1 : viewYear, m: viewMonth === 0 ? 11 : viewMonth - 1, d: daysInPrevMonth - i, other: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ y: viewYear, m: viewMonth, d, other: false });
+  while (cells.length % 7 !== 0) { const last = cells[cells.length - 1]; const nm = last.m === 11 ? 0 : last.m + 1; const ny = last.m === 11 ? last.y + 1 : last.y; cells.push({ y: ny, m: nm, d: cells.length - daysInMonth - firstDow + 1, other: true }); }
+  document.getElementById('doCalGrid').innerHTML = cells.map(c => {
+    const str = doCalFmt(c.y, c.m, c.d);
+    const classes = ['cal-day'];
+    if (c.other) classes.push('other-month');
+    if (str === todayStr) classes.push('today');
+    if (pickStart && str === pickStart) classes.push('range-start');
+    if (pickEnd && str === pickEnd) classes.push('range-end');
+    if (pickStart && pickEnd && str > pickStart && str < pickEnd) classes.push('in-range');
+    return `<button type="button" class="${classes.join(' ')}" data-cal-date="${str}">${c.d}</button>`;
+  }).join('');
+  const msg = document.getElementById('doCalRangeMsg');
+  msg.textContent = pickStart && pickEnd ? `${pickStart} to ${pickEnd}` : pickStart ? `${pickStart} — pick an end date` : 'Pick a start date';
+  document.getElementById('doCalGrid').querySelectorAll('[data-cal-date]').forEach(btn => btn.onclick = () => {
+    const str = btn.dataset.calDate;
+    if (!doCalState.pickStart || (doCalState.pickStart && doCalState.pickEnd) || str < doCalState.pickStart) { doCalState.pickStart = str; doCalState.pickEnd = null; }
+    else { doCalState.pickEnd = str; }
+    doRenderCalendar();
+  });
+}
+function doOpenCalendarPopover() {
+  const base = doCustomStart ? new Date(doCustomStart + 'T00:00:00Z') : new Date();
+  doCalState.viewYear = base.getFullYear(); doCalState.viewMonth = base.getMonth();
+  doCalState.pickStart = doCustomStart; doCalState.pickEnd = doCustomEnd;
+  doRenderCalendar();
+  document.getElementById('doCalendarPopover').classList.add('show');
+}
+document.getElementById('doCustomRangeBtn').onclick = (e) => { e.stopPropagation(); doOpenCalendarPopover(); };
+document.getElementById('doCalPrevBtn').onclick = () => { doCalState.viewMonth--; if (doCalState.viewMonth < 0) { doCalState.viewMonth = 11; doCalState.viewYear--; } doRenderCalendar(); };
+document.getElementById('doCalNextBtn').onclick = () => { doCalState.viewMonth++; if (doCalState.viewMonth > 11) { doCalState.viewMonth = 0; doCalState.viewYear++; } doRenderCalendar(); };
+document.getElementById('doCalCancelBtn').onclick = () => document.getElementById('doCalendarPopover').classList.remove('show');
+document.getElementById('doCalApplyBtn').onclick = () => {
+  if (!doCalState.pickStart) return;
+  doCustomStart = doCalState.pickStart;
+  doCustomEnd = doCalState.pickEnd || doCalState.pickStart;
+  document.getElementById('doCustomRangeBtn').textContent = `${doCustomStart} to ${doCustomEnd}`;
+  document.getElementById('doCalendarPopover').classList.remove('show');
+  doApplyPeriod();
+};
+document.getElementById('doCalendarPopover').addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', (e) => {
+  const popover = document.getElementById('doCalendarPopover');
+  if (popover.classList.contains('show') && e.target.id !== 'doCustomRangeBtn') popover.classList.remove('show');
+});
+
 async function loadDropoffs() {
   const wrap = document.getElementById('dropoffsList');
-  const r = await fetch(`/api/forms/${form.id}/dropoffs`);
+  const qs = doStart && doEnd ? `?start=${doStart}&end=${doEnd}` : '';
+  const r = await fetch(`/api/forms/${form.id}/dropoffs${qs}`);
   if (!r.ok) { wrap.innerHTML = '<div class="pra-muted" style="padding:16px 0">Could not load drop-off data.</div>'; return; }
   const { steps, completed } = await r.json();
   const rows = [...steps.map(s => ({ label: s.label, count: s.views })), { label: 'Completed', count: completed }];
@@ -1966,7 +2125,10 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => btn.onclick = () 
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
   if (btn.dataset.tab === 'responses') { renderBackfillMatchButton(); loadResponses(); }
-  if (btn.dataset.tab === 'dropoffs') loadDropoffs();
+  if (btn.dataset.tab === 'dropoffs') {
+    if (!doPeriodInited) { doPeriodInited = true; doInitPeriodSelector().then(doApplyPeriod); }
+    else loadDropoffs();
+  }
 });
 
 (async function init() {

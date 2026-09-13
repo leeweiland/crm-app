@@ -17,12 +17,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const FORMS_FILE = "crm_forms.json";
 export const RESPONSES_FILE = "crm_form_responses.json";
 // Best-effort funnel analytics only (Forms > Drop-offs tab) -- { [formId]:
-// { [stepIndex]: [sid, sid, ...] } }, one entry per DISTINCT visitor who
-// reached that step at least once. Keyed by a client-generated sessionStorage
-// id (see public-form.html's stepViewSid), deliberately separate from the
-// vid/visitorId ad-attribution cookie since that one is blank for most
-// direct/organic traffic and would undercount every step to "1 visitor."
+// { [stepIndex]: { [sid]: "YYYY-MM-DD" } } }, one entry per DISTINCT visitor
+// who reached that step, keyed by a client-generated sessionStorage id (see
+// public-form.html's stepViewSid), deliberately separate from the vid/
+// visitorId ad-attribution cookie since that one is blank for most direct/
+// organic traffic and would undercount every step to "1 visitor." The date
+// is the visitor's FIRST-seen day for that step (never overwritten on a
+// later revisit), in Anchorage's calendar day -- same timezone convention
+// reporting.html's own date-range picker uses -- so the Drop-offs tab's
+// period filter buckets consistently with every other report in the app.
 export const STEP_VIEWS_FILE = "crm_form_step_views.json";
+// Same "which Anchorage calendar day does this instant fall on" question
+// ads_backend.js's resolveRange answers for ad spend -- duplicated (not
+// imported) since it's a one-line Intl call, not worth a shared module for.
+function anchorageDateStr(d) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Anchorage", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
 
 // "statement"/"headline"/"image"/"video"/"calendar" are display-only content
 // blocks (no answer), "page_break" is a layout marker (splits the public
@@ -479,8 +489,8 @@ export async function handleFormsRequest(req, res, url) {
       if (Number.isInteger(idx) && idx >= 0 && sid) {
         const views = readJson(STEP_VIEWS_FILE, {});
         const forForm = views[form.id] || (views[form.id] = {});
-        const arr = forForm[idx] || (forForm[idx] = []);
-        if (!arr.includes(sid)) { arr.push(sid); writeJson(STEP_VIEWS_FILE, views); }
+        const forStep = forForm[idx] || (forForm[idx] = {});
+        if (!(sid in forStep)) { forStep[sid] = anchorageDateStr(new Date()); writeJson(STEP_VIEWS_FILE, views); }
       }
     }
     return sendJson(res, 200, { ok: true });
@@ -718,6 +728,14 @@ export async function handleFormsRequest(req, res, url) {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === dropoffsMatch[1]);
     if (!form) return sendJson(res, 404, { error: "Form not found" });
+    // start/end are Anchorage calendar-day strings (YYYY-MM-DD), same
+    // convention as reporting.html's own date-range picker -- inclusive on
+    // both ends. Missing/invalid either one means "no filter" (all-time).
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const start = dateRe.test(url.searchParams.get("start") || "") ? url.searchParams.get("start") : null;
+    const end = dateRe.test(url.searchParams.get("end") || "") ? url.searchParams.get("end") : null;
+    const inRange = dateStr => (!start || dateStr >= start) && (!end || dateStr <= end);
+
     const stepCount = form.fields.reduce((n, f) => n + (f.type === "page_break" ? 1 : 0), 0) + 1;
     const stepLabels = [];
     let cur = [];
@@ -728,12 +746,14 @@ export async function handleFormsRequest(req, res, url) {
     stepLabels.push(cur);
     const views = readJson(STEP_VIEWS_FILE, {})[form.id] || {};
     const steps = Array.from({ length: stepCount }, (_, i) => ({
-      views: (views[i] || []).length,
+      views: Object.values(views[i] || {}).filter(inRange).length,
       label: (stepLabels[i]?.find(f => !["statement", "headline", "image", "video", "calendar", "page_break"].includes(f.type))?.label)
         || stepLabels[i]?.find(f => f.label)?.label || `Step ${i + 1}`,
     }));
-    const completed = readJson(RESPONSES_FILE, []).filter(r => r.formId === form.id).length;
-    return sendJson(res, 200, { steps, completed });
+    const completed = readJson(RESPONSES_FILE, [])
+      .filter(r => r.formId === form.id && inRange(anchorageDateStr(new Date(r.submittedAt))))
+      .length;
+    return sendJson(res, 200, { steps, completed, start, end });
   }
 
   return false;
