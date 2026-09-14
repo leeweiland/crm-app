@@ -615,16 +615,21 @@ export async function handleFormsRequest(req, res, url) {
         const answerLines = form.fields
           .filter(f => ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "")
           .map(f => `${f.label || f.type}: ${Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id]}`);
-        // Full body is one Q&A per line -- the conversation panel's
-        // .note-bubble-body already has white-space:pre-wrap, so this alone
-        // is what turns the "wall of text" into a readable list. bodyPreview
-        // stays " · "-joined on purpose: it's a single-line summary (inbox
-        // list rows, sidebar), where line breaks would just collapse anyway.
+        // Full body is one Q&A block per blank-line-separated paragraph --
+        // NOT a single "\n" (a multi-line textarea answer already carries its
+        // own embedded "\n"s, which would be visually indistinguishable from
+        // the separators between different fields once everything's joined
+        // into one flat string; "\n\n" can't collide with a single embedded
+        // newline). The conversation panel's noteBubbleHtml splits back on
+        // "\n\n" to render each field as its own bold-label/plain-answer
+        // block. bodyPreview stays " · "-joined on purpose: it's a
+        // single-line summary (inbox list rows, sidebar), where line breaks
+        // would just collapse anyway.
         const answerSummary = answerLines.join(" · ");
         logMessage({
           channel: "form", direction: "inbound", contactId: result.contact.id,
           sourceType: "form", sourceId: form.id,
-          subject: `Form: ${form.name}`, body: answerLines.join("\n"), bodyPreview: answerSummary.slice(0, 200),
+          subject: `Form: ${form.name}`, body: answerLines.join("\n\n"), bodyPreview: answerSummary.slice(0, 200),
           status: "received",
         });
         fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
