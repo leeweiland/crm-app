@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
 import { getContactMessages } from "./message_index.js";
+import { getContactByIdFast } from "./sqlite_inbox.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
   generateAgentReply, contactMatchesTargeting, isExcludable,
@@ -201,15 +202,17 @@ export async function handleAiActiveRequest(req, res, url) {
 
 // ── Scheduler-driven processing. Called every tick from scheduler.js;
 // cheap when there's nothing due (filters small per-batch state files by
-// nextActionAt before doing any real work, never scans the full contact
-// list or message log).
+// nextActionAt before doing any real work). Contact lookups below are
+// indexed single-contact reads (getContactByIdFast), not a full
+// readJson(CONTACTS_FILE, []) -- this used to unconditionally load the
+// entire ~190MB contacts file the moment any batch was "running" (which can
+// span hours per campaign), confirmed live as a direct cause of multi-
+// second stalls on unrelated concurrent requests.
 export async function processAiActiveBatches() {
   const batches = readJson(AI_ACTIVE_BATCHES_FILE, []).filter((b) => b.status === "running");
   if (!batches.length) return;
   const agents = readJson(AI_AGENTS_FILE, []);
   const states = readJson(AI_ACTIVE_STATES_FILE, []);
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contactById = new Map(contacts.map((c) => [c.id, c]));
   const now = Date.now();
   let changed = false;
 
@@ -223,7 +226,7 @@ export async function processAiActiveBatches() {
 
     const due = states.filter((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state) && (!s.nextActionAt || new Date(s.nextActionAt).getTime() <= now));
     for (const st of due) {
-      const contact = contactById.get(st.contactId);
+      const contact = getContactByIdFast(st.contactId);
       if (!contact) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
 
       const exclReason = isExcludable(contact);

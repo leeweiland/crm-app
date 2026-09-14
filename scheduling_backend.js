@@ -8,7 +8,7 @@ import { STATUSES_FILE } from "./statuses_backend.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
-import { syncContactFields } from "./sqlite_inbox.js";
+import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { applyMergeTags } from "./block_editor_shared.js";
@@ -775,15 +775,6 @@ export async function sendDueBookingReminders() {
   const eventTypes = getEventTypes();
   const now = Date.now();
   let changed = false;
-  // Read once per TICK, not once per booking -- this runs every 30s
-  // regardless of whether any reminder is actually due (it has to check),
-  // so a contacts.json read inside the loop meant every confirmed future
-  // booking cost its own full ~190MB synchronous read, forever, blocking
-  // the whole single-threaded server for however long that took. Confirmed
-  // live: 4 bookings was enough to turn into Inbox-hanging-for-a-minute
-  // territory under concurrent load. Only built when at least one booking
-  // could plausibly need it (below), so this stays free on a quiet tick.
-  let contactsById = null;
   for (const booking of bookings) {
     if (booking.status !== "confirmed") continue;
     const startMs = new Date(booking.startAt).getTime();
@@ -792,8 +783,14 @@ export async function sendDueBookingReminders() {
     const emailReminders = et?.reminders?.email || [];
     const smsReminders = et?.reminders?.sms || [];
     if (!emailReminders.length && !smsReminders.length) continue;
-    if (!contactsById) contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
-    const contact = contactsById.get(booking.contactId);
+    // Indexed single-contact lookup, not a ~190MB readJson(CONTACTS_FILE)
+    // per tick -- this loop used to build a full-file Map the moment any
+    // one booking needed it, which was still a per-tick cost on every tick
+    // any confirmed future booking with reminders existed. Confirmed live:
+    // 4 bookings was enough to turn into Inbox-hanging-for-a-minute
+    // territory under concurrent load. See getContactByIdFast's own
+    // comment (sqlite_inbox.js).
+    const contact = getContactByIdFast(booking.contactId);
     if (!contact) continue;
     const createdMs = new Date(booking.createdAt).getTime();
     booking.remindersSent = booking.remindersSent || [];

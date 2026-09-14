@@ -594,6 +594,23 @@ export function getContactByIdSqlite(id) {
   if (!row) return null;
   try { return JSON.parse(row.raw_json); } catch { return null; }
 }
+// For scheduler jobs that only ever need to resolve a handful of specific
+// contact ids (a due meeting/booking/AI-outreach-batch's own contactId) --
+// meetings_backend.js's checkMeetingReminders, scheduling_backend.js's
+// sendDueBookingReminders, and ai_active_backend.js's processAiActiveBatches
+// each used to independently readJson(CONTACTS_FILE, []) (~190MB,
+// synchronous, blocks the single Node thread) on every ~30s tick just to
+// build a Map for a few lookups. Confirmed live via Railway logs this was a
+// direct cause of multi-second stalls on unrelated concurrent requests
+// (e.g. an Inbox reply landing mid-tick). Falls back to a plain find() over
+// the full file only if SQLite indexing genuinely isn't available --
+// production always has it (same index the Contacts page's own search/
+// filter/sort already depends on), so this fallback exists for
+// environment-safety, not as a real expected path.
+export function getContactByIdFast(id) {
+  if (sqliteInboxAvailable()) return getContactByIdSqlite(id);
+  return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null;
+}
 
 // One GROUP BY instead of a full readJson(CONTACTS_FILE, []) + per-contact
 // JS loop -- same data, but SQLite does the json_each explode/count

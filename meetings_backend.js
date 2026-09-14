@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getContactByIdFast } from "./sqlite_inbox.js";
 import { logMessage } from "./message_log.js";
 import { createCalendarEvent, deleteCalendarEvent, calendarConfigured } from "./scheduling_backend.js";
 import { sendEmail } from "./email_backend.js";
@@ -19,7 +19,7 @@ import { getMeetingReminderSettings } from "./integrations_backend.js";
 // event or invite email to maintain here.
 export const MEETINGS_FILE = "crm_meetings.json";
 
-function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
+function getContact(id) { return getContactByIdFast(id); }
 function fillTemplate(tpl, vars) {
   return String(tpl || "").replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] != null ? vars[k] : ""));
 }
@@ -120,21 +120,11 @@ export async function checkMeetingReminders() {
   const users = readJson(USERS_FILE, []);
   const now = Date.now();
   let changed = false;
-  // Read once per TICK, not once per meeting -- getContact() re-reads the
-  // full ~190MB contacts file on every call, and this loop used to call it
-  // per meeting on every 30s tick regardless of whether a reminder was
-  // actually due. Same fix as scheduling_backend.js's sendDueBookingReminders
-  // (confirmed live there: a handful of items in this kind of loop was
-  // enough to turn into the Inbox hanging for a full minute under
-  // concurrent load) -- lazy-built so a quiet tick with nothing to remind
-  // about still costs nothing.
-  let contactsById = null;
 
   for (const meeting of meetings) {
     const startMs = new Date(meeting.startISO).getTime();
     if (!startMs || startMs <= now) continue; // meeting already happened
-    if (!contactsById) contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
-    const contact = contactsById.get(meeting.contactId);
+    const contact = getContact(meeting.contactId);
     const coach = users.find(u => u.id === meeting.userId);
     if (!contact || !coach) continue;
     meeting.remindersSent = meeting.remindersSent || [];
