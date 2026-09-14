@@ -12,6 +12,7 @@
   .status-scheduled { background: rgba(255,193,7,0.15); color: #ffc107; }
   .status-sending { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .status-sent { background: rgba(57,255,20,0.15); color: var(--pra-green); }
+  .status-send_error { background: rgba(255,59,48,0.15); color: #ff5c4d; }
   .toolbar input { max-width: 320px; margin-right: 12px; }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--pra-white); }
@@ -89,6 +90,15 @@ function campaignSearchText(c) {
   const blockText = (c.blocks || []).map(b => b.html || b.text || '').join(' ');
   return `${c.name} ${c.subject || ''} ${blockText}`.replace(/<[^>]+>/g, ' ').toLowerCase();
 }
+// "sent"/"send_error" show as-is; "sending" shows live progress ("SENDING
+// 12/230") once sendProgress exists -- large campaigns send one recipient
+// at a time in the background (see sendCampaignNow), so this is the only
+// feedback of whether it's actually moving or stuck.
+function statusLabel(c) {
+  if (c.status === 'sending' && c.sendProgress) return `sending ${c.sendProgress.sent}/${c.sendProgress.total}`;
+  if (c.status === 'send_error') return 'error';
+  return c.status;
+}
 function renderCampaignsTable() {
   const q = document.getElementById('campaignSearch').value.trim().toLowerCase();
   let rows = allCampaigns.filter(c => !q || campaignSearchText(c).includes(q));
@@ -112,7 +122,7 @@ function renderCampaignsTable() {
   body.innerHTML = rows.map((c, idx) => `
     <tr>
       <td class="clickable"><a href="/campaign-builder.html?id=${c.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(c.name)}</a></td>
-      <td><span class="status-pill status-${c.status}">${c.status}</span></td>
+      <td><span class="status-pill status-${c.status}" title="${c.status === 'send_error' && c.sendError ? escapeHtml(c.sendError) : ''}">${statusLabel(c)}</span></td>
       <td class="pra-muted">${escapeHtml(c.subject || '')}</td>
       <td>${c.stats?.sent ?? 0}</td>
       <td>${c.stats?.opened ?? 0}</td>
@@ -156,11 +166,16 @@ function renderCampaignsTable() {
     loadCampaigns();
   });
 }
+let sendPollTimer = null;
 async function loadCampaigns() {
   const r = await fetch('/api/campaigns');
   if (!r.ok) { document.getElementById('campaignsBody').innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
   allCampaigns = (await r.json()).campaigns;
   renderCampaignsTable();
+  // Re-poll every 3s only while something is actually mid-send -- avoids
+  // polling forever on a normal, idle campaigns list.
+  clearTimeout(sendPollTimer);
+  if (allCampaigns.some(c => c.status === 'sending')) sendPollTimer = setTimeout(loadCampaigns, 3000);
 }
 document.getElementById('campaignSearch').addEventListener('input', () => { clearTimeout(window._cst); window._cst = setTimeout(renderCampaignsTable, 200); });
 // Sort choice persists per-user (server-side) so it survives navigation,

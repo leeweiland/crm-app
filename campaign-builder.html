@@ -379,12 +379,15 @@ document.getElementById('sendNowBtn').onclick = async () => {
   if (!confirm('Send this campaign now to all matching recipients?')) return;
   await saveCampaign();
   const msg = document.getElementById('sendMsg');
-  msg.textContent = 'Sending...';
+  msg.textContent = 'Starting send...';
   const r = await fetch(`/api/campaigns/${campaign.id}/send`, { method: 'POST' });
   const d = await r.json();
   if (!r.ok) { msg.textContent = d.error || 'Send failed.'; return; }
-  msg.textContent = `Sent to ${d.recipientCount} recipients.`;
-  loadCampaign();
+  // The send itself now runs in the background (see campaigns_backend.js's
+  // sendCampaignNow) -- this response just confirms it started, not that
+  // it finished, so there's nothing to wait around for here. Straight back
+  // to the list, which shows live progress via its own "Sending X/Y" badge.
+  location.href = '/campaigns.html';
 };
 
 (function populateTimePicker() {

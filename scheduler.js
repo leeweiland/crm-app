@@ -47,7 +47,12 @@ async function tick() {
       const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
       for (const campaign of due) {
         console.log(`[scheduler] sending due campaign ${campaign.id} (${campaign.name})`);
-        await sendCampaignNow(campaign.id).catch(e => console.error("[scheduler] campaign send failed", campaign.id, e.message));
+        // sendCampaignNow is synchronous now -- it kicks off the actual
+        // send loop in the background and returns right away (see its own
+        // comment in campaigns_backend.js), so no .catch()/await needed
+        // here; a plain try/catch covers the rare synchronous throw before
+        // the background loop even starts (e.g. a read failure).
+        try { sendCampaignNow(campaign.id); } catch (e) { console.error("[scheduler] campaign send failed", campaign.id, e.message); }
       }
     });
     await timedPhase("advanceDueEnrollments", advanceDueEnrollments);

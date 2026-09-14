@@ -59,26 +59,65 @@ function rollupStats(campaignId) {
 // Exported so scheduler.js can trigger a due scheduled campaign without an
 // HTTP round-trip -- same "small reusable function, not internal HTTP"
 // convention as sendEmail() itself.
-export async function sendCampaignNow(campaignId) {
+// Kicks off sending and returns immediately -- does NOT await the send
+// loop. A 20k-recipient campaign sending one-at-a-time (SES has no bulk
+// endpoint) can take many minutes; the old version awaited the entire loop
+// inside the HTTP request handler, so the browser's Send Now request would
+// sit open for that whole duration with zero feedback, almost certainly
+// past any reverse-proxy/browser timeout on a large list. Progress is
+// written to campaign.sendProgress after every send so campaigns.html can
+// poll and show a live "Sending X/Y" badge; status becomes "sent" only
+// once the loop actually finishes, or "send_error" if the loop itself
+// throws (an individual recipient's send failure is NOT fatal -- sendEmail
+// already reports {ok:false} for that one and the loop continues, same as
+// before this change).
+export function sendCampaignNow(campaignId) {
   const campaigns = readJson(CAMPAIGNS_FILE, []);
   const campaign = campaigns.find(c => c.id === campaignId);
   if (!campaign) return { ok: false, reason: "not_found" };
-  campaign.status = "sending";
-  writeJson(CAMPAIGNS_FILE, campaigns);
-
   const recipients = resolveRecipients(campaign.recipients || {});
-  for (const contact of recipients) {
-    await sendEmail({
-      to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
-      footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
-      sourceType: "campaign", sourceId: campaign.id,
-    });
-  }
-
-  campaign.status = "sent";
-  campaign.sentAt = new Date().toISOString();
-  campaign.stats = rollupStats(campaign.id);
+  campaign.status = "sending";
+  campaign.sendProgress = { total: recipients.length, sent: 0 };
   writeJson(CAMPAIGNS_FILE, campaigns);
+
+  (async () => {
+    try {
+      let sent = 0;
+      for (const contact of recipients) {
+        await sendEmail({
+          to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
+          footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
+          sourceType: "campaign", sourceId: campaign.id,
+        });
+        sent++;
+        // Every 10th (and the last one) rather than every single send --
+        // this loop can run thousands of times and each write here is a
+        // full CAMPAIGNS_FILE readJson+writeJson (small file, but no
+        // reason to do it 20,000 times when the badge only needs to be
+        // roughly live, not per-email-exact).
+        if (sent % 10 === 0 || sent === recipients.length) {
+          const latest = readJson(CAMPAIGNS_FILE, []);
+          const c = latest.find(x => x.id === campaignId);
+          if (c) { c.sendProgress = { total: recipients.length, sent }; writeJson(CAMPAIGNS_FILE, latest); }
+        }
+      }
+      const finalCampaigns = readJson(CAMPAIGNS_FILE, []);
+      const finalCampaign = finalCampaigns.find(c => c.id === campaignId);
+      if (finalCampaign) {
+        finalCampaign.status = "sent";
+        finalCampaign.sentAt = new Date().toISOString();
+        finalCampaign.sendProgress = { total: recipients.length, sent: recipients.length };
+        finalCampaign.stats = rollupStats(campaignId);
+        writeJson(CAMPAIGNS_FILE, finalCampaigns);
+      }
+    } catch (e) {
+      console.error(`[campaign send] ${campaignId} failed:`, e.message);
+      const errCampaigns = readJson(CAMPAIGNS_FILE, []);
+      const errCampaign = errCampaigns.find(c => c.id === campaignId);
+      if (errCampaign) { errCampaign.status = "send_error"; errCampaign.sendError = e.message; writeJson(CAMPAIGNS_FILE, errCampaigns); }
+    }
+  })();
+
   return { ok: true, recipientCount: recipients.length };
 }
 
@@ -238,7 +277,11 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaign = campaigns.find(c => c.id === sendMatch[1]);
     if (!campaign) return sendJson(res, 404, { error: "Not found" });
     if (!campaign.subject || !campaign.blocks?.length) return sendJson(res, 400, { error: "Add a subject and at least one block before sending" });
-    const result = await sendCampaignNow(campaign.id);
+    // sendCampaignNow is synchronous now and kicks off the actual send loop
+    // in the background -- this returns almost immediately regardless of
+    // recipient count (see its own comment), so the browser doesn't sit on
+    // an open request for a large send.
+    const result = sendCampaignNow(campaign.id);
     return sendJson(res, 200, result);
   }
 
