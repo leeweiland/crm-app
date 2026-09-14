@@ -879,7 +879,7 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
-    const { slug, startAt, timezone, answers, formAnswers, vid } = await readJsonBody(req);
+    const { slug, startAt, timezone, answers, formAnswers, formAnswerLabels, vid } = await readJsonBody(req);
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.slug === slug && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
@@ -959,6 +959,12 @@ export async function handleSchedulingRequest(req, res, url) {
       // {{payload.X}} tokens -- otherwise they'd only ever exist for the
       // instant a flow run actually fires, with no way to discover them.
       formAnswers: formAnswers && typeof formAnswers === "object" ? formAnswers : {},
+      // code->label snapshot (see book.html's prefillFormAnswerLabels) --
+      // ONLY for flows_backend.js's /samples picker to show a real question
+      // instead of a raw stable code. Never part of the actual trigger
+      // payload (that's formAnswers above), so it can never be mistaken
+      // for an answer by resolveTemplate.
+      formAnswerLabels: formAnswerLabels && typeof formAnswerLabels === "object" ? formAnswerLabels : {},
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || calendar.availability.timezone,
       status: "confirmed", calendarEventId, calendarId,

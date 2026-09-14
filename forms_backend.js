@@ -136,6 +136,58 @@ function slugField(field) {
   return base || field.id;
 }
 
+// A field's `code` is the STABLE identifier flows/customFields key answers
+// by -- generated once (from whatever the label happens to be at that
+// moment) and never touched again, so relabeling a question later can't
+// silently sever a {{payload.code}} token in an already-built flow, or
+// fragment a contact's customFields history across two different keys.
+// Reordering fields never touches this either, since it lives on the field
+// object itself, not its position in the array. Truncated at a word
+// boundary rather than a hard character cut, so it stays a real (if
+// shortened) phrase instead of ending mid-word.
+function codeFromLabel(label, type) {
+  const base = String(label || type || "field").toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!base) return type || "field";
+  let out = "";
+  for (const word of base.split("_")) {
+    const next = out ? `${out}_${word}` : word;
+    if (next.length > 48) break;
+    out = next;
+  }
+  return out || base.slice(0, 48) || type || "field";
+}
+
+// Backfills `.code` onto any field that doesn't have one yet (a brand-new
+// field, or an existing field from before this migration) -- deduped
+// against every other code already in use on this form so two same-worded
+// questions ("Email", "Email") don't collide. Idempotent: a field that
+// already has a code is never touched, no matter how many times this runs.
+function ensureFieldCodes(fields) {
+  const used = new Set(fields.map(f => f.code).filter(Boolean));
+  for (const f of fields) {
+    if (f.code || !ANSWERABLE_TYPES.includes(f.type)) continue;
+    const base = codeFromLabel(f.label, f.type);
+    let code = base, n = 2;
+    while (used.has(code)) code = `${base}_${n++}`;
+    f.code = code;
+    used.add(code);
+  }
+  return fields;
+}
+// Self-heal for a form that's never been re-saved in the builder since this
+// migration shipped -- newForm/the PATCH handler are the normal places
+// codes get assigned, but only run when someone actually opens the
+// builder. Called from both the public GET (so public-form.html's own
+// bookingWidgetUrl has real codes to key labeledAnswers by) and the submit
+// handler (belt and suspenders, in case the visitor's own load happened
+// moments before this shipped). No-ops instantly once every field has one.
+function selfHealFieldCodes(form, forms) {
+  if (form.fields.some(f => ANSWERABLE_TYPES.includes(f.type) && !f.code)) {
+    ensureFieldCodes(form.fields);
+    writeJson(FORMS_FILE, forms);
+  }
+}
+
 function newField(type) {
   const id = randomUUID();
   const field = { id, type, label: "", placeholder: "", required: false, helpText: "" };
@@ -152,7 +204,7 @@ function newForm(name) {
     id: randomUUID(),
     name: name || "Untitled Form",
     status: "draft",
-    fields: [emailField],
+    fields: ensureFieldCodes([emailField]),
     settings: {
       submitButtonText: "Submit",
       confirmationMessage: "Thanks — we got it!",
@@ -363,13 +415,17 @@ function upsertContactFromSubmission(form, answers, bookedIdentity) {
   // crm_custom_fields.json -- e.g. one imported from Close -- so the answer
   // lands in the same field contact-detail.html/segments/etc. already know
   // about, keyed by that definition's real id. Unmapped fields fall back to
-  // the old auto-slugged-from-the-question-label key, unchanged.
+  // f.code -- the stable per-field key (see ensureFieldCodes) -- so a
+  // question's customField key survives being reworded later instead of
+  // fragmenting into a new key every time (slugField(f) is only a last
+  // resort now, for the rare field saved before this migration that
+  // somehow still has no code).
   const customFields = {};
   for (const f of form.fields) {
     if (!ANSWERABLE_TYPES.includes(f.type)) continue;
     if ([emailField?.id, phoneField?.id, firstField?.id, lastField?.id].includes(f.id)) continue;
     if (answers[f.id] === undefined || answers[f.id] === "") continue;
-    customFields[f.mapToCustomFieldId || slugField(f)] = answers[f.id];
+    customFields[f.mapToCustomFieldId || f.code || slugField(f)] = answers[f.id];
   }
 
   if (contact) {
@@ -435,6 +491,7 @@ export async function handleFormsRequest(req, res, url) {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === publicFormMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    selfHealFieldCodes(form, forms);
     return sendJson(res, 200, { form: publicForm(form) });
   }
   // A "country" field never asks the visitor anything -- this silently
@@ -501,6 +558,7 @@ export async function handleFormsRequest(req, res, url) {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
+    selfHealFieldCodes(form, forms);
     const { answers, vid, bookedIdentity } = await readJsonBody(req);
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);
@@ -566,13 +624,22 @@ export async function handleFormsRequest(req, res, url) {
         });
         fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
         fireWorkflowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
-        // Labeled by field label (not raw field id) so a flow's {{payload.x}}
-        // tokens -- and the "pull sample data" picker -- show real, readable
-        // field names instead of opaque uuids.
+        // Dual-keyed: by f.code (the stable key -- see ensureFieldCodes --
+        // that a REGENERATED {{payload.x}} token will use going forward,
+        // immune to this question ever being reworded) AND by f.label (kept
+        // for backward compat, so a flow template someone already built
+        // against the current wording keeps working right up until the
+        // next time this question's label actually changes -- exactly the
+        // same as it always has, no regression). The "pull sample data"
+        // picker (flows_backend.js's /samples, flow-builder.html) filters
+        // the label-keyed duplicates back out so it only ever offers the
+        // stable one.
         const labeledAnswers = {};
         form.fields.forEach(f => {
           if (ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "") {
-            labeledAnswers[f.label || f.type] = Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id];
+            const val = Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id];
+            labeledAnswers[f.code || slugField(f)] = val;
+            if (f.label) labeledAnswers[f.label] = val;
           }
         });
         fireFlowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id, payload: labeledAnswers });
@@ -622,13 +689,14 @@ export async function handleFormsRequest(req, res, url) {
     const form = forms.find(f => f.id === formMatch[1]);
     if (req.method === "GET") {
       if (!form) return sendJson(res, 404, { error: "Form not found" });
+      selfHealFieldCodes(form, forms);
       return sendJson(res, 200, { form });
     }
     if (req.method === "PATCH") {
       if (!form) return sendJson(res, 404, { error: "Form not found" });
       const body = await readJsonBody(req);
       if ("status" in body && !["draft", "published"].includes(body.status)) return sendJson(res, 400, { error: "status must be 'draft' or 'published'" });
-      if ("fields" in body) body.fields = sanitizeRichTextFields(body.fields);
+      if ("fields" in body) body.fields = ensureFieldCodes(sanitizeRichTextFields(body.fields));
       for (const k of ["name", "status", "fields", "settings", "theme"]) if (k in body) form[k] = body[k];
       form.updatedAt = new Date().toISOString();
       writeJson(FORMS_FILE, forms);

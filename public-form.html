@@ -323,16 +323,27 @@ function bookingWidgetUrl(f) {
   const carriedIds = new Set([emailField?.id, phoneField?.id, firstField?.id, lastField?.id, f.id]);
   const extraFields = form.fields.filter(ff => !NON_ANSWERABLE_TYPES.includes(ff.type) && !carriedIds.has(ff.id));
   const extraQA = [];
+  // Dual-keyed by ff.code (stable -- forms_backend.js's ensureFieldCodes)
+  // AND ff.label (backward compat for a flow template already built
+  // against the current wording -- see forms_backend.js's own labeledAnswers
+  // for the full reasoning, same dual-key applied here for the same reason).
   const labeledAnswers = {};
+  const answerLabels = {};
   extraFields.forEach(ff => {
     const v = answers[ff.id];
     if (v === undefined || v === '') return;
     const flat = Array.isArray(v) ? v.join(', ') : v;
     extraQA.push(`${ff.label}: ${flat}`);
-    labeledAnswers[ff.label] = flat;
+    labeledAnswers[ff.code || ff.id] = flat;
+    if (ff.label) { labeledAnswers[ff.label] = flat; answerLabels[ff.code || ff.id] = ff.label; }
   });
   if (extraQA.length) url.searchParams.set('formAnswers', extraQA.join('\n'));
   if (Object.keys(labeledAnswers).length) url.searchParams.set('formAnswersJson', JSON.stringify(labeledAnswers));
+  // Only the code->label map -- NOT part of the trigger payload itself --
+  // so flows_backend.js's /samples endpoint can show a real question
+  // instead of a raw code in the token picker, without that map ever being
+  // mistaken for an actual answer field by resolveTemplate.
+  if (Object.keys(answerLabels).length) url.searchParams.set('formAnswerLabels', JSON.stringify(answerLabels));
   return url.toString();
 }
 

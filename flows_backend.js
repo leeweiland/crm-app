@@ -807,17 +807,27 @@ export async function handleFlowsRequest(req, res, url) {
       const formId = flow.trigger.config?.formId;
       if (formId) responses = responses.filter(r => r.formId === formId);
       responses = responses.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)).slice(0, 5);
+      // fieldLabels (code -> current question wording) is for the token
+      // picker's display text ONLY -- every sample itself is still
+      // dual-keyed (code AND label, same as the real trigger payload -- see
+      // forms_backend.js's own labeledAnswers) so an ALREADY-built
+      // template's {{payload.<old label>}} token still finds a match here
+      // too, not just at actual send time.
+      const fieldLabels = {};
       const samples = responses.map(r => {
         const form = forms.find(f => f.id === r.formId);
         const labeled = {};
         (form?.fields || []).forEach(f => {
           if (r.answers[f.id] !== undefined && r.answers[f.id] !== "") {
-            labeled[f.label || f.type] = Array.isArray(r.answers[f.id]) ? r.answers[f.id].join(", ") : r.answers[f.id];
+            const val = Array.isArray(r.answers[f.id]) ? r.answers[f.id].join(", ") : r.answers[f.id];
+            const key = f.code || f.label || f.type;
+            labeled[key] = val;
+            if (f.label) { labeled[f.label] = val; fieldLabels[key] = f.label; }
           }
         });
         return labeled;
       });
-      return sendJson(res, 200, { samples });
+      return sendJson(res, 200, { samples, fieldLabels });
     }
     if (type === "booking_created") {
       const eventTypes = readJson("crm_event_types.json", []);
@@ -825,6 +835,16 @@ export async function handleFlowsRequest(req, res, url) {
       const eventTypeId = flow.trigger.config?.eventTypeId;
       if (eventTypeId) bookings = bookings.filter(b => b.eventTypeId === eventTypeId);
       bookings = bookings.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
+      // fieldLabels merged newest-first (bookings is already sorted that
+      // way) -- only fills in a code the first time it's seen, so the most
+      // recent booking's wording for a given question wins, same "favors
+      // the latest" precedence the trigger-payload example lookups already
+      // use elsewhere in this file.
+      const fieldLabels = {};
+      bookings.forEach(b => {
+        const labels = b.formAnswerLabels && typeof b.formAnswerLabels === "object" ? b.formAnswerLabels : {};
+        for (const [k, v] of Object.entries(labels)) if (!(k in fieldLabels)) fieldLabels[k] = v;
+      });
       // Same precedence as the real trigger payload (scheduling_backend.js)
       // -- b.formAnswers spread first so the fixed fields always win a
       // same-named collision, and so a calendar-embedded form's OTHER
@@ -836,7 +856,7 @@ export async function handleFlowsRequest(req, res, url) {
         "When": new Date(b.startAt).toLocaleString(),
         "Name": b.name, "Email": b.email, "Phone": b.phone, "Notes": b.notes || "",
       }));
-      return sendJson(res, 200, { samples });
+      return sendJson(res, 200, { samples, fieldLabels });
     }
     return sendJson(res, 200, { samples: [] });
   }

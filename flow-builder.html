@@ -510,10 +510,20 @@ document.getElementById('copyWebhookUrlBtn').onclick = () => {
 // recent hits, so the builder previews one real, coherent submission
 // instead of Frankensteining fields from different people's answers.
 let cachedRawSamples = null;
+// code -> current question wording (flows_backend.js's /samples endpoint) --
+// display text ONLY. A sample object itself is always dual-keyed (code AND
+// label, see forms_backend.js's labeledAnswers), so this never needs to be
+// threaded into value-matching (sampleKeys/exampleValueForToken/
+// exampleFor already find either key fine) -- only into what the TOKEN
+// PICKER shows as a field's name, and which of its two keys is worth
+// offering (see pickableKeys) so the list doesn't show every question twice.
+let cachedFieldLabels = {};
 async function fetchRawSamples(force) {
   if (cachedRawSamples && !force) return cachedRawSamples;
   const r = await fetch(`/api/flows/${flow.id}/samples`);
-  cachedRawSamples = r.ok ? (await r.json()).samples : [];
+  const d = r.ok ? await r.json() : { samples: [], fieldLabels: {} };
+  cachedRawSamples = d.samples || [];
+  cachedFieldLabels = d.fieldLabels || {};
   return cachedRawSamples;
 }
 async function fetchSamples(force) {
@@ -536,6 +546,17 @@ function sampleKeys(samples) {
   samples.forEach(s => Object.keys(s).forEach(k => { if (!keys.includes(k)) keys.push(k); }));
   return keys;
 }
+// Drops the legacy label-keyed duplicate of every code-keyed field (both
+// resolve to the identical value -- see the dual-key comment above -- so
+// listing both would just show every form/booking question twice). A key
+// that IS a code (present in fieldLabels) always stays; a key that's a
+// fixed field with no code at all (Email, Notes, Event Type, ...) stays too
+// since it was never duplicated in the first place.
+function pickableKeys(samples, fieldLabels) {
+  fieldLabels = fieldLabels || {};
+  const dupLabels = new Set(Object.values(fieldLabels));
+  return sampleKeys(samples).filter(k => (k in fieldLabels) || !dupLabels.has(k));
+}
 // Best-effort human label for a submission button -- name if we can find
 // one, else email, else just its position ("Submission 3").
 function sampleLabel(sample, idx) {
@@ -545,8 +566,9 @@ function sampleLabel(sample, idx) {
   return escapeHtml(name || findVal(['email', 'emailaddress']) || `Submission ${idx + 1}`);
 }
 function submissionFieldsHtml(sample) {
-  return Object.entries(sample).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => `
-    <div class="sample-field-row"><code>${escapeHtml(k)}</code><div class="sample-field-value">${escapeHtml(String(v))}</div></div>
+  const keep = new Set(pickableKeys([sample], cachedFieldLabels));
+  return Object.entries(sample).filter(([k, v]) => v !== undefined && v !== '' && keep.has(k)).map(([k, v]) => `
+    <div class="sample-field-row"><code>${escapeHtml(cachedFieldLabels[k] || k)}</code><div class="sample-field-value">${escapeHtml(String(v))}</div></div>
   `).join('');
 }
 function renderSamplePicker(resultEl, samples, forWebhook) {
@@ -1180,10 +1202,15 @@ async function getAvailableTokens() {
   // pulled sample happens to be named. Only genuinely extra fields (e.g.
   // "SMS Consent") are worth listing separately.
   const STANDARD_NAMES = new Set(['email', 'emailaddress', 'firstname', 'fname', 'lastname', 'lname', 'phone', 'phonenumber', 'mobile', 'mobilenumber']);
-  const payloadKeys = sampleKeys(samples).filter(k => !STANDARD_NAMES.has(normalize(k)));
+  const payloadKeys = pickableKeys(samples, cachedFieldLabels).filter(k => !STANDARD_NAMES.has(normalize(k)));
   const payloadFields = payloadKeys.map(k => {
     const withValue = samples.find(s => s[k] !== undefined && s[k] !== '');
-    return { label: k, token: `{{payload.${k}}}`, example: withValue ? String(withValue[k]) : null };
+    // Display text is the CURRENT question wording (falls back to the raw
+    // key for a fixed field like "Notes" that was never code-keyed) -- the
+    // token itself always stays {{payload.<key>}}, i.e. the stable code
+    // when there is one, so picking this from the list keeps working no
+    // matter how many times the question gets reworded afterward.
+    return { label: cachedFieldLabels[k] || k, token: `{{payload.${k}}}`, example: withValue ? String(withValue[k]) : null };
   });
   return [...contactFields, ...payloadFields];
 }
@@ -1199,7 +1226,13 @@ function tokenLabel(raw) {
   const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured' };
   if (KNOWN[m[1]]) return KNOWN[m[1]];
   const pm = m[1].match(/^payload\.(.+)$/);
-  return pm ? pm[1] : m[1];
+  if (!pm) return m[1];
+  // A stable code (see forms_backend.js's ensureFieldCodes) reads fine on
+  // its own for a short question ("career") but gets ugly fast for a long
+  // one ("we_re_looking_for_motivated_people_who_want..._sooner_or_later")
+  // -- cachedFieldLabels swaps in the real current wording whenever it's
+  // available; falls back to the raw code only before that's loaded yet.
+  return cachedFieldLabels[pm[1]] || pm[1];
 }
 // opts.display overrides what the chip SHOWS (the Q&A block below uses
 // this to show the actual answer value instead of restating the question
