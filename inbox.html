@@ -1083,8 +1083,12 @@ function wireConvoRow(row) {
 // row's own removal animation already ran before this fires; this only
 // updates state and refreshes whatever else needs it (the open thread's
 // own Mark Done button, if this happens to be the open conversation).
-async function swipeMarkDone(convo) {
-  await fetch(`/api/inbox/conversations/${convo.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
+function swipeMarkDone(convo) {
+  // Genuinely optimistic now, not just documented as such -- this used to
+  // await the round trip before touching any state, so the row's own
+  // swipe-removal animation was the only thing that looked instant; the
+  // Unresponded count and the open thread's own button both lagged
+  // behind it until the server replied.
   convo.done = true; convo.unreadCount = 0;
   recentlyConfirmedDone.set(convo.contactId, Date.now());
   if (convoFilter === 'unresponded') conversations = conversations.filter(x => x.key !== convo.key);
@@ -1094,6 +1098,8 @@ async function swipeMarkDone(convo) {
     selectedConvo.done = true;
     chatPanelInstance?.handleRemoteUpdate({ type: 'done', contactId: convo.contactId, done: true });
   }
+  fetch(`/api/inbox/conversations/${convo.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) })
+    .catch(() => showToast('Could not save -- try again', true));
   setTimeout(loadConversations, 5500, true);
 }
 // Updates the in-memory row (not just the <select>'s own value, which
@@ -1224,12 +1230,16 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && selected
 // recentlyConfirmedDone tracking the single-row handlers always used (see
 // their own comments) -- just looped over the full selection instead of
 // one ctxMenuConvo, and fired in parallel rather than one at a time.
-document.getElementById('ctxDoneBtn').onclick = async () => {
+document.getElementById('ctxDoneBtn').onclick = () => {
   const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
   closeContextMenu();
   if (!rows.length) { clearConvoSelection(); return; }
   const nextDone = !rows.every(r => r.done);
-  await Promise.all(rows.map(r => fetch(`/api/inbox/conversations/${r.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) })));
+  // Optimistic: state/sidebar update BEFORE the requests resolve, not
+  // after -- awaiting Promise.all first meant nothing visible happened
+  // until every one of them came back, so a multi-row selection felt
+  // slower the more rows were selected, exactly backwards from what a
+  // bulk action should feel like.
   for (const r of rows) {
     r.done = nextDone;
     if (nextDone) { r.unreadCount = 0; recentlyConfirmedDone.set(r.contactId, Date.now()); } else recentlyConfirmedDone.delete(r.contactId);
@@ -1241,16 +1251,19 @@ document.getElementById('ctxDoneBtn').onclick = async () => {
   if (convoFilter === 'unresponded' && nextDone) conversations = conversations.filter(x => !rows.some(r => r.key === x.key));
   showToast(rows.length > 1 ? `Marked ${rows.length} ${nextDone ? 'done' : 'not done'}` : (nextDone ? 'Marked done' : 'Marked not done'));
   clearConvoSelection();
+  Promise.all(rows.map(r => fetch(`/api/inbox/conversations/${r.contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) })))
+    .catch(() => showToast('Could not save -- try again', true));
   setTimeout(loadConversations, 5500, true);
 };
-document.getElementById('ctxArchiveBtn').onclick = async () => {
+document.getElementById('ctxArchiveBtn').onclick = () => {
   const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
   closeContextMenu();
   if (!rows.length) { clearConvoSelection(); return; }
   const nextArchived = !rows.every(r => r.archived);
-  await Promise.all(rows.map(r => fetch(`/api/inbox/conversations/${r.contactId}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: nextArchived }) })));
   for (const r of rows) r.archived = nextArchived;
   showToast(rows.length > 1 ? `${nextArchived ? 'Archived' : 'Unarchived'} ${rows.length}` : (nextArchived ? 'Archived' : 'Unarchived'));
+  Promise.all(rows.map(r => fetch(`/api/inbox/conversations/${r.contactId}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: nextArchived }) })))
+    .catch(() => showToast('Could not save -- try again', true));
   // Every bucket except the dedicated Archived tab excludes archived rows
   // outright (see sqlite_inbox.js's queryConversationsSqlite) -- drop it
   // the instant it no longer belongs in whichever tab is open instead of
@@ -1260,18 +1273,20 @@ document.getElementById('ctxArchiveBtn').onclick = async () => {
   clearConvoSelection();
   loadConversations();
 };
-document.getElementById('ctxBlacklistBtn').onclick = async () => {
+document.getElementById('ctxBlacklistBtn').onclick = () => {
   const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
   closeContextMenu();
   if (!rows.length) { clearConvoSelection(); return; }
-  await Promise.all(rows.map(r => fetch('/api/contacts/' + r.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) })));
   showToast(rows.length > 1 ? `Marked ${rows.length} as Blacklist` : 'Marked as Blacklist');
   // Blacklist sets the same hidden=1 flag as STOP -- if the Hidden tab is
   // what's open, this row still belongs there, just don't drop it.
+  // Optimistic, same reasoning as ctxDoneBtn/ctxArchiveBtn above -- drop it
+  // from the sidebar now, not after the PATCH round trip comes back.
   if (convoFilter !== 'hidden') rows.forEach(r => dropConvoFromSidebar(r.key));
   clearConvoSelection();
-  loadRefs();
-  loadConversations();
+  Promise.all(rows.map(r => fetch('/api/contacts/' + r.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'BLACKLIST' }) })))
+    .then(() => { loadRefs(); loadConversations(); })
+    .catch(() => showToast('Could not save -- try again', true));
 };
 document.getElementById('ctxDeleteBtn').onclick = () => {
   const c = ctxMenuConvo;

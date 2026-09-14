@@ -89,13 +89,35 @@
       </div>
     `;
   }
+  // Form submissions store one Q&A block per blank-line-separated
+  // paragraph ("Label: answer\n\nNext label: next answer" -- see
+  // forms_backend.js) so a multi-line textarea answer's own embedded "\n"s
+  // can't be confused with the separator between different fields. Renders
+  // each block's label bold, its answer in regular weight below it, with
+  // visual space between blocks. Older, already-logged submissions were
+  // stored with a single "\n" between fields (no way to tell a field
+  // separator from an embedded newline in that format) -- falls back to
+  // splitting on single "\n" for those, best-effort.
+  function formAnswersHtml(body) {
+    const blocks = body.includes('\n\n') ? body.split(/\n{2,}/) : body.split('\n');
+    return blocks.filter(Boolean).map((block) => {
+      const idx = block.indexOf(': ');
+      if (idx === -1) return `<div class="note-qa"><div class="note-qa-answer">${escapeHtml(block)}</div></div>`;
+      return `<div class="note-qa"><div class="note-qa-label">${escapeHtml(block.slice(0, idx))}</div><div class="note-qa-answer">${escapeHtml(block.slice(idx + 2))}</div></div>`;
+    }).join('');
+  }
   function noteBubbleHtml(item) {
     const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
+    const bodyHtml = item.body
+      ? (item.channel === 'form'
+          ? `<div class="note-bubble-body note-bubble-qa">${formAnswersHtml(item.body)}</div>`
+          : `<div class="note-bubble-body">${escapeHtml(item.body)}</div>`)
+      : '';
     return `
       <div class="bubble-row ${item.direction}">
         <div class="bubble-content note-bubble">
           <div class="note-bubble-head"><span>${icon}</span><span class="note-bubble-subject">${escapeHtml(item.subject || '')}</span></div>
-          ${item.body ? `<div class="note-bubble-body">${escapeHtml(item.body)}</div>` : ''}
+          ${bodyHtml}
           <div class="bubble-time">${fmtDate(item.at)}</div>
         </div>
       </div>
@@ -745,13 +767,31 @@
       }
       const markDoneBtn = container.querySelector('#chatMarkDoneBtn');
       if (markDoneBtn) {
-        markDoneBtn.onclick = async () => {
+        markDoneBtn.onclick = () => {
+          // Optimistic -- update the button, fire onDoneChanged (which is
+          // what actually pulls this conversation out of Unresponded in
+          // the sidebar), and toast BEFORE the request resolves, not
+          // after. Awaiting the round trip first was the entire reason
+          // this felt slow: the click did nothing visible until the
+          // server replied, no matter how fast that reply was. The
+          // request still goes out and is still what persists the
+          // change; a failure just re-flips the local state back and
+          // says so, same as any other optimistic-update pattern already
+          // used elsewhere in this app (e.g. the sidebar's own unread
+          // clearing).
           const nextDone = !state.done;
-          await fetch(`/api/inbox/conversations/${contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) });
           state.done = nextDone;
           config.onDoneChanged?.(contactId, nextDone);
           showToast(nextDone ? 'Marked done' : 'Marked not done');
           render();
+          fetch(`/api/inbox/conversations/${contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: nextDone }) })
+            .then(r => { if (!r.ok) throw new Error(); })
+            .catch(() => {
+              state.done = !nextDone;
+              config.onDoneChanged?.(contactId, !nextDone);
+              showToast('Could not save -- try again', true);
+              render();
+            });
         };
       }
       if (isFull && contactId) {
