@@ -95,10 +95,11 @@ export function markFirstSeen(contact, candidateISO) {
 
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
 // field: "status" | "smsOptOut" | "emailOptOut" | "tags" | "listIds" | "customFields.<fieldId>"
-//      | "emailOpened" | "emailClicked" | "visitedPage"
+//      | "emailOpened" | "emailClicked" | "visitedPage" | "firstSeenAt" | "createdAt"
 // op: "eq" | "neq" | "includes" | "excludes" | "exists"           (legacy, still fully supported)
 //   | "any_of" | "all_of" | "not_any_of" | "not_all_of"           (new -- value is an array, array-valued fields only)
 //   | "contains"                                                   (new -- substring match, visitedPage only)
+//   | "within_last_hours"                                          (new -- value is a number of hours, firstSeenAt only, re-evaluated against Date.now() every read)
 //
 // emailOpened/emailClicked and visitedPage are deliberately NOT read from
 // crm_message_log.json / crm_page_visits.json here -- both can grow huge in
@@ -112,6 +113,28 @@ export function markFirstSeen(contact, candidateISO) {
 // touching only the contact object already in memory.
 function evalCondition(contact, cond) {
   const { field, op, value } = cond;
+
+  // "within_last_hours" is deliberately computed against Date.now() at
+  // EVALUATION time, not a fixed cutoff baked in when the segment was
+  // saved -- a saved "new leads, last 72 hours" segment has to keep
+  // meaning "the last 72 hours" every time it's read (campaign send,
+  // segment preview, bulk-enroll), not "whoever matched on the day I
+  // created this segment".
+  //
+  // Two different fields on purpose: firstSeenAt (markFirstSeen, above) is
+  // meant to be "when this person first appeared in ANY connected system",
+  // but in practice is only refreshed by periodic AC/Close/Hyros sync jobs
+  // -- confirmed live (2026-09-14) it can lag reality by weeks. createdAt is
+  // set the moment this CRM's own record is created, which is what "new
+  // leads in the last N hours" actually means for anyone watching fresh
+  // intake -- use createdAt for that; firstSeenAt is still useful for
+  // "genuinely never seen before any system", just not "just now".
+  if ((field === "firstSeenAt" || field === "createdAt") && op === "within_last_hours") {
+    const at = contact[field];
+    if (!at) return false;
+    const ageMs = Date.now() - new Date(at).getTime();
+    return ageMs >= 0 && ageMs <= Number(value) * 3600 * 1000;
+  }
 
   if (field === "visitedPage") {
     const paths = contact.visitedPaths || [];

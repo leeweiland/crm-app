@@ -37,6 +37,8 @@ window.ConditionRowBuilder = (function () {
       <option value="emailOpened">Opened Email</option>
       <option value="emailClicked">Clicked Email</option>
       <option value="visitedPage">Visited Webpage</option>
+      <option value="createdAt">New Lead (created, age)</option>
+      <option value="firstSeenAt">First Seen anywhere (age)</option>
       ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
     `;
   }
@@ -46,6 +48,7 @@ window.ConditionRowBuilder = (function () {
   // it's just not offered as a choice for a brand-new row.
   function opOptionsHtml(field, legacyOp) {
     if (field === "visitedPage") return `<option value="eq">Is</option><option value="neq">Is not</option><option value="contains">Contains</option>`;
+    if (field === "firstSeenAt" || field === "createdAt") return `<option value="within_last_hours">Within the last (hours)</option>`;
     if (ARRAY_FIELDS.includes(field)) {
       const legacy = (legacyOp === "includes") ? `<option value="includes">Includes (legacy)</option>` : (legacyOp === "excludes") ? `<option value="excludes">Excludes (legacy)</option>` : "";
       return `<option value="any_of">Is any of</option><option value="all_of">Is all of</option><option value="not_any_of">Is not any of</option><option value="not_all_of">Is not all of</option>${legacy}`;
@@ -114,6 +117,7 @@ window.ConditionRowBuilder = (function () {
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
     if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
+    if (field === 'firstSeenAt' || field === 'createdAt') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="e.g. 72"/>`;
     if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
     if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
     return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
@@ -178,10 +182,12 @@ window.ConditionRowBuilder = (function () {
   const FIELD_LABELS = {
     type: 'Type (Lead/Contact)', status: 'Status', programType: 'Type', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
     tags: 'Tag', listIds: 'List', emailOpened: 'Opened Email', emailClicked: 'Clicked Email', visitedPage: 'Visited Webpage',
+    firstSeenAt: 'First seen', createdAt: 'New lead (created)',
   };
   const OP_LABELS = {
     eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', contains: 'contains',
     any_of: 'is any of', all_of: 'is all of', not_any_of: 'is not any of', not_all_of: 'is not all of',
+    within_last_hours: 'is within the last',
   };
   function describeCondition(cond) {
     const fieldLabel = FIELD_LABELS[cond.field] || (cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field);
@@ -194,6 +200,7 @@ window.ConditionRowBuilder = (function () {
       if (cond.field === 'tags') valueLabel = allTags.find(t => t.id === cond.value)?.name || cond.value;
       if (cond.field === 'listIds') valueLabel = allLists.find(l => l.id === cond.value)?.name || cond.value;
     }
+    if (cond.op === 'within_last_hours') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} hours`;
     return `${fieldLabel} ${opLabel}${cond.op === 'exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
   }
   function describeFilter(filter) {
