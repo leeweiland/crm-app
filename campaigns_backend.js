@@ -16,6 +16,17 @@ function campaignSnapshotFields(campaign) {
   return out;
 }
 
+// Each POPULATED criterion (lists, tags, segment) narrows the audience --
+// AND across categories, same as any normal filter UI ("in this list AND
+// matches this segment"), OR only within a category ("in any of these
+// lists"). Previously ORed every category together, so picking a segment
+// to narrow an already-selected list did nothing (segment membership is
+// near-always a subset of a list that broad) -- confirmed live: adding the
+// 157k-member ONLINE list to a 23-person "last 72h" segment jumped the
+// recipient count to 80k instead of narrowing it, since matching the list
+// ALONE was enough to qualify. An empty category is skipped entirely
+// (doesn't restrict), so leaving Tags blank while using Lists+Segment still
+// works as expected.
 function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
   const contacts = readJson(CONTACTS_FILE, []);
   const segment = segmentId ? readJson(SEGMENTS_FILE, []).find(s => s.id === segmentId) : null;
@@ -24,10 +35,10 @@ function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
     if (c.emailOptOut || !c.email) return false;
     if (excludeListIds?.length && (c.listIds || []).some(id => excludeListIds.includes(id))) return false;
     if (!hasFilters) return true; // no targeting = everyone (minus opt-outs/exclusions above)
-    if (listIds?.length && (c.listIds || []).some(id => listIds.includes(id))) return true;
-    if (tagIds?.length && (c.tags || []).some(id => tagIds.includes(id))) return true;
-    if (segment && matchesSegment(c, segment.filter)) return true;
-    return false;
+    if (listIds?.length && !(c.listIds || []).some(id => listIds.includes(id))) return false;
+    if (tagIds?.length && !(c.tags || []).some(id => tagIds.includes(id))) return false;
+    if (segment && !matchesSegment(c, segment.filter)) return false;
+    return true;
   });
 }
 
