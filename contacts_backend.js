@@ -21,12 +21,19 @@ export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 // webhook and tracking_backend.js's pageview handler.
 export function markContactEmailEngagement(contactId, kind) { // kind: "opened" | "clicked"
   if (!contactId) return;
-  updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+  const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
     c.emailEngagement = c.emailEngagement || {};
     c.emailEngagement[kind] = true;
     c.emailEngagement[`${kind}At`] = new Date().toISOString();
     return c;
   });
+  // Without this, the SQLite mirror (contacts_idx) silently drifts from
+  // the real file the moment an open/click lands -- confirmed live: caught
+  // getContactByIdFast (sqlite_inbox.js) returning a stale emailEngagement
+  // for a contact that had opened an email minutes earlier. Best-effort,
+  // same reasoning as the PATCH /api/contacts/:id handler's own sync call
+  // below -- a sync bug here shouldn't block the actual contact save.
+  if (updated) { try { syncContactFields(contactId, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
 }
 // A hard bounce or spam complaint (SES webhook, see email_backend.js) is
 // treated the same as an explicit unsubscribe -- reuses the exact same
@@ -37,20 +44,22 @@ export function markContactEmailEngagement(contactId, kind) { // kind: "opened" 
 // repeatedly mailing a bounced address is what damages sender reputation.
 export function suppressContactEmail(contactId, reason) { // reason: "bounced" | "complained"
   if (!contactId) return;
-  updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+  const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
     c.emailOptOut = true;
     c.emailSuppressedReason = reason;
     c.emailSuppressedAt = new Date().toISOString();
     return c;
   });
+  if (updated) { try { syncContactFields(contactId, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
 }
 export function markContactVisitedPage(contactId, path) {
   if (!contactId || !path) return;
-  updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+  const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
     c.visitedPaths = c.visitedPaths || [];
     if (!c.visitedPaths.includes(path)) c.visitedPaths.push(path);
     return c;
   });
+  if (updated) { try { syncContactFields(contactId, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
 }
 
 // Matched by exact name (case-insensitive) -- used by every importer
