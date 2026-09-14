@@ -76,7 +76,7 @@ function sourceFile(sourceType, sourceId) {
 // slimMessage() above applies: enough for stats and a recipient-list table
 // (campaign-report.html), not full bodies.
 function slimSourceMessage(m) {
-  return { id: m.id, contactId: m.contactId, to: m.to, status: m.status, sentAt: m.sentAt || m.createdAt };
+  return { id: m.id, contactId: m.contactId, to: m.to, status: m.status, sentAt: m.sentAt || m.createdAt, providerMessageId: m.providerMessageId || null };
 }
 export function getSourceMessages(sourceType, sourceId) {
   if (!sourceType || !sourceId) return [];

@@ -97,20 +97,45 @@ function statsFromSources(sourceType, sourceIds, startMs, endMs, statsFn) {
 // itself (confirmed live: 17 sent showed 20 replies before this fix).
 function countReplies(sentMessages, channel, endMs) {
   const earliestSendByContact = new Map();
+  const providerIdsByContact = new Map();
   for (const m of sentMessages) {
     if (!m.contactId) continue;
     const t = new Date(m.sentAt || 0).getTime();
     const existing = earliestSendByContact.get(m.contactId);
     if (existing === undefined || t < existing) earliestSendByContact.set(m.contactId, t);
+    if (m.providerMessageId) {
+      if (!providerIdsByContact.has(m.contactId)) providerIdsByContact.set(m.contactId, []);
+      providerIdsByContact.get(m.contactId).push(m.providerMessageId);
+    }
   }
   let replies = 0;
   for (const [contactId, sentAtMs] of earliestSendByContact) {
-    const replied = getContactMessages(contactId).some(m => {
+    // Precise match first: In-Reply-To/References (see gmail_backend.js's
+    // processGmailMessage) names the exact provider message id this is
+    // replying to -- checked as a substring, not exact equality, since SES
+    // wraps its own MessageId in a <...@region.amazonses.com> envelope we
+    // don't reconstruct ourselves, but the raw id still appears verbatim
+    // inside it either way. Only sends logged after this field started
+    // being captured carry a providerMessageId here (getMessagesForSource
+    // reads whatever's actually on disk -- nothing retroactive), so this
+    // silently has nothing to match for older sends; falls through to the
+    // timing heuristic below for exactly those, not a hard requirement.
+    const providerIds = providerIdsByContact.get(contactId) || [];
+    const contactMessages = getContactMessages(contactId);
+    const preciseMatch = providerIds.length && contactMessages.some(m =>
+      m.channel === channel && m.direction === "inbound" && m.inReplyTo && providerIds.some(pid => m.inReplyTo.includes(pid))
+    );
+    if (preciseMatch) { replies++; continue; }
+    // Fallback: same contact, same channel, inbound after their earliest
+    // in-range send -- a timing guess, not a verified thread link (see the
+    // conversation with the user this was written for: it can miscount an
+    // unrelated inbound message as a "reply").
+    const timingMatch = contactMessages.some(m => {
       if (m.channel !== channel || m.direction !== "inbound") return false;
       const t = new Date(m.createdAt).getTime();
       return t > sentAtMs && t <= endMs;
     });
-    if (replied) replies++;
+    if (timingMatch) replies++;
   }
   return replies;
 }

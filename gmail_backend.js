@@ -453,11 +453,19 @@ async function processGmailMessage(user, msg) {
 
   const contactId = getContactIdByEmail(fromEmail);
   if (!contactId) return; // not a known lead/contact -- not the CRM's concern
+  // In-Reply-To names the exact Message-ID this is replying to; when a mail
+  // client omits it, References' last entry is the same thing (the RFC822
+  // convention is "most recent message first" reading left to right... in
+  // practice always just the immediately-prior message last) -- gives
+  // reporting_backend.js's countReplies a real thread link instead of only
+  // a same-contact-and-after-the-send timing guess.
+  const inReplyTo = headerValue(msg.payload?.headers, "In-Reply-To") || (headerValue(msg.payload?.headers, "References") || "").trim().split(/\s+/).pop() || null;
   logMessage({
     channel: "email", direction: "inbound", contactId,
     sourceType: "inbound", sourceId: null, providerMessageId: msg.id,
     to: user.gmailEmail, from: fromHeader, subject, body, bodyPreview: plainPreview(body, 140),
     status: "received", createdAt,
+    extra: inReplyTo ? { inReplyTo } : undefined,
   });
   checkConversionGoal("incoming_email", contactId);
   // A reply is unambiguous proof they read whatever they're replying to --
