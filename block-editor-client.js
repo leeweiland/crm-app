@@ -694,8 +694,15 @@ window.BlockEditor = (function () {
         // across browsers with createLink alone (it can silently no-op or
         // leave the old href in place) -- unlinking first makes this work
         // consistently whether the selection is plain text or an existing link.
+        const wasBold = document.queryCommandState('bold');
         document.execCommand('unlink', false, null);
         document.execCommand('createLink', false, url);
+        // unlink/createLink's DOM rewrite can drop sibling <b> formatting
+        // depending on browser/selection boundaries -- confirmed live
+        // (bold text losing its weight after Link Apply). queryCommandState
+        // is toggle-aware, so this only re-asserts bold if it actually got
+        // lost, never double-toggles it back off.
+        if (wasBold && !document.queryCommandState('bold')) document.execCommand('bold', false, null);
         if (linkColorTouched) {
           // Primary: the live selection right after createLink still sits
           // inside the anchor it just made/updated in every tested browser
