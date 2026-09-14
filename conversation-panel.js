@@ -469,26 +469,53 @@
     }
 
     async function sendComposeMessage() {
+      // Hard guard against duplicate sends -- confirmed live that when the
+      // backend is slow (scheduler contention can stall any request for
+      // 10-20+s, unrelated to this send path itself), staff assume a slow
+      // "Sending…" button means it failed and click again, sending the
+      // same reply twice. This makes a second invocation a no-op for as
+      // long as the first request is actually in flight, regardless of how
+      // many times the button gets clicked (or double-fires some other
+      // way) in the meantime -- independent of the button's own disabled
+      // attribute, which a fast double-click can race past before the
+      // first paint even applies it.
+      if (state.sendInFlight) return;
+      state.sendInFlight = true;
       const contactId = state.contactId;
       const bodyEl = container.querySelector('#composeBody');
       const body = (bodyEl?.value || '').trim();
-      if (!body || !contactId) return;
+      if (!body || !contactId) { state.sendInFlight = false; return; }
       const subject = state.composeChannel === 'email' ? container.querySelector('#composeSubject')?.value.trim() : undefined;
       const fromUserId = state.composeChannel === 'email' ? container.querySelector('#composeFromUserId')?.value : undefined;
       const btn = container.querySelector('#composeSendBtn');
       btn.disabled = true; btn.textContent = 'Sending…';
+      // Ticks up while the request is in flight so a genuinely slow (not
+      // stuck) send reads as "still working" instead of looking frozen --
+      // the exact ambiguity that led to the double-sends this is fixing.
+      const startedAt = Date.now();
+      const elapsedTimer = setInterval(() => {
+        if (btn.isConnected) btn.textContent = `Sending… (${Math.round((Date.now() - startedAt) / 1000)}s)`;
+      }, 1000);
       const isReply = state.composeChannel === 'email' && state.composeReplyTo;
-      const r = await fetch('/api/inbox/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contactId, channel: state.composeChannel, subject, body, fromUserId,
-          quotedHtml: isReply ? state.composeReplyTo.quotedHtml : undefined,
-          quotedMeta: isReply ? state.composeReplyTo.quotedMeta : undefined,
-        }),
-      });
-      const d = await r.json();
+      let r = null, d = null, networkError = null;
+      try {
+        r = await fetch('/api/inbox/send', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contactId, channel: state.composeChannel, subject, body, fromUserId,
+            quotedHtml: isReply ? state.composeReplyTo.quotedHtml : undefined,
+            quotedMeta: isReply ? state.composeReplyTo.quotedMeta : undefined,
+          }),
+        });
+        d = await r.json();
+      } catch (e) {
+        networkError = e;
+      } finally {
+        clearInterval(elapsedTimer);
+        state.sendInFlight = false;
+      }
       btn.disabled = false; btn.textContent = state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send';
-      if (!r.ok) { showToast(d.error || 'Send failed', true); return; }
+      if (networkError || !r.ok) { showToast(d?.error || networkError?.message || 'Send failed', true); return; }
       showToast('Sent');
       state.composeReplyTo = null;
       // A real reply just went out -- THIS is what actually counts as
