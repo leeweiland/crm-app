@@ -180,6 +180,23 @@ export async function handleInboxRequest(req, res, url) {
   const contactActivityMatch = p.match(/^\/api\/inbox\/contact\/([^/]+)$/);
   if (contactActivityMatch && req.method === "GET") {
     const contactId = contactActivityMatch[1];
+    // Some outbound emails logged against a contact (e.g. flow-step "notify
+    // the team" steps like the "2 ONLINE BOOKING" flow) are actually sent TO
+    // STAFF (lee@/alexis@) about that contact's booking, not to the contact
+    // themselves -- tagged with contactId purely for traceability/reporting.
+    // Confirmed live (2026-09-14): these were showing up inside the
+    // contact's OWN conversation thread as if sent to them, and inflating
+    // their "X emails sent/opened/clicked" stats with staff opening their
+    // own internal alert. Filtered out below by comparing the email's `to`
+    // against the contact's own known addresses -- only applied when we
+    // actually have an email on file to compare against, so a contact with
+    // no email yet doesn't have every email wrongly filtered out.
+    const contactForFilter = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    const ownEmails = contactForFilter ? new Set([contactForFilter.email, ...(contactForFilter.altEmails || [])].filter(Boolean).map(e => e.toLowerCase())) : null;
+    function isInternalStaffEmail(m) {
+      if (m.channel !== "email" || m.direction !== "outbound" || !m.to || !ownEmails || !ownEmails.size) return false;
+      return !ownEmails.has(String(m.to).toLowerCase());
+    }
     // AC-sourced messages carry a reference (acCampaignId), not the body
     // itself -- see ac_sync.js's own header comment for why (the same
     // campaign's HTML duplicated onto every recipient's own record filled
@@ -193,7 +210,7 @@ export async function handleInboxRequest(req, res, url) {
     // app's own send path instead). Resolved here, same as the AC case,
     // synchronously (no network call -- the shared template's already on
     // disk locally, unlike AC's which has to be fetched).
-    const messages = await Promise.all(getContactMessages(contactId).map(async m => {
+    const messages = await Promise.all(getContactMessages(contactId).filter(m => !isInternalStaffEmail(m)).map(async m => {
       let body = m.body;
       if (!body && m.acCampaignId && (m.sourceType === "ac_campaign" || m.sourceType === "ac_import")) {
         body = await getAcCampaignHtml(m.acCampaignId);
