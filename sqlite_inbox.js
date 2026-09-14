@@ -125,6 +125,36 @@ export function sqliteInboxAvailable() {
   if (!existingCols.has("last_seen_by_json")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN last_seen_by_json TEXT`);
   }
+  // Fast-path index for the Contacts page and single-contact lookups --
+  // separate table from `conversations` above (which only has a row per
+  // contact that's actually exchanged a message, and is missing tags/
+  // listIds/type/emailOptOut/smsOptOut/createdAt entirely). GET /api/contacts
+  // and GET /api/contacts/:id used to always fall back to a full
+  // readJson(CONTACTS_FILE, []) -- a ~190MB JSON.parse -- on every single
+  // request, confirmed live as the dominant cost behind Contacts (10+s) and
+  // contact-detail (~5s) page loads. tags/listIds stay JSON text columns
+  // (queried via json_each, confirmed available in node:sqlite) rather than
+  // a join table -- simpler, and filtering by one tag/list is already rare
+  // enough that an unindexed json_each scan over an otherwise-indexed,
+  // already-narrowed row set is fine.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS contacts_idx (
+      id TEXT PRIMARY KEY, type TEXT, account_name TEXT,
+      first TEXT, last TEXT, email TEXT, phone TEXT,
+      status TEXT, program_type TEXT, owner_id TEXT,
+      email_opt_out INTEGER DEFAULT 0, sms_opt_out INTEGER DEFAULT 0,
+      first_seen_at TEXT, created_at TEXT, updated_at TEXT,
+      tags_json TEXT, list_ids_json TEXT, raw_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ci_status ON contacts_idx(status);
+    CREATE INDEX IF NOT EXISTS idx_ci_type ON contacts_idx(type);
+    CREATE INDEX IF NOT EXISTS idx_ci_email_opt_out ON contacts_idx(email_opt_out);
+    CREATE INDEX IF NOT EXISTS idx_ci_owner_id ON contacts_idx(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_ci_first ON contacts_idx(first);
+    CREATE INDEX IF NOT EXISTS idx_ci_last ON contacts_idx(last);
+    CREATE INDEX IF NOT EXISTS idx_ci_email ON contacts_idx(email);
+    CREATE INDEX IF NOT EXISTS idx_ci_created_at ON contacts_idx(created_at);
+  `);
   return true;
 }
 
@@ -269,6 +299,69 @@ export function syncContactFields(contactId, contact) {
     phone: contact.phone || null, firstSeenAt: contact.firstSeenAt || null,
     status: contact.status || null, programType: contact.programType || null, ownerId: contact.ownerId || null,
   });
+  // Every call site above already exists (see commit 9268cc6's audit of
+  // every writeJson(CONTACTS_FILE, ...) call in the app) -- piggybacking
+  // the Contacts-page index on the exact same call sites instead of
+  // touching each one a second time.
+  upsertContactIndex(contact);
+}
+
+// contacts_idx mirrors the Contacts page's own filter/sort/search needs --
+// see its CREATE TABLE comment above. raw_json is the full stored record
+// (customFields, externalIds, tags, listIds, etc, everything a single
+// GET /api/contacts/:id needs), so a lookup by id never has to reconstruct
+// a contact from flattened columns.
+export function upsertContactIndex(contact) {
+  if (!sqliteInboxAvailable() || !contact?.id) return;
+  db.prepare(`
+    INSERT INTO contacts_idx (id, type, account_name, first, last, email, phone, status, program_type, owner_id,
+      email_opt_out, sms_opt_out, first_seen_at, created_at, updated_at, tags_json, list_ids_json, raw_json)
+    VALUES (:id, :type, :accountName, :first, :last, :email, :phone, :status, :programType, :ownerId,
+      :emailOptOut, :smsOptOut, :firstSeenAt, :createdAt, :updatedAt, :tagsJson, :listIdsJson, :rawJson)
+    ON CONFLICT(id) DO UPDATE SET
+      type = excluded.type, account_name = excluded.account_name, first = excluded.first, last = excluded.last,
+      email = excluded.email, phone = excluded.phone, status = excluded.status, program_type = excluded.program_type,
+      owner_id = excluded.owner_id, email_opt_out = excluded.email_opt_out, sms_opt_out = excluded.sms_opt_out,
+      first_seen_at = excluded.first_seen_at, created_at = excluded.created_at, updated_at = excluded.updated_at,
+      tags_json = excluded.tags_json, list_ids_json = excluded.list_ids_json, raw_json = excluded.raw_json
+  `).run({
+    id: contact.id, type: contact.type || null, accountName: contact.accountName || null,
+    first: contact.first || null, last: contact.last || null, email: contact.email || null, phone: contact.phone || null,
+    status: contact.status || null, programType: contact.programType || null, ownerId: contact.ownerId || null,
+    emailOptOut: contact.emailOptOut ? 1 : 0, smsOptOut: contact.smsOptOut ? 1 : 0,
+    firstSeenAt: contact.firstSeenAt || null, createdAt: contact.createdAt || null, updatedAt: contact.updatedAt || null,
+    tagsJson: JSON.stringify(contact.tags || []), listIdsJson: JSON.stringify(contact.listIds || []),
+    rawJson: JSON.stringify(contact),
+  });
+}
+export function deleteContactIndex(id) {
+  if (!sqliteInboxAvailable() || !id) return;
+  db.prepare(`DELETE FROM contacts_idx WHERE id = ?`).run(id);
+}
+export function contactsIndexCount() {
+  if (!sqliteInboxAvailable()) return 0;
+  return db.prepare(`SELECT COUNT(*) as n FROM contacts_idx`).get().n;
+}
+// One-time bulk populate -- everything above only ever upserts ONE contact
+// per call, so without this, every contact that existed before this
+// feature shipped (i.e. all ~176k of them in production) would simply be
+// missing from the index until something happens to individually touch
+// it. Runs inside the already-running server process (a separate one-off
+// script sharing this container with the live server was confirmed live
+// to destabilize it -- see compliance_backend.js's status-migration
+// history for the exact incident), in one transaction so 176k inserts pay
+// SQLite's per-transaction fsync cost once, not 176k times.
+export function backfillContactsIndex(contacts) {
+  if (!sqliteInboxAvailable()) return 0;
+  db.exec("BEGIN");
+  try {
+    for (const c of contacts) upsertContactIndex(c);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+  return contacts.length;
 }
 
 // Bulk companion to syncContactFields above -- renaming a status definition
@@ -488,4 +581,102 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
     };
   });
   return { conversations, total, hasMore: offset + limit < total };
+}
+
+// Trivial indexed lookup by primary key -- turns contact-detail.html's
+// ~5s single-contact load (a full readJson(CONTACTS_FILE, []).find(...)
+// linear scan over ~190MB) into effectively instant. raw_json is the exact
+// stored contact record, so the caller gets back the identical shape a
+// readJson+find would have.
+export function getContactByIdSqlite(id) {
+  if (!sqliteInboxAvailable() || !id) return undefined;
+  const row = db.prepare(`SELECT raw_json FROM contacts_idx WHERE id = ?`).get(id);
+  if (!row) return null;
+  try { return JSON.parse(row.raw_json); } catch { return null; }
+}
+
+// One GROUP BY instead of a full readJson(CONTACTS_FILE, []) + per-contact
+// JS loop -- same data, but SQLite does the json_each explode/count
+// natively over the compact indexed table instead of a ~190MB JSON.parse
+// materializing 176k live objects just to tally two numbers per tag.
+export function tagCountsSqlite() {
+  if (!sqliteInboxAvailable()) return null;
+  const rows = db.prepare(`SELECT value as tagId, COUNT(*) as n FROM contacts_idx, json_each(tags_json) GROUP BY value`).all();
+  const counts = {};
+  for (const r of rows) counts[r.tagId] = r.n;
+  return counts;
+}
+export function listCountsSqlite() {
+  if (!sqliteInboxAvailable()) return null;
+  const rows = db.prepare(`
+    SELECT value as listId, COUNT(*) as total, SUM(CASE WHEN email_opt_out = 0 THEN 1 ELSE 0 END) as subscribed
+    FROM contacts_idx, json_each(list_ids_json) GROUP BY value
+  `).all();
+  const counts = {};
+  for (const r of rows) counts[r.listId] = { total: r.total, subscribed: r.subscribed };
+  return counts;
+}
+
+// Deliberately does NOT handle the arbitrary segment-condition ("advanced
+// filter") case -- matchesSegment's condition language (segments_shared.js)
+// covers customFields.*/visitedPage/relative-time operators that aren't
+// columns here, and this app already had one production outage from a
+// clever-but-wrong fast path on this exact file (see contacts_backend.js's
+// "REVERTED to plain readJson+filter" comment). The caller falls back to
+// the old full-read path whenever advancedFilter is present; this only
+// ever serves the plain q/status/tag/listId/type/emailOptOut/sort case,
+// which covers the default Contacts view and every column-header sort.
+export function queryContactsSqlite({ q, status, tag, listId, type, emailOptOut, sortField, sortDir, limit, offset }) {
+  if (!sqliteInboxAvailable()) return null;
+
+  const where = [];
+  const params = {};
+  // COALESCE(...,'') on both sides of || -- SQLite string concatenation
+  // returns NULL if EITHER operand is NULL, and upsertContactIndex stores
+  // an empty-string first/last as NULL (`contact.last || null`), so a
+  // contact with no last name would silently never match ANY search
+  // without this -- confirmed live via a direct fast-vs-slow-path diff.
+  if (q) { where.push("(LOWER(COALESCE(first,'') || ' ' || COALESCE(last,'')) LIKE :q OR LOWER(COALESCE(email,'')) LIKE :q OR LOWER(COALESCE(account_name,'')) LIKE :q)"); params.q = `%${q.toLowerCase()}%`; }
+  if (status) { where.push("status = :status"); params.status = status; }
+  if (type) { where.push("type = :type"); params.type = type; }
+  if (emailOptOut !== null && emailOptOut !== undefined) { where.push("email_opt_out = :emailOptOut"); params.emailOptOut = emailOptOut ? 1 : 0; }
+  // json_each is unindexed (a per-row table-valued scan), same tradeoff
+  // sqlite_inbox.js's channel filter above already accepts -- fine here
+  // since tag/listId filtering is a much rarer path (one specific List/Tag
+  // view) than the default Contacts list.
+  if (tag) { where.push("EXISTS (SELECT 1 FROM json_each(tags_json) WHERE value = :tag)"); params.tag = tag; }
+  if (listId) { where.push("EXISTS (SELECT 1 FROM json_each(list_ids_json) WHERE value = :listId)"); params.listId = listId; }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  // LOWER(...) on every text column -- SQLite's default TEXT comparison is
+  // byte-wise/case-sensitive (uppercase sorts before lowercase), but the
+  // JS comparator this replaces explicitly lowercases both sides first.
+  // Confirmed live via a direct fast-vs-slow-path diff: same row set,
+  // different order, on every text-column sort without this.
+  const SORT_COLUMNS = {
+    first: "LOWER(first)", last: "LOWER(last)", email: "LOWER(email)", phone: "LOWER(phone)", status: "LOWER(status)",
+    smsOptOut: "sms_opt_out", emailOptOut: "email_opt_out", programType: "LOWER(program_type)",
+    createdAt: "COALESCE(first_seen_at, created_at)",
+  };
+  const dir = sortDir === "desc" ? "DESC" : "ASC";
+  const orderSql = sortField && SORT_COLUMNS[sortField] ? `ORDER BY ${SORT_COLUMNS[sortField]} ${dir}` : "";
+
+  const total = db.prepare(`SELECT COUNT(*) as n FROM contacts_idx ${whereSql}`).get(params).n;
+  // limit === null means "no limit param at all" -- several existing
+  // callers (inbox.html, workflow-detail.html, reporting.html) fetch this
+  // endpoint with none and expect the FULL matching set back, same as the
+  // full-read fallback's `page = filtered` (no slice) when there's no
+  // limitParam. Literal LIMIT/OFFSET (not bound params) for the same
+  // reason queryConversationsSqlite above uses literals -- bound values
+  // defeat SQLite's top-K optimization; safe since both are already
+  // clamped ints (or explicitly null) from the caller, never raw request text.
+  let limitSql = "";
+  if (limit !== null && limit !== undefined) {
+    const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
+    const safeOffset = Math.max(0, Math.trunc(offset) || 0);
+    limitSql = `LIMIT ${safeLimit} OFFSET ${safeOffset}`;
+  }
+  const rows = db.prepare(`SELECT raw_json FROM contacts_idx ${whereSql} ${orderSql} ${limitSql}`).all(params);
+  const contacts = rows.map(r => { try { return JSON.parse(r.raw_json); } catch { return null; } }).filter(Boolean);
+  return { contacts, total };
 }

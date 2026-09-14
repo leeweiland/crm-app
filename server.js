@@ -34,7 +34,7 @@ import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { readJson, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { sqliteInboxAvailable } from "./sqlite_inbox.js";
+import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Explicit path, not dotenv's default (process.cwd()) -- the preview
@@ -103,8 +103,27 @@ setInterval(() => {
 function warmCaches() {
   const t0 = Date.now();
   try {
-    readJson(CONTACTS_FILE, []);
+    const contacts = readJson(CONTACTS_FILE, []);
     sqliteInboxAvailable();
+    // One-time bulk populate for contacts_idx (the Contacts page/single-
+    // contact-lookup fast path, see contacts_backend.js and sqlite_inbox.js's
+    // CREATE TABLE comment) -- every contact that existed before this
+    // feature shipped has no row there yet, only ones some other write
+    // touches from here on. Gated on count vs length (not "table just got
+    // created") so a container that crashed/restarted mid-backfill --or an
+    // index that's fallen behind for any other reason -- catches up on the
+    // next boot too, not just the very first one. Reuses the `contacts`
+    // array this function already paid to parse, so backfilling costs
+    // nothing beyond the 176k inserts themselves (one transaction, see
+    // backfillContactsIndex) -- and runs here, before .listen(), rather
+    // than as a separate script sharing this container with the live
+    // server, which is exactly what destabilized production earlier this
+    // session (see compliance_backend.js's status-migration history).
+    if (contacts.length && contactsIndexCount() < contacts.length) {
+      const bt0 = Date.now();
+      const n = backfillContactsIndex(contacts);
+      console.log(`[warmup] contacts_idx backfilled (${n} rows) in ${Date.now() - bt0}ms`);
+    }
     console.log(`[warmup] caches primed in ${Date.now() - t0}ms`);
   } catch (e) {
     console.error("[warmup] failed (non-fatal, first real request will just pay the cost instead):", e.message);

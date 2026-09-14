@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
-import { syncContactFields } from "./sqlite_inbox.js";
+import { syncContactFields, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
@@ -179,6 +179,28 @@ export async function handleContactsRequest(req, res, url) {
       try { advancedFilter = JSON.parse(filterParam); }
       catch { return sendJson(res, 400, { error: "filter must be valid JSON" }); }
     }
+    const sortField = url.searchParams.get("sort");
+    const sortDir = url.searchParams.get("dir") === "desc" ? "desc" : "asc";
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Math.max(1, parseInt(limitParam, 10) || 50) : null;
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
+
+    // Fast path: contacts_idx (sqlite_inbox.js) instead of a full
+    // readJson(CONTACTS_FILE, []) -- a ~190MB JSON.parse -- on every single
+    // request, confirmed live as the dominant cost of the Contacts page's
+    // 10+s load. Deliberately NOT used for advancedFilter (matchesSegment's
+    // condition language covers customFields.*/visitedPage/relative-time
+    // operators that aren't columns in that table) -- this app already had
+    // one production outage from a "clever" fast path on this exact
+    // endpoint (see the streamJsonArrayFiltered revert this replaced), so
+    // the one case that doesn't cleanly map to SQL just keeps using the
+    // known-safe full read instead of forcing it.
+    if (!advancedFilter && url.searchParams.get("_sqlite") !== "0" && sqliteInboxAvailable()) {
+      const emailOptOut = emailOptOutParam !== null ? emailOptOutParam === "true" : null;
+      const fast = queryContactsSqlite({ q, status, tag, listId, type, emailOptOut, sortField, sortDir, limit, offset });
+      if (fast) return sendJson(res, 200, { contacts: fast.contacts.map(publicContact), total: fast.total });
+    }
+
     // REVERTED to plain readJson+filter (2026-09-01): the streamJsonArrayFiltered
     // version made the app hang in production (whole server unresponsive) --
     // likely a real bug in the byte-scan against crm_contacts.json's actual
@@ -186,7 +208,8 @@ export async function handleContactsRequest(req, res, url) {
     // was tested against before shipping. Back to the known-safe (if slower)
     // approach until that's root-caused properly, not under live-incident
     // pressure. See git history around this date for the attempted fix and
-    // its revert.
+    // its revert. Still the only path for advancedFilter, and the fallback
+    // if the sqlite index isn't available for some reason.
     const contacts = readJson(CONTACTS_FILE, []);
     let filtered = contacts;
     if (q) filtered = filtered.filter(c =>
@@ -195,8 +218,12 @@ export async function handleContactsRequest(req, res, url) {
       (c.accountName || "").toLowerCase().includes(q)
     );
     if (status) filtered = filtered.filter(c => c.status === status);
-    if (tag) filtered = filtered.filter(c => c.tags.includes(tag));
-    if (listId) filtered = filtered.filter(c => c.listIds.includes(listId));
+    // (c.tags || [])/(c.listIds || []) -- confirmed live one contact with
+    // listIds === undefined (not just empty) threw uncaught here, which
+    // left that request hanging forever (an unhandled rejection inside
+    // this handler never calls sendJson, so the response is never sent).
+    if (tag) filtered = filtered.filter(c => (c.tags || []).includes(tag));
+    if (listId) filtered = filtered.filter(c => (c.listIds || []).includes(listId));
     if (type) filtered = filtered.filter(c => c.type === type);
     if (emailOptOutParam !== null) { const want = emailOptOutParam === "true"; filtered = filtered.filter(c => !!c.emailOptOut === want); }
     if (advancedFilter) filtered = filtered.filter(c => matchesSegment(c, advancedFilter));
@@ -205,23 +232,17 @@ export async function handleContactsRequest(req, res, url) {
     // (inbox.html, workflow-detail.html, reporting.html) fetch this same
     // endpoint with no params at all and expect the full unsorted list back,
     // so omitting either param must behave exactly as before.
-    const sortField = url.searchParams.get("sort");
     if (sortField) {
-      const sortDir = url.searchParams.get("dir") === "desc" ? -1 : 1;
+      const dirNum = sortDir === "desc" ? -1 : 1;
       filtered = [...filtered].sort((a, b) => {
         let av, bv;
         if (sortField === "createdAt") { av = a.firstSeenAt || a.createdAt || ""; bv = b.firstSeenAt || b.createdAt || ""; }
         else { av = (a[sortField] || "").toString().toLowerCase(); bv = (b[sortField] || "").toString().toLowerCase(); }
-        return av < bv ? -sortDir : av > bv ? sortDir : 0;
+        return av < bv ? -dirNum : av > bv ? dirNum : 0;
       });
     }
-    const limitParam = url.searchParams.get("limit");
     let page = filtered;
-    if (limitParam) {
-      const limit = Math.max(1, parseInt(limitParam, 10) || 50);
-      const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
-      page = filtered.slice(offset, offset + limit);
-    }
+    if (limit !== null) page = filtered.slice(offset, offset + limit);
     return sendJson(res, 200, { contacts: page.map(publicContact), total });
   }
   if (p === "/api/contacts" && req.method === "POST") {
@@ -255,6 +276,7 @@ export async function handleContactsRequest(req, res, url) {
     } else {
       record = newContactRecord(body);
       appendJsonRecordFast(CONTACTS_FILE, record);
+      try { syncContactFields(record.id, record); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
     }
     record.listIds.forEach(listId => { fireTrigger("list_subscribe", { contactId: record.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: record.id, listId }); });
     record.tags.forEach(tagId => { fireTrigger("tag_added", { contactId: record.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: record.id, tagId }); });
@@ -297,13 +319,24 @@ export async function handleContactsRequest(req, res, url) {
       if (updated.status !== prevStatus) { checkConversionGoal("lead_status_change", updated.id); checkAutomationGoal("lead_status_change", updated.id, updated.status); }
       return sendJson(res, 200, { ok: true, contact: publicContact(updated) });
     }
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find(c => c.id === contactMatch[1]);
     if (req.method === "GET") {
+      // Fast path: an indexed lookup instead of a full readJson(CONTACTS_FILE,
+      // []).find(...) linear scan over ~190MB -- confirmed live as the
+      // dominant cost of contact-detail.html's ~5s load. Falls back to the
+      // full read if the index isn't available yet (sqlite missing) or
+      // hasn't caught up for this specific id (shouldn't normally happen --
+      // every create/update path syncs synchronously -- but never trust a
+      // best-effort cache to be the only source of truth).
+      const fast = getContactByIdSqlite(contactMatch[1]);
+      if (fast !== null && fast !== undefined) return sendJson(res, 200, { contact: publicContact(fast) });
+      const contacts = readJson(CONTACTS_FILE, []);
+      const contact = contacts.find(c => c.id === contactMatch[1]);
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       return sendJson(res, 200, { contact: publicContact(contact) });
     }
     if (req.method === "DELETE") {
+      const contacts = readJson(CONTACTS_FILE, []);
+      const contact = contacts.find(c => c.id === contactMatch[1]);
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       writeJson(CONTACTS_FILE, contacts.filter(c => c.id !== contactMatch[1]));
       // Deleting the contact record alone left its conversation summary
@@ -312,9 +345,12 @@ export async function handleContactsRequest(req, res, url) {
       // test contact kept showing up in the Inbox sidebar indefinitely,
       // complete with a stuck unread badge nothing could ever clear, since
       // there was no longer a real contact or messages behind it for any
-      // mark-done/recompute path to reconcile against.
+      // mark-done/recompute path to reconcile against. Same reasoning now
+      // applies to the Contacts-page index -- without deleteContactIndex, a
+      // deleted contact would keep showing up there too.
       removeConversationSummary(contactMatch[1]);
       deleteContactMessageFile(contactMatch[1]);
+      try { deleteContactIndex(contactMatch[1]); } catch (e) { console.error("[sqlite_inbox] contact index delete failed:", e.message); }
       return sendJson(res, 200, { ok: true });
     }
   }
@@ -378,6 +414,8 @@ export async function handleContactsRequest(req, res, url) {
   // browser network timing (not just server-side request timing, which was
   // fast in isolation) as the actual cause of the reported 5+ second load.
   if (p === "/api/lists/counts" && req.method === "GET") {
+    const fast = listCountsSqlite();
+    if (fast) return sendJson(res, 200, { counts: fast });
     const contacts = readJson(CONTACTS_FILE, []);
     const counts = {};
     for (const c of contacts) {
@@ -427,6 +465,8 @@ export async function handleContactsRequest(req, res, url) {
   // this N+1 pattern predates them). One read + one loop here does the
   // exact same total work in a single pass instead of 3500+ of them.
   if (p === "/api/tags/counts" && req.method === "GET") {
+    const fast = tagCountsSqlite();
+    if (fast) return sendJson(res, 200, { counts: fast });
     const contacts = readJson(CONTACTS_FILE, []);
     const counts = {};
     for (const c of contacts) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
