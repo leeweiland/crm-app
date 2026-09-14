@@ -551,7 +551,16 @@
       btn.disabled = false; btn.textContent = state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send';
       if (networkError || !r.ok) { showToast(d?.error || networkError?.message || 'Send failed', true); return; }
       showToast('Sent');
+      // Resets to the exact same state this panel opens with for a fresh
+      // conversation -- not just clearing composeReplyTo (which alone left
+      // composeView/composeChannel/composeBarHeight whatever they happened
+      // to be), so hitting Send always lands back on the plain default
+      // Send Email/SMS box, never still looking like "Reply To Email" or a
+      // manually-resized compose bar left over from the reply.
       state.composeReplyTo = null;
+      state.composeView = 'compose';
+      state.composeChannel = config.initialChannel || 'email';
+      state.composeBarHeight = null;
       // A real reply just went out -- THIS is what actually counts as
       // responding, not merely having opened the thread earlier. Marks
       // every prior unread inbound message done and moves the conversation
