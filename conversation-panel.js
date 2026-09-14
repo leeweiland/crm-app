@@ -28,7 +28,7 @@
       const r = await fetch('/api/reporting/contact-clicks/' + contactId);
       if (!r.ok) return [];
       const { clicks } = await r.json();
-      return (clicks || []).map(c => ({ itemType: 'click', at: c.at, title: c.label, path: c.path, category: c.category }));
+      return (clicks || []).map(c => ({ itemType: 'click', at: c.at, title: c.label, path: c.fullUrl || c.path, category: c.category }));
     } catch { return []; }
   }
   function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }

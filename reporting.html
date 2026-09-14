@@ -778,7 +778,7 @@ async function openJourney(contactId) {
   if (!msgRes.ok) { timeline.innerHTML = '<div class="pra-muted">Could not load.</div>'; return; }
   const { items } = await msgRes.json();
   const { clicks } = clickRes.ok ? await clickRes.json() : { clicks: [] };
-  const clickItems = clicks.map(c => ({ itemType: 'click', category: c.category, at: c.at, title: c.label, path: c.path }));
+  const clickItems = clicks.map(c => ({ itemType: 'click', category: c.category, at: c.at, title: c.label, path: c.fullUrl || c.path }));
   currentJourneyItems = [...items, ...clickItems].sort((a, b) => new Date(a.at) - new Date(b.at));
   renderJourneyTimeline();
 }

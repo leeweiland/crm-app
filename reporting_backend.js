@@ -496,16 +496,53 @@ export async function handleReportingRequest(req, res, url) {
   if (journeyClicksMatch && req.method === "GET") {
     const contactId = journeyClicksMatch[1];
     const visits = readJson(PAGE_VISITS_FILE, []).filter(v => v.contactId === contactId);
+    // The el= tag only carries the sending campaign/automation/flow's NAME
+    // (resolveSendSourceSlug, source_names.js -- one slug per flow, not per
+    // step), so "Clicked: 2 Online Booking" doesn't say which of that flow's
+    // several emails/texts it actually was. For email/sms clicks specifically,
+    // correlate against this same contact's own outbound history: the most
+    // recent email/sms sent to them at or before the click time is, in
+    // practice, almost always the one that link lived in -- gives the real
+    // subject line (email) or message text (sms) instead of just the flow
+    // name. Fetched once per contact, not once per click.
+    // Same internal-staff-notification exclusion as
+    // /api/inbox/contact/:id (inbox_backend.js) -- a flow's own "notify the
+    // team" copy (sent to lee@/alexis@, not the contact) must never be
+    // picked as "the email this contact clicked", or a staff member's own
+    // click on their internal alert gets misattributed to the contact.
+    const contactForOwnEmails = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    const ownEmails = contactForOwnEmails ? new Set([contactForOwnEmails.email, ...(contactForOwnEmails.altEmails || [])].filter(Boolean).map(e => e.toLowerCase())) : null;
+    const outboundByChannel = { email: [], sms: [] };
+    for (const m of getContactMessages(contactId)) {
+      if (m.direction !== "outbound" || (m.channel !== "email" && m.channel !== "sms")) continue;
+      if (m.channel === "email" && ownEmails?.size && m.to && !ownEmails.has(String(m.to).toLowerCase())) continue;
+      outboundByChannel[m.channel].push(m);
+    }
+    outboundByChannel.email.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    outboundByChannel.sms.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    function closestPriorMessage(channel, atIso) {
+      const atMs = new Date(atIso).getTime();
+      return outboundByChannel[channel].find(m => new Date(m.createdAt).getTime() <= atMs) || null;
+    }
+    const siteBaseUrl = (readJson("crm_integrations.json", {}).site?.websiteUrl || "").replace(/\/+$/, "");
     const clicks = visits.map(v => {
       const key = attributionKeyForVisit(v);
       if (!key) return null;
       const isAd = /^(meta-ad|google-ad|ad):/.test(key);
       const socialMatch = key.match(/^(youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
+      const category = isAd ? "ad" : socialMatch ? "media" : (key.startsWith("email") ? "email" : key.startsWith("sms") ? "sms" : "other");
+      const flowName = niceTitle(key.replace(/^(email|sms)[-:]/, ""));
+      const sourceMsg = (category === "email" || category === "sms") ? closestPriorMessage(category, v.at) : null;
+      // Falls back to the flow-name label when no matching send is found
+      // (e.g. the click happened before any tracked send, or the message
+      // predates getContactMessages' own history) -- never blank.
       const label = isAd ? `${key.startsWith("meta-ad:") ? "Meta" : key.startsWith("google-ad:") ? "Google" : "Ad"} — ${key.split(":")[1]}`
         : socialMatch ? `${SOCIAL_PLATFORM_LABEL[socialMatch[1]]} — ${niceTitle(socialMatch[2])}`
-        : niceTitle(key.replace(/^(email|sms)[-:]/, ""));
-      const category = isAd ? "ad" : socialMatch ? "media" : (key.startsWith("email") ? "email" : key.startsWith("sms") ? "sms" : "other");
-      return { at: v.at, path: v.path, key, label, category };
+        : category === "email" ? `Email: ${sourceMsg?.subject || flowName}`
+        : category === "sms" ? `SMS: ${sourceMsg?.body ? sourceMsg.body.slice(0, 60) : flowName}`
+        : flowName;
+      const fullUrl = (siteBaseUrl ? siteBaseUrl : "") + (v.path || "") + (v.search || "");
+      return { at: v.at, path: v.path, fullUrl, key, label, category, sourceSubject: sourceMsg?.subject || null };
     }).filter(Boolean);
     return sendJson(res, 200, { clicks });
   }
