@@ -612,14 +612,19 @@ export async function handleFormsRequest(req, res, url) {
         // Log the submission itself as an inbound Inbox activity -- otherwise
         // a form fill only shows up as a contact getting created/updated,
         // with no trace in the conversation thread that they reached out.
-        const answerSummary = form.fields
+        const answerLines = form.fields
           .filter(f => ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "")
-          .map(f => `${f.label || f.type}: ${Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id]}`)
-          .join(" · ");
+          .map(f => `${f.label || f.type}: ${Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id]}`);
+        // Full body is one Q&A per line -- the conversation panel's
+        // .note-bubble-body already has white-space:pre-wrap, so this alone
+        // is what turns the "wall of text" into a readable list. bodyPreview
+        // stays " · "-joined on purpose: it's a single-line summary (inbox
+        // list rows, sidebar), where line breaks would just collapse anyway.
+        const answerSummary = answerLines.join(" · ");
         logMessage({
           channel: "form", direction: "inbound", contactId: result.contact.id,
           sourceType: "form", sourceId: form.id,
-          subject: `Form: ${form.name}`, body: answerSummary, bodyPreview: answerSummary.slice(0, 200),
+          subject: `Form: ${form.name}`, body: answerLines.join("\n"), bodyPreview: answerSummary.slice(0, 200),
           status: "received",
         });
         fireTrigger("form_submitted", { contactId: result.contact.id, formId: form.id });
