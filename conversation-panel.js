@@ -16,6 +16,21 @@
   'use strict';
 
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+  // Same endpoint + mapping reporting.html's Customer Journey view already
+  // uses (openJourney()) -- ad/social/email/sms-attributed page visits only
+  // (see attributionKeyForVisit in reporting_backend.js; a plain unattributed
+  // pageview returns no `key` and is filtered out server-side, same as it
+  // already is in Customer Journeys). Never throws on failure -- a contact
+  // with no click history, or the request failing, just means no click
+  // bubbles, not a broken thread load.
+  async function fetchClickItems(contactId) {
+    try {
+      const r = await fetch('/api/reporting/contact-clicks/' + contactId);
+      if (!r.ok) return [];
+      const { clicks } = await r.json();
+      return (clicks || []).map(c => ({ itemType: 'click', at: c.at, title: c.label, path: c.path, category: c.category }));
+    } catch { return []; }
+  }
   function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
   function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''; }
   // Compact date -- toLocaleString() always includes a time, which reads as
@@ -81,6 +96,24 @@
         <div class="bubble-content note-bubble">
           <div class="note-bubble-head"><span>${icon}</span><span class="note-bubble-subject">${escapeHtml(item.subject || '')}</span></div>
           ${item.body ? `<div class="note-bubble-body">${escapeHtml(item.body)}</div>` : ''}
+          <div class="bubble-time">${fmtDate(item.at)}</div>
+        </div>
+      </div>
+    `;
+  }
+  // Ad/social/email/sms-attributed page visits, merged in from
+  // /api/reporting/contact-clicks/:contactId (same endpoint and shape
+  // reporting.html's Customer Journey view already uses -- see its
+  // openJourney()). Read-only merge done entirely client-side in
+  // loadThread() below; this itemType never touches logMessage()/
+  // message_index.js, so it structurally cannot affect unreadCount,
+  // Unresponded, or the notification broadcast.
+  function clickBubbleHtml(item) {
+    return `
+      <div class="bubble-row inbound">
+        <div class="bubble-content note-bubble">
+          <div class="note-bubble-head"><span>🖱️</span><span class="note-bubble-subject">Clicked: ${escapeHtml(item.title || '')}</span></div>
+          ${item.path ? `<div class="note-bubble-body">${escapeHtml(item.path)}</div>` : ''}
           <div class="bubble-time">${fmtDate(item.at)}</div>
         </div>
       </div>
@@ -466,8 +499,8 @@
       state.done = true;
       config.onDoneChanged?.(contactId, true);
       if (state.contactId !== contactId) return; // superseded by a later switchContact
-      const threadRes = await fetch('/api/inbox/contact/' + contactId);
-      state.threadItems = threadRes.ok ? (await threadRes.json()).items : [];
+      const [threadRes, clickItems] = await Promise.all([fetch('/api/inbox/contact/' + contactId), fetchClickItems(contactId)]);
+      state.threadItems = threadRes.ok ? [...(await threadRes.json()).items, ...clickItems] : clickItems;
       if (state.contactId !== contactId) return;
       render();
       config.onThreadLoaded?.(state.threadItems);
@@ -612,9 +645,9 @@
         </div>
       `;
 
-      const items = [...state.threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
+      const items = [...state.threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting', 'click'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
       const threadEl = container.querySelector('#chatThread');
-      threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
+      threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : item.itemType === 'click' ? clickBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
       threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {
         const wasExpanded = el.classList.contains('expanded');
         el.classList.toggle('expanded');
@@ -737,16 +770,17 @@
       const contactId = state.contactId;
       if (!contactId) { state.threadItems = []; state.aiAssistAvailable = false; render(); return; }
       const contact = getContact();
-      const [threadRes, matchRes] = await Promise.all([
+      const [threadRes, matchRes, clickItems] = await Promise.all([
         fetch('/api/inbox/contact/' + contactId),
         fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(contactId) + '&status=' + encodeURIComponent(contact?.status || '') + '&programType=' + encodeURIComponent(contact?.programType || '')),
+        fetchClickItems(contactId),
       ]);
       // Discard a stale response -- switchContact() may have moved this
       // instance on to a different conversation while this fetch was still
       // in flight (inbox: clicking a different row before the first one
       // finished loading).
       if (state.contactId !== contactId) return;
-      state.threadItems = threadRes.ok ? (await threadRes.json()).items : [];
+      state.threadItems = threadRes.ok ? [...(await threadRes.json()).items, ...clickItems] : clickItems;
       state.aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
       if (state.contactId !== contactId) return;
       render();

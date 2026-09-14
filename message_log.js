@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { appendJsonRecordFast, appendToJsonObjectFast, readJson } from "./auth_backend.js";
-import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, SIDEBAR_CHANNELS } from "./message_index.js";
+import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 
@@ -92,11 +92,10 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
   // inbound message is different: no open tab has any way to learn about
   // it at all otherwise, short of polling or a manual refresh (confirmed
   // live -- new replies just sat invisible in the sidebar until someone
-  // happened to reload). SIDEBAR_CHANNELS-gated the same way
-  // upsertConversationSummary above already is, so a channel that doesn't
-  // drive the Inbox list (activity/meeting logs, etc.) doesn't trigger a
-  // pointless reload in every open tab.
-  if (row.direction === "inbound" && row.contactId && SIDEBAR_CHANNELS.includes(row.channel)) {
+  // happened to reload). NOTIFY_CHANNELS-gated (email/sms/form/booking
+  // only) so a channel that doesn't drive Unresponded (activity/meeting
+  // logs, etc.) doesn't trigger a pointless reload in every open tab.
+  if (row.direction === "inbound" && row.contactId && NOTIFY_CHANNELS.includes(row.channel)) {
     broadcastInboxUpdate({ type: "new_message", contactId: row.contactId });
   }
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });

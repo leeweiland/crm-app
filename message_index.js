@@ -234,6 +234,16 @@ export function conversationKey(m) {
 // channel that actually shows up in the sidebar keeps its own slim ref
 // alongside the combined one.
 export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", "meeting"];
+// Narrower than SIDEBAR_CHANNELS on purpose: SIDEBAR_CHANNELS controls what
+// renders in a conversation thread and what counts toward per-channel
+// preview text (lastByChannel below) -- activity/meeting logs belong there.
+// NOTIFY_CHANNELS controls what's allowed to increment unreadCount / flip a
+// conversation into the Inbox's Unresponded bucket / fire the SSE
+// new_message broadcast (message_log.js) -- an activity/meeting log should
+// never do any of those three things, even though today's SIDEBAR_CHANNELS
+// already (correctly, by accident) never carries one inbound. This makes
+// that exclusion structural instead of "nothing happens to violate it yet."
+export const NOTIFY_CHANNELS = ["email", "sms", "form", "booking"];
 function emptyGroup(key, contactId) {
   const g = { key, contactId: contactId || null, last: null, lastMine: null, lastInboundAt: null, unreadCount: 0, lastByChannel: {} };
   SIDEBAR_CHANNELS.forEach(c => { g.lastByChannel[c] = null; });
@@ -246,7 +256,10 @@ function foldMessageIntoGroup(g, m) {
   if (m.direction === "outbound" && (!g.lastMine || new Date(m.createdAt) > new Date(g.lastMine.createdAt))) g.lastMine = slim;
   if (m.direction === "inbound") {
     if (!g.lastInboundAt || new Date(m.createdAt) > new Date(g.lastInboundAt)) g.lastInboundAt = m.createdAt;
-    if (!m.inboxDone) g.unreadCount++;
+    // Gated to NOTIFY_CHANNELS (narrower than SIDEBAR_CHANNELS) -- an
+    // inbound activity/meeting log still updates lastByChannel/preview text
+    // above, it just never counts toward Unresponded.
+    if (!m.inboxDone && NOTIFY_CHANNELS.includes(m.channel)) g.unreadCount++;
   }
 }
 // SQLite sync is best-effort -- never let a bug in the new/less-proven path
