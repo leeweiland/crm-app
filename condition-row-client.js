@@ -97,10 +97,10 @@ window.ConditionRowBuilder = (function () {
     searchEl.addEventListener('focus', showMatches);
     searchEl.addEventListener('blur', () => setTimeout(() => dropdownEl.classList.remove('open'), 150));
     renderChips();
-    // Open immediately -- for a short, known list (statuses) this is the
-    // actual picker, not a search box you have to click into first to
-    // discover has options at all.
-    showMatches();
+    // Stays closed until the user actually clicks/types into the search
+    // box (matches campaign-builder.html's own list/tag pickers) -- a
+    // condition row is often just left at "Status"/"Tag" defaults without
+    // ever touching the value picker, so it shouldn't open uninvited.
   }
 
   const MULTI_VALUE_OPS = ["any_of", "all_of", "not_any_of", "not_all_of"];
