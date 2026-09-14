@@ -94,17 +94,29 @@
   // forms_backend.js) so a multi-line textarea answer's own embedded "\n"s
   // can't be confused with the separator between different fields. Renders
   // each block's label bold, its answer in regular weight below it, with
-  // visual space between blocks. Older, already-logged submissions were
-  // stored with a single "\n" between fields (no way to tell a field
-  // separator from an embedded newline in that format) -- falls back to
-  // splitting on single "\n" for those, best-effort.
-  function formAnswersHtml(body) {
-    const blocks = body.includes('\n\n') ? body.split(/\n{2,}/) : body.split('\n');
-    return blocks.filter(Boolean).map((block) => {
+  // visual space between blocks.
+  function splitFormBlocks(body, separator) {
+    return body.split(separator).filter(Boolean).map((block) => {
       const idx = block.indexOf(': ');
-      if (idx === -1) return `<div class="note-qa"><div class="note-qa-answer">${escapeHtml(block)}</div></div>`;
-      return `<div class="note-qa"><div class="note-qa-label">${escapeHtml(block.slice(0, idx))}</div><div class="note-qa-answer">${escapeHtml(block.slice(idx + 2))}</div></div>`;
-    }).join('');
+      return idx === -1 ? { label: null, answer: block } : { label: block.slice(0, idx), answer: block.slice(idx + 2) };
+    });
+  }
+  function formAnswersHtml(body) {
+    let pairs = splitFormBlocks(body, /\n{2,}/);
+    // Older, already-logged submissions were stored with a single "\n"
+    // between fields (no reliable way to tell a field separator from an
+    // embedded newline within one multi-line answer in that format) --
+    // and can incidentally contain a genuine blank line too, which would
+    // otherwise false-positive as "this is the new double-newline format".
+    // A real double-newline-separated block always starts with a short
+    // field label; if splitting that way produced a "label" that runs on
+    // for a full paragraph, that's old data, not new -- fall back to
+    // single-"\n" splitting (still imperfect for old data, best-effort).
+    if (pairs.some((p) => p.label && p.label.length > 100)) pairs = splitFormBlocks(body, '\n');
+    return pairs.map((p) => p.label
+      ? `<div class="note-qa"><div class="note-qa-label">${escapeHtml(p.label)}</div><div class="note-qa-answer">${escapeHtml(p.answer)}</div></div>`
+      : `<div class="note-qa"><div class="note-qa-answer">${escapeHtml(p.answer)}</div></div>`
+    ).join('');
   }
   function noteBubbleHtml(item) {
     const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
