@@ -34,18 +34,18 @@
           <span class="cb-status-pill" id="statusPill">draft</span>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="historyBtn" type="button">History</button>
         </div>
+        <div class="field" style="margin-top:14px">
+          <label class="pra-label">Subject line</label>
+          <input class="pra-input" id="subjectInput" placeholder="Your session with Coach Lee..."/>
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label class="pra-label">Preview text</label>
+          <input class="pra-input" id="previewTextInput" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
+        </div>
       </div>
 
       <div class="cb-layout">
         <div>
-          <div class="field" style="margin-bottom:16px">
-            <label class="pra-label">Subject line</label>
-            <input class="pra-input" id="subjectInput" placeholder="Your session with Coach Lee..."/>
-          </div>
-          <div class="field" style="margin-bottom:16px">
-            <label class="pra-label">Preview text</label>
-            <input class="pra-input" id="previewTextInput" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
-          </div>
           <div id="blockEditorRoot"></div>
         </div>
 
@@ -440,6 +440,17 @@ async function loadCampaign() {
       (state) => { campaign.blocks = state.blocks; campaign.theme = state.theme; saveDebounced(); },
       () => { document.getElementById('footerDirtyBar').style.display = 'block'; },
     );
+    // Keeps the block editor's own sticky toolbar positioned right below
+    // the page's sticky header (which now also holds Subject/Preview)
+    // instead of overlapping it -- a ResizeObserver instead of a fixed
+    // pixel offset since the header's real height varies (the
+    // SES-not-configured banner toggling visibility, responsive
+    // breakpoints, browser font/zoom settings, etc).
+    const stickyHeader = document.querySelector('.mobile-sticky-header');
+    const toolbar = document.getElementById('beToolbar');
+    if (stickyHeader && toolbar) {
+      new ResizeObserver(() => { toolbar.style.top = stickyHeader.getBoundingClientRect().height + 'px'; }).observe(stickyHeader);
+    }
   } else {
     editor.setState({ blocks: campaign.blocks, theme: campaign.theme });
   }
