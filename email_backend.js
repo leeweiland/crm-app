@@ -137,7 +137,7 @@ export function reconstructEmailBody(message) {
   let html = cached.replaceAll(EMAIL_TEMPLATE_SENTINEL_CID, encodeURIComponent(message.contactId || ""));
   const contact = message.contactId ? getContact(message.contactId) : null;
   if (contact) html = applyMergeTags(html, contact);
-  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(message.sourceType, message.sourceId)}`);
+  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(message.sourceType, message.sourceId)}`, "e");
   html = wrapLinksForClickTracking(html, message.id);
   html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(message.contactId || "")}`);
   return html;
@@ -277,10 +277,11 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   if (contact) html = applyMergeTags(html, contact);
   // Tagged before logging, so the stored body matches exactly what the
   // recipient received (same convention sms_backend.js's sendSms() uses).
-  // "el=email-<slug>" resolved from THIS send's own sourceType/sourceId
-  // (source_names.js), matching the el= convention already used on ads,
-  // social, and YouTube links.
-  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(sourceType, sourceId)}`);
+  // "e=email-<slug>" resolved from THIS send's own sourceType/sourceId
+  // (source_names.js) -- its own dedicated param, distinct from the el=
+  // convention ads/social/YouTube links are hand-tagged with, so email
+  // traffic can be filtered/reported on separately from everything else.
+  html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(sourceType, sourceId)}`, "e");
   // Every link now routes through /api/email/click first (real click
   // tracking -- the "clicked" stat was always 0 before this, since nothing
   // ever generated a link pointing there) -- done BEFORE the %UNSUBSCRIBE%
@@ -391,12 +392,13 @@ export async function handleEmailRequest(req, res, url) {
         if (dest) executeLinkClickAction(row, dest);
       }
     }
-    // Tagged with "el=email-<slug>" resolved from THIS message's own
+    // Tagged with "e=email-<slug>" resolved from THIS message's own
     // sourceType/sourceId (see source_names.js) rather than a static
     // setting, so the value always names whichever campaign/automation
-    // actually sent it.
+    // actually sent it. Own dedicated param (not el=) -- see
+    // tagHtmlLinksWithSource's own comment above.
     const elValue = row ? `email-${resolveSendSourceSlug(row.sourceType, row.sourceId)}` : null;
-    let taggedDest = dest ? appendSourceTag(dest, elValue) : dest;
+    let taggedDest = dest ? appendSourceTag(dest, elValue, "e") : dest;
     // Identifies this browser for page-visit tracking (tracking_backend.js's
     // /track.js snippet, embedded on the Framer site) -- passed as a query
     // param on the DESTINATION url rather than (or in addition to) a

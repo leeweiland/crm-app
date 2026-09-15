@@ -159,12 +159,20 @@ export function applyMergeTags(html, contact) {
 // concatenation so it correctly handles a link that already has its own
 // query string or fragment; a malformed URL is left untouched rather than
 // risked being corrupted.
-export function appendSourceTag(rawUrl, value) {
+// paramName defaults to "el" (the existing hand-tagging convention already
+// used for ads/social/YouTube links) -- email_backend.js's send/click paths
+// pass "e" explicitly instead, per Lee's request to keep email-sourced
+// traffic under its own distinct query param rather than folded into the
+// same "el=" bucket as everything else. Nothing else calls this with a
+// different paramName today, so "el" stays the default for any future/
+// other caller (SMS, once appendSourceTagToSmsBody below is actually wired
+// up somewhere).
+export function appendSourceTag(rawUrl, value, paramName = "el") {
   if (!value) return rawUrl;
   if (/^https?:\/\//i.test(rawUrl)) {
     try {
       const u = new URL(rawUrl);
-      u.searchParams.set("el", value);
+      u.searchParams.set(paramName, value);
       return u.toString();
     } catch {
       return rawUrl;
@@ -174,21 +182,21 @@ export function appendSourceTag(rawUrl, value) {
   // "PacificRimAthletics.com/videos/x" with no "https://") -- appended via
   // plain string logic instead of round-tripping through the URL API,
   // which would lowercase the hostname and change how the link reads.
-  return `${rawUrl}${rawUrl.includes("?") ? "&" : "?"}el=${encodeURIComponent(value)}`;
+  return `${rawUrl}${rawUrl.includes("?") ? "&" : "?"}${paramName}=${encodeURIComponent(value)}`;
 }
 // Applies appendSourceTag to every <a href="..."> in a rendered email.
-export function tagHtmlLinksWithSource(html, value) {
+export function tagHtmlLinksWithSource(html, value, paramName = "el") {
   if (!value) return html;
   return String(html || "").replace(/href="([^"]+)"/g, (match, url) => {
     if (url.startsWith("mailto:") || url.startsWith("#")) return match;
-    return `href="${appendSourceTag(url, value)}"`;
+    return `href="${appendSourceTag(url, value, paramName)}"`;
   });
 }
 // Same idea, but for a plain-text SMS body -- finds every URL, WITH or
 // WITHOUT a leading http(s)://, and appends the tag to each. Requires a
 // trailing "/path" so a bare "info@pacificrimathletics.com" email mention
 // (no path after the domain) is never mistaken for a link.
-export function appendSourceTagToSmsBody(body, value) {
+export function appendSourceTagToSmsBody(body, value, paramName = "el") {
   if (!value) return body;
-  return String(body || "").replace(/(?<!@)(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}\/[^\s]*/g, (url) => appendSourceTag(url, value));
+  return String(body || "").replace(/(?<!@)(?:https?:\/\/)?(?:www\.)?[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}\/[^\s]*/g, (url) => appendSourceTag(url, value, paramName));
 }
