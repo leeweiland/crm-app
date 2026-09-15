@@ -24,6 +24,27 @@ window.crmNavReady = (async function () {
     { href: "/settings.html", label: "Settings" },
   ];
 
+  // Detail/editor pages aren't in NAV_ITEMS (they're reached by clicking
+  // through from a list page, not from the sidebar) -- map each to the tab
+  // it belongs to so the permission check and active-link highlighting
+  // below treat e.g. contact-detail.html as part of "/contacts.html"
+  // instead of an unrecognized path. Without this, any non-admin role
+  // landing on one of these got redirected straight to their first allowed
+  // tab (Inbox), since an unmapped path always fails allowedHrefs.has(path).
+  const DETAIL_PAGE_PARENT = {
+    "/contact-detail.html": "/contacts.html",
+    "/summary-image.html": "/contacts.html",
+    "/automation-builder.html": "/automations.html",
+    "/automation-report.html": "/automations.html",
+    "/workflow-detail.html": "/workflows.html",
+    "/campaign-builder.html": "/campaigns.html",
+    "/campaign-report.html": "/campaigns.html",
+    "/form-builder.html": "/forms.html",
+    "/scheduling-editor.html": "/scheduling.html",
+    "/flow-builder.html": "/flows.html",
+    "/ai-agent-editor.html": "/ai-agents.html",
+  };
+
   const sidebar = document.getElementById("appSidebar");
   if (!sidebar) return;
 
@@ -54,18 +75,19 @@ window.crmNavReady = (async function () {
     : `Pacific Rim Athletics`;
 
   const path = location.pathname;
+  const effectivePath = DETAIL_PAGE_PARENT[path] || path;
   // Real enforcement, not just hiding the link -- a user/superuser landing
   // directly on a URL their role isn't allowed (typed in, bookmarked, an
   // old link) gets bounced to the first tab they DO have, same as an
   // expired session bouncing to login above.
-  if (allowedHrefs && !allowedHrefs.has(path) && visibleItems.length) {
+  if (allowedHrefs && !allowedHrefs.has(effectivePath) && visibleItems.length) {
     location.href = visibleItems[0].href;
     return;
   }
   sidebar.innerHTML = `
     <div class="app-sidebar-logo">${logoHtml}</div>
     <nav>
-      ${visibleItems.map(item => `<a class="app-nav-link${path === item.href ? " active" : ""}" href="${item.href}">${item.label}</a>`).join("")}
+      ${visibleItems.map(item => `<a class="app-nav-link${effectivePath === item.href ? " active" : ""}" href="${item.href}">${item.label}</a>`).join("")}
     </nav>
     <div class="app-sidebar-footer">
       ${me.first} ${me.last}<br/>
