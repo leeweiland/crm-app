@@ -224,13 +224,24 @@ export async function handleCampaignsRequest(req, res, url) {
     }
     if (req.method === "PATCH") {
       if (!campaign) return sendJson(res, 404, { error: "Not found" });
-      if (campaign.status === "sent" || campaign.status === "sending") return sendJson(res, 400, { error: "Can't edit a campaign that's already sending or sent" });
       const body = await readJsonBody(req);
+      const locked = campaign.status === "sent" || campaign.status === "sending";
+      // Once sent, everything that actually went out (subject/blocks/
+      // recipients/etc) has to stay locked -- editing those after the fact
+      // would misrepresent what was really sent. But the campaign's name
+      // is just an internal organizational label nobody outside this CRM
+      // ever sees, so there's no reason renaming a sent campaign (for
+      // tidying up the list later) needs to be blocked along with it. The
+      // frontend's autosave always PATCHes the full field set (not just
+      // whatever changed), so a locked campaign quietly no-ops every field
+      // except name instead of rejecting the whole request.
+      if (locked && !("name" in body)) return sendJson(res, 400, { error: "Can't edit a campaign that's already sending or sent" });
+      const fieldsToApply = locked ? ["name"] : VERSIONED_FIELDS;
       // Snapshot the pre-change state before overwriting it -- throttled
       // (see versions_shared.js) so this doesn't create a new version on
       // every debounced autosave, just roughly once per editing session.
-      maybeSnapshotVersion(CAMPAIGN_VERSIONS_FILE, "campaignId", campaign.id, campaignSnapshotFields(campaign));
-      for (const k of VERSIONED_FIELDS) if (k in body) campaign[k] = body[k];
+      if (!locked) maybeSnapshotVersion(CAMPAIGN_VERSIONS_FILE, "campaignId", campaign.id, campaignSnapshotFields(campaign));
+      for (const k of fieldsToApply) if (k in body) campaign[k] = body[k];
       campaign.updatedAt = new Date().toISOString();
       writeJson(CAMPAIGNS_FILE, campaigns);
       return sendJson(res, 200, { ok: true, campaign });
