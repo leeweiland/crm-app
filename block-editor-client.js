@@ -170,7 +170,7 @@ window.BlockEditor = (function () {
               <option value="'Century Gothic Bold', 'Century Gothic', sans-serif" style="font-weight:bold">Century Gothic Bold</option>
               <option value="Aldrich, Arial, sans-serif">Aldrich</option>
             </select>
-            <select id="beFontSize"><option value="2">Small</option><option value="3" selected>Normal</option><option value="5">Large</option><option value="7">XL</option></select>
+            <select id="beFontSize" title="Font size"><option value="">Size...</option><option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="14">14</option><option value="16">16</option><option value="18">18</option><option value="20">20</option><option value="24">24</option><option value="28">28</option><option value="32">32</option><option value="36">36</option><option value="48">48</option></select>
             <button type="button" id="beLinkBtn">Link</button>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option>${(opts.extraPersonalizeOptions || []).map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>
             <span class="be-link-popover" id="beLinkPopover" style="display:none">
@@ -362,13 +362,14 @@ window.BlockEditor = (function () {
 
     // Image blocks get an editor-only affordance renderBlockHtml() can't
     // provide (that function's output has to stay identical to the real
-    // send-time HTML) -- an empty block shows a click-to-upload placeholder
-    // instead of a broken <img>, and a filled one is wrapped so clicking the
-    // picture itself re-uploads/replaces it, not just the sidebar button.
+    // send-time HTML) -- an empty block shows a click-to-upload placeholder.
+    // A filled block renders plain: clicking it just selects the block (via
+    // the block-level click handler below) so the sidebar's Image fields
+    // show up; only the sidebar's own Upload Image button re-uploads it.
     function blockBodyPreviewHtml(b) {
       if (b.type !== 'image') return renderBlockHtml(b);
       if (!b.src) return `<div class="be-image-upload-placeholder" data-upload-for="${b.id}">${ICON.image}<span>Click to upload image</span></div>`;
-      return `<div class="be-image-replace-wrap" data-upload-for="${b.id}" title="Click to replace image">${renderBlockHtml(b)}</div>`;
+      return renderBlockHtml(b);
     }
 
     // Footer content is now genuinely editable here (not just a read-only
@@ -605,7 +606,24 @@ window.BlockEditor = (function () {
       btn.addEventListener('click', () => { document.execCommand(btn.dataset.cmd, false, null); syncSelectedText(); });
     });
     wireHexColorField(toolbar, 'beColor', (v) => { document.execCommand('foreColor', false, v); syncSelectedText(); });
-    toolbar.querySelector('#beFontSize').addEventListener('change', (e) => { document.execCommand('fontSize', false, e.target.value); syncSelectedText(); });
+    toolbar.querySelector('#beFontSize').addEventListener('change', (e) => {
+      const px = e.target.value;
+      if (!px) return;
+      // execCommand('fontSize', ...) only ever accepts the legacy 1-7 HTML
+      // scale (no direct way to pass a real px/pt value) and, worse,
+      // produces a deprecated <font size="N"> attribute instead of real
+      // CSS -- inconsistent across email clients. The standard workaround:
+      // use size 7 (the max of that legacy scale, unlikely to already be
+      // in use) purely as a marker to find what execCommand just wrapped,
+      // then replace the attribute with a real inline font-size style.
+      document.execCommand('fontSize', false, '7');
+      canvas.querySelectorAll('font[size="7"]').forEach(el => {
+        el.removeAttribute('size');
+        el.style.fontSize = px + 'px';
+      });
+      e.target.value = '';
+      syncSelectedText();
+    });
     toolbar.querySelector('#beFontFamily').addEventListener('change', (e) => {
       if (!e.target.value) return;
       document.execCommand('fontName', false, e.target.value);

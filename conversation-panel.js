@@ -660,6 +660,7 @@
             </div>
           </div>
           ${isFull ? `<select class="pra-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Change status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>` : ''}
+          ${isFull && contactId ? `<button class="pra-btn pra-btn-outline pra-btn-sm" id="chatGenSummaryImageBtn" type="button">Generate Summary Image</button>` : ''}
           ${isFull ? optOutBadgesHtml(contact) : ''}
           ${!isFull && contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
@@ -840,6 +841,19 @@
           showToast('Status updated');
           e.target.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle(status) : '');
           config.onStatusChanged?.(contactId, status);
+        });
+      }
+      const genSummaryBtn = container.querySelector('#chatGenSummaryImageBtn');
+      if (genSummaryBtn) {
+        // Same dedicated-tab pattern as contact-detail.html's own button --
+        // generation runs on gpt-image-2 and regularly takes 60-90s, so this
+        // opens summary-image.html (which does its own fetch) instead of
+        // blocking this panel; opening synchronously on click, before any
+        // await, also avoids popup blockers.
+        genSummaryBtn.addEventListener('click', () => {
+          if (!contactId) return;
+          const name = (config.getDisplayName ? config.getDisplayName() : `${contact?.first || ''} ${contact?.last || ''}`.trim()) || 'Contact';
+          window.open('/summary-image.html?contactId=' + encodeURIComponent(contactId) + '&name=' + encodeURIComponent(name), '_blank');
         });
       }
 

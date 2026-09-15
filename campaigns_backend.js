@@ -189,7 +189,7 @@ export async function handleCampaignsRequest(req, res, url) {
     if (!source) return sendJson(res, 404, { error: "Not found" });
     const copy = {
       id: randomUUID(), name: `Copy of ${source.name}`, status: "draft",
-      subject: source.subject, blocks: JSON.parse(JSON.stringify(source.blocks)),
+      subject: source.subject, previewText: source.previewText || "", blocks: JSON.parse(JSON.stringify(source.blocks)),
       theme: JSON.parse(JSON.stringify(source.theme || getEmailTheme())),
       footerTemplateId: source.footerTemplateId,
       recipients: JSON.parse(JSON.stringify(source.recipients)),

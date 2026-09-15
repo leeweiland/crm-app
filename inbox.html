@@ -413,9 +413,10 @@
           <span id="ovTypeBadge"></span>
           <div class="pra-h2" id="contactOverlayName" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Contact</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
           <select class="status-pill-select" id="ovStatus"></select>
           <span id="ovOptOutBadges" style="display:flex;gap:6px"></span>
+          <button class="pra-btn pra-btn-outline pra-btn-sm" id="ovGenSummaryImageBtn" type="button">Generate Summary Image</button>
         </div>
       </div>
       <a class="pra-btn pra-btn-ghost pra-btn-sm" id="ovFullPageLink" href="#">Open Full Page</a>
@@ -1433,6 +1434,14 @@ async function openContactOverlay(contactId) {
   overlayContact = (await contactRes.json()).contact;
   document.getElementById('contactOverlayName').textContent = `${overlayContact.first} ${overlayContact.last}`.trim() || 'Contact';
   document.getElementById('ovTypeBadge').innerHTML = overlayContact.programType ? `<span class="pra-badge pra-badge-${overlayContact.programType}">${escapeHtml(overlayContact.programType)}</span>` : '';
+  // Same dedicated-tab pattern as contact-detail.html/conversation-panel.js's
+  // own button -- generation runs on gpt-image-2 and regularly takes
+  // 60-90s, so this opens summary-image.html (its own fetch) instead of
+  // blocking this popup.
+  document.getElementById('ovGenSummaryImageBtn').onclick = () => {
+    const name = (`${overlayContact.first} ${overlayContact.last}`.trim()) || 'Contact';
+    window.open('/summary-image.html?contactId=' + encodeURIComponent(contactId) + '&name=' + encodeURIComponent(name), '_blank');
+  };
   const statusSel = document.getElementById('ovStatus');
   statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${overlayContact.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
   statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(overlayContact.status)};${statusSelectWidthRule(overlayContact.status)}`);
