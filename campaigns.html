@@ -59,8 +59,8 @@
               <th>List</th>
               <th>Segment</th>
               <th class="sortable" data-sort="sent">Sent</th>
-              <th class="sortable" data-sort="opened">Opened</th>
-              <th class="sortable" data-sort="clicked">Clicked</th>
+              <th class="sortable" data-sort="opened">Open %</th>
+              <th class="sortable" data-sort="clicked">Click %</th>
               <th class="sortable" data-sort="updatedAt">Last Updated</th>
               <th></th>
             </tr></thead>
@@ -84,6 +84,7 @@
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
+function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '—'; }
 
 let allCampaigns = [];
 let allLists = [], allSegments = [];
@@ -116,8 +117,8 @@ function renderCampaignsTable() {
   rows = [...rows].sort((a, b) => {
     let av, bv;
     if (field === 'sent') { av = a.stats?.sent ?? 0; bv = b.stats?.sent ?? 0; }
-    else if (field === 'opened') { av = a.stats?.opened ?? 0; bv = b.stats?.opened ?? 0; }
-    else if (field === 'clicked') { av = a.stats?.clicked ?? 0; bv = b.stats?.clicked ?? 0; }
+    else if (field === 'opened') { av = a.stats?.sent ? (a.stats.opened ?? 0) / a.stats.sent : 0; bv = b.stats?.sent ? (b.stats.opened ?? 0) / b.stats.sent : 0; }
+    else if (field === 'clicked') { av = a.stats?.sent ? (a.stats.clicked ?? 0) / a.stats.sent : 0; bv = b.stats?.sent ? (b.stats.clicked ?? 0) / b.stats.sent : 0; }
     else if (field === 'updatedAt') { av = a.updatedAt || ''; bv = b.updatedAt || ''; }
     else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
     return av < bv ? -dir : av > bv ? dir : 0;
@@ -136,8 +137,8 @@ function renderCampaignsTable() {
       <td class="pra-muted">${escapeHtml(listNames(c.recipients?.listIds))}</td>
       <td class="pra-muted">${escapeHtml(segmentName(c.recipients?.segmentId))}</td>
       <td>${c.stats?.sent ?? 0}</td>
-      <td>${c.stats?.opened ?? 0}</td>
-      <td>${c.stats?.clicked ?? 0}</td>
+      <td>${pct(c.stats?.opened ?? 0, c.stats?.sent ?? 0)}</td>
+      <td>${pct(c.stats?.clicked ?? 0, c.stats?.sent ?? 0)}</td>
       <td class="pra-muted">${fmtDate(c.updatedAt)}</td>
       <td style="white-space:nowrap">
         <button class="tpl-expand-btn" data-expand="${idx}" onclick="event.stopPropagation()">Preview</button>
