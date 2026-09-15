@@ -6,6 +6,7 @@ import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
+import { logMessage } from "./message_log.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -317,6 +318,21 @@ export async function handleContactsRequest(req, res, url) {
         return contact;
       });
       if (!updated) return sendJson(res, 404, { error: "Contact not found" });
+      // A status change (BLACKLIST especially) previously left no trace of
+      // WHEN it happened or who did it -- confirmed live: the only way to
+      // even guess was contact.updatedAt, which isn't reliable (any other
+      // field on the same PATCH bumps it too). Logged the same way a form
+      // submission or booking is, so it shows up right in the thread.
+      if (updated.status !== prevStatus) {
+        logMessage({
+          channel: "activity", direction: "inbound", contactId: updated.id,
+          sourceType: "status_change", sourceId: null,
+          subject: `Status changed: ${prevStatus || "(none)"} → ${updated.status || "(none)"}`,
+          body: `Changed by ${me?.first ? `${me.first} ${me.last || ""}`.trim() : (me?.email || "system")}`,
+          bodyPreview: `${prevStatus || "(none)"} → ${updated.status || "(none)"}`,
+          status: "received",
+        });
+      }
       // Best-effort, same reasoning as message_index.js's safeSqliteSync --
       // a sync bug here shouldn't block the actual contact save.
       try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
