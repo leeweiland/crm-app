@@ -56,14 +56,15 @@
             <thead><tr>
               <th class="sortable" data-sort="name">Name</th>
               <th class="sortable" data-sort="status">Status</th>
-              <th>Subject</th>
+              <th>List</th>
+              <th>Segment</th>
               <th class="sortable" data-sort="sent">Sent</th>
               <th class="sortable" data-sort="opened">Opened</th>
               <th class="sortable" data-sort="clicked">Clicked</th>
               <th class="sortable" data-sort="updatedAt">Last Updated</th>
               <th></th>
             </tr></thead>
-            <tbody id="campaignsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
+            <tbody id="campaignsBody"><tr><td colspan="9" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -85,7 +86,16 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
 let allCampaigns = [];
+let allLists = [], allSegments = [];
 let campaignSort = { field: 'updatedAt', dir: -1 };
+function listNames(listIds) {
+  if (!listIds?.length) return '—';
+  return listIds.map(id => allLists.find(l => l.id === id)?.name || id).join(', ');
+}
+function segmentName(segmentId) {
+  if (!segmentId) return '—';
+  return allSegments.find(s => s.id === segmentId)?.name || segmentId;
+}
 function campaignSearchText(c) {
   const blockText = (c.blocks || []).map(b => b.html || b.text || '').join(' ');
   return `${c.name} ${c.subject || ''} ${blockText}`.replace(/<[^>]+>/g, ' ').toLowerCase();
@@ -118,12 +128,13 @@ function renderCampaignsTable() {
     if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
   });
   const body = document.getElementById('campaignsBody');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No campaigns match.</td></tr>'; return; }
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="pra-muted">No campaigns match.</td></tr>'; return; }
   body.innerHTML = rows.map((c, idx) => `
     <tr>
       <td class="clickable"><a href="/campaign-builder.html?id=${c.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(c.name)}</a></td>
       <td><span class="status-pill status-${c.status}" title="${c.status === 'send_error' && c.sendError ? escapeHtml(c.sendError) : ''}">${statusLabel(c)}</span></td>
-      <td class="pra-muted">${escapeHtml(c.subject || '')}</td>
+      <td class="pra-muted">${escapeHtml(listNames(c.recipients?.listIds))}</td>
+      <td class="pra-muted">${escapeHtml(segmentName(c.recipients?.segmentId))}</td>
       <td>${c.stats?.sent ?? 0}</td>
       <td>${c.stats?.opened ?? 0}</td>
       <td>${c.stats?.clicked ?? 0}</td>
@@ -135,7 +146,7 @@ function renderCampaignsTable() {
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${c.id}">Delete</button>
       </td>
     </tr>
-    <tr class="tpl-preview-row" id="camp-preview-${idx}"><td colspan="8"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
+    <tr class="tpl-preview-row" id="camp-preview-${idx}"><td colspan="9"><iframe sandbox="" data-loaded="0"></iframe></td></tr>
   `).join('');
   body.querySelectorAll('[data-expand]').forEach(btn => btn.onclick = async (e) => {
     e.stopPropagation();
@@ -167,10 +178,28 @@ function renderCampaignsTable() {
   });
 }
 let sendPollTimer = null;
+let refsLoaded = false;
 async function loadCampaigns() {
-  const r = await fetch('/api/campaigns');
-  if (!r.ok) { document.getElementById('campaignsBody').innerHTML = '<tr><td colspan="8" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
+  const requests = [fetch('/api/campaigns')];
+  if (!refsLoaded) requests.push(fetch('/api/lists'), fetch('/api/segments'));
+  const [r, listsRes, segmentsRes] = await Promise.all(requests);
+  if (!r.ok) { document.getElementById('campaignsBody').innerHTML = '<tr><td colspan="9" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
+  if (listsRes) { allLists = (await listsRes.json()).lists; allSegments = (await segmentsRes.json()).segments; refsLoaded = true; }
   allCampaigns = (await r.json()).campaigns;
+  // campaign.stats is a one-time snapshot taken the instant a send loop
+  // finishes (see sendCampaignNow) -- opens/clicks that land afterward
+  // (which is most of them; recipients don't open the moment it sends)
+  // never update it again. Confirmed live: a campaign sent 22h earlier
+  // still showed 0 opened here despite 3 real opens already recorded in
+  // the message log. Refreshing this list-wide on every full-file scan of
+  // the message log would be too expensive (it's 12+GB), but the existing
+  // GET /api/reporting/campaigns/:id endpoint already computes one
+  // campaign's stats live and cheaply (getMessagesForSource is a bounded
+  // per-source scan, not a full-log read) -- fine to call once per SENT
+  // campaign here, since that's a naturally small, bounded set.
+  const sentCampaigns = allCampaigns.filter(c => c.status === 'sent');
+  const liveStats = await Promise.all(sentCampaigns.map(c => fetch(`/api/reporting/campaigns/${c.id}`).then(res => res.ok ? res.json() : null).catch(() => null)));
+  sentCampaigns.forEach((c, i) => { if (liveStats[i]) c.stats = liveStats[i].stats; });
   renderCampaignsTable();
   // Re-poll every 3s only while something is actually mid-send -- avoids
   // polling forever on a normal, idle campaigns list.
