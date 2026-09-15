@@ -10,7 +10,7 @@ import {
   markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
-import { queryConversationsSqlite, syncContactFields } from "./sqlite_inbox.js";
+import { queryConversationsSqlite, syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 import { sentCategoryForSourceType } from "./ai_agents_backend.js";
@@ -191,7 +191,13 @@ export async function handleInboxRequest(req, res, url) {
     // against the contact's own known addresses -- only applied when we
     // actually have an email on file to compare against, so a contact with
     // no email yet doesn't have every email wrongly filtered out.
-    const contactForFilter = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    // getContactByIdFast (sqlite_inbox.js) instead of a full
+    // readJson(CONTACTS_FILE, []).find() linear scan over ~190MB just to
+    // grab this one contact's email for the internal-staff-email filter
+    // below -- confirmed live as the dominant cost of opening the Inbox
+    // chat panel, same class of fix already applied to contacts_backend.js's
+    // own GET /api/contacts/:id.
+    const contactForFilter = getContactByIdFast(contactId);
     const ownEmails = contactForFilter ? new Set([contactForFilter.email, ...(contactForFilter.altEmails || [])].filter(Boolean).map(e => e.toLowerCase())) : null;
     function isInternalStaffEmail(m) {
       if (m.channel !== "email" || m.direction !== "outbound" || !m.to || !ownEmails || !ownEmails.size) return false;
