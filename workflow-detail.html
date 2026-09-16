@@ -360,7 +360,7 @@ function renderCanvas() {
         </div>
         <select class="step-unit-select" data-unit-for="${step.id}">${unitOptionsHtml}</select>
         ${step.type === 'sms' ? '<span class="step-delay-sms-tag">&middot; SMS</span>' : ''}
-        <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
+        <span class="${step.type === 'wait' ? '' : 'pra-muted'}" style="font-size:.76rem;margin-left:auto${step.type === 'wait' ? ';color:#009bff;font-weight:700' : ''}">${countLabel}</span>
       </div>
       ${step.type === 'sms' ? `
         <select class="step-unit-select" data-personalize-for="${step.id}" style="margin-top:8px;font-size:.78rem">
