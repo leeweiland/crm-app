@@ -363,6 +363,43 @@ export async function handleWorkflowsRequest(req, res, url) {
       // an old cached client mid-edit during this deploy doesn't lose data;
       // remove once confirmed nothing sends it anymore.
       if ("trigger" in body && !("triggers" in body)) { workflow.triggers = [body.trigger]; delete workflow.trigger; }
+
+      // A Wait step's own nextStepDueAt is a snapshot computed once, when an
+      // enrollment first arrives at that step, from whatever the delay was
+      // at that moment. Left alone, editing "wait 10000 days" down to "wait
+      // 1 minute" would silently do nothing for everyone already parked
+      // there -- only new arrivals would see the shorter wait, which reads
+      // as the edit just not working. Detect a changed Wait step's delay
+      // here (matched by id at the same array index, so an unrelated
+      // insert/delete elsewhere in the same save doesn't get misread as a
+      // delay edit) and re-anchor everyone currently sitting at that step to
+      // "now" + the new delay, the same computation a step normally gets
+      // when it first fires.
+      if ("steps" in body && Array.isArray(body.steps)) {
+        const oldSteps = workflow.steps || [];
+        const newSteps = body.steps;
+        const effectiveWorkflow = { ...workflow, ...body, steps: newSteps };
+        const changedWaitIndexes = [];
+        newSteps.forEach((newStep, i) => {
+          const oldStep = oldSteps[i];
+          if (newStep?.type === "wait" && oldStep?.type === "wait" && oldStep.id === newStep.id &&
+              (oldStep.delayValue !== newStep.delayValue || oldStep.delayUnit !== newStep.delayUnit)) {
+            changedWaitIndexes.push(i);
+          }
+        });
+        if (changedWaitIndexes.length) {
+          const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
+          let touched = false;
+          for (const enrollment of enrollments) {
+            if (enrollment.workflowId === workflow.id && enrollment.status === "active" && changedWaitIndexes.includes(enrollment.currentStepIndex)) {
+              enrollment.nextStepDueAt = computeStepDueDate(effectiveWorkflow, new Date().toISOString(), newSteps[enrollment.currentStepIndex]);
+              touched = true;
+            }
+          }
+          if (touched) writeJson(WF_ENROLLMENTS_FILE, enrollments);
+        }
+      }
+
       for (const k of ["name", "triggers", "steps", "conversionGoals", "recipientSettings"]) if (k in body) workflow[k] = body[k];
       workflow.updatedAt = new Date().toISOString();
       writeJson(WORKFLOWS_FILE, workflows);
