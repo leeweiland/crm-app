@@ -57,6 +57,7 @@
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px 12px 30px; min-width: 320px; max-width: 100%; text-align: left; position: relative; transition: border-color .12s, opacity .12s; }
+  .step-card[data-step-type="sms"] { min-width: 480px; }
   .step-card.dragging { opacity: .4; }
   /* Its own draggable handle, separate from the card -- dragging from
      inside the message textarea or the delay input needs to keep doing
@@ -73,10 +74,10 @@
   .step-day-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--pra-border); border-radius: 7px; overflow: hidden; flex-shrink: 0; }
   .step-day-stepper button { background: var(--pra-panel); border: none; color: var(--pra-dim); width: 26px; cursor: pointer; font-size: 1rem; line-height: 1; }
   .step-day-stepper button:hover { background: rgba(255,255,255,0.1); color: var(--pra-white); }
-  .step-day-input { width: 52px; text-align: center; background: rgba(255,255,255,0.05); border: none; border-left: 1px solid var(--pra-border); border-right: 1px solid var(--pra-border); color: var(--pra-white); font-family: var(--font-primary); font-size: 1rem; font-weight: 700; padding: 4px 2px; -moz-appearance: textfield; }
+  .step-day-input { width: 52px; text-align: center; background: rgba(255,255,255,0.05); border: none; border-left: 1px solid var(--pra-border); border-right: 1px solid var(--pra-border); color: var(--pra-white); font-family: var(--font-primary); font-size: 1rem; font-weight: 400; padding: 4px 2px; -moz-appearance: textfield; }
   .step-day-input::-webkit-outer-spin-button, .step-day-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   .step-day-input:focus { outline: none; background: rgba(0,155,255,0.1); }
-  .step-unit-select { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); border-radius: 7px; color: var(--pra-white); font-size: .8rem; font-weight: 600; padding: 5px 8px; }
+  .step-unit-select { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); border-radius: 7px; color: var(--pra-white); font-size: .8rem; font-weight: 400; padding: 5px 8px; }
   .step-unit-select:focus { outline: none; border-color: var(--pra-blue); }
   /* The dropdown POPUP list is a separate rendering surface from the closed
      select -- Chromium fills it in using the select's own dark background/
@@ -364,7 +365,7 @@ function renderCanvas() {
           <button type="button" class="step-day-inc" data-day-for="${step.id}" title="Increase">+</button>
         </div>
         <select class="step-unit-select" data-unit-for="${step.id}">${unitOptionsHtml}</select>
-        <span style="font-size:.76rem;margin-left:auto;color:#009bff;font-weight:700">${countLabel}</span>
+        <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
       </div>
     ` : `
       <div class="step-delay-row">
@@ -373,7 +374,7 @@ function renderCanvas() {
       </div>
     `;
     return `
-    <div class="step-card" data-step-id="${step.id}">
+    <div class="step-card" data-step-id="${step.id}" data-step-type="${step.type}">
       <div class="step-drag-handle" draggable="true" title="Drag to reorder">&#8942;&#8942;</div>
       <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>
       ${delayRowHtml}
