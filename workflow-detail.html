@@ -365,7 +365,7 @@ function renderCanvas() {
           <button type="button" class="step-day-inc" data-day-for="${step.id}" title="Increase">+</button>
         </div>
         <select class="step-unit-select" data-unit-for="${step.id}">${unitOptionsHtml}</select>
-        <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
+        <span class="${count ? '' : 'pra-muted'}" style="font-size:.76rem;margin-left:auto${count ? ';color:#009bff;font-weight:700' : ''}">${countLabel}</span>
       </div>
     ` : `
       <div class="step-delay-row">
