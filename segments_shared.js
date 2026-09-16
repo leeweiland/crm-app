@@ -99,7 +99,8 @@ export function markFirstSeen(contact, candidateISO) {
 // op: "eq" | "neq" | "includes" | "excludes" | "exists"           (legacy, still fully supported)
 //   | "any_of" | "all_of" | "not_any_of" | "not_all_of"           (new -- value is an array, array-valued fields only)
 //   | "contains"                                                   (new -- substring match, visitedPage only)
-//   | "within_last_hours"                                          (new -- value is a number of hours, firstSeenAt only, re-evaluated against Date.now() every read)
+//   | "within_last_hours"                                          (new -- value is a number of hours, firstSeenAt/createdAt only, re-evaluated against Date.now() every read)
+//   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
 //
 // emailOpened/emailClicked and visitedPage are deliberately NOT read from
 // crm_message_log.json / crm_page_visits.json here -- both can grow huge in
@@ -134,6 +135,12 @@ function evalCondition(contact, cond) {
     if (!at) return false;
     const ageMs = Date.now() - new Date(at).getTime();
     return ageMs >= 0 && ageMs <= Number(value) * 3600 * 1000;
+  }
+  if ((field === "firstSeenAt" || field === "createdAt") && op === "between") {
+    const at = contact[field];
+    if (!at) return false;
+    const t = new Date(at).getTime();
+    return t >= new Date(value.from).getTime() && t < new Date(value.to).getTime();
   }
 
   if (field === "visitedPage") {
