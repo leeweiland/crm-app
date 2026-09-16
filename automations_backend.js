@@ -445,6 +445,45 @@ export async function handleAutomationsRequest(req, res, url) {
       // file (crm_automation_versions.json) rather than growing unboundedly
       // inline on the automation record itself.
       maybeSnapshotVersion(AUTOMATION_VERSIONS_FILE, "automationId", automation.id, automationSnapshotFields(automation));
+
+      // A Wait step's own waitUntil is a snapshot computed once, when an
+      // enrollment first reaches that step, from whatever amount/unit it had
+      // at that moment (see advanceEnrollment's wait branch). Editing the
+      // step afterward silently did nothing for anyone already parked there
+      // -- only new arrivals would see the new duration, which reads as the
+      // edit not working (same gap workflows_backend.js's PATCH handler had
+      // for SMS Sequences' Wait steps -- confirmed live there too: changing
+      // a 10,000-day placeholder down to 1 minute left already-enrolled
+      // contacts waiting on their original due date). Detect a changed Wait
+      // step's amount/unit here (matched by step id, which is stable --
+      // steps are keyed by id, not array position, so no index-shift risk)
+      // and re-anchor everyone currently sitting at that step to now + the
+      // new duration.
+      if ("steps" in body && body.steps && typeof body.steps === "object") {
+        const oldSteps = automation.steps || {};
+        const newSteps = body.steps;
+        const changedWaitStepIds = Object.keys(newSteps).filter(id => {
+          const oldStep = oldSteps[id], newStep = newSteps[id];
+          return oldStep?.type === "wait" && newStep?.type === "wait" &&
+            (oldStep.config?.amount !== newStep.config?.amount || oldStep.config?.unit !== newStep.config?.unit);
+        });
+        if (changedWaitStepIds.length) {
+          const enrollments = readJson(ENROLLMENTS_FILE, []);
+          let touched = false;
+          for (const enrollment of enrollments) {
+            if (enrollment.automationId === automation.id && enrollment.status === "active" && enrollment.waitUntil && changedWaitStepIds.includes(enrollment.currentStepId)) {
+              const step = newSteps[enrollment.currentStepId];
+              const ms = step.config.unit === "days" ? step.config.amount * 86400000
+                : step.config.unit === "hours" ? step.config.amount * 3600000
+                : step.config.amount * 60000;
+              enrollment.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
+              touched = true;
+            }
+          }
+          if (touched) writeJson(ENROLLMENTS_FILE, enrollments);
+        }
+      }
+
       for (const k of VERSIONED_FIELDS) if (k in body) automation[k] = body[k];
       automation.updatedAt = new Date().toISOString();
       writeJson(AUTOMATIONS_FILE, automations);
