@@ -30,17 +30,25 @@ export const TAGS_FILE = "crm_tags.json";
 // fine tradeoff for a display count like this.
 const COUNTS_CACHE_FILE = "crm_counts_cache.json";
 const COUNTS_CACHE_TTL_MS = 3 * 60 * 1000;
+// contacts.json is ~181MB -- deliberately never mtime-cached by readJson on
+// the live server (see auth_backend.js's own comment: holding a parsed copy
+// forever is exactly what caused a real OOM crash), so every call streams
+// the whole file fresh, no exceptions. This one load is shared across
+// everything below that needs it (segments always did; tags/lists only need
+// it as a fallback when their SQLite fast path is unavailable; testContactIds
+// piggybacks on whichever of those already paid the cost) specifically so a
+// single cache refresh never reads this file more than once.
 function computeAllCounts() {
+  let contacts = null;
+  const getContacts = () => contacts || (contacts = readJson(CONTACTS_FILE, []));
   const tags = tagCountsSqlite() || (() => {
-    const contacts = readJson(CONTACTS_FILE, []);
     const counts = {};
-    for (const c of contacts) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
+    for (const c of getContacts()) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
     return counts;
   })();
   const lists = listCountsSqlite() || (() => {
-    const contacts = readJson(CONTACTS_FILE, []);
     const counts = {};
-    for (const c of contacts) {
+    for (const c of getContacts()) {
       for (const listId of c.listIds || []) {
         const entry = counts[listId] || (counts[listId] = { total: 0, subscribed: 0 });
         entry.total++;
@@ -49,15 +57,19 @@ function computeAllCounts() {
     }
     return counts;
   })();
-  const segments = (() => {
-    const segmentList = readJson(SEGMENTS_FILE, []);
-    const contacts = readJson(CONTACTS_FILE, []);
-    const counts = {};
-    for (const s of segmentList) counts[s.id] = 0;
-    for (const c of contacts) for (const s of segmentList) if (matchesSegment(c, s.filter)) counts[s.id]++;
-    return counts;
-  })();
-  return { tags, lists, segments, computedAt: new Date().toISOString() };
+  const segmentList = readJson(SEGMENTS_FILE, []);
+  const segments = {};
+  for (const s of segmentList) segments[s.id] = 0;
+  for (const c of getContacts()) for (const s of segmentList) if (matchesSegment(c, s.filter)) segments[s.id]++;
+  // testContact IDs, for reporting_backend.js's excludeTestContacts -- was
+  // its own full readJson(CONTACTS_FILE, []) on every single campaign/
+  // automation/workflow report request (confirmed live as the dominant cost
+  // of the Email Campaigns list page: 8 campaigns on screen fired 8 of these
+  // requests, each paying the same ~1.5s full-file stream). Piggybacks on
+  // getContacts() here instead -- costs nothing extra since segments above
+  // already forces that same read.
+  const testContactIds = getContacts().filter(c => c.testContact).map(c => c.id);
+  return { tags, lists, segments, testContactIds, computedAt: new Date().toISOString() };
 }
 // Called from scheduler.js's tick -- cheap staleness check every 30s, only
 // pays the real (multi-second) computation cost once every COUNTS_CACHE_TTL_MS.
@@ -65,6 +77,11 @@ export function refreshCountsCacheIfDue() {
   const cache = readJson(COUNTS_CACHE_FILE, null);
   if (cache?.computedAt && Date.now() - new Date(cache.computedAt).getTime() < COUNTS_CACHE_TTL_MS) return;
   writeJson(COUNTS_CACHE_FILE, computeAllCounts());
+}
+// Used by reporting_backend.js's excludeTestContacts -- see its own comment.
+export function getCachedTestContactIds() {
+  const cache = readJson(COUNTS_CACHE_FILE, null);
+  return cache?.testContactIds ?? null; // null (not []) means "no cache yet" -- caller falls back to computing live
 }
 export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 

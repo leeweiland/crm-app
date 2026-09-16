@@ -9,6 +9,7 @@ import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
 import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel } from "./ads_backend.js";
+import { getCachedTestContactIds } from "./contacts_backend.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -71,7 +72,16 @@ function sumByStatus(days, key) {
 // (contact-detail.html's "Test Contact" checkbox) shouldn't skew these
 // per-campaign/automation/workflow stats either, for the same reason.
 function excludeTestContacts(messages) {
-  const testIds = new Set(readJson(CONTACTS_FILE, []).filter(c => c.testContact).map(c => c.id));
+  // Was its own full readJson(CONTACTS_FILE, []) (~181MB, never cached on
+  // the live server by design -- see auth_backend.js) on every single call.
+  // Confirmed live as the dominant cost of the Email Campaigns list page:
+  // one of these fires per campaign row, so 8 campaigns on screen meant 8
+  // full-file streams. contacts_backend.js's counts cache already computes
+  // this same set every refresh for its own purposes; reused here instead.
+  // Falls back to computing live only on a cold start, before the
+  // scheduler's first tick has populated that cache yet.
+  const cached = getCachedTestContactIds();
+  const testIds = new Set(cached ?? readJson(CONTACTS_FILE, []).filter(c => c.testContact).map(c => c.id));
   return messages.filter(m => !testIds.has(m.contactId));
 }
 
