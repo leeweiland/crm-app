@@ -19,7 +19,7 @@ function tzOffsetHours(atMs, timezone) {
   const m = (parts.find(p => p.type === "timeZoneName")?.value || "GMT-8").match(/GMT([+-]\d+)/);
   return m ? parseInt(m[1], 10) : -8;
 }
-function anchorageMidnightUTC(dateStr) {
+export function anchorageMidnightUTC(dateStr) {
   const offset = tzOffsetHours(Date.parse(dateStr + "T20:00:00Z"), "America/Anchorage");
   const [y, mo, d] = dateStr.split("-").map(Number);
   return new Date(Date.UTC(y, mo - 1, d, -offset, 0));

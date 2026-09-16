@@ -8,7 +8,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
-import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings } from "./ads_backend.js";
+import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings, anchorageMidnightUTC } from "./ads_backend.js";
 import { getCachedTestContactIds } from "./contacts_backend.js";
 import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 
@@ -375,7 +375,14 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   // table showed a handful of leads per source while Overview correctly
   // showed 300+. Rather than silently hide that gap, it's surfaced as its
   // own explicit row per program.
-  const crmData = fetchCrmLeadsAndBookings(startMs, endMs);
+  // True Anchorage-midnight boundaries, not startMs/endMs's plain UTC-
+  // midnight-of-the-date-string -- same fix Overview's fetchAdsReport
+  // already applies (see anchorageMidnightUTC in ads_backend.js). Using
+  // startMs/endMs directly here undercounted vs. Overview by the
+  // Anchorage/UTC offset's worth of flow runs at each boundary.
+  const crmStartMs = anchorageMidnightUTC(startStr).getTime();
+  const crmEndMs = anchorageMidnightUTC(endStr).getTime() + 86400000 - 1;
+  const crmData = fetchCrmLeadsAndBookings(crmStartMs, crmEndMs);
   const attributedContactIds = new Set();
   for (const idSet of byElStage.values()) for (const id of idSet) attributedContactIds.add(id);
   const contactsById = getContactsByIdsFast([...attributedContactIds]);
