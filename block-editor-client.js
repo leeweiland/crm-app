@@ -171,14 +171,12 @@ window.BlockEditor = (function () {
               <option value="Aldrich, Arial, sans-serif">Aldrich</option>
             </select>
             <select id="beFontSize" title="Font size"><option value="">Size...</option><option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="14">14</option><option value="16">16</option><option value="18">18</option><option value="20">20</option><option value="24">24</option><option value="28">28</option><option value="32">32</option><option value="36">36</option><option value="48">48</option></select>
-            <button type="button" id="beLinkBtn">Link</button>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option>${(opts.extraPersonalizeOptions || []).map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>
-            <span class="be-link-popover" id="beLinkPopover" style="display:none">
-              <input type="text" id="beLinkUrl" placeholder="https://"/>
+            <span class="be-link-popover" id="beLinkPopover">
+              <input type="text" id="beLinkUrl" placeholder="Link URL (select text first)"/>
               ${hexColorFieldHtml('beLinkColor', '')}
               <button type="button" id="beLinkApply">Apply</button>
               <button type="button" id="beLinkUnlink">Unlink</button>
-              <button type="button" id="beLinkCancel">Cancel</button>
             </span>
           </div>
           <div class="be-canvas-toprow">
@@ -621,28 +619,30 @@ window.BlockEditor = (function () {
         el.removeAttribute('size');
         el.style.fontSize = px + 'px';
       });
-      e.target.value = '';
+      // Deliberately not resetting the select back to "Size..." here -- it
+      // now reflects the selection's actual size (see syncToolbarFromSelection
+      // below), so leaving it showing what was just applied is correct.
       syncSelectedText();
     });
     toolbar.querySelector('#beFontFamily').addEventListener('change', (e) => {
       if (!e.target.value) return;
       document.execCommand('fontName', false, e.target.value);
-      e.target.value = '';
       syncSelectedText();
     });
-    // Inline popover instead of prompt() -- native prompt() is blocked in
-    // some embedded/sandboxed browser contexts (e.g. iframed previews),
-    // and a small popover matches the rest of this editor's UI anyway.
+    // The Font, Size, and Link fields all reflect whatever's under the
+    // current text selection (kept in sync by syncToolbarFromSelection
+    // below) instead of needing a separate "open" action to see or edit any
+    // of it -- matches how a native word processor's toolbar behaves.
     let savedRange = null;
     let linkColorTouched = false;
-    const linkPopover = toolbar.querySelector('#beLinkPopover');
     const linkUrlInput = toolbar.querySelector('#beLinkUrl');
     const linkColorInput = toolbar.querySelector('#beLinkColor');
     const linkColorSwatch = toolbar.querySelector('#beLinkColorSwatch');
+    const fontFamilySelect = toolbar.querySelector('#beFontFamily');
+    const fontSizeSelect = toolbar.querySelector('#beFontSize');
     // Walks up from a selection node to find an enclosing <a>, stopping at
-    // the canvas boundary -- used both to pre-fill the popover when
-    // re-opening it on already-linked text, and to locate the anchor(s)
-    // Apply just created/updated.
+    // the canvas boundary -- used both to pre-fill the link fields from the
+    // current selection, and to locate the anchor(s) Apply just created/updated.
     function findLinkAncestor(node) {
       while (node && node !== canvas) {
         if (node.nodeType === 1 && node.tagName === 'A') return node;
@@ -656,103 +656,129 @@ window.BlockEditor = (function () {
       return '#' + [m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('');
     }
     // The browser's own text-selection highlight disappears the instant
-    // focus moves to the URL input, since selection rendering only shows on
-    // whichever element actually has focus -- there's no way around that
-    // with the real Selection object. The Custom Highlight API paints an
-    // arbitrary Range's own highlight independent of focus/selection, so
-    // this stays visible for as long as the popover is open.
+    // focus moves to the URL/color fields, since selection rendering only
+    // shows on whichever element actually has focus -- there's no way
+    // around that with the real Selection object. The Custom Highlight API
+    // paints an arbitrary Range's own highlight independent of focus/
+    // selection, so this keeps a link's text visibly marked while its
+    // fields have focus.
     function setLinkEditHighlight(range) {
-      if (!range || !window.Highlight || !CSS.highlights) return;
-      CSS.highlights.set('be-link-edit', new Highlight(range));
+      if (range && window.Highlight && CSS.highlights) CSS.highlights.set('be-link-edit', new Highlight(range));
+      else if (CSS.highlights) CSS.highlights.delete('be-link-edit');
     }
-    function clearLinkEditHighlight() {
-      if (CSS.highlights) CSS.highlights.delete('be-link-edit');
+    // Inserts/updates a one-off option so the select can show a real value
+    // even when it doesn't match any preset (e.g. a font-family/size set
+    // some other way) -- same pattern renderStylePanel's theme font
+    // selector already uses. `matchValue` compares loosely (normalized)
+    // against preset options so e.g. getComputedStyle's quoting doesn't
+    // spuriously fail to match a preset that's really the same font.
+    function reflectSelectValue(select, rawValue, matchValue) {
+      const preset = [...select.options].find(o => o.value && !o.dataset.dynamic && matchValue(o.value) === matchValue(rawValue));
+      let dyn = select.querySelector('option[data-dynamic]');
+      if (preset) { if (dyn) dyn.remove(); select.value = preset.value; return; }
+      if (!dyn) { dyn = document.createElement('option'); dyn.dataset.dynamic = '1'; select.insertBefore(dyn, select.firstChild); }
+      dyn.value = rawValue; dyn.textContent = rawValue;
+      select.value = rawValue;
     }
-    toolbar.querySelector('#beLinkBtn').addEventListener('click', () => {
+    const normFamily = (f) => (f || '').replace(/['"]/g, '').trim().toLowerCase();
+    // Reflects the current selection's font, size, and link state into the
+    // toolbar -- runs on every selection change inside the active block's
+    // text so the toolbar always shows what's actually under the cursor.
+    function syncToolbarFromSelection() {
       const sel = window.getSelection();
-      let range = sel.rangeCount ? sel.getRangeAt(0) : null;
-      const existingLink = range ? findLinkAncestor(range.startContainer) : null;
-      // A collapsed selection (just a cursor) inside an existing link can't
-      // be re-linked/unlinked as-is -- execCommand needs characters
-      // selected. Expand to the whole link's text so Apply/Unlink act on
-      // it, matching what a user placing the cursor there would expect.
-      if (existingLink && range && range.collapsed) {
-        range = document.createRange();
-        range.selectNodeContents(existingLink);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      const container = range.startContainer;
+      const el = container.nodeType === 1 ? container : container.parentElement;
+      // Ignore selection changes outside this block's editable body (e.g.
+      // focus moved to the URL/color input, or elsewhere on the page) --
+      // keeps showing the last real selection state instead of blanking the
+      // toolbar out from under whatever the user is doing there.
+      if (!el || !el.closest(`.be-block-body[data-id="${selectedId}"]`)) return;
       savedRange = range;
-      setLinkEditHighlight(range);
+      const cs = getComputedStyle(el);
+      reflectSelectValue(fontSizeSelect, String(Math.round(parseFloat(cs.fontSize))), (v) => v);
+      reflectSelectValue(fontFamilySelect, cs.fontFamily, normFamily);
+      const existingLink = findLinkAncestor(container);
       linkColorTouched = false;
-      linkUrlInput.value = existingLink ? (existingLink.getAttribute('href') || '') : 'https://';
+      linkUrlInput.value = existingLink ? (existingLink.getAttribute('href') || '') : '';
       linkColorInput.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '';
       linkColorSwatch.value = existingLink && existingLink.style.color ? rgbToHex(existingLink.style.color) : '#0000ff';
-      linkPopover.style.display = 'inline-flex';
-      linkUrlInput.focus();
-      linkUrlInput.select();
-    });
+      setLinkEditHighlight(existingLink ? range : null);
+    }
+    document.addEventListener('selectionchange', syncToolbarFromSelection);
     wireHexColorField(toolbar, 'beLinkColor', () => { linkColorTouched = true; });
-    function closeLinkPopover() { linkPopover.style.display = 'none'; savedRange = null; clearLinkEditHighlight(); }
-    toolbar.querySelector('#beLinkCancel').addEventListener('click', closeLinkPopover);
+    // A collapsed selection (just a cursor, no highlight) inside an existing
+    // link can't be re-linked/unlinked as-is -- execCommand needs
+    // characters selected. Expand to the whole link's text so Apply/Unlink
+    // act on it, matching what a user placing the cursor there would expect.
+    function rangeForLinkAction() {
+      if (!savedRange) return null;
+      const existingLink = findLinkAncestor(savedRange.startContainer);
+      if (existingLink && savedRange.collapsed) {
+        const range = document.createRange();
+        range.selectNodeContents(existingLink);
+        return range;
+      }
+      return savedRange;
+    }
     toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
       const url = linkUrlInput.value.trim();
-      if (url && savedRange) {
-        // Captured before unlink/createLink mutate the DOM -- those can
-        // replace the text nodes savedRange pointed at, so the range itself
-        // isn't safe to re-query afterward, but the containing block-body
-        // element survives (only its contents change).
-        const startContainer = savedRange.startContainer;
-        const startEl = startContainer.nodeType === 1 ? startContainer : startContainer.parentElement;
-        const bodyEl = startEl ? startEl.closest('.be-block-body') : null;
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
-        // Re-targeting text that's already inside an <a> is unreliable
-        // across browsers with createLink alone (it can silently no-op or
-        // leave the old href in place) -- unlinking first makes this work
-        // consistently whether the selection is plain text or an existing link.
-        const wasBold = document.queryCommandState('bold');
-        document.execCommand('unlink', false, null);
-        document.execCommand('createLink', false, url);
-        // unlink/createLink's DOM rewrite can drop sibling <b> formatting
-        // depending on browser/selection boundaries -- confirmed live
-        // (bold text losing its weight after Link Apply). queryCommandState
-        // is toggle-aware, so this only re-asserts bold if it actually got
-        // lost, never double-toggles it back off.
-        if (wasBold && !document.queryCommandState('bold')) document.execCommand('bold', false, null);
-        if (linkColorTouched) {
-          // Primary: the live selection right after createLink still sits
-          // inside the anchor it just made/updated in every tested browser
-          // -- walking up from there avoids re-deriving a CSS selector from
-          // an arbitrary URL string, which is fragile for quote/backslash
-          // characters a real link could contain.
-          const sel2 = window.getSelection();
-          const liveNode = sel2.rangeCount ? sel2.getRangeAt(0).startContainer : null;
-          const liveAnchor = liveNode ? findLinkAncestor(liveNode) : null;
-          if (liveAnchor) {
-            liveAnchor.style.color = linkColorInput.value;
-          } else if (bodyEl) {
-            bodyEl.querySelectorAll('a[href]').forEach(a => { if (a.getAttribute('href') === url) a.style.color = linkColorInput.value; });
-          }
+      const range = rangeForLinkAction();
+      if (!url || !range) return;
+      // Captured before unlink/createLink mutate the DOM -- those can
+      // replace the text nodes range pointed at, so the range itself isn't
+      // safe to re-query afterward, but the containing block-body element
+      // survives (only its contents change).
+      const startContainer = range.startContainer;
+      const startEl = startContainer.nodeType === 1 ? startContainer : startContainer.parentElement;
+      const bodyEl = startEl ? startEl.closest('.be-block-body') : null;
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      // Re-targeting text that's already inside an <a> is unreliable
+      // across browsers with createLink alone (it can silently no-op or
+      // leave the old href in place) -- unlinking first makes this work
+      // consistently whether the selection is plain text or an existing link.
+      const wasBold = document.queryCommandState('bold');
+      document.execCommand('unlink', false, null);
+      document.execCommand('createLink', false, url);
+      // unlink/createLink's DOM rewrite can drop sibling <b> formatting
+      // depending on browser/selection boundaries -- confirmed live
+      // (bold text losing its weight after Link Apply). queryCommandState
+      // is toggle-aware, so this only re-asserts bold if it actually got
+      // lost, never double-toggles it back off.
+      if (wasBold && !document.queryCommandState('bold')) document.execCommand('bold', false, null);
+      if (linkColorTouched) {
+        // Primary: the live selection right after createLink still sits
+        // inside the anchor it just made/updated in every tested browser
+        // -- walking up from there avoids re-deriving a CSS selector from
+        // an arbitrary URL string, which is fragile for quote/backslash
+        // characters a real link could contain.
+        const sel2 = window.getSelection();
+        const liveNode = sel2.rangeCount ? sel2.getRangeAt(0).startContainer : null;
+        const liveAnchor = liveNode ? findLinkAncestor(liveNode) : null;
+        if (liveAnchor) {
+          liveAnchor.style.color = linkColorInput.value;
+        } else if (bodyEl) {
+          bodyEl.querySelectorAll('a[href]').forEach(a => { if (a.getAttribute('href') === url) a.style.color = linkColorInput.value; });
         }
-        syncSelectedText();
       }
-      closeLinkPopover();
+      syncSelectedText();
+      syncToolbarFromSelection();
     });
     toolbar.querySelector('#beLinkUnlink').addEventListener('click', () => {
-      if (savedRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
-        document.execCommand('unlink', false, null);
-        syncSelectedText();
-      }
-      closeLinkPopover();
+      const range = rangeForLinkAction();
+      if (!range) return;
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('unlink', false, null);
+      syncSelectedText();
+      syncToolbarFromSelection();
     });
     linkUrlInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); toolbar.querySelector('#beLinkApply').click(); }
-      if (e.key === 'Escape') closeLinkPopover();
     });
     toolbar.querySelector('#bePersonalize').addEventListener('change', (e) => {
       if (!e.target.value) return;
