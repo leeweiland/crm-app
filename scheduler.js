@@ -114,6 +114,13 @@ async function guardedTick() {
 // were a symptom of that same memory pressure (timers fire unreliably
 // under heavy GC/swap load), not a real bug in the guard below, which
 // stays in place as legitimate protection regardless.
+//
+// Exported separately from startScheduler (2026-09-16) so background_worker.js
+// can run the exact same tick logic on its own setInterval, off the main
+// thread -- see BACKGROUND_WORKER in server.js. Both paths call this one
+// function; nothing about the tick itself changes based on which thread
+// runs it.
+export { guardedTick };
 export function startScheduler() {
   setInterval(guardedTick, TICK_MS);
   console.log(`[scheduler] started, checking every ${TICK_MS / 1000}s`);

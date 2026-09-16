@@ -3,6 +3,7 @@ import twilio from "twilio";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
+import { getBackgroundWorker } from "./background_worker_handle.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
@@ -141,6 +142,14 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
   }
 }
 
+// Split out of the webhook handler so background_worker.js can run the
+// exact same update from a postMessage instead of the main thread (see
+// BACKGROUND_WORKER in server.js) -- same function either way, just which
+// thread calls it changes.
+export function processTwilioStatusUpdate(messageSid, status) {
+  updateMessageStatusByProviderId(messageSid, status);
+}
+
 function readRawBody(req) {
   return new Promise((resolve) => {
     let body = "";
@@ -192,12 +201,18 @@ export async function handleSmsRequest(req, res, url) {
     const params = Object.fromEntries(new URLSearchParams(raw));
     const signature = req.headers["x-twilio-signature"];
     const fullUrl = (process.env.PUBLIC_BASE_URL || "") + p;
+    // Signature validation stays on the main thread regardless of
+    // BACKGROUND_WORKER -- it's cheap (one HMAC check) and needs the raw
+    // request headers, which a worker thread never sees. Only the actual
+    // record update (a file read+write) is worth moving off this thread.
     if (twilioConfigured() && !twilio.validateRequest(getTwilioSettings().authToken, signature, fullUrl, params)) {
       res.writeHead(403); res.end(); return true;
     }
     const statusMap = { queued: "queued", sent: "sent", delivered: "delivered", undelivered: "failed", failed: "failed" };
     if (params.MessageSid && statusMap[params.MessageStatus]) {
-      updateMessageStatusByProviderId(params.MessageSid, statusMap[params.MessageStatus]);
+      const worker = getBackgroundWorker();
+      if (worker) worker.postMessage({ type: "twilio_status", sid: params.MessageSid, status: statusMap[params.MessageStatus] });
+      else processTwilioStatusUpdate(params.MessageSid, statusMap[params.MessageStatus]);
     }
     return sendJson(res, 200, { ok: true });
   }

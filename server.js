@@ -32,6 +32,7 @@ import { handleMeetingsRequest } from "./meetings_backend.js";
 import { handleGmailRequest } from "./gmail_backend.js";
 import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
+import { setBackgroundWorker } from "./background_worker_handle.js";
 import { readJson, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex } from "./sqlite_inbox.js";
@@ -195,7 +196,37 @@ createServer(async (req, res) => {
   res.end(readFileSync(filePath));
 }).listen(PORT, () => console.log(`crm-app running on port ${PORT}`));
 
-startScheduler();
+// BACKGROUND_WORKER (2026-09-16, off by default): runs the whole scheduler
+// tick and all Twilio/SES webhook processing on a separate OS thread
+// instead of inline on this one -- see background_worker.js's own comment
+// for why. Deliberately opt-in: this changes nothing about current
+// behavior until the env var is set, so it can ship and sit inert while
+// it's verified, then get switched on with a config change alone (no
+// redeploy needed at cutover time).
+if (process.env.BACKGROUND_WORKER === "1") {
+  let consecutiveCrashes = 0;
+  function spawnBackgroundWorker() {
+    const worker = new Worker(join(__dirname, "background_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[background-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[background-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      // A worker that dies within seconds of starting, repeatedly, means
+      // something's fundamentally broken (a bad import, a missing env var)
+      // -- respawning it in a tight loop would just spin forever without
+      // ever actually recovering, so this backs off instead of giving up
+      // entirely (silently losing every background job -- sends, wait-step
+      // advancement, reminders -- is worse than a loud, slow retry).
+      consecutiveCrashes = (Date.now() - startedAt < 10000) ? consecutiveCrashes + 1 : 0;
+      setTimeout(spawnBackgroundWorker, Math.min(30000, 1000 * 2 ** consecutiveCrashes));
+    });
+    setBackgroundWorker(worker);
+  }
+  spawnBackgroundWorker();
+  console.log("[server] BACKGROUND_WORKER=1 -- scheduler tick and webhook processing running off the main thread");
+} else {
+  startScheduler();
+}
 
 // Warms the SQLite DB file's OS page cache on its own thread -- see
 // warmup_worker.js's own comment for why this (not the query-level

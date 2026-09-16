@@ -10,6 +10,7 @@ import { getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { resolveSendSourceSlug } from "./source_names.js";
 import { setConvoMeta } from "./conversation_meta.js";
 import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
+import { getBackgroundWorker } from "./background_worker_handle.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -347,6 +348,26 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   }
 }
 
+// Split out of the webhook handler so background_worker.js can run the
+// exact same processing from a postMessage instead of the main thread (see
+// BACKGROUND_WORKER in server.js) -- same function either way, just which
+// thread calls it changes. Takes the raw (still-JSON-string) SNS Message
+// field, same shape both callers have it in.
+export function processSesNotificationMessage(raw) {
+  try {
+    const msg = JSON.parse(raw);
+    const providerMessageId = msg.mail?.messageId;
+    const eventType = msg.eventType || msg.notificationType;
+    const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
+    if (providerMessageId && statusMap[eventType]) {
+      const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
+      if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
+      if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
+      if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained")) suppressContactEmail(row.contactId, statusMap[eventType]);
+    }
+  } catch (e) { console.error("[SES webhook] parse failed", e.message); }
+}
+
 export async function handleEmailRequest(req, res, url) {
   const p = url.pathname;
 
@@ -361,18 +382,9 @@ export async function handleEmailRequest(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
     if (body.Type === "Notification") {
-      try {
-        const msg = JSON.parse(body.Message);
-        const providerMessageId = msg.mail?.messageId;
-        const eventType = msg.eventType || msg.notificationType;
-        const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
-        if (providerMessageId && statusMap[eventType]) {
-          const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
-          if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
-          if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
-          if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained")) suppressContactEmail(row.contactId, statusMap[eventType]);
-        }
-      } catch (e) { console.error("[SES webhook] parse failed", e.message); }
+      const worker = getBackgroundWorker();
+      if (worker) worker.postMessage({ type: "ses_notification", raw: body.Message });
+      else processSesNotificationMessage(body.Message);
     }
     return sendJson(res, 200, { ok: true });
   }
