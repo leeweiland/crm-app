@@ -101,6 +101,7 @@ export function markFirstSeen(contact, candidateISO) {
 //   | "contains"                                                   (new -- substring match, visitedPage only)
 //   | "within_last_hours"                                          (new -- value is a number of hours, firstSeenAt/createdAt only, re-evaluated against Date.now() every read)
 //   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
+//   | "after"                                                       (new -- value is a single ISO timestamp, firstSeenAt/createdAt only; a FIXED lower bound with no upper bound, so it keeps matching every new contact from that point forward -- e.g. "leads since Sep 6, 2026, ongoing".)
 //
 // emailOpened/emailClicked and visitedPage are deliberately NOT read from
 // crm_message_log.json / crm_page_visits.json here -- both can grow huge in
@@ -141,6 +142,11 @@ function evalCondition(contact, cond) {
     if (!at) return false;
     const t = new Date(at).getTime();
     return t >= new Date(value.from).getTime() && t < new Date(value.to).getTime();
+  }
+  if ((field === "firstSeenAt" || field === "createdAt") && op === "after") {
+    const at = contact[field];
+    if (!at) return false;
+    return new Date(at).getTime() >= new Date(value).getTime();
   }
 
   if (field === "visitedPage") {
