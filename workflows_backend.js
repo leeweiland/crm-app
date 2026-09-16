@@ -266,7 +266,15 @@ export async function advanceDueWorkflowEnrollments() {
     enrollment.currentStepIndex = nextIndex;
     if (enrollment.status === "active") {
       if (nextStep) {
-        enrollment.nextStepDueAt = computeStepDueDate(workflow, enrollment.enrolledAt, nextStep);
+        // Relative to now (when this step just fired), not the original
+        // enrollment time -- steps no longer carry their own delay (see
+        // workflow-detail.html), so a "wait" step's duration is the only
+        // thing spacing sends apart, and it needs to count from when the
+        // previous step actually completed. Anchoring to enrolledAt instead
+        // would make every step after a long wait (e.g. the 10,000-day
+        // placeholder some sequences use) become due in the same instant
+        // the wait elapses, firing the rest of the chain in one burst.
+        enrollment.nextStepDueAt = computeStepDueDate(workflow, new Date().toISOString(), nextStep);
       } else {
         enrollment.status = "completed"; enrollment.completedAt = new Date().toISOString(); enrollment.nextStepDueAt = null;
       }

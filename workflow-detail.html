@@ -56,7 +56,14 @@
   .insert-step-btn { position: absolute; width: 20px; height: 20px; border-radius: 50%; background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: .9rem; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s, border-color .12s, color .12s; }
   .chain-arrow-wrap:hover .insert-step-btn { opacity: 1; }
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
-  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; max-width: 100%; text-align: left; position: relative; transition: border-color .12s; }
+  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px 12px 30px; min-width: 320px; max-width: 100%; text-align: left; position: relative; transition: border-color .12s, opacity .12s; }
+  .step-card.dragging { opacity: .4; }
+  /* Its own draggable handle, separate from the card -- dragging from
+     inside the message textarea or the delay input needs to keep doing
+     normal text selection/dragging, not pick up the whole card. */
+  .step-drag-handle { position: absolute; top: 10px; left: 6px; bottom: 10px; width: 16px; display: flex; align-items: center; justify-content: center; color: var(--pra-dim); font-size: .9rem; letter-spacing: -2px; line-height: 1; cursor: grab; border-radius: 4px; }
+  .step-drag-handle:hover { color: var(--pra-white); background: rgba(255,255,255,0.06); }
+  .step-drag-handle:active { cursor: grabbing; }
   .step-delay-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-right: 26px; }
   .step-delay-label { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
   .step-delay-sms-tag { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
@@ -246,7 +253,7 @@ function uid() { return 'wst' + Math.random().toString(36).slice(2, 10); }
 
 const workflowId = new URLSearchParams(location.search).get('id');
 let workflow = null, allLists = [], allTags = [], allEventTypes = [], allForms = [];
-let saveTimer, pendingInsertDelay;
+let saveTimer, pendingInsertAfterId;
 
 // Contacts are NOT preloaded here -- the full list is 176k+ rows (a ~13MB
 // response that took 25+ seconds and blocked the entire page from
@@ -315,53 +322,57 @@ function trigLabel(trig) {
 }
 const GOAL_SHORT_LABELS = { incoming_email: 'Incoming email', incoming_sms: 'Incoming SMS', incoming_call: 'Incoming call', meeting_booked: 'Meeting booked', lead_status_change: 'Lead status change', outcome_met: 'Outcome met' };
 
-// Same conversion table as workflows_backend.js's stepDelayMinutes -- used
-// here only for sort order, since the server is the one that actually
-// schedules sends. dayOffset is read as a fallback for steps saved before
-// delayValue/delayUnit existed.
-const DELAY_UNIT_MINUTES = { seconds: 1 / 60, minutes: 1, hours: 60, days: 1440, weeks: 10080, months: 43200 };
-function stepDelayMinutes(step) {
-  const amount = step.delayValue ?? step.dayOffset ?? 0;
-  const unit = step.delayUnit || 'days';
-  return amount * (DELAY_UNIT_MINUTES[unit] || 1440);
-}
 function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
 
 // Same insert-step-btn affordance as automation-builder.html's arrowHtml --
-// wraps an arrow with a hoverable "+" that opens the type picker seeded
-// with a dayOffset that sorts it into this exact gap. insertAfterDay is
-// null for the gap before the very first step.
+// wraps an arrow with a hoverable "+" that opens the type picker. Steps
+// render in their true storage order (see renderCanvas below), so
+// insertion has to splice into that same array at the right index --
+// data-insert-after carries the neighboring step's id (empty string for
+// the gap before the very first step).
 function arrowHtml(afterStep) {
-  const attr = afterStep ? `${afterStep.delayValue ?? afterStep.dayOffset ?? 0}|${afterStep.delayUnit || 'days'}` : '';
-  return `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-insert-after="${attr}" title="Insert a step here">+</button></div>`;
+  return `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-insert-after="${afterStep ? afterStep.id : ''}" title="Insert a step here">+</button></div>`;
 }
 function renderCanvas() {
   const canvas = document.getElementById('wfCanvas');
-  const sorted = [...workflow.steps].sort((a, b) => stepDelayMinutes(a) - stepDelayMinutes(b));
-  const stepHtml = sorted.map((step, i) => {
+  // Steps render in their true storage (array) order now -- this IS the
+  // backend's actual execution order (advanceDueWorkflowEnrollments walks
+  // workflow.steps by currentStepIndex), so what you see is what runs, and
+  // editing a delay value no longer re-sorts the card to a new spot.
+  // Reordering happens explicitly now, via drag-and-drop (see dragstart/
+  // drop handlers below) or by deleting and re-inserting.
+  const stepHtml = workflow.steps.map((step, i) => {
     const amount = step.delayValue ?? step.dayOffset ?? 0;
     const unit = step.delayUnit || 'days';
     const unitOptionsHtml = ['seconds', 'minutes', 'hours', 'days', 'weeks', 'months'].map(u => `<option value="${u}" ${u === unit ? 'selected' : ''}>${u[0].toUpperCase()}${u.slice(1)}</option>`).join('');
-    // stepCounts is keyed by currentStepIndex, which points into
-    // workflow.steps' raw storage order -- NOT this render's delay-sorted
-    // `sorted` position, so the lookup index has to be found separately.
-    const realIndex = workflow.steps.findIndex(s => s.id === step.id);
-    const count = (window._wfStepCounts || {})[realIndex] || 0;
+    const count = (window._wfStepCounts || {})[i] || 0;
     const countLabel = step.type === 'wait' ? `${count} waiting` : `${count} here`;
-    return `
-    <div class="step-card" data-step-id="${step.id}">
-      <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>
+    // SMS steps carry no delay of their own anymore -- they fire as soon as
+    // the chain reaches them. "Send after" only ever meant something for a
+    // Wait step now; spacing between messages comes entirely from explicit
+    // Wait steps, so the stepper/unit-select only render for those.
+    const delayRowHtml = step.type === 'wait' ? `
       <div class="step-delay-row">
-        <span class="step-delay-label">${step.type === 'sms' ? 'Send after' : 'Wait'}</span>
+        <span class="step-delay-label">Wait</span>
         <div class="step-day-stepper">
           <button type="button" class="step-day-dec" data-day-for="${step.id}" title="Decrease">&minus;</button>
           <input type="number" min="0" class="step-day-input" data-day-for="${step.id}" value="${amount}"/>
           <button type="button" class="step-day-inc" data-day-for="${step.id}" title="Increase">+</button>
         </div>
         <select class="step-unit-select" data-unit-for="${step.id}">${unitOptionsHtml}</select>
-        ${step.type === 'sms' ? '<span class="step-delay-sms-tag">&middot; SMS</span>' : ''}
-        <span class="${step.type === 'wait' ? '' : 'pra-muted'}" style="font-size:.76rem;margin-left:auto${step.type === 'wait' ? ';color:#009bff;font-weight:700' : ''}">${countLabel}</span>
+        <span style="font-size:.76rem;margin-left:auto;color:#009bff;font-weight:700">${countLabel}</span>
       </div>
+    ` : `
+      <div class="step-delay-row">
+        <span class="step-delay-label">SMS</span>
+        <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
+      </div>
+    `;
+    return `
+    <div class="step-card" data-step-id="${step.id}">
+      <div class="step-drag-handle" draggable="true" title="Drag to reorder">&#8942;&#8942;</div>
+      <div class="step-actions"><button data-delete="${step.id}" title="Delete">&times;</button></div>
+      ${delayRowHtml}
       ${step.type === 'sms' ? `
         <select class="step-unit-select" data-personalize-for="${step.id}" style="margin-top:8px;font-size:.78rem">
           <option value="">Personalize...</option>
@@ -383,7 +394,7 @@ function renderCanvas() {
         <textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>
       ` : ''}
     </div>
-    ${i < sorted.length - 1 ? arrowHtml(step) : '<div class="chain-arrow">&darr;</div>'}
+    ${i < workflow.steps.length - 1 ? arrowHtml(step) : '<div class="chain-arrow">&darr;</div>'}
   `;
   }).join('');
   // The goal card isn't part of workflow.steps (goals aren't day-ordered --
@@ -427,7 +438,7 @@ function renderCanvas() {
       </div>
       ${triggers.length ? '<button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>' : ''}
     </div>
-    ${!goalHtml && sorted.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
+    ${!goalHtml && workflow.steps.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
     ${goalHtml}
     ${stepHtml}
     <button class="add-step-btn" id="addStepBtn">+ Add Step</button>
@@ -446,23 +457,61 @@ function renderCanvas() {
   if (addTriggerBtn) addTriggerBtn.onclick = () => openTriggerModal(null);
   const goalCardBtn = document.getElementById('goalCardBtn');
   if (goalCardBtn) goalCardBtn.onclick = openGoalsModal;
-  document.getElementById('addStepBtn').onclick = () => { pendingInsertDelay = undefined; openModal('typePickerModal'); };
+  document.getElementById('addStepBtn').onclick = () => { pendingInsertAfterId = undefined; openModal('typePickerModal'); };
   canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
     if (!confirm('Delete this step?')) return;
     workflow.steps = workflow.steps.filter(s => s.id !== btn.dataset.delete);
     renderCanvas(); saveDebounced();
   });
+  // pendingInsertAfterId: undefined means "Add Step" (append to the end),
+  // '' means the gap before the first step, an id means splice right after
+  // that step -- matches arrowHtml's data-insert-after exactly.
   canvas.querySelectorAll('[data-insert-after]').forEach(btn => btn.onclick = () => {
-    const raw = btn.dataset.insertAfter;
-    if (!raw) { pendingInsertDelay = null; }
-    else { const [v, u] = raw.split('|'); pendingInsertDelay = { value: Number(v), unit: u }; }
+    pendingInsertAfterId = btn.dataset.insertAfter;
     openModal('typePickerModal');
   });
+  // Drag-and-drop reordering. draggable lives on a dedicated handle (not
+  // the whole card) so dragging/selecting text inside the message textarea
+  // or the delay input still works normally.
+  let dragStepId = null;
+  canvas.querySelectorAll('.step-drag-handle').forEach(handle => {
+    handle.addEventListener('dragstart', (e) => {
+      dragStepId = handle.closest('.step-card').dataset.stepId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragStepId);
+      handle.closest('.step-card').classList.add('dragging');
+    });
+    handle.addEventListener('dragend', () => {
+      handle.closest('.step-card').classList.remove('dragging');
+      dragStepId = null;
+    });
+  });
+  canvas.querySelectorAll('.step-card').forEach(card => {
+    card.addEventListener('dragover', (e) => { if (dragStepId) e.preventDefault(); });
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const droppedId = dragStepId || e.dataTransfer.getData('text/plain');
+      const targetId = card.dataset.stepId;
+      if (!droppedId || droppedId === targetId) return;
+      const fromIdx = workflow.steps.findIndex(s => s.id === droppedId);
+      if (fromIdx === -1) return;
+      const [moved] = workflow.steps.splice(fromIdx, 1);
+      // Drop above the target's vertical midpoint inserts before it, below
+      // inserts after -- lets a drag land on either side of the hovered card.
+      const rect = card.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      let toIdx = workflow.steps.findIndex(s => s.id === targetId);
+      if (!before) toIdx += 1;
+      workflow.steps.splice(toIdx, 0, moved);
+      renderCanvas(); saveDebounced();
+    });
+  });
   // Click straight into a step's delay amount/unit or message to edit -- no
-  // popup. Delay changes affect sort order/insert-gaps, so those re-render
-  // on blur; the message body doesn't, so it just saves without disturbing
-  // whatever else the user might still be typing elsewhere on the canvas.
+  // popup. Delay changes re-render on blur (to refresh the arrow's seeded
+  // insert-default and the "+ Add Step" list); the message body doesn't,
+  // so it just saves without disturbing whatever else the user might still
+  // be typing elsewhere on the canvas.
   function commitDelay(stepId, mutate) {
     const step = workflow.steps.find(s => s.id === stepId);
     if (!step) return;
@@ -517,9 +566,29 @@ function renderCanvas() {
 document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => btn.onclick = () => {
   closeModal('typePickerModal');
   if (btn.dataset.type === 'goal') { openGoalsModal(); return; }
-  const delay = pendingInsertDelay || { value: btn.dataset.type === 'sms' ? 0 : 1, unit: 'days' };
-  const step = { id: uid(), order: workflow.steps.length, delayValue: delay.value, delayUnit: delay.unit, type: btn.dataset.type, config: btn.dataset.type === 'sms' ? { body: '' } : {} };
-  workflow.steps.push(step);
+  const type = btn.dataset.type;
+  // Insertion index: undefined -> end of the chain (Add Step button), ''
+  // -> before the first step, an id -> right after that step. Falls back
+  // to appending if the referenced step was deleted in the meantime.
+  let insertIdx = workflow.steps.length;
+  if (pendingInsertAfterId !== undefined) {
+    if (pendingInsertAfterId === '') insertIdx = 0;
+    else {
+      const afterIdx = workflow.steps.findIndex(s => s.id === pendingInsertAfterId);
+      insertIdx = afterIdx === -1 ? workflow.steps.length : afterIdx + 1;
+    }
+  }
+  // Only Wait steps carry a delay -- SMS steps fire as soon as the chain
+  // reaches them, so there's nothing to seed for those.
+  let step;
+  if (type === 'wait') {
+    const neighborWait = [workflow.steps[insertIdx - 1], workflow.steps[insertIdx]].find(s => s?.type === 'wait');
+    const delay = neighborWait ? { value: neighborWait.delayValue ?? neighborWait.dayOffset ?? 0, unit: neighborWait.delayUnit || 'days' } : { value: 1, unit: 'days' };
+    step = { id: uid(), order: workflow.steps.length, delayValue: delay.value, delayUnit: delay.unit, type, config: {} };
+  } else {
+    step = { id: uid(), order: workflow.steps.length, type, config: { body: '' } };
+  }
+  workflow.steps.splice(insertIdx, 0, step);
   renderCanvas(); saveDebounced();
   const wfCanvas = document.getElementById('wfCanvas');
   const toFocus = wfCanvas.querySelector(`[data-body-for="${step.id}"]`) || wfCanvas.querySelector(`.step-day-input[data-day-for="${step.id}"]`);
@@ -793,7 +862,7 @@ canvasWrap.addEventListener('touchstart', (e) => {
   // still arm panning -- touchmove below only commits to it past a small
   // move threshold, so a plain tap (no threshold crossed) still reaches
   // the card's own click handler and opens it as before.
-  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, [data-delete], [data-day-for], [data-unit-for], [data-body-for], [data-personalize-for]')) return;
+  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, .step-drag-handle, [data-delete], [data-day-for], [data-unit-for], [data-body-for], [data-personalize-for]')) return;
   if (e.touches.length === 1) {
     panning = true; touchMoved = false; canvasWrap.classList.add('panning');
     panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY; panOrigX = panX; panOrigY = panY;
