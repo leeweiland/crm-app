@@ -318,8 +318,35 @@ async function loadFacebookAudienceOptions(currentAudienceId) {
   };
 }
 
+// Recomputed once per render() (see below) -- stepId -> its 1-based
+// position among every send_email step in the automation, walking the
+// chain in the same order renderChainHtml draws it (including branches),
+// so "Email 3" always means "the 3rd email a contact could actually reach"
+// rather than an arbitrary/creation-order number.
+let emailNumbers = new Map();
+function computeEmailNumbers(startId, seen) {
+  seen = seen || new Set();
+  let cur = startId;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const step = automation.steps[cur];
+    if (!step) break;
+    if (step.type === 'send_email') emailNumbers.set(step.id, emailNumbers.size + 1);
+    if (step.type === 'condition') {
+      computeEmailNumbers(step.yesStepId, seen);
+      computeEmailNumbers(step.noStepId, seen);
+      break;
+    }
+    cur = step.nextStepId || null;
+  }
+}
+
 function stepSummary(step) {
-  if (step.type === 'send_email') return `Subject: ${escapeHtml(step.config.subject || '(empty)')}`;
+  if (step.type === 'send_email') {
+    const n = emailNumbers.get(step.id);
+    const label = n ? `Email ${n}` : 'Email';
+    return `${label}: ${escapeHtml(step.config.subject || '(empty)')}`;
+  }
   if (step.type === 'wait') return `Wait ${step.config.amount || 0} ${step.config.unit || 'minutes'}`;
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
@@ -414,12 +441,17 @@ function renderChainHtml(startId, path) {
 // automationStats), so this shows the labels that actually apply here.
 function renderOverview(stats) {
   const r = stats || {};
+  const totalEmails = Object.values(automation.steps || {}).filter(s => s.type === 'send_email').length;
   const labels = { active: 'Active', enrolled: 'Enrolled', completed: 'Completed', goalMet: 'Goal Met', cancelled: 'Cancelled' };
-  document.getElementById('statsGrid').innerHTML = Object.entries(labels).map(([k, l]) => `
+  document.getElementById('statsGrid').innerHTML =
+    `<div class="pra-card" style="padding:16px"><div class="pra-label">Total Emails</div><div class="pra-h1">${totalEmails}</div></div>` +
+    Object.entries(labels).map(([k, l]) => `
     <div class="pra-card" style="padding:16px"><div class="pra-label">${l}</div><div class="pra-h1">${r[k] ?? 0}</div></div>
   `).join('');
 }
 function render() {
+  emailNumbers = new Map();
+  computeEmailNumbers(automation.startStepId);
   document.getElementById('autoName').value = automation.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (automation.active ? ' on' : '');
   document.getElementById('activeLabel').textContent = automation.active ? 'Active' : 'Inactive';
