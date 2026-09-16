@@ -6,7 +6,7 @@ import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
 import { CONVERSATION_META_FILE } from "./conversation_meta.js";
 import { PAGE_VISITS_FILE, claimVisitorHistory } from "./tracking_backend.js";
 import { recomputeConversationSummary, removeConversationSummary } from "./message_index.js";
-import { syncContactFields } from "./sqlite_inbox.js";
+import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
 
 export const POSSIBLE_DUPLICATES_FILE = "crm_possible_duplicates.json";
 
@@ -275,10 +275,18 @@ export async function handleDuplicatesRequest(req, res, url) {
   // above) -- same "flag for a human, never auto-attribute" shape as the
   // contact-duplicate pairs above.
   if (p === "/api/duplicates/visitor-matches" && req.method === "GET") {
-    const contacts = readJson(CONTACTS_FILE, []);
+    // contacts.html fires this unconditionally on every load (see
+    // loadVisitorMatches) -- this used to readJson(CONTACTS_FILE, []) (the
+    // full 176k-contact file) just to look up a handful of pending rows'
+    // contacts, the exact class of bug sqlite_inbox.js's getContactByIdFast
+    // comment already documents (confirmed live 2026-09-16: this call
+    // blocking the single Node thread for 30+ seconds compounded an
+    // unrelated bulk-send incident into a much longer outage than it needed
+    // to be). Pending rows are always few, so a fast indexed lookup per row
+    // costs nothing next to parsing the whole file on every page load.
     const rows = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []).filter(m => m.status === "pending");
     const withContacts = rows
-      .map(m => ({ ...m, contact: contacts.find(c => c.id === m.contactId) || null }))
+      .map(m => ({ ...m, contact: getContactByIdFast(m.contactId) }))
       .filter(m => m.contact); // contact may have been deleted/merged since flagging
     return sendJson(res, 200, { matches: withContacts });
   }
