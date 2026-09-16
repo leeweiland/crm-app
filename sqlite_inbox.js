@@ -43,6 +43,17 @@ export function sqliteInboxAvailable() {
   // generous for real contention to clear without hanging a request
   // indefinitely.
   db.exec("PRAGMA busy_timeout = 5000;");
+  // WAL mode (2026-09-16): the main thread and background_worker.js each
+  // open their own connection to this same file now (see BACKGROUND_WORKER
+  // in server.js) -- genuinely concurrent OS threads, not just interleaved
+  // async on one event loop like before. The default rollback-journal mode
+  // takes an exclusive lock for the DURATION of any write, blocking every
+  // other connection's reads too, not just other writers -- confirmed live
+  // as a real cause of an otherwise-fast contact lookup (getContactByIdFast)
+  // taking 1.3s, coinciding with the worker's own tick doing sqlite writes
+  // at the same moment. WAL lets any number of readers proceed concurrently
+  // with a single writer, which is exactly this two-connection shape.
+  db.exec("PRAGMA journal_mode = WAL;");
   db.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       key TEXT PRIMARY KEY, contact_id TEXT, display_name TEXT, first TEXT, last TEXT, email TEXT,
