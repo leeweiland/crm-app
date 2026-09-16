@@ -125,6 +125,30 @@ export async function fetchLiveGoogleAdLevel(startStr, endStr) {
   return byAdId;
 }
 
+// Diagnostic only -- the connected customer's own "AW-xxxxxxxxx" Google tag
+// ID, so a gtag conversion snippet's send_to value (set once in Framer,
+// years ago) can be checked against whichever Google Ads account is
+// actually configured here right now. A brand-new account almost never
+// shares its predecessor's AW- id, so a mismatch here means every
+// conversion event on the site is still reporting into the OLD account,
+// invisible to this one no matter how much real spend/clicks it gets.
+export async function fetchGoogleAdsTagId() {
+  const { googleAdsCustomerId, googleAdsDeveloperToken, googleAdsRefreshToken } = getConversionSettings();
+  if (!googleAdsCustomerId || !googleAdsDeveloperToken || !googleAdsRefreshToken) return null;
+  const accessToken = await getGoogleAdsAccessToken(googleAdsRefreshToken);
+  const customerId = googleAdsCustomerId.replace(/\D/g, "");
+  const query = `SELECT customer.id, customer.descriptive_name, customer.conversion_tracking_setting.conversion_tracking_id, customer.conversion_tracking_setting.google_ads_conversion_customer FROM customer LIMIT 1`;
+  const r = await fetch(`https://googleads.googleapis.com/v25/customers/${customerId}/googleAds:search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "developer-token": googleAdsDeveloperToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.[0]?.message || d?.error?.message || `google_http_${r.status}`);
+  const row = d.results?.[0]?.customer;
+  return row ? { id: row.id, name: row.descriptiveName, awTagId: row.conversionTrackingSetting?.conversionTrackingId, googleAdsConversionCustomer: row.conversionTrackingSetting?.googleAdsConversionCustomer } : null;
+}
+
 // Merges Meta + Google campaign rows into the Online/Gym buckets the rest
 // of this file already works in. Returns null (not thrown) when neither
 // platform is configured, so fetchAdsReport can cleanly fall back to the
@@ -470,6 +494,16 @@ export async function handleAdsRequest(req, res, url) {
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
     const result = await triggerCouplerRefresh();
     return sendJson(res, 200, result);
+  }
+
+  if (p === "/api/ads/google-tag-id" && req.method === "GET") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    try {
+      const info = await fetchGoogleAdsTagId();
+      return sendJson(res, 200, { ok: true, info });
+    } catch (e) {
+      return sendJson(res, 200, { ok: false, error: e.message });
+    }
   }
 
   if (p === "/api/ads/report" && req.method === "GET") {
