@@ -73,7 +73,7 @@ function renderWorkflowsTable() {
   const { field, dir } = workflowSort;
   const rows = [...allWorkflows].sort((a, b) => {
     let av, bv;
-    if (field === 'steps') { av = a.steps.length; bv = b.steps.length; }
+    if (field === 'steps') { av = a.steps.filter(s => s.type === 'sms').length; bv = b.steps.filter(s => s.type === 'sms').length; }
     else if (field === 'active') { av = a.active ? 1 : 0; bv = b.active ? 1 : 0; }
     else if (field === 'activeEnrolled') { av = a.stats.active; bv = b.stats.active; }
     else if (field === 'goalMet') { av = a.stats.goalMet; bv = b.stats.goalMet; }
@@ -91,7 +91,7 @@ function renderWorkflowsTable() {
   body.innerHTML = rows.map(w => `
     <tr>
       <td class="clickable"><a href="/workflow-detail.html?id=${w.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(w.name)}</a></td>
-      <td class="pra-muted">${w.steps.length}</td>
+      <td class="pra-muted">${w.steps.filter(s => s.type === 'sms').length}</td>
       <td><button class="active-toggle${w.active ? ' on' : ''}" data-id="${w.id}" data-active="${w.active}"></button></td>
       <td class="enrolled-count-cell" data-enrolled="${w.id}" data-name="${escapeHtml(w.name)}">${w.stats.active}</td>
       <td>${w.stats.goalMet}</td>
