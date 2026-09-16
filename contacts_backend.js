@@ -11,6 +11,61 @@ import { logMessage } from "./message_log.js";
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
 export const TAGS_FILE = "crm_tags.json";
+
+// Tags/lists/segments counts used to be computed fresh on every single
+// Contacts page load -- confirmed live (2026-09-16) as a combined 5-10s of
+// the page's load time, every time, regardless of server load otherwise.
+// tagCountsSqlite/listCountsSqlite's json_each() over 176k rows' tags_json/
+// list_ids_json isn't actually fast at this scale (no index possible on an
+// exploded JSON array), and segments/counts has no fast path at all -- a
+// full contacts-file read plus every segment's matchesSegment() against
+// every contact, from scratch, every time. The real fix is a normalized
+// join table (one indexed row per contact-tag pair) instead of exploding
+// JSON blobs at query time, which is a schema migration deserving its own
+// non-rushed session, not a fix to make live on top of tonight's incident.
+// This instead moves the SAME computation off the request path entirely:
+// refreshCountsCacheIfDue runs it periodically from the scheduler tick
+// (see scheduler.js) and the three endpoints below just read the result,
+// so a page load never pays this cost -- staleness of a few minutes is a
+// fine tradeoff for a display count like this.
+const COUNTS_CACHE_FILE = "crm_counts_cache.json";
+const COUNTS_CACHE_TTL_MS = 3 * 60 * 1000;
+function computeAllCounts() {
+  const tags = tagCountsSqlite() || (() => {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const counts = {};
+    for (const c of contacts) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
+    return counts;
+  })();
+  const lists = listCountsSqlite() || (() => {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const counts = {};
+    for (const c of contacts) {
+      for (const listId of c.listIds || []) {
+        const entry = counts[listId] || (counts[listId] = { total: 0, subscribed: 0 });
+        entry.total++;
+        if (!c.emailOptOut) entry.subscribed++;
+      }
+    }
+    return counts;
+  })();
+  const segments = (() => {
+    const segmentList = readJson(SEGMENTS_FILE, []);
+    const contacts = readJson(CONTACTS_FILE, []);
+    const counts = {};
+    for (const s of segmentList) counts[s.id] = 0;
+    for (const c of contacts) for (const s of segmentList) if (matchesSegment(c, s.filter)) counts[s.id]++;
+    return counts;
+  })();
+  return { tags, lists, segments, computedAt: new Date().toISOString() };
+}
+// Called from scheduler.js's tick -- cheap staleness check every 30s, only
+// pays the real (multi-second) computation cost once every COUNTS_CACHE_TTL_MS.
+export function refreshCountsCacheIfDue() {
+  const cache = readJson(COUNTS_CACHE_FILE, null);
+  if (cache?.computedAt && Date.now() - new Date(cache.computedAt).getTime() < COUNTS_CACHE_TTL_MS) return;
+  writeJson(COUNTS_CACHE_FILE, computeAllCounts());
+}
 export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 
 // Denormalized engagement signals so segment evaluation (segments_shared.js's
@@ -439,6 +494,11 @@ export async function handleContactsRequest(req, res, url) {
   // browser network timing (not just server-side request timing, which was
   // fast in isolation) as the actual cause of the reported 5+ second load.
   if (p === "/api/lists/counts" && req.method === "GET") {
+    // Served from the periodic cache (see refreshCountsCacheIfDue above) --
+    // falls back to computing live only on a cold start, before the
+    // scheduler's first tick has populated it yet.
+    const cached = readJson(COUNTS_CACHE_FILE, null);
+    if (cached?.lists) return sendJson(res, 200, { counts: cached.lists });
     const fast = listCountsSqlite();
     if (fast) return sendJson(res, 200, { counts: fast });
     const contacts = readJson(CONTACTS_FILE, []);
@@ -490,6 +550,10 @@ export async function handleContactsRequest(req, res, url) {
   // this N+1 pattern predates them). One read + one loop here does the
   // exact same total work in a single pass instead of 3500+ of them.
   if (p === "/api/tags/counts" && req.method === "GET") {
+    // Served from the periodic cache -- see /api/lists/counts above and
+    // refreshCountsCacheIfDue's comment for why.
+    const cached = readJson(COUNTS_CACHE_FILE, null);
+    if (cached?.tags) return sendJson(res, 200, { counts: cached.tags });
     const fast = tagCountsSqlite();
     if (fast) return sendJson(res, 200, { counts: fast });
     const contacts = readJson(CONTACTS_FILE, []);
@@ -576,6 +640,12 @@ export async function handleContactsRequest(req, res, url) {
   // contact in one read instead, same total matchesSegment() calls, one
   // network round trip instead of N.
   if (p === "/api/segments/counts" && req.method === "GET") {
+    // Served from the periodic cache -- see /api/lists/counts above and
+    // refreshCountsCacheIfDue's comment for why. This one had no fast path
+    // at all before (a full contacts-file read plus every segment's
+    // matchesSegment() against every contact, from scratch, every load).
+    const cached = readJson(COUNTS_CACHE_FILE, null);
+    if (cached?.segments) return sendJson(res, 200, { counts: cached.segments });
     const segments = readJson(SEGMENTS_FILE, []);
     const contacts = readJson(CONTACTS_FILE, []);
     const counts = {};

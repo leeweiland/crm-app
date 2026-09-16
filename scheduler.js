@@ -13,6 +13,7 @@ import { processCloseAltBackfillBatch, processStopStatusRecoveryBatch } from "./
 import { resyncStaleStopRows, resyncStaleLegacyLabelRows } from "./sqlite_inbox.js";
 import { processAcRefFillBatch } from "./ac_sync.js";
 import { processBehavioralTriggers } from "./behavioral_triggers_backend.js";
+import { refreshCountsCacheIfDue } from "./contacts_backend.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
 // Phase 2 only checks scheduled campaigns; Phase 3 adds automation
@@ -82,6 +83,7 @@ async function tick() {
     // happens as a deliberate one-off later, once AWS SES is live. Both
     // functions are still exported from ac_sync.js, just not scheduled.
     await timedPhase("processBehavioralTriggers", processBehavioralTriggers);
+    await timedPhase("refreshCountsCacheIfDue", async () => refreshCountsCacheIfDue());
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }
