@@ -702,6 +702,35 @@ function fitToScreen() {
   panY = margin - minY * zoom; // top-anchored, not vertically centered -- a flow reads top-down, so it should start at the top of the view, not float in the middle
   applyTransform();
 }
+// Same horizontal-centering/top-anchoring as fitToScreen, but at a fixed
+// 100% zoom instead of shrinking to fit the whole chain -- opening a long
+// sequence used to always land zoomed out (as low as 40%) just to show
+// every step at once, which made the page unreadable on open. This is what
+// actually runs on load; fitToScreen is kept for the explicit zoom-reset
+// button and window resize, where "show me the whole thing" is the point.
+function centerAt100() {
+  const wrap = document.getElementById('canvasWrap');
+  const canvas = document.getElementById('wfCanvas');
+  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card')];
+  zoom = 1;
+  if (!cards.length) { panX = 0; panY = 0; applyTransform(); return; }
+  const zoomLayer = document.getElementById('zoomLayer');
+  const prevTransform = zoomLayer.style.transform;
+  zoomLayer.style.transform = 'none';
+  const canvasRect = canvas.getBoundingClientRect();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity;
+  cards.forEach(el => {
+    const r = el.getBoundingClientRect();
+    minX = Math.min(minX, r.left - canvasRect.left); maxX = Math.max(maxX, r.right - canvasRect.left);
+    minY = Math.min(minY, r.top - canvasRect.top);
+  });
+  zoomLayer.style.transform = prevTransform;
+  const wrapRect = wrap.getBoundingClientRect();
+  const margin = 40;
+  panX = wrapRect.width / 2 - (minX + maxX) / 2;
+  panY = margin - minY;
+  applyTransform();
+}
 // Re-fit on load and on resize -- NOT after every in-place render() (adding
 // a step, editing a card), which would yank away a pan/zoom the user just
 // set up mid-edit. Debounced so a window drag-resize doesn't recompute the
@@ -824,7 +853,7 @@ canvasWrap.addEventListener('touchend', (e) => {
   document.getElementById('activeLabel').textContent = workflow.active ? 'Active' : 'Inactive';
   renderOverview();
   renderCanvas();
-  fitToScreen();
+  centerAt100();
 })();
 </script>
 </body>
