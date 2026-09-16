@@ -6,7 +6,7 @@ import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
 import { CONVERSATION_META_FILE } from "./conversation_meta.js";
 import { PAGE_VISITS_FILE, claimVisitorHistory } from "./tracking_backend.js";
 import { recomputeConversationSummary, removeConversationSummary } from "./message_index.js";
-import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
+import { syncContactFields, getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 
 export const POSSIBLE_DUPLICATES_FILE = "crm_possible_duplicates.json";
 
@@ -233,13 +233,17 @@ export async function handleDuplicatesRequest(req, res, url) {
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
 
   if (p === "/api/duplicates" && req.method === "GET") {
-    // Same fix as GET /api/duplicates/visitor-matches above (see its own
-    // comment) -- this one fires from contacts.html's own auto-load too,
-    // and was doing the identical full readJson(CONTACTS_FILE, []) scan,
-    // twice per pending pair (contactA + contactB), on every page load.
+    // Same fix as GET /api/duplicates/visitor-matches below -- this one
+    // fires from contacts.html's own auto-load too, and was doing the
+    // identical full readJson(CONTACTS_FILE, []) scan, twice per pending
+    // pair (contactA + contactB), on every page load. A one-at-a-time
+    // getContactByIdFast per row was an improvement but still, confirmed
+    // live, thousands of separate SQLite round trips with 1,486 pending
+    // pairs sitting unreviewed -- one batched lookup instead.
     const pairs = readJson(POSSIBLE_DUPLICATES_FILE, []).filter(d => d.status === "pending");
+    const byId = getContactsByIdsFast(pairs.flatMap(d => [d.contactAId, d.contactBId]));
     const withContacts = pairs
-      .map(d => ({ ...d, contactA: getContactByIdFast(d.contactAId), contactB: getContactByIdFast(d.contactBId) }))
+      .map(d => ({ ...d, contactA: byId.get(d.contactAId) || null, contactB: byId.get(d.contactBId) || null }))
       .filter(d => d.contactA && d.contactB); // one side may have been deleted/merged elsewhere since flagging
     return sendJson(res, 200, { pairs: withContacts });
   }
@@ -285,11 +289,13 @@ export async function handleDuplicatesRequest(req, res, url) {
     // comment already documents (confirmed live 2026-09-16: this call
     // blocking the single Node thread for 30+ seconds compounded an
     // unrelated bulk-send incident into a much longer outage than it needed
-    // to be). Pending rows are always few, so a fast indexed lookup per row
-    // costs nothing next to parsing the whole file on every page load.
+    // to be). "Pending rows are always few" turned out not to hold in
+    // production -- 3,682 sitting unreviewed, so a lookup per row was still
+    // thousands of separate SQLite round trips. One batched lookup instead.
     const rows = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []).filter(m => m.status === "pending");
+    const byId = getContactsByIdsFast(rows.map(m => m.contactId));
     const withContacts = rows
-      .map(m => ({ ...m, contact: getContactByIdFast(m.contactId) }))
+      .map(m => ({ ...m, contact: byId.get(m.contactId) || null }))
       .filter(m => m.contact); // contact may have been deleted/merged since flagging
     return sendJson(res, 200, { matches: withContacts });
   }

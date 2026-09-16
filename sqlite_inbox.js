@@ -623,6 +623,41 @@ export function getContactByIdFast(id) {
   return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null;
 }
 
+// For a caller that needs MANY specific contacts at once (a whole review
+// queue's worth of rows, not "the one contact this request is about") --
+// confirmed live (2026-09-16): duplicates_backend.js's GET /api/duplicates
+// and /api/duplicates/visitor-matches call getContactByIdFast once PER
+// PENDING ROW, and with 3,682 pending visitor matches + 1,486 pending
+// duplicate pairs sitting unreviewed in production, that's thousands of
+// separate SQLite round trips per page load -- individually fast, but the
+// per-query overhead adds up to roughly the same multi-second cost the
+// full-file scan this replaced had, just moved to different code. One
+// batched `WHERE id IN (...)` query does the same lookups in a single
+// round trip. Chunked at 500 ids/query -- SQLite's default host-parameter
+// ceiling is 999; well under it with room to spare, and a Map lookup
+// afterward is why the caller doesn't need this to preserve input order.
+export function getContactsByIdsFast(ids) {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  const result = new Map();
+  if (!uniqueIds.length) return result;
+  if (!sqliteInboxAvailable()) {
+    const contacts = readJson(CONTACTS_FILE, []);
+    const idSet = new Set(uniqueIds);
+    for (const c of contacts) if (idSet.has(c.id)) result.set(c.id, c);
+    return result;
+  }
+  const CHUNK = 500;
+  for (let i = 0; i < uniqueIds.length; i += CHUNK) {
+    const chunk = uniqueIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT id, raw_json FROM contacts_idx WHERE id IN (${placeholders})`).all(...chunk);
+    for (const row of rows) {
+      try { result.set(row.id, JSON.parse(row.raw_json)); } catch { /* skip a corrupt row rather than fail the whole batch */ }
+    }
+  }
+  return result;
+}
+
 // One GROUP BY instead of a full readJson(CONTACTS_FILE, []) + per-contact
 // JS loop -- same data, but SQLite does the json_each explode/count
 // natively over the compact indexed table instead of a ~190MB JSON.parse
