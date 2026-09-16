@@ -11,6 +11,7 @@ import { resolveSendSourceSlug } from "./source_names.js";
 import { setConvoMeta } from "./conversation_meta.js";
 import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
+import { getContactByIdFast } from "./sqlite_inbox.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -74,8 +75,15 @@ async function getSesClient() {
   });
 }
 
+// getContactByIdFast (sqlite_inbox.js) instead of the full readJson
+// (CONTACTS_FILE, []).find() every other file already migrated off of --
+// this was the one copy left behind. Confirmed live as a real contributor
+// to the Inbox chat panel's slowness: reconstructEmailBody calls this once
+// per email in a contact's history that needs its body rebuilt (see its own
+// comment), so a contact with several such messages paid the full ~181MB
+// stream that many times over, just to open their conversation.
 export function getContact(contactId) {
-  return readJson(CONTACTS_FILE, []).find(c => c.id === contactId) || null;
+  return getContactByIdFast(contactId);
 }
 
 // Campaigns/automations/workflows send the exact same block-rendered

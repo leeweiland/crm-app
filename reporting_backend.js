@@ -10,6 +10,7 @@ import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
 import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel } from "./ads_backend.js";
 import { getCachedTestContactIds } from "./contacts_backend.js";
+import { getContactByIdFast } from "./sqlite_inbox.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -520,7 +521,7 @@ export async function handleReportingRequest(req, res, url) {
     // team" copy (sent to lee@/alexis@, not the contact) must never be
     // picked as "the email this contact clicked", or a staff member's own
     // click on their internal alert gets misattributed to the contact.
-    const contactForOwnEmails = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    const contactForOwnEmails = getContactByIdFast(contactId);
     const ownEmails = contactForOwnEmails ? new Set([contactForOwnEmails.email, ...(contactForOwnEmails.altEmails || [])].filter(Boolean).map(e => e.toLowerCase())) : null;
     const outboundByChannel = { email: [], sms: [] };
     for (const m of getContactMessages(contactId)) {

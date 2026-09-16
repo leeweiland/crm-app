@@ -233,10 +233,13 @@ export async function handleDuplicatesRequest(req, res, url) {
   if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
 
   if (p === "/api/duplicates" && req.method === "GET") {
-    const contacts = readJson(CONTACTS_FILE, []);
+    // Same fix as GET /api/duplicates/visitor-matches above (see its own
+    // comment) -- this one fires from contacts.html's own auto-load too,
+    // and was doing the identical full readJson(CONTACTS_FILE, []) scan,
+    // twice per pending pair (contactA + contactB), on every page load.
     const pairs = readJson(POSSIBLE_DUPLICATES_FILE, []).filter(d => d.status === "pending");
     const withContacts = pairs
-      .map(d => ({ ...d, contactA: contacts.find(c => c.id === d.contactAId) || null, contactB: contacts.find(c => c.id === d.contactBId) || null }))
+      .map(d => ({ ...d, contactA: getContactByIdFast(d.contactAId), contactB: getContactByIdFast(d.contactBId) }))
       .filter(d => d.contactA && d.contactB); // one side may have been deleted/merged elsewhere since flagging
     return sendJson(res, 200, { pairs: withContacts });
   }
