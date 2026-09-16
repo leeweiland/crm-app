@@ -299,8 +299,10 @@ manualEnrollSearchInput.addEventListener('input', () => {
 
 function renderOverview() {
   const r = window._wfStats || {};
+  const totalSms = workflow.steps.filter(s => s.type === 'sms').length;
   const labels = { active: 'Active', enrolled: 'Enrolled', completed: 'Completed', goalMet: 'Goal Met', bounced: 'Bounced', errored: 'Errored' };
-  document.getElementById('statsGrid').innerHTML = Object.entries(labels).map(([k, l]) => `
+  const totalSmsCard = `<div class="pra-card" style="padding:16px"><div class="pra-label">Total SMS</div><div class="pra-h1">${totalSms}</div></div>`;
+  document.getElementById('statsGrid').innerHTML = totalSmsCard + Object.entries(labels).map(([k, l]) => `
     <div class="pra-card" style="padding:16px"><div class="pra-label">${l}</div><div class="pra-h1">${r[k] ?? 0}</div></div>
   `).join('');
 }
@@ -341,12 +343,14 @@ function renderCanvas() {
   // editing a delay value no longer re-sorts the card to a new spot.
   // Reordering happens explicitly now, via drag-and-drop (see dragstart/
   // drop handlers below) or by deleting and re-inserting.
+  let smsNum = 0;
   const stepHtml = workflow.steps.map((step, i) => {
     const amount = step.delayValue ?? step.dayOffset ?? 0;
     const unit = step.delayUnit || 'days';
     const unitOptionsHtml = ['seconds', 'minutes', 'hours', 'days', 'weeks', 'months'].map(u => `<option value="${u}" ${u === unit ? 'selected' : ''}>${u[0].toUpperCase()}${u.slice(1)}</option>`).join('');
     const count = (window._wfStepCounts || {})[i] || 0;
     const countLabel = step.type === 'wait' ? `${count} waiting` : `${count} here`;
+    if (step.type === 'sms') smsNum++;
     // SMS steps carry no delay of their own anymore -- they fire as soon as
     // the chain reaches them. "Send after" only ever meant something for a
     // Wait step now; spacing between messages comes entirely from explicit
@@ -364,7 +368,7 @@ function renderCanvas() {
       </div>
     ` : `
       <div class="step-delay-row">
-        <span class="step-delay-label">SMS</span>
+        <span class="step-delay-label">SMS ${smsNum}</span>
         <span class="pra-muted" style="font-size:.76rem;margin-left:auto">${countLabel}</span>
       </div>
     `;
