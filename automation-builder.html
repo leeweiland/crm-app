@@ -571,7 +571,16 @@ document.getElementById('backLink').addEventListener('click', async (e) => {
   location.href = '/automations.html';
 });
 window.addEventListener('beforeunload', () => {
-  if (!automation?.id) return;
+  // saveTimer is only ever set by saveDebounced(), which every real edit
+  // handler calls -- if it's unset, nothing has actually changed since
+  // this page loaded (or since the last successful save), so there is
+  // nothing to flush. Saving unconditionally here re-sent this page's own
+  // load-time snapshot on EVERY close/navigate, even a plain read-only
+  // view -- confirmed live: closing a tab that had simply been left open
+  // on an old view of this automation silently overwrote newer edits made
+  // elsewhere in the meantime, repeatedly, for both the block-order and
+  // font-size fixes made tonight.
+  if (!automation?.id || !saveTimer) return;
   clearTimeout(saveTimer);
   saveAutomation({ keepalive: true });
 });
