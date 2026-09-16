@@ -202,7 +202,7 @@ async function fetchLiveAdSpend(startStr, endStr) {
 // "how many lead/application/booking events happened today" signal.
 // Matched by name substring, not hardcoded flow IDs, so this doesn't
 // silently go stale if a flow gets rebuilt with a new ID.
-function fetchCrmLeadsAndBookings(startMs, endMs) {
+export function fetchCrmLeadsAndBookings(startMs, endMs) {
   const flows = readJson(FLOWS_FILE, []);
   const runs = readJson(RUNS_FILE, []);
   const buckets = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };

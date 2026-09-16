@@ -726,7 +726,36 @@ function renderAdsReportTable() {
       default: return '';
     }
   }
-  body.innerHTML = rows.map(row => `
+  // Totals row: summed straight off every row regardless of current sort
+  // (so it never moves and always reflects the full table), with cost-per-X
+  // recomputed from the summed spend/leads/bookings/sales -- averaging the
+  // per-row $/Email etc. values directly would weight a $0 source the same
+  // as a $2,000 one, which isn't what a blended cost-per-lead means.
+  const totalSpend = allAdsReportRows.reduce((s, r) => s + (r.spend || 0), 0);
+  const totalRevenue = allAdsReportRows.reduce((s, r) => s + (r.revenue || 0), 0);
+  const totalSales = allAdsReportRows.reduce((s, r) => s + (r.sales || 0), 0);
+  const totalBookings = allAdsReportRows.reduce((s, r) => s + (r.bookings || 0), 0);
+  const totalLeads = allAdsReportRows.reduce((s, r) => s + (r.leads || 0), 0);
+  const totalVisits = allAdsReportRows.reduce((s, r) => s + (r.visits || 0), 0);
+  const totalsRow = {
+    source: 'Totals', platform: `${allAdsReportRows.length} source${allAdsReportRows.length === 1 ? '' : 's'}`,
+    adGroup: '—', campaign: '—',
+    spend: totalSpend || null, revenue: totalRevenue, sales: totalSales, costPerSale: totalSales ? money(totalSpend / totalSales) : null,
+    bookings: totalBookings, costPerBooking: totalBookings ? money(totalSpend / totalBookings) : null,
+    leads: totalLeads, costPerLead: totalLeads ? money(totalSpend / totalLeads) : null,
+    visits: totalVisits, key: '__totals__',
+  };
+  const totalsCellFor = (key) => key === 'bookings'
+    ? `<td style="text-align:right;padding:10px 16px">${totalsRow.bookings}</td>`
+    : key === 'leads'
+    ? `<td style="text-align:right;padding:10px 16px">${totalsRow.leads}</td>`
+    : cellFor(key, totalsRow);
+  const totalsHtml = `
+    <tr style="border-bottom:2px solid var(--pra-blue);font-weight:700;background:var(--pra-blue-dim)">
+      ${adsReportColumnOrder.map(key => totalsCellFor(key)).join('')}
+    </tr>
+  `;
+  body.innerHTML = totalsHtml + rows.map(row => `
     <tr style="border-top:1px solid var(--pra-border)">
       ${adsReportColumnOrder.map(key => cellFor(key, row)).join('')}
     </tr>

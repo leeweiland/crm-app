@@ -8,9 +8,9 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
-import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel } from "./ads_backend.js";
+import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings } from "./ads_backend.js";
 import { getCachedTestContactIds } from "./contacts_backend.js";
-import { getContactByIdFast } from "./sqlite_inbox.js";
+import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -343,7 +343,7 @@ const money = (n) => (n && isFinite(n)) ? Math.round(n * 100) / 100 : null;
 // source is connected -- not computed from anything today, deliberately,
 // rather than showing a number that would just be wrong.
 export async function computeAdsReport(startMs, endMs, startStr, endStr) {
-  const { sources } = computeAttribution(startMs, endMs);
+  const { sources, byElStage } = computeAttribution(startMs, endMs);
   const [metaSettled, googleSettled] = await Promise.allSettled([
     fetchLiveMetaAdLevel(startStr, endStr),
     fetchLiveGoogleAdLevel(startStr, endStr),
@@ -364,7 +364,43 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
       key: s.el,
     };
   });
-  return { rows, spendError };
+
+  // computeAttribution can only ever see leads/bookings tied to a TRACKED
+  // PAGE VISIT -- confirmed live this misses most real leads, since native
+  // Meta/Google Lead Ads and other webhook-delivered leads never touch
+  // this site's tracking script at all (there's no page visit to attribute
+  // from). Without this, the table's own totals looked wildly undercounted
+  // next to fetchCrmLeadsAndBookings's flow-run-based totals shown
+  // elsewhere in Reporting (Overview's Ads cards) -- confirmed live: this
+  // table showed a handful of leads per source while Overview correctly
+  // showed 300+. Rather than silently hide that gap, it's surfaced as its
+  // own explicit row per program.
+  const crmData = fetchCrmLeadsAndBookings(startMs, endMs);
+  const attributedContactIds = new Set();
+  for (const idSet of byElStage.values()) for (const id of idSet) attributedContactIds.add(id);
+  const contactsById = getContactsByIdsFast([...attributedContactIds]);
+  const attributedLeads = { online: 0, gym: 0 };
+  const attributedBookings = { online: 0, gym: 0 };
+  for (const [key, idSet] of byElStage) {
+    const stage = key.slice(key.lastIndexOf("|") + 1);
+    if (stage !== "optIns" && stage !== "bookings") continue;
+    const bucket = stage === "optIns" ? attributedLeads : attributedBookings;
+    for (const id of idSet) {
+      const program = contactsById.get(id)?.programType === "gym" ? "gym" : "online";
+      bucket[program]++;
+    }
+  }
+  const untrackedRows = ["online", "gym"].map(program => ({
+    source: "Untracked (no site visit or ad click ID)", platform: program === "online" ? "Online" : "Gym",
+    adGroup: "—", campaign: "—",
+    leads: Math.max(0, crmData[program].emails - attributedLeads[program]), costPerLead: null,
+    bookings: Math.max(0, crmData[program].bookM - attributedBookings[program]), costPerBooking: null,
+    revenue: 0, sales: 0, costPerSale: null,
+    spend: 0, visits: 0, uniqueVisitors: 0,
+    key: `untracked-${program}`,
+  })).filter(r => r.leads > 0 || r.bookings > 0);
+
+  return { rows: [...rows, ...untrackedRows], spendError };
 }
 
 // Shared with ads_backend.js's period presets on the frontend -- the
