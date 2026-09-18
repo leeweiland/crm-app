@@ -250,6 +250,19 @@
 <script>
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+// Clicking the dimmed area around the email step editor used to just hide it
+// (crm-nav.js's generic click-outside handler), skipping commitAndClose --
+// so a brand-new step was never attached to the chain and the edit was lost.
+// Here it behaves exactly like the Close button, which commits and saves.
+// stopPropagation keeps the generic handler from also acting on it; a press
+// that started inside the panel (a drag that ended outside) is ignored.
+let emailStepDownOnBackdrop = false;
+document.getElementById('emailStepModal').addEventListener('mousedown', (e) => { emailStepDownOnBackdrop = e.target.id === 'emailStepModal'; });
+document.getElementById('emailStepModal').addEventListener('click', (e) => {
+  if (e.target.id !== 'emailStepModal') return;
+  e.stopPropagation();
+  if (emailStepDownOnBackdrop) document.getElementById('closeEmailStepBtn').click();
+});
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 

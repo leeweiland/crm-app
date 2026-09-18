@@ -192,8 +192,17 @@ window.showToast = showToast;
 // aren't forced to hunt for a Cancel button -- clicking the dimmed
 // backdrop (not the panel itself) closes whichever modal is open, same
 // affordance as clicking the panel's own Cancel/Close button.
+//
+// The mouse press has to have started on the backdrop too. A drag that
+// begins inside the panel (selecting text, dragging a block) and releases
+// out over the dimmed area still fires a click whose target is the
+// backdrop (the nearest common ancestor of both ends), which used to close
+// the modal mid-edit -- losing an unsaved email step that had never been
+// committed.
+let modalMouseDownTarget = null;
+document.addEventListener("mousedown", (e) => { modalMouseDownTarget = e.target; }, true);
 document.addEventListener("click", (e) => {
-  if (e.target.classList && e.target.classList.contains("modal-backdrop")) {
+  if (e.target.classList && e.target.classList.contains("modal-backdrop") && modalMouseDownTarget === e.target) {
     e.target.classList.remove("show");
   }
 });
