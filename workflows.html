@@ -36,14 +36,14 @@
       </div>
       <div class="pra-panel" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr>
-            <th class="sortable" data-sort="name">Name</th>
-            <th class="sortable" data-sort="steps">Total SMS</th>
-            <th class="sortable" data-sort="active">Active</th>
-            <th class="sortable" data-sort="activeEnrolled">Active Enrolled</th>
-            <th class="sortable" data-sort="goalMet">Goal Met</th>
-            <th class="sortable" data-sort="updatedAt">Last Edited</th>
-            <th></th>
+          <thead><tr id="workflowsHeadRow">
+            <th class="sortable" data-sort="name" data-col-key="name">Name</th>
+            <th class="sortable" data-sort="steps" data-col-key="steps">Total SMS</th>
+            <th class="sortable" data-sort="active" data-col-key="active">Active</th>
+            <th class="sortable" data-sort="activeEnrolled" data-col-key="activeEnrolled">Active Enrolled</th>
+            <th class="sortable" data-sort="goalMet" data-col-key="goalMet">Goal Met</th>
+            <th class="sortable" data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th>
+            <th data-col-key="actions"></th>
           </tr></thead>
           <tbody id="workflowsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
         </table>
@@ -61,6 +61,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/column-resize.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
@@ -184,6 +185,8 @@ document.getElementById('newWorkflowBtn').onclick = async () => {
 (async function init() {
   await loadSortPreference();
   loadWorkflows();
+  await window.crmNavReady;
+  wireColumnResize('#workflowsHeadRow', 'workflowsColumnWidths');
 })();
 </script>
 </body>

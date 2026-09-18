@@ -258,6 +258,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/column-resize.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
@@ -693,6 +694,7 @@ function renderAdsReportHeader() {
       fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adsReportColumnOrder }) });
     });
   });
+  wireColumnResize('#adsReportHeaderRow', 'adsReportColumnWidths');
 }
 function renderAdsReportTable() {
   const body = document.getElementById('adsReportBody');
@@ -843,6 +845,7 @@ function renderJourneyTimeline() {
 
 (async function init() {
   await loadSortPreference();
+  await window.crmNavReady;
   renderAdsReportHeader();
   await initPeriodSelector();
   applyPeriod();

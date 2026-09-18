@@ -360,6 +360,7 @@
 <script src="/crm-nav.js"></script>
 <script src="/inline-edit.js"></script>
 <script src="/condition-row-client.js"></script>
+<script src="/column-resize.js"></script>
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
 let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
@@ -1004,6 +1005,7 @@ function renderContactsTable() {
     saveContactSortPreference();
   });
   wireColumnDrag();
+  wireColumnResize('#contactsHeadRow', 'contactsColumnWidths');
 
   const body = document.getElementById('contactsBody');
   if (!currentContacts.length) { body.innerHTML = `<tr><td colspan="${cols.length + 1}" class="pra-muted">No contacts match.</td></tr>`; }

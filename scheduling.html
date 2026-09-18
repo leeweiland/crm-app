@@ -66,7 +66,7 @@
         </div>
         <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th data-sort="name">Name</th><th data-sort="duration">Duration</th><th data-sort="calendar">Calendar</th><th data-sort="location">Location</th><th data-sort="active">Active</th><th>Booking Link</th><th></th></tr></thead>
+            <thead><tr id="eventTypesHeadRow"><th data-sort="name" data-col-key="name">Name</th><th data-sort="duration" data-col-key="duration">Duration</th><th data-sort="calendar" data-col-key="calendar">Calendar</th><th data-sort="location" data-col-key="location">Location</th><th data-sort="active" data-col-key="active">Active</th><th data-col-key="bookingLink">Booking Link</th><th data-col-key="actions"></th></tr></thead>
             <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
@@ -131,6 +131,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/column-resize.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtWhen(iso) { return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }); }
@@ -419,6 +420,8 @@ document.getElementById('saveMeetingRemindersBtn').onclick = async () => {
   await loadSortPreference();
   loadEventTypes();
   loadMeetingReminderSettings();
+  await window.crmNavReady;
+  wireColumnResize('#eventTypesHeadRow', 'eventTypesColumnWidths');
 })();
 </script>
 </body>
