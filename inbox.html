@@ -81,13 +81,13 @@
   .convo-row.multi-selected { background: rgba(0,155,255,0.16); box-shadow: inset 0 0 0 1px var(--pra-blue); }
   .convo-row { transition: transform .18s ease, opacity .18s ease; }
   .convo-row.swiping { transition: none; }
-  /* Per-status outer glow removed (Lee: redundant with the calendar/
-     incoming-message notifications already doing that job) -- .convo-avatar
-     keeps its solid neon fill for has-unread though, since THAT is the
-     actual incoming-message notification, not the removed glow. */
-  .convo-avatar { transition: background .15s; }
-  .convo-avatar.has-unread { background: #39ff14; color: #0a0a0d; }
-  #chatStatusSelect, .convo-status-select { transition: background .15s; }
+  /* Outer glow color is set inline per row (--status-glow, from the
+     contact's CRM status -- see STATUS_GLOW below). An unresponded thread
+     does NOT fill the avatar itself neon green anymore (Lee: the green
+     unread-count badge and time already say "needs a reply", the circle
+     stays normal) -- only the status-colored outer glow remains. */
+  .convo-avatar { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s; }
+  #chatStatusSelect, .convo-status-select { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s; }
   /* No flex-shrink:0 here (unlike the type badge/date below), but a real
      fixed width now (not just max-width, and no more per-row inline
      statusSelectWidthRule sizing-to-content) -- .convo-name is the row's
