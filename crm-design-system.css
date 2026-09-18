@@ -191,12 +191,13 @@ body { margin: 0; }
 .pra-tel-link:hover { text-decoration: underline; }
 .pra-tel-link svg { width: 16px; height: 16px; vertical-align: middle; }
 
-/* A per-contact status <select> styled as a colored pill (glow color set
-   inline per-status via --status-glow/--status-glow-soft custom
-   properties) -- shared by contact-detail.html's header, the inbox's chat
-   panel, and the inbox's contact-overlay modal, so it needs to live here
-   rather than duplicated per page. */
-.status-pill-select { font-family: var(--font-primary); font-weight: 700; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-blue); background: var(--pra-blue-dim); border: none; border-radius: 12px; padding: 5px 12px; cursor: pointer; box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s, color .15s; }
+/* A per-contact status <select> styled as a colored pill -- shared by
+   contact-detail.html's header, the inbox's chat panel, and the inbox's
+   contact-overlay modal, so it needs to live here rather than duplicated
+   per page. No status-glow box-shadow here anymore (removed per Lee: the
+   calendar/incoming-message notifications already cover "needs attention",
+   so a separate neon glow per lead status was redundant). */
+.status-pill-select { font-family: var(--font-primary); font-weight: 700; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-blue); background: var(--pra-blue-dim); border: none; border-radius: 12px; padding: 5px 12px; cursor: pointer; }
 /* The dropdown POPUP list is a separate rendering surface from the closed
    pill -- Chromium fills it in using the <select>'s own color/background
    unless every <option> overrides them, which made the list unreadable
@@ -325,10 +326,18 @@ body { margin: 0; }
   text-align: left; font-family: var(--font-secondary); font-size: .66rem;
   letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim);
   padding: 10px 12px; border-bottom: 1px solid var(--pra-border);
+  position: relative; /* anchors .col-resize-handle */
 }
-.data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; }
+.data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
 .data-table tr.clickable { cursor: pointer; }
+
+/* ── Resizable columns (column-resize.js) ──
+   A thin drag strip on the right edge of each <th data-col-key>. Kept
+   separate from the existing col-drag-handle (contacts.html's drag-to-
+   REORDER icon) -- this one changes width, not position. */
+.col-resize-handle { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; touch-action: none; user-select: none; z-index: 1; }
+.col-resize-handle:hover, .col-resize-handle.resizing { background: var(--pra-blue); opacity: .5; }
 
 /* ── Modal ──
    Every modal-backdrop is a direct child of <body>, not .pra-root (they're
@@ -622,9 +631,16 @@ body { margin: 0; }
 .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
 .compose-channel-toggle button.active.reply-mode { background: rgba(57,255,20,0.12); color: var(--pra-green); }
 .compose-row { display: flex; gap: 8px; flex: 1; min-height: 0; }
-.compose-row #composeSendBtn { align-self: flex-end; }
+.compose-send-group { display: flex; align-items: center; gap: 6px; align-self: flex-end; }
 #composeSendBtn.reply-mode { background: var(--pra-green); color: #06210a; }
 .compose-row textarea { flex: 1; resize: vertical; min-height: 40px; }
+.compose-schedule-btn { padding: 0; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.compose-schedule-btn.reply-mode { color: var(--pra-green); border-color: var(--pra-green); }
+.compose-schedule-btn.reply-mode:hover { background: rgba(57,255,20,0.12); }
+/* Opens leftward off the button's right edge, not the generic .task-panel
+   left:0 -- this button sits at the far right of the compose bar, so a
+   left-anchored panel would run off the edge. */
+.compose-schedule-panel { left: auto; right: 0; }
 .compose-quote-preview { border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
 .compose-quote-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--pra-panel-2); font-size: .72rem; color: var(--pra-dim); }
 .compose-quote-preview-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

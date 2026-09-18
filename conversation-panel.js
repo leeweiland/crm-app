@@ -202,12 +202,16 @@
       if (e.target.id === 'notePanelAddBtn') { inst._submitNewNote(); return; }
       if (e.target.id === 'schedulePanelCancelBtn') { inst._toggleSchedulePanel(false); return; }
       if (e.target.id === 'schedulePanelAddBtn') { inst._submitNewMeeting(); return; }
+      if (e.target.id === 'composeScheduleCancelBtn') { inst._toggleComposeSchedulePanel(false); return; }
+      if (e.target.id === 'composeScheduleConfirmBtn') { inst._submitScheduledSend(); return; }
       const taskPanel = root.querySelector('#taskPanel');
       if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') inst._toggleTaskPanel(false);
       const notePanel = root.querySelector('#notePanel');
       if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') inst._toggleNotePanel(false);
       const schedulePanel = root.querySelector('#schedulePanel');
       if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) inst._toggleSchedulePanel(false);
+      const composeSchedulePanel = root.querySelector('#composeSchedulePanel');
+      if (composeSchedulePanel?.classList.contains('open') && !composeSchedulePanel.contains(e.target) && e.target.id !== 'composeScheduleBtn' && !e.target.closest('#composeScheduleBtn')) inst._toggleComposeSchedulePanel(false);
     });
   }
 
@@ -415,6 +419,93 @@
       renderSchedulePanel();
       loadThread();
       config.onMeetingChanged?.(contactId);
+    }
+
+    // ── Schedule-send popover (compose bar) ────────────────────────────
+    // Queues the current compose draft (email, SMS, or an in-progress
+    // reply) to send later instead of now -- same fields sendComposeMessage
+    // itself posts to /api/inbox/send, plus scheduledAt, posted to
+    // /api/inbox/schedule instead. Button/panel ids are prefixed
+    // "composeSchedule*" to stay clear of the unrelated "schedule a
+        // meeting" popover above (chatScheduleBtn/schedulePanel), which books
+    // a calendar call, not a future send.
+    function composeSchedulePanelRowHtml(m) {
+      const when = new Date(m.scheduledAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      const label = m.channel === 'email' ? (m.subject || '(no subject)') : m.body.slice(0, 40);
+      return `
+        <div class="schedule-panel-row" data-scheduled-row="${m.id}">
+          <button type="button" data-scheduled-cancel="${m.id}" title="Cancel">&times;</button>
+          <span class="schedule-panel-when">${m.channel === 'email' ? 'Email' : 'SMS'} &middot; ${escapeHtml(label)}<br>${when}</span>
+        </div>
+      `;
+    }
+    async function renderComposeSchedulePanel() {
+      const list = container.querySelector('#composeSchedulePanelList');
+      if (!list) return;
+      const contactId = state.contactId;
+      if (!contactId) { list.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Match this conversation to a contact first.</div>'; return; }
+      list.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Loading…</div>';
+      const r = await fetch('/api/inbox/scheduled?contactId=' + encodeURIComponent(contactId));
+      const { items } = r.ok ? await r.json() : { items: [] };
+      if (state.contactId !== contactId) return; // superseded by a later switchContact
+      list.innerHTML = items.length ? items.map(composeSchedulePanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">Nothing scheduled yet.</div>';
+      list.querySelectorAll('[data-scheduled-cancel]').forEach(btn => btn.onclick = async () => {
+        if (!confirm('Cancel this scheduled message?')) return;
+        await fetch('/api/inbox/scheduled/' + btn.dataset.scheduledCancel + '/cancel', { method: 'POST' });
+        showToast('Scheduled message cancelled');
+        renderComposeSchedulePanel();
+      });
+    }
+    function _toggleComposeSchedulePanel(forceOpen) {
+      const panel = container.querySelector('#composeSchedulePanel');
+      if (!panel) return;
+      const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      panel.classList.toggle('open', opening);
+      if (opening) {
+        const now = new Date(Date.now() + 5 * 60000); // 5 min out, so "now" pre-fills to a valid future time
+        container.querySelector('#composeScheduleDate').value = now.toISOString().slice(0, 10);
+        container.querySelector('#composeScheduleTime').value = now.toTimeString().slice(0, 5);
+        renderComposeSchedulePanel();
+      }
+    }
+    async function _submitScheduledSend() {
+      const contactId = state.contactId;
+      if (!contactId) { showToast('Match this conversation to a contact first', true); return; }
+      const bodyEl = container.querySelector('#composeBody');
+      const body = (bodyEl?.value || '').trim();
+      if (!body) { showToast('Write a message first', true); return; }
+      const dateVal = container.querySelector('#composeScheduleDate').value;
+      const timeVal = container.querySelector('#composeScheduleTime').value;
+      if (!dateVal || !timeVal) { showToast('Pick a date and time', true); return; }
+      const scheduledAt = new Date(`${dateVal}T${timeVal}`).toISOString();
+      if (new Date(scheduledAt).getTime() <= Date.now()) { showToast('Pick a time in the future', true); return; }
+      const subject = state.composeChannel === 'email' ? container.querySelector('#composeSubject')?.value.trim() : undefined;
+      const fromUserId = state.composeChannel === 'email' ? container.querySelector('#composeFromUserId')?.value : undefined;
+      const isReply = state.composeChannel === 'email' && state.composeReplyTo;
+      const btn = container.querySelector('#composeScheduleConfirmBtn');
+      btn.disabled = true; btn.textContent = 'Scheduling…';
+      const r = await fetch('/api/inbox/schedule', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contactId, channel: state.composeChannel, subject, body, fromUserId, scheduledAt,
+          quotedHtml: isReply ? state.composeReplyTo.quotedHtml : undefined,
+          quotedMeta: isReply ? state.composeReplyTo.quotedMeta : undefined,
+        }),
+      });
+      const d = await r.json();
+      btn.disabled = false; btn.textContent = 'Schedule';
+      if (!r.ok) { showToast(d.error || 'Could not schedule', true); return; }
+      showToast(`Scheduled for ${new Date(scheduledAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`);
+      _toggleComposeSchedulePanel(false);
+      // Same reset sendComposeMessage does after a live send -- the compose
+      // bar always lands back on a fresh Send Email/SMS box, never left
+      // looking like a reply/draft that already went out (queued, in this
+      // case, rather than sent).
+      state.composeReplyTo = null;
+      state.composeView = 'compose';
+      state.composeChannel = config.initialChannel || 'email';
+      state.composeBarHeight = null;
+      render();
     }
 
     // ── AI assist ───────────────────────────────────────────────────────
@@ -699,7 +790,25 @@
             ${state.composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
             <div class="compose-row">
               <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
-              <button class="pra-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
+              <div class="compose-send-group">
+                <button class="pra-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
+                <div class="chat-panel-task-btn compose-schedule-wrap">
+                  <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeScheduleBtn" title="Schedule for later">${CALENDAR_ICON}</button>
+                  <div class="task-panel compose-schedule-panel" id="composeSchedulePanel">
+                    <div class="task-panel-list" id="composeSchedulePanelList"></div>
+                    <div class="task-panel-add">
+                      <div class="task-panel-add-row">
+                        <input class="pra-input" type="date" id="composeScheduleDate"/>
+                        <input class="pra-input" type="time" id="composeScheduleTime"/>
+                      </div>
+                    </div>
+                    <div class="task-panel-footer">
+                      <button class="pra-btn pra-btn-ghost pra-btn-sm" id="composeScheduleCancelBtn" type="button">Cancel</button>
+                      <button class="pra-btn pra-btn-sm" id="composeScheduleConfirmBtn" type="button" style="margin-left:8px">Schedule</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             ${state.composeChannel === 'email' && state.composeReplyTo ? `
               <div class="compose-quote-preview">
@@ -764,7 +873,11 @@
         if (quoteRemoveBtn) quoteRemoveBtn.onclick = () => { state.composeReplyTo = null; render(); };
       }
       if (state.composeView === 'summary') { if (contactId) loadAiSummary(contactId); }
-      else { const sendBtn = container.querySelector('#composeSendBtn'); if (sendBtn) sendBtn.onclick = sendComposeMessage; }
+      else {
+        const sendBtn = container.querySelector('#composeSendBtn'); if (sendBtn) sendBtn.onclick = sendComposeMessage;
+        const scheduleBtn = container.querySelector('#composeScheduleBtn');
+        if (scheduleBtn) scheduleBtn.onclick = (e) => { e.stopPropagation(); _toggleComposeSchedulePanel(); };
+      }
       const backBtn = container.querySelector('#chatBackBtn');
       if (backBtn) backBtn.onclick = () => config.onBack?.();
       wireComposeResize();
@@ -920,6 +1033,17 @@
       render,
       get contactId() { return state.contactId; },
       get done() { return state.done; },
+      // Exposed so _wireDelegatedPopoverHandler's page-level click listener
+      // (registered once, dispatches via the instance registry -- see its
+      // own comment) can actually reach these. Confirmed missing for the
+      // pre-existing Task/Note/Schedule-meeting popovers too -- their
+      // Cancel buttons and click-outside-to-close silently no-opped
+      // (calling undefined()) before this; fixed here alongside adding the
+      // new compose-schedule popover, which uses the identical pattern.
+      _toggleTaskPanel, _submitNewTask,
+      _toggleNotePanel, _submitNewNote,
+      _toggleSchedulePanel, _submitNewMeeting,
+      _toggleComposeSchedulePanel, _submitScheduledSend,
     };
     _instancesByRoot.set(container, instance);
     return instance;

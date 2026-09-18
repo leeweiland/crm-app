@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, USERS_FILE, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, updateJsonArrayRecordByField, appendJsonRecordFast, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
 import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE } from "./message_log.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
@@ -20,6 +20,90 @@ import { sseClients, broadcastInboxUpdate } from "./inbox_events.js";
 
 function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 function escapeHtmlBasic(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+// A contact's compose bar can queue an email/SMS (or a reply) to go out
+// later instead of right now -- same record shape as a real send, plus
+// scheduledAt/status, so sendDueScheduledMessages() below can fire it
+// through the exact same path a live Send would use.
+export const SCHEDULED_MESSAGES_FILE = "crm_scheduled_messages.json";
+
+// Same "mark the whole thread handled" effect as the /done endpoint below,
+// pulled out so the scheduled-send job can apply it server-side after a
+// scheduled message actually goes out, with no human there to click
+// anything -- mirrors sendComposeMessage's own follow-up call to /done
+// after a live send.
+function markConversationDone(contactId) {
+  const idsToFlip = getContactMessages(contactId).filter(m => m.direction === "inbound" && !m.inboxDone).map(m => m.id);
+  if (idsToFlip.length) markContactMessagesDone(contactId);
+  recomputeConversationSummary(contactId);
+  const meta = setConvoMeta(contactId, { done: true });
+  broadcastInboxUpdate({ type: "done", contactId, done: true });
+  return meta;
+}
+
+// Shared by the live "/api/inbox/send" handler and the scheduler's due-
+// scheduled-message job (sendDueScheduledMessages) -- identical Gmail/SES/
+// SMS send path either way, so a scheduled message behaves exactly like
+// typing it and hitting Send right now, just later.
+async function sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta }) {
+  if (channel === "email") {
+    if (!contact.email) return { ok: false, status: 400, reason: "This contact has no email address" };
+    const html = body.replace(/\n/g, "<br/>");
+    const blocks = [{ id: "b1", type: "text", html }];
+    const theme = getEmailTheme();
+    const trailingHtml = quotedHtml
+      ? `<div style="border-left:3px solid #ccc;margin:28px 0 0 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
+      : undefined;
+    const result = (getEmailSendPreference() !== "ses" && sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
+      ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", blocks, theme, contactId: contact.id, sourceType: "inbox", sourceId: sender.id, footerTemplateId: sender.footerTemplateId || null, trailingHtml })
+      : await sendEmail({
+          to: contact.email, subject: subject || "(no subject)",
+          blocks, theme, footerTemplateId: sender.footerTemplateId || null,
+          contactId: contact.id, sourceType: "inbox", sourceId: sender.id,
+          from: `${sender.first} ${sender.last} <${sender.email}>`,
+          trailingHtml,
+        });
+    return result.ok ? { ok: true } : { ok: false, status: 502, reason: result.reason || "Send failed" };
+  }
+  if (channel === "sms") {
+    if (!contact.phone) return { ok: false, status: 400, reason: "This contact has no phone number" };
+    const result = await sendSms({ to: contact.phone, body, contactId: contact.id, sourceType: "inbox", sourceId: sender.id });
+    return result.ok ? { ok: true } : { ok: false, status: 502, reason: result.reason || "Send failed" };
+  }
+  return { ok: false, status: 400, reason: "channel must be 'email' or 'sms'" };
+}
+
+// Polled every scheduler tick (scheduler.js) -- sends any scheduled 1:1
+// email/SMS/reply whose scheduledAt has passed.
+export async function sendDueScheduledMessages() {
+  const all = readJson(SCHEDULED_MESSAGES_FILE, []);
+  const due = all.filter(m => m.status === "scheduled" && new Date(m.scheduledAt).getTime() <= Date.now());
+  if (!due.length) return;
+  const contacts = readJson(CONTACTS_FILE, []);
+  const teamUsers = readJson(USERS_FILE, []);
+  for (const m of due) {
+    const contact = contacts.find(c => c.id === m.contactId);
+    let status = "failed", failReason = null;
+    if (!contact) {
+      failReason = "Contact no longer exists";
+    } else {
+      const sender = (m.fromUserId && teamUsers.find(u => u.id === m.fromUserId && !u.archived)) || teamUsers.find(u => u.id === m.createdBy && !u.archived) || null;
+      if (!sender) {
+        failReason = "Original sender's account no longer exists";
+      } else {
+        const result = await sendInboxMessage({ contact, channel: m.channel, subject: m.subject, body: m.body, sender, quotedHtml: m.quotedHtml, quotedMeta: m.quotedMeta });
+        if (result.ok) { status = "sent"; markConversationDone(contact.id); }
+        else failReason = result.reason;
+      }
+    }
+    updateJsonArrayRecordByField(SCHEDULED_MESSAGES_FILE, "id", m.id, (rec) => {
+      rec.status = status; rec.sentAt = status === "sent" ? new Date().toISOString() : null; rec.failReason = failReason;
+      return rec;
+    });
+    if (status === "failed") console.error(`[inbox] scheduled message ${m.id} failed:`, failReason);
+  }
+}
+
 // Mirrors sqlite_inbox.js's own upcomingBookedContactIds -- this file's
 // conversation-list handler only reaches this JSON-fold path when SQLite
 // is unavailable or explicitly disabled (?_sqlite=0), but it should still
@@ -58,7 +142,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/activity" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/activity" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/schedule" || p === "/api/inbox/scheduled" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/") || p.startsWith("/api/inbox/scheduled/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -527,71 +611,67 @@ export async function handleInboxRequest(req, res, url) {
     const contact = contacts.find(c => c.id === contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
     if (!body || !body.trim()) return sendJson(res, 400, { error: "Message is required" });
+    // Sending "as" a teammate (compose panel's From dropdown, email only) --
+    // admin only (enforced here too, not just by hiding the dropdown
+    // client-side), and only trusts fromUserId enough to look up a REAL
+    // other user record, never takes name/email straight from the request
+    // body. SMS has no such dropdown, so fromUserId is always undefined
+    // there and sender falls through to `me`, same as before this was
+    // pulled out into sendInboxMessage.
+    let sender = me;
+    if (fromUserId && fromUserId !== me.id && isAdmin(me)) {
+      const teamUsers = readJson(USERS_FILE, []);
+      const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
+      if (other) sender = other;
+    }
+    const result = await sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta });
+    if (!result.ok) return sendJson(res, result.status, { error: result.reason });
+    return sendJson(res, 200, { ok: true });
+  }
 
-    if (channel === "email") {
-      if (!contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
-      // Sending "as" a teammate (compose panel's From dropdown) -- admin
-      // only (enforced here too, not just by hiding the dropdown client-
-      // side), and only trusts fromUserId enough to look up a REAL other
-      // user record, never takes name/email straight from the request body.
-      let sender = me;
-      if (fromUserId && fromUserId !== me.id && isAdmin(me)) {
-        const teamUsers = readJson(USERS_FILE, []);
-        const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
-        if (other) sender = other;
-      }
-      // Gmail first when the sender has actually granted send access --
-      // SES here is stuck in sandbox mode (confirmed via AWS's own account
-      // API: ProductionAccessEnabled false), which caps at 200 sends/24h
-      // and rejects any recipient that isn't individually pre-verified in
-      // the AWS console, i.e. nearly every real lead. Falls back to SES
-      // for anyone who hasn't (re)connected Gmail with the send scope yet
-      // rather than hard-failing their send.
-      const html = body.replace(/\n/g, "<br/>");
-      const blocks = [{ id: "b1", type: "text", html }];
-      // The org's configured default (Settings > Email Theme), not a bare
-      // {} -- a 1:1 reply's footer links should render in whatever link
-      // color is actually set there, not silently fall back to
-      // DEFAULT_THEME's blue just because this send path never looked it up.
-      const theme = getEmailTheme();
-      // Reply button (inbox.html) sends the original message's real HTML
-      // back verbatim so the recipient sees a properly formatted quoted
-      // thread, not a plain-text-mangled copy -- same reasoning as why the
-      // email bubble itself renders item.body through an iframe instead of
-      // stripping it. Kept OUT of `blocks` itself and passed as its own
-      // trailingHtml instead -- both send paths append the sender's footer
-      // right after the rendered blocks, so folding the quote in there too
-      // would push the footer down after the whole quoted thread instead of
-      // right after the new reply.
-      const trailingHtml = quotedHtml
-        // Real visible whitespace, not just a couple of <br/>s -- margin-top
-        // on the quote block so it reads as clearly separate from the new
-        // reply (and the footer between them) instead of looking bunched up.
-        ? `<div style="border-left:3px solid #ccc;margin:28px 0 0 0;padding-left:12px;color:#666;font-size:13px">${quotedMeta ? `${escapeHtmlBasic(quotedMeta)}<br/>` : ""}${quotedHtml}</div>`
-        : undefined;
-      // "ses" mode forces the shared AWS pipeline even for a sender with
-      // Gmail connected -- see getEmailSendPreference's own comment. Default
-      // ("gmail") keeps the existing per-sender behavior: use their own
-      // connected Gmail when they have one, otherwise fall back to SES.
-      const result = (getEmailSendPreference() !== "ses" && sender.gmailRefreshToken && sender.gmailScope?.includes("gmail.send"))
-        ? await sendViaGmail({ user: sender, to: contact.email, subject: subject || "(no subject)", blocks, theme, contactId, sourceType: "inbox", sourceId: sender.id, footerTemplateId: sender.footerTemplateId || null, trailingHtml })
-        : await sendEmail({
-            to: contact.email, subject: subject || "(no subject)",
-            blocks, theme, footerTemplateId: sender.footerTemplateId || null,
-            contactId, sourceType: "inbox", sourceId: sender.id,
-            from: `${sender.first} ${sender.last} <${sender.email}>`,
-            trailingHtml,
-          });
-      if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
-      return sendJson(res, 200, { ok: true });
-    }
-    if (channel === "sms") {
-      if (!contact.phone) return sendJson(res, 400, { error: "This contact has no phone number" });
-      const result = await sendSms({ to: contact.phone, body, contactId, sourceType: "inbox", sourceId: me.id });
-      if (!result.ok) return sendJson(res, 502, { error: result.reason || "Send failed" });
-      return sendJson(res, 200, { ok: true });
-    }
-    return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
+  // Same body as /send, plus scheduledAt -- queues the message instead of
+  // sending it now. Validated up front (contact/email-or-phone/channel)
+  // the same way a live send is, so a bad schedule fails immediately
+  // rather than silently sitting in the queue until the scheduler tries
+  // and fails it hours or days later.
+  if (p === "/api/inbox/schedule" && req.method === "POST") {
+    const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta, scheduledAt } = await readJsonBody(req);
+    if (!scheduledAt || new Date(scheduledAt).getTime() <= Date.now()) return sendJson(res, 400, { error: "Pick a date and time in the future" });
+    if (channel !== "email" && channel !== "sms") return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find(c => c.id === contactId);
+    if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
+    if (!body || !body.trim()) return sendJson(res, 400, { error: "Message is required" });
+    if (channel === "email" && !contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
+    if (channel === "sms" && !contact.phone) return sendJson(res, 400, { error: "This contact has no phone number" });
+    if (fromUserId && fromUserId !== me.id && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can send as another teammate" });
+    const record = {
+      id: randomUUID(), contactId, channel, subject: subject || null, body,
+      fromUserId: fromUserId || null, quotedHtml: quotedHtml || null, quotedMeta: quotedMeta || null,
+      scheduledAt, status: "scheduled", sentAt: null, failReason: null,
+      createdBy: me.id, createdAt: new Date().toISOString(),
+    };
+    appendJsonRecordFast(SCHEDULED_MESSAGES_FILE, record);
+    return sendJson(res, 200, { ok: true, id: record.id, scheduledAt });
+  }
+
+  if (p === "/api/inbox/scheduled" && req.method === "GET") {
+    const contactId = url.searchParams.get("contactId");
+    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
+    const items = readJson(SCHEDULED_MESSAGES_FILE, [])
+      .filter(m => m.contactId === contactId && m.status === "scheduled")
+      .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
+    return sendJson(res, 200, { items });
+  }
+
+  const cancelScheduledMatch = p.match(/^\/api\/inbox\/scheduled\/([^/]+)\/cancel$/);
+  if (cancelScheduledMatch && req.method === "POST") {
+    const updated = updateJsonArrayRecordByField(SCHEDULED_MESSAGES_FILE, "id", cancelScheduledMatch[1], (m) => {
+      if (m.status === "scheduled") m.status = "cancelled";
+      return m;
+    });
+    if (!updated) return sendJson(res, 404, { error: "Not found" });
+    return sendJson(res, 200, { ok: true });
   }
 
   if (p === "/api/inbox" && req.method === "GET") {
