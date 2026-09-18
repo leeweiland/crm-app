@@ -637,10 +637,14 @@ body { margin: 0; }
 .compose-schedule-btn { padding: 0; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .compose-schedule-btn.reply-mode { color: var(--pra-green); border-color: var(--pra-green); }
 .compose-schedule-btn.reply-mode:hover { background: rgba(57,255,20,0.12); }
-/* Opens leftward off the button's right edge, not the generic .task-panel
-   left:0 -- this button sits at the far right of the compose bar, so a
-   left-anchored panel would run off the edge. */
-.compose-schedule-panel { left: auto; right: 0; }
+/* Opens leftward and UPWARD off the button, not the generic .task-panel's
+   left:0/top:calc(100%+6px) -- this button sits at the bottom-right corner
+   of the compose bar, the very bottom of the whole chat panel, which also
+   has overflow:hidden (needed elsewhere to contain the panel's own height,
+   see .convo-panel) -- confirmed live: opening downward like the other
+   popovers do just clipped the whole panel invisible against that
+   boundary, since there's no room below it to open into. */
+.compose-schedule-panel { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); }
 .compose-quote-preview { border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
 .compose-quote-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--pra-panel-2); font-size: .72rem; color: var(--pra-dim); }
 .compose-quote-preview-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
