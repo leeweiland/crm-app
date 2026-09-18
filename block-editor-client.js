@@ -11,7 +11,7 @@ window.BlockEditor = (function () {
   // identically in both the editor's own canvas and the actual sent HTML.
   const DEFAULT_THEME = {
     background: '#ffffff', maxWidth: 650, fontFamily: 'Arial, Helvetica, sans-serif',
-    fontSize: 15, textColor: '#222222', linkColor: '#009bff', lineHeight: 1.5, bodyPadding: 24,
+    fontSize: 16, textColor: '#222222', linkColor: '#009bff', lineHeight: 1.5, bodyPadding: 24,
   };
 
   // One consistent line-icon language (Feather-style: 16x16, currentColor
@@ -43,8 +43,22 @@ window.BlockEditor = (function () {
     if (style.textAlign) parts.push(`text-align:${style.textAlign}`);
     return parts.length ? ` style="${parts.join(';')}"` : '';
   }
+  // Client copy of block_editor_shared.js's cleanPastedHtml -- see its comment
+  // for why (pasted ActiveCampaign HTML carries invalid --tw-* style
+  // declarations that mail clients punish by dropping the whole style attribute).
+  function cleanPastedHtml(html) {
+    if (!html) return '';
+    return String(html)
+      .replace(/<!--\s*(?:Start|End)Fragment\s*-->/gi, '')
+      .replace(/\s(?:class="ac-designer-copy"|readability="[^"]*")/gi, '')
+      .replace(/\sstyle\s*=\s*(["'])([\s\S]*?)\1/gi, (m, q, v) => {
+        if (!v.includes('--') || /url\(/i.test(v)) return m;
+        const kept = v.split(';').map(d => d.trim()).filter(d => d && !d.startsWith('--'));
+        return kept.length ? ` style=${q}${kept.join('; ')}${q}` : '';
+      });
+  }
   function renderBlockHtml(block) {
-    if (block.type === 'text') return `<div${styleAttr(block.style)}>${block.html || ''}</div>`;
+    if (block.type === 'text') return `<div${styleAttr(block.style)}>${cleanPastedHtml(block.html)}</div>`;
     if (block.type === 'image') {
       const img = `<img src="${block.src || ''}" width="${block.width || 600}" style="max-width:100%;display:inline-block;border:0"/>`;
       return `<div${styleAttr(block.style)}>${block.link ? `<a href="${block.link}">${img}</a>` : img}</div>`;

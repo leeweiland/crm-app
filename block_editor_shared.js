@@ -26,9 +26,32 @@ function styleAttr(style) {
   return parts.length ? ` style="${parts.join(";")}"` : "";
 }
 
+// Pasting from ActiveCampaign's designer (or any browser editor) drags its
+// clipboard debris along: every element carries a style attribute full of
+// Tailwind custom properties (--tw-ring-inset: ; ...), plus
+// class="ac-designer-copy", readability="..." and <!--StartFragment-->
+// markers. Chrome (the editor preview) shrugs that off, but the recipient's
+// mail client does not -- a real send of a pasted AC email arrived in Gmail
+// all bold with no colors, because the bold-canceling and color overrides
+// live in those same style attributes. Custom properties mean nothing in
+// email anyway, so this strips them (and the junk attributes) at render time
+// instead of trusting whatever got pasted; ordinary declarations in the same
+// style attribute (color, font-weight, ...) are kept as-is.
+export function cleanPastedHtml(html) {
+  if (!html) return "";
+  return String(html)
+    .replace(/<!--\s*(?:Start|End)Fragment\s*-->/gi, "")
+    .replace(/\s(?:class="ac-designer-copy"|readability="[^"]*")/gi, "")
+    .replace(/\sstyle\s*=\s*(["'])([\s\S]*?)\1/gi, (m, q, v) => {
+      if (!v.includes("--") || /url\(/i.test(v)) return m;
+      const kept = v.split(";").map(d => d.trim()).filter(d => d && !d.startsWith("--"));
+      return kept.length ? ` style=${q}${kept.join("; ")}${q}` : "";
+    });
+}
+
 function renderBlock(block) {
   if (block.type === "text") {
-    return `<div${styleAttr(block.style)}>${block.html || ""}</div>`;
+    return `<div${styleAttr(block.style)}>${cleanPastedHtml(block.html)}</div>`;
   }
   if (block.type === "image") {
     const img = `<img src="${block.src || ""}" width="${block.width || 600}" style="max-width:100%;display:inline-block;border:0"/>`;
@@ -49,7 +72,7 @@ export const DEFAULT_THEME = {
   background: "#ffffff",
   maxWidth: 650,
   fontFamily: "Arial, Helvetica, sans-serif",
-  fontSize: 15,
+  fontSize: 16,
   textColor: "#222222",
   linkColor: "#009bff",
   lineHeight: 1.5,
