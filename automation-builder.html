@@ -58,6 +58,14 @@
   .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
   .step-card .step-actions button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .8rem; }
   .step-card .step-actions button:hover { color: #fff; }
+  /* Drag-to-reorder (see the "Drag to reorder" block in the script). The
+     cards' own inline cursor:pointer would win over a plain rule, hence !important. */
+  .step-card[draggable="true"], .step-card[draggable="true"] [data-open-step] { cursor: grab !important; }
+  .step-card.dragging { opacity: .35; }
+  .step-card.drop-before { box-shadow: 0 -4px 0 0 var(--pra-blue); }
+  .step-card.drop-after { box-shadow: 0 4px 0 0 var(--pra-blue); }
+  .chain-arrow-wrap.drop-here::after { content: ''; position: absolute; left: 50%; top: 50%; width: 360px; height: 4px; margin: -2px 0 0 -180px; background: var(--pra-blue); border-radius: 2px; }
+  .add-step-btn.drop-here { border-color: var(--pra-blue); color: var(--pra-blue); background: rgba(0,155,255,0.12); }
   .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; }
   .add-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .branch-row { display: flex; gap: 40px; margin-top: 4px; }
@@ -399,10 +407,13 @@ function stepCardHtml(stepId, isLast) {
   // Other step types stay plain divs; they're in-page-only config (no
   // separate email content to open), so there's nothing to deep-link to.
   const cardOpener = step.type === 'send_email'
-    ? `<a class="step-link" data-open-step="${stepId}" href="automation-builder.html?id=${automationId}&step=${stepId}" style="cursor:pointer;color:inherit;text-decoration:none;display:block">${body}</a>`
+    // draggable="false" on the link: a real <a href> is natively draggable
+    // (it would drag the URL out instead of the card), so the drag has to fall
+    // through to the draggable .step-card around it.
+    ? `<a class="step-link" draggable="false" data-open-step="${stepId}" href="automation-builder.html?id=${automationId}&step=${stepId}" style="cursor:pointer;color:inherit;text-decoration:none;display:block">${body}</a>`
     : `<div data-open-step="${stepId}" style="cursor:pointer">${body}</div>`;
   return `
-    <div class="step-card">
+    <div class="step-card" data-step-id="${stepId}"${step.type !== 'condition' ? ' draggable="true"' : ''}>
       <div class="step-actions">
         ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
       </div>
@@ -743,6 +754,150 @@ function deleteStep(stepId) {
   delete automation.steps[stepId];
   render(); saveDebounced();
 }
+
+// ── Drag to reorder ─────────────────────────────────────────────────────
+// A chain is a linked list (startStepId -> nextStepId ...; a condition step
+// ends its chain and hangs two more chains off yesStepId/noStepId), so moving
+// one step = unlink it from whatever points at it, then splice it in where it
+// was dropped. Only that single step moves -- whatever followed it stays where
+// it was. Condition steps aren't draggable: they carry two whole sub-chains
+// and are always the last card of theirs.
+//
+// Drop targets: the top/bottom half of any card (insert before/after it), the
+// arrow gap between two cards, and a chain's "+ Add Step" button (append; also
+// how you drop into an empty YES/NO branch).
+let draggingStepId = null, dropTarget = null;
+let dragPointerX = 0, dragPointerY = 0, dragAutoPanRaf = null;
+
+function pathRef(path) { // 'root' | 'yes:<conditionId>' | 'no:<conditionId>'
+  if (path === 'root') return { type: 'start' };
+  const [type, id] = path.split(':');
+  return { type, id };
+}
+function getRef(ref) {
+  if (ref.type === 'start') return automation.startStepId || null;
+  const s = automation.steps[ref.id];
+  return (ref.type === 'yes' ? s.yesStepId : ref.type === 'no' ? s.noStepId : s.nextStepId) || null;
+}
+function setRef(ref, value) {
+  if (ref.type === 'start') automation.startStepId = value;
+  else if (ref.type === 'yes') automation.steps[ref.id].yesStepId = value;
+  else if (ref.type === 'no') automation.steps[ref.id].noStepId = value;
+  else automation.steps[ref.id].nextStepId = value;
+}
+function findParentRef(stepId) {
+  if (automation.startStepId === stepId) return { type: 'start' };
+  for (const s of Object.values(automation.steps)) {
+    if (s.type === 'condition') {
+      if (s.yesStepId === stepId) return { type: 'yes', id: s.id };
+      if (s.noStepId === stepId) return { type: 'no', id: s.id };
+    } else if (s.nextStepId === stepId) {
+      return { type: 'next', id: s.id };
+    }
+  }
+  return null;
+}
+// dest: {mode:'before', id} | {mode:'after', id} | {mode:'gap', path, after}
+// ('after' being '' or '__start__' means "at the head of that chain").
+function moveStep(stepId, dest) {
+  const step = automation.steps[stepId];
+  const origRef = findParentRef(stepId);
+  if (!step || !origRef || step.type === 'condition') return false;
+  const origNext = step.nextStepId || null;
+  setRef(origRef, origNext); // unlink first -- destinations are worked out against the list as it is WITHOUT this step
+  step.nextStepId = null;
+  let destRef = null;
+  if (dest.mode === 'before') destRef = findParentRef(dest.id);
+  else if (dest.mode === 'after') destRef = { type: 'next', id: dest.id };
+  else destRef = (dest.after && dest.after !== '__start__') ? { type: 'next', id: dest.after } : pathRef(dest.path);
+  const badDest = !destRef || destRef.id === stepId || (destRef.type === 'next' && automation.steps[destRef.id].type === 'condition');
+  if (badDest) { step.nextStepId = origNext; setRef(origRef, stepId); return false; } // couldn't place it -- put it back exactly where it was
+  step.nextStepId = getRef(destRef);
+  setRef(destRef, stepId);
+  return true;
+}
+// Dropping a step where it already is would just re-save an identical chain.
+function isNoopDest(dest) {
+  const dragged = automation.steps[draggingStepId];
+  if (dest.mode === 'before') return dragged.nextStepId === dest.id;
+  const after = dest.mode === 'after' ? dest.id : dest.after;
+  if (after && after !== '__start__') return after === draggingStepId || automation.steps[after]?.nextStepId === draggingStepId;
+  return getRef(pathRef(dest.path)) === draggingStepId;
+}
+function dropTargetAt(e) {
+  const card = e.target.closest('.step-card[data-step-id]');
+  if (card) {
+    const id = card.dataset.stepId;
+    if (id === draggingStepId) return null;
+    const r = card.getBoundingClientRect();
+    const mode = e.clientY < r.top + r.height / 2 ? 'before' : 'after';
+    if (mode === 'after' && automation.steps[id].type === 'condition') return null; // nothing chains after a condition -- its branches are below it
+    return { el: card, cls: 'drop-' + mode, dest: { mode, id } };
+  }
+  const wrap = e.target.closest('.chain-arrow-wrap');
+  const insertBtn = wrap && wrap.querySelector('.insert-step-btn');
+  if (insertBtn) return { el: wrap, cls: 'drop-here', dest: { mode: 'gap', path: insertBtn.dataset.path, after: insertBtn.dataset.after } };
+  const addBtn = e.target.closest('.add-step-btn');
+  if (addBtn) return { el: addBtn, cls: 'drop-here', dest: { mode: 'gap', path: addBtn.dataset.path, after: addBtn.dataset.after } };
+  return null;
+}
+function clearDropIndicator() {
+  if (dropTarget) dropTarget.el.classList.remove(dropTarget.cls);
+  dropTarget = null;
+}
+function endDrag() {
+  clearDropIndicator();
+  document.querySelectorAll('.step-card.dragging').forEach(el => el.classList.remove('dragging'));
+  draggingStepId = null;
+  if (dragAutoPanRaf) { cancelAnimationFrame(dragAutoPanRaf); dragAutoPanRaf = null; }
+}
+// Native drag-and-drop never scrolls the canvas by itself, and a long chain
+// (this one runs to 60+ steps) doesn't fit on screen -- so pan while the
+// pointer is held near the top/bottom edge of the canvas.
+function dragAutoPanTick() {
+  if (!draggingStepId) { dragAutoPanRaf = null; return; }
+  const r = canvasWrap.getBoundingClientRect();
+  const edge = 80;
+  if (dragPointerX >= r.left && dragPointerX <= r.right) {
+    let dy = 0;
+    if (dragPointerY < r.top + edge) dy = Math.min(20, (r.top + edge - dragPointerY) / 4 + 2);
+    else if (dragPointerY > r.bottom - edge) dy = -Math.min(20, (dragPointerY - (r.bottom - edge)) / 4 + 2);
+    if (dy) { panY += dy; applyTransform(); }
+  }
+  dragAutoPanRaf = requestAnimationFrame(dragAutoPanTick);
+}
+const stepCanvas = document.getElementById('canvas'); // persists across render() (which only swaps its innerHTML), so these listeners are attached once
+stepCanvas.addEventListener('dragstart', (e) => {
+  const card = e.target.closest ? e.target.closest('.step-card[draggable="true"]') : null;
+  if (!card) return;
+  draggingStepId = card.dataset.stepId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', draggingStepId);
+  setTimeout(() => card.classList.add('dragging'), 0); // after the browser has snapshotted the drag image, or the ghost would be faded too
+  if (!dragAutoPanRaf) dragAutoPanRaf = requestAnimationFrame(dragAutoPanTick);
+});
+document.addEventListener('dragover', (e) => { dragPointerX = e.clientX; dragPointerY = e.clientY; }, true);
+stepCanvas.addEventListener('dragover', (e) => {
+  if (!draggingStepId) return;
+  const t = dropTargetAt(e);
+  if (!t || isNoopDest(t.dest)) { clearDropIndicator(); return; } // no preventDefault => the browser shows "can't drop here"
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if (!dropTarget || dropTarget.el !== t.el || dropTarget.cls !== t.cls) { clearDropIndicator(); t.el.classList.add(t.cls); }
+  dropTarget = t;
+});
+stepCanvas.addEventListener('dragleave', (e) => { if (!stepCanvas.contains(e.relatedTarget)) clearDropIndicator(); });
+stepCanvas.addEventListener('drop', (e) => {
+  if (!draggingStepId || !dropTarget) return;
+  e.preventDefault();
+  const id = draggingStepId, dest = dropTarget.dest;
+  endDrag();
+  if (moveStep(id, dest)) {
+    render(); saveDebounced();
+    showToast('Step moved');
+  }
+});
+document.addEventListener('dragend', endDrag);
 
 // ── Generic (non-email) step config ─────────────────────────────────────
 function openStepConfigModal(step, isNew) {
