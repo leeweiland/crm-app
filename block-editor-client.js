@@ -74,21 +74,185 @@ window.BlockEditor = (function () {
     return `<div style="background:${t.background};padding:${t.bodyPadding}px 0;font-family:${t.fontFamily};font-size:${t.fontSize}px;line-height:${t.lineHeight};color:${t.textColor}"><div style="max-width:${t.maxWidth}px;margin:0 auto;background:#ffffff">${body}</div></div>`;
   }
 
-  // A native <input type="color"> opens the OS's own picker, which no page
-  // can control the internal layout of -- on most platforms that buries hex
-  // entry behind RGB/HSL tabs. This pairs a plain text field (hex, typed or
-  // pasted directly -- the primary way to set a color) with a small native
-  // swatch alongside it (still there for picking visually), synced both ways.
+  // ── Hex-first color picker ─────────────────────────────────────────────
+  // A native <input type="color"> opens the browser's own picker, which no
+  // page can control the layout of -- Chrome's always opens on RGB, burying
+  // hex behind a format toggle. So clicking a swatch opens this instead: a hex
+  // box first (focused, ready to type or paste), then a saturation/brightness
+  // square and hue bar, plus an eyedropper where the browser has one. The
+  // native <input type="color"> stays in the DOM as the value store/event
+  // source (it also draws the swatch), so everything that reads or sets
+  // swatch.value keeps working untouched.
+  const EYE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>';
+  function normalizeHex(str) {
+    let s = String(str || '').trim().toLowerCase();
+    if (!s) return null;
+    if (s[0] !== '#') s = '#' + s;
+    if (/^#[0-9a-f]{3}$/.test(s)) s = '#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3];
+    return /^#[0-9a-f]{6}$/.test(s) ? s : null;
+  }
+  function hexToHsv(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+    let h = 0;
+    if (d) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    return [h, max ? d / max : 0, max];
+  }
+  function hsvToHex(h, s, v) {
+    const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return '#' + [f(5), f(3), f(1)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+  }
+
+  let colorPicker = null; // { swatch, close(applyPending) } for the one picker that can be open at a time
+  function closeColorPicker(applyPending) { if (colorPicker) colorPicker.close(applyPending); }
+
+  // restoreSelection: for the text-color swatch, whose result is applied with
+  // document.execCommand -- that acts on the editor's selection, which moves
+  // when the hex box takes focus, so the selection is snapshotted on open and
+  // put back right before each apply. Off for every other swatch: putting the
+  // editor selection back there would fire selectionchange and overwrite
+  // whatever was just typed into the Link URL field.
+  function openColorPicker(swatch, restoreSelection) {
+    closeColorPicker(false);
+    let hex = normalizeHex(swatch.value) || '#000000';
+    let [h, s, v] = hexToHsv(hex);
+    const editableOf = (node) => { const el = node && (node.nodeType === 1 ? node : node.parentElement); return el ? el.closest('[contenteditable="true"]') : null; };
+    const grabRange = () => { const sel = window.getSelection(); return restoreSelection && sel.rangeCount && editableOf(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null; };
+    let snap = grabRange();
+    let pending = null;     // a typed hex that hasn't been applied yet
+    let lastApplied = null;
+
+    const pop = document.createElement('div');
+    pop.className = 'be-cp';
+    pop.innerHTML = `
+      <div class="be-cp-hexrow">
+        <input type="text" class="be-cp-hex" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Hex color" placeholder="#000000"/>
+        ${window.EyeDropper ? `<button type="button" class="be-cp-eye" title="Pick a color from the screen">${EYE_ICON}</button>` : ''}
+      </div>
+      <div class="be-cp-sv"><div class="be-cp-knob"></div></div>
+      <div class="be-cp-hue"><div class="be-cp-knob"></div></div>`;
+    document.body.appendChild(pop);
+    const hexInput = pop.querySelector('.be-cp-hex');
+    const sv = pop.querySelector('.be-cp-sv'), svKnob = sv.querySelector('.be-cp-knob');
+    const hue = pop.querySelector('.be-cp-hue'), hueKnob = hue.querySelector('.be-cp-knob');
+
+    // leaveHexBox: the hex box's own typing handler passes true so repainting
+    // doesn't rewrite (and re-format) what the user is in the middle of typing;
+    // every other repaint (dragging, eyedropper, first open) refreshes it.
+    function paint(shownHex, leaveHexBox) {
+      hex = shownHex || hsvToHex(h, s, v);
+      sv.style.background = `linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,hsl(${h},100%,50%))`;
+      svKnob.style.left = (s * 100) + '%'; svKnob.style.top = ((1 - v) * 100) + '%'; svKnob.style.background = hex;
+      hueKnob.style.left = (h / 360 * 100) + '%'; hueKnob.style.background = `hsl(${h},100%,50%)`;
+      if (!leaveHexBox) hexInput.value = hex;
+    }
+    function setFromHex(nh) {
+      const [nh_h, nh_s, nh_v] = hexToHsv(nh);
+      if (nh_s > 0 && nh_v > 0) h = nh_h; // a gray/black has no hue of its own -- keep the current one so the hue bar doesn't jump to red
+      s = nh_s; v = nh_v;
+    }
+    function applyColor(value) {
+      if (snap) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(snap); }
+      swatch.value = value;
+      swatch.dispatchEvent(new Event('input', { bubbles: true }));
+      snap = grabRange() || snap; // execCommand may have rewritten the DOM under the old range
+      pending = null;
+      lastApplied = value;
+    }
+
+    // Square/bar drags update the picker live and apply once on release --
+    // applying on every pointermove would fire execCommand hundreds of times
+    // per drag for the text-color swatch.
+    function dragOn(el, onPos) {
+      const pos = (e) => { const r = el.getBoundingClientRect(); onPos(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))); paint(); };
+      el.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        el.setPointerCapture(e.pointerId);
+        pos(e);
+        const up = () => { el.removeEventListener('pointermove', pos); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); applyColor(hex); };
+        el.addEventListener('pointermove', pos); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+      });
+    }
+    dragOn(sv, (x, y) => { s = x; v = 1 - y; });
+    dragOn(hue, (x) => { h = x * 360; });
+
+    hexInput.addEventListener('input', () => {
+      const nh = normalizeHex(hexInput.value);
+      if (nh) { pending = nh; setFromHex(nh); paint(nh, true); }
+    });
+    // Typed hex applies on Enter or when the picker closes, not per keystroke:
+    // applying restores the editor selection, which pulls focus out of this
+    // box mid-typing and would send the next Backspace into the email text.
+    hexInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      close(true);
+    });
+    const eye = pop.querySelector('.be-cp-eye');
+    if (eye) eye.addEventListener('click', async () => {
+      try {
+        const nh = normalizeHex((await new EyeDropper().open()).sRGBHex);
+        if (nh) { setFromHex(nh); paint(nh); applyColor(nh); }
+      } catch { /* picking was cancelled */ }
+    });
+    // Keep the editor's focus/selection for every pointer interaction except
+    // clicking into the hex box itself.
+    pop.addEventListener('mousedown', (e) => { if (e.target !== hexInput) e.preventDefault(); });
+
+    const onDocDown = (e) => { if (!pop.contains(e.target) && e.target !== swatch) close(true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(false); } };
+    const onScroll = (e) => { if (!pop.contains(e.target)) close(true); };
+    document.addEventListener('mousedown', onDocDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    function close(applyPending) {
+      if (applyPending && pending && pending !== lastApplied) applyColor(pending);
+      pop.remove();
+      document.removeEventListener('mousedown', onDocDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+      colorPicker = null;
+    }
+    colorPicker = { swatch, close };
+
+    paint(hex);
+    const rect = swatch.getBoundingClientRect();
+    pop.style.left = Math.min(Math.max(8, rect.left), window.innerWidth - pop.offsetWidth - 8) + 'px';
+    let top = rect.bottom + 6;
+    if (top + pop.offsetHeight > window.innerHeight - 8) top = Math.max(8, rect.top - pop.offsetHeight - 6);
+    pop.style.top = top + 'px';
+    hexInput.focus();
+    hexInput.select();
+  }
+
+  // Pairs a plain hex text field (typed or pasted -- the primary way to set a
+  // color) with the swatch that opens the picker above, synced both ways.
   function hexColorFieldHtml(id, value) {
     const swatchVal = /^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#000000';
     return `<span class="be-hex-color"><input type="text" class="pra-input" id="${id}" placeholder="#000000" value="${value || ''}" maxlength="7"/><input type="color" id="${id}Swatch" tabindex="-1" value="${swatchVal}"/></span>`;
   }
-  function wireHexColorField(scope, id, onChange) {
+  function wireHexColorField(scope, id, onChange, opts) {
     const text = scope.querySelector('#' + id);
     const swatch = scope.querySelector('#' + id + 'Swatch');
     const commit = (v) => { if (/^#[0-9a-fA-F]{6}$/i.test(v)) { swatch.value = v; onChange(v); } };
     text.addEventListener('input', () => commit(text.value.trim()));
     swatch.addEventListener('input', () => { text.value = swatch.value; onChange(swatch.value); });
+    // mousedown is blocked so clicking the swatch doesn't pull focus/selection
+    // out of the editor; click is blocked so the browser's own picker never opens.
+    swatch.addEventListener('mousedown', (e) => e.preventDefault());
+    swatch.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (colorPicker && colorPicker.swatch === swatch) closeColorPicker(true);
+      else openColorPicker(swatch, !!(opts && opts.restoreSelection));
+    });
     return text;
   }
 
@@ -617,7 +781,7 @@ window.BlockEditor = (function () {
     toolbar.querySelectorAll('[data-cmd]').forEach(btn => {
       btn.addEventListener('click', () => { document.execCommand(btn.dataset.cmd, false, null); syncSelectedText(); });
     });
-    wireHexColorField(toolbar, 'beColor', (v) => { document.execCommand('foreColor', false, v); syncSelectedText(); });
+    wireHexColorField(toolbar, 'beColor', (v) => { document.execCommand('foreColor', false, v); syncSelectedText(); }, { restoreSelection: true });
     toolbar.querySelector('#beFontSize').addEventListener('change', (e) => {
       const px = e.target.value;
       if (!px) return;

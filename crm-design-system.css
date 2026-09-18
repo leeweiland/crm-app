@@ -401,7 +401,19 @@ body { margin: 0; }
    visually; the two stay in sync either way. */
 .be-hex-color { display: inline-flex; align-items: center; gap: 4px; }
 .be-hex-color input[type="text"] { width: 76px; padding: 3px 6px; font-size: .78rem; }
-.be-hex-color input[type="color"] { width: 22px; height: 22px; padding: 1px; flex-shrink: 0; }
+.be-hex-color input[type="color"] { width: 22px; height: 22px; padding: 1px; flex-shrink: 0; cursor: pointer; }
+/* Hex-first color picker popover (openColorPicker in block-editor-client.js)
+   -- replaces the browser's own picker, which always opens on RGB. */
+.be-cp { position: fixed; z-index: 2000; width: 236px; box-sizing: border-box; padding: 10px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.55); user-select: none; }
+.be-cp-hexrow { display: flex; gap: 6px; margin-bottom: 8px; }
+.be-cp-hex { flex: 1; min-width: 0; background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 6px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9rem; user-select: text; }
+.be-cp-hex:focus { outline: none; border-color: var(--pra-blue); }
+.be-cp-eye { display: flex; align-items: center; justify-content: center; width: 32px; background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; cursor: pointer; padding: 0; }
+.be-cp-eye:hover { border-color: var(--pra-blue); }
+.be-cp-sv { position: relative; height: 130px; border-radius: 5px; cursor: crosshair; touch-action: none; }
+.be-cp-hue { position: relative; height: 14px; margin-top: 10px; border-radius: 7px; cursor: pointer; touch-action: none; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.be-cp-knob { position: absolute; width: 14px; height: 14px; box-sizing: border-box; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,0.6); transform: translate(-50%, -50%); pointer-events: none; }
+.be-cp-hue .be-cp-knob { top: 50%; }
 /* Keeps the edited text visibly highlighted while the Link popover is open
    -- the browser's native selection highlight disappears once focus moves
    to the popover's own URL input, so this paints an independent highlight
@@ -409,8 +421,12 @@ body { margin: 0; }
    block-editor-client.js). No-op in a browser without Custom Highlight API
    support -- CSS.highlights.set() there is simply never called. */
 ::highlight(be-link-edit) { background-color: rgba(0,155,255,0.35); }
-.be-link-popover { display: inline-flex; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
+/* Full toolbar width on its own row under the formatting buttons (basis 100%
+   can't share a row with anything), with the URL field taking all the space
+   the color field and buttons leave -- a long link used to be cut off at 180px. */
+.be-link-popover { display: flex; flex: 1 1 100%; box-sizing: border-box; align-items: center; gap: 6px; background: var(--pra-panel); border: 1px solid var(--pra-blue); border-radius: 6px; padding: 3px 5px; }
 .be-link-popover input { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 4px; padding: 3px 6px; font-size: .78rem; width: 180px; }
+.be-link-popover #beLinkUrl { flex: 1 1 auto; width: auto; min-width: 0; }
 .be-canvas-toprow { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 6px; }
 /* Outer themed strip + inner white content card -- mirrors
    block_editor_shared.js's actual send-time render exactly, so picking a
