@@ -326,17 +326,21 @@ body { margin: 0; }
   text-align: left; font-family: var(--font-secondary); font-size: .66rem;
   letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim);
   padding: 10px 12px; border-bottom: 1px solid var(--pra-border);
-  position: relative; /* anchors .col-resize-handle */
 }
 .data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
 .data-table tr.clickable { cursor: pointer; }
 
 /* ── Resizable columns (column-resize.js) ──
-   A thin drag strip on the right edge of each <th data-col-key>. Kept
-   separate from the existing col-drag-handle (contacts.html's drag-to-
-   REORDER icon) -- this one changes width, not position. */
-.col-resize-handle { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; touch-action: none; user-select: none; z-index: 1; }
+   A thin drag strip at each column boundary, spanning the table's full
+   height (not just the header cell) -- top:0;bottom:0 against the table
+   itself (position:relative, set by column-resize.js) so it always
+   stretches to match however tall the table currently is, with no JS
+   height tracking as rows are added/removed. `left` is computed in JS
+   from the header cell's own right edge. Kept separate from the existing
+   col-drag-handle (contacts.html's drag-to-REORDER icon) -- this one
+   changes width, not position. */
+.col-resize-handle { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; touch-action: none; user-select: none; z-index: 2; }
 .col-resize-handle:hover, .col-resize-handle.resizing { background: var(--pra-blue); opacity: .5; }
 
 /* ── Modal ──
