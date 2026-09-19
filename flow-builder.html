@@ -302,6 +302,26 @@
 <script>
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+// Clicking the dimmed area around the step editor used to just hide it
+// (crm-nav.js's generic click-outside handler) -- discarding everything typed
+// since it opened, and never attaching a brand-new step, with no warning.
+// Typing "ONLINE" into Type and clicking off the panel looked like the value
+// "didn't stick". Now, if anything in the panel was edited, clicking outside
+// commits exactly like Save; an untouched panel still just closes. Cancel
+// stays the explicit way to throw an edit away. stopPropagation keeps the
+// generic handler from also acting; a press that started inside the panel (a
+// text-selection drag that ended outside) is ignored.
+let stepConfigDirty = false, stepConfigDownOnBackdrop = false;
+document.getElementById('stepConfigBody').addEventListener('input', () => { stepConfigDirty = true; });
+document.getElementById('stepConfigBody').addEventListener('change', () => { stepConfigDirty = true; });
+document.getElementById('stepConfigModal').addEventListener('mousedown', (e) => { stepConfigDownOnBackdrop = e.target.id === 'stepConfigModal'; });
+document.getElementById('stepConfigModal').addEventListener('click', (e) => {
+  if (e.target.id !== 'stepConfigModal') return;
+  e.stopPropagation();
+  if (!stepConfigDownOnBackdrop) return;
+  if (stepConfigDirty) document.getElementById('saveStepBtn').click();
+  else closeModal('stepConfigModal');
+});
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 
@@ -891,6 +911,7 @@ function acCustomFieldsGridHtml(customFields) {
 
 function openStepConfigModal(step, isNew) {
   editingStepId = step.id;
+  stepConfigDirty = false;
   document.getElementById('stepConfigTitle').textContent = TYPE_LABELS[step.type];
   const body = document.getElementById('stepConfigBody');
   // Shared across the google_sheet branch's helper functions and its save
