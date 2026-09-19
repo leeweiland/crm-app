@@ -338,11 +338,25 @@ function endDateMsFromContact(contact, fieldId = endDateFieldId()) {
 export function backfillRenewalDates(contacts) {
   if (!sqliteInboxAvailable()) return 0;
   const fieldId = endDateFieldId();
-  const upd = db.prepare("UPDATE conversations SET renew_by_ms = :ms WHERE contact_id = :id AND renew_by_ms IS NOT :ms");
+  // ONE pass to load contact_id -> rows, then update by primary key ONLY where the value differs.
+  // The previous "UPDATE ... WHERE contact_id = :id" per contact scanned the whole ~175k-row
+  // table each time (no index on contact_id; contacts with no conversation cost a FULL scan):
+  // with ~1,100 end dates that added ~2 minutes to every boot (2026-09-20 outages).
+  const rowsByContact = new Map();
+  for (const r of db.prepare("SELECT key, contact_id, renew_by_ms FROM conversations WHERE contact_id IS NOT NULL").all()) {
+    (rowsByContact.get(r.contact_id) || rowsByContact.set(r.contact_id, []).get(r.contact_id)).push(r);
+  }
+  const upd = db.prepare("UPDATE conversations SET renew_by_ms = :ms WHERE key = :key");
   let n = 0;
   db.exec("BEGIN");
-  try { for (const c of contacts) { const ms = endDateMsFromContact(c, fieldId); if (ms != null) { upd.run({ ms, id: c.id }); n++; } } db.exec("COMMIT"); }
-  catch (e) { db.exec("ROLLBACK"); throw e; }
+  try {
+    for (const c of contacts) {
+      const ms = endDateMsFromContact(c, fieldId);
+      if (ms == null) continue;
+      for (const row of rowsByContact.get(c.id) || []) if (row.renew_by_ms !== ms) { upd.run({ ms, key: row.key }); n++; }
+    }
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
   return n;
 }
 

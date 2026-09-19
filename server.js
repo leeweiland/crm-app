@@ -41,7 +41,6 @@ import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 import { seedKickoffForms } from "./seed_kickoff_forms.js";
 import { seedKickoffFlows } from "./seed_kickoff_flows.js";
 import { syncKickoffFlows } from "./sync_kickoff_flows.js";
-import { syncKickoffDates } from "./sync_kickoff_dates.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Explicit path, not dotenv's default (process.cwd()) -- the preview
@@ -209,14 +208,6 @@ createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": mime });
   res.end(readFileSync(filePath));
 }).listen(PORT, () => console.log(`crm-app running on port ${PORT}`));
-
-// One-time START/END DATE fill from the kickoff sheets (see sync_kickoff_dates.js). Production only
-// (the volume path is what marks it), and delayed so an old container overlapping this deploy is gone first.
-// DISABLED 2026-09-20: streaming ~12 batches through the 181MB contacts file blocked the event loop and made the CRM
-// unresponsive while it ran. Needs a non-blocking approach before it's re-enabled.
-if (false && process.env.RAILWAY_VOLUME_MOUNT_PATH) {
-  setTimeout(() => syncKickoffDates().catch(e => console.error("[kickoff-dates] failed (non-fatal, retries next boot):", e.message)), 120000);
-}
 
 // BACKGROUND_WORKER (2026-09-16, off by default): runs the whole scheduler
 // tick and all Twilio/SES webhook processing on a separate OS thread
