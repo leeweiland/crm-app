@@ -2,7 +2,7 @@ import { readJson } from "./auth_backend.js";
 import { CAMPAIGNS_FILE, sendCampaignNow } from "./campaigns_backend.js";
 import { advanceDueEnrollments } from "./automations_backend.js";
 import { advanceDueWorkflowEnrollments } from "./workflows_backend.js";
-import { advanceDueFlowRuns, recoverStaleFlowRuns } from "./flows_backend.js";
+import { advanceDueFlowRuns, recoverStaleFlowRuns, pollYoutubeFlows } from "./flows_backend.js";
 import { runScheduledDuplicateScan } from "./duplicates_backend.js";
 import { syncWritingCacheIfDue } from "./ai_agents_backend.js";
 import { processAiActiveBatches } from "./ai_active_backend.js";
@@ -61,6 +61,7 @@ async function tick() {
     await timedPhase("advanceDueWorkflowEnrollments", advanceDueWorkflowEnrollments);
     await timedPhase("advanceDueFlowRuns", advanceDueFlowRuns);
     await timedPhase("recoverStaleFlowRuns", recoverStaleFlowRuns);
+    await timedPhase("pollYoutubeFlows", pollYoutubeFlows);
     await timedPhase("runScheduledDuplicateScan", async () => runScheduledDuplicateScan());
     await timedPhase("syncWritingCacheIfDue", syncWritingCacheIfDue);
     await timedPhase("processAiActiveBatches", processAiActiveBatches);

@@ -10,16 +10,18 @@ import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetch
 import { claimByIdentity, getAdCaptureByIdentity } from "./tracking_backend.js";
 import { normalizePhoneForCapture } from "./phone_util.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
+import { fetchChannelFeed, addVideoToPlaylist } from "./youtube_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
 const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migrated below
 
-export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created"];
+export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created", "youtube_new_video"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
+  "youtube_add_to_playlist",
 ];
 
 // send_email's Body is still just a flat string (not the block editor's
@@ -473,6 +475,33 @@ async function advanceFlowRun(run, flow) {
         } catch (e) { console.error("[flows] add_update_contact_ac failed", e.message); }
       }
       run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "youtube_add_to_playlist") {
+      const cfg = step.config || {};
+      const videoId = resolveTemplate(cfg.videoId || "", ctx).trim();
+      if (cfg.playlistId && videoId) {
+        // A video processed seconds ago can briefly 404/5xx on playlistItems,
+        // so a few spaced attempts (worst case ~50s, well under STALE_RUN_MS)
+        // before giving up; the last error lands on this step's history entry.
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const r = await withTimeout(addVideoToPlaylist(cfg.playlistId, videoId), 20000, "youtube_add_to_playlist");
+            console.log(`[flows] youtube_add_to_playlist ${videoId} -> ${cfg.playlistId}: ${r.alreadyThere ? "already there" : "added"}`);
+            lastErr = null;
+            break;
+          } catch (e) {
+            lastErr = e;
+            if (attempt < 3) await new Promise(r => setTimeout(r, 10000));
+          }
+        }
+        if (lastErr) {
+          console.error("[flows] youtube_add_to_playlist failed", videoId, lastErr.message);
+          run.history[run.history.length - 1].error = lastErr.message;
+        }
+      } else {
+        run.history[run.history.length - 1].error = "Missing playlist or video ID";
+      }
+      run.currentStepId = step.nextStepId || null;
     } else {
       run.currentStepId = step.nextStepId || null;
     }
@@ -521,6 +550,56 @@ export function fireFlowTrigger(type, { contactId, formId, eventTypeId, payload 
     if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
     if (matches) startFlowRun(flow, contactId, payload || {});
   }
+}
+
+// ── YouTube "new video" trigger. Called by scheduler.js every tick; each
+// active youtube_new_video flow is only actually checked every ~2 minutes.
+// The FIRST check of a flow just records what's already on the channel (no
+// backfill -- only uploads after activation fire), and a flow that goes
+// inactive drops its record so re-activating later starts fresh the same way,
+// instead of firing for everything uploaded while it was off. Each new video
+// is marked seen BEFORE its run starts, so a crash can only skip one, never
+// fire it twice. Contactless run: payload = {videoId, title, url, ...}.
+const YT_POLL_STATE_FILE = "crm_youtube_poll_state.json";
+const YT_POLL_EVERY_MS = 2 * 60 * 1000;
+export async function pollYoutubeFlows() {
+  const flows = readJson(FLOWS_FILE, []).filter(f => f.active && f.trigger?.type === "youtube_new_video" && f.trigger.config?.channelId);
+  const state = readJson(YT_POLL_STATE_FILE, {}) || {};
+  let dirty = false;
+  for (const id of Object.keys(state)) {
+    if (!flows.some(f => f.id === id)) { delete state[id]; dirty = true; }
+  }
+  for (const flow of flows) {
+    const st = state[flow.id] || (state[flow.id] = { seen: [], seededAt: null, lastPollAt: 0, recent: [], lastError: null });
+    if (Date.now() - (st.lastPollAt || 0) < YT_POLL_EVERY_MS) continue;
+    st.lastPollAt = Date.now();
+    dirty = true;
+    try {
+      const channelId = flow.trigger.config.channelId;
+      const { channelTitle, videos } = await fetchChannelFeed(channelId);
+      st.lastError = null;
+      const asPayload = (v) => ({ videoId: v.videoId, title: v.title, url: `https://www.youtube.com/watch?v=${v.videoId}`, publishedAt: v.publishedAt, channelId, channelTitle });
+      if (!st.seededAt) {
+        st.seen = videos.map(v => v.videoId);
+        st.seededAt = new Date().toISOString();
+        st.recent = videos.slice(0, 5).map(asPayload);
+        continue;
+      }
+      const fresh = videos.filter(v => !st.seen.includes(v.videoId)).reverse(); // oldest first
+      for (const v of fresh) {
+        st.seen.push(v.videoId);
+        st.recent = [asPayload(v), ...st.recent].slice(0, 5);
+        writeJson(YT_POLL_STATE_FILE, state);
+        console.log(`[flows] new YouTube video ${v.videoId} ("${v.title}") -> flow "${flow.name}"`);
+        startFlowRun(flow, null, asPayload(v));
+      }
+      st.seen = st.seen.slice(-200);
+    } catch (e) {
+      st.lastError = e.message;
+      console.error(`[flows] YouTube poll failed for flow "${flow.name}":`, e.message);
+    }
+  }
+  if (dirty) writeJson(YT_POLL_STATE_FILE, state);
 }
 
 // Called by scheduler.js every tick -- resumes any run whose delay step has expired.
@@ -917,6 +996,12 @@ export async function handleFlowsRequest(req, res, url) {
         ...(b.calendarTimezone ? { "Calendar Time": new Date(b.startAt).toLocaleString("en-US", { timeZone: b.calendarTimezone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) } : {}),
       }));
       return sendJson(res, 200, { samples, fieldLabels });
+    }
+    if (type === "youtube_new_video") {
+      // Real recent uploads once the poller has seen the channel; before that,
+      // one blank row so {{payload.videoId}} etc. are still pickable tokens.
+      const recent = readJson(YT_POLL_STATE_FILE, {})?.[flow.id]?.recent || [];
+      return sendJson(res, 200, { samples: recent.length ? recent : [{ videoId: "", title: "", url: "", publishedAt: "", channelId: "", channelTitle: "" }] });
     }
     return sendJson(res, 200, { samples: [] });
   }

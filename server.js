@@ -30,6 +30,7 @@ import { handleBehavioralTriggersRequest } from "./behavioral_triggers_backend.j
 import { handleConversionsRequest } from "./conversions_backend.js";
 import { handleMeetingsRequest } from "./meetings_backend.js";
 import { handleGmailRequest } from "./gmail_backend.js";
+import { handleYoutubeRequest } from "./youtube_backend.js";
 import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
@@ -188,6 +189,7 @@ createServer(async (req, res) => {
   if (await handleConversionsRequest(req, res, url)) return;
   if (await handleMeetingsRequest(req, res, url)) return;
   if (await handleGmailRequest(req, res, url)) return;
+  if (await handleYoutubeRequest(req, res, url)) return;
   if (await handleAppSummaryRequest(req, res, url)) return;
 
   // Static file serving — this app is its own Railway service (unlike

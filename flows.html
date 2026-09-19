@@ -45,7 +45,7 @@
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
-const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', booking_created: 'Booking created' };
+const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', booking_created: 'Booking created', youtube_new_video: 'New YouTube video' };
 
 let flowsCache = [];
 let flowsSort = { key: 'updatedAt', dir: 'desc' };

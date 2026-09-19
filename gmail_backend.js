@@ -8,6 +8,7 @@ import { resolveFooterHtml, absolutizeUploadUrls } from "./email_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 import { renderEmailBody } from "./block_editor_shared.js";
 import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
+import { handleYoutubeCallback } from "./youtube_backend.js";
 
 // Per-user Gmail connection -- same idea as Close's "just add it as a
 // user", not a domain-level SES/MX setup: each staff member connects
@@ -209,6 +210,9 @@ export async function handleGmailRequest(req, res, url) {
   }
 
   if (p === REDIRECT_PATH && req.method === "GET") {
+    // The YouTube connect (youtube_backend.js) reuses this already-registered
+    // redirect URI and marks its own states "yt:".
+    if ((url.searchParams.get("state") || "").startsWith("yt:")) { await handleYoutubeCallback(req, res, url); return true; }
     const code = url.searchParams.get("code");
     const userId = url.searchParams.get("state");
     const users = readJson(USERS_FILE, []);

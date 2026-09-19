@@ -203,6 +203,7 @@
         <option value="webhook">A webhook is received (Framer, etc.)</option>
         <option value="form_submitted">Form is submitted</option>
         <option value="booking_created">Booking is created</option>
+        <option value="youtube_new_video">A new video is uploaded to a YouTube channel</option>
       </select>
     </div>
     <div class="field" id="triggerTargetField" style="display:none">
@@ -221,6 +222,12 @@
         <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="pullSampleBtn">&#8635; Pull Sample Data</button>
         <div class="pra-muted" style="font-size:.76rem;margin-top:6px">Submit the real Framer form (or send a test hit) once, then click this to see what actually arrives -- use those field names as <code>{{payload.Field Name}}</code> tokens in an Add/Update Contact step (add one right after this trigger) and any other step.</div>
         <div id="sampleDataResult"></div>
+      </div>
+    </div>
+    <div id="youtubeConfigFields" style="display:none">
+      <div class="field"><label class="pra-label">YouTube channel ID</label>
+        <input class="pra-input" id="youtubeChannelId" placeholder="UC..."/>
+        <div class="pra-muted" style="font-size:.76rem;margin-top:6px">Checked about every 2 minutes. Only public videos uploaded after this flow is switched on start a run -- existing videos are never backfilled. Each run's data: <code>{{payload.videoId}}</code>, <code>{{payload.title}}</code>, <code>{{payload.url}}</code>, <code>{{payload.publishedAt}}</code>.</div>
       </div>
     </div>
     <div id="nonWebhookSampleFields" style="display:none">
@@ -255,6 +262,7 @@
       <button data-type="send_conversion_event"><svg viewBox="0 0 24 24" fill="none"><path d="M4 19V10M9.5 19V5M15 19v-7M20.5 19V3" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><circle cx="20.5" cy="3" r="1.6" fill="#009bff"/></svg>Send Conversion Event</button>
       <button data-type="add_to_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.6"/><path d="M8 12h8M12 8v8" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add to ActiveCampaign</button>
       <button data-type="add_update_contact_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="10" cy="8.5" r="3.5" stroke="#fff" stroke-width="1.6"/><path d="M3.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="17.5" cy="8" r="4" stroke="#009bff" stroke-width="1.6"/><path d="M17.5 6.3v3.4M15.8 8h3.4" stroke="#009bff" stroke-width="1.4" stroke-linecap="round"/></svg>Add/Update Contact (ActiveCampaign)</button>
+      <button data-type="youtube_add_to_playlist"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="3.5" stroke="#fff" stroke-width="1.6"/><path d="M10.2 9.6v4.8l4.2-2.4-4.2-2.4Z" fill="#009bff"/></svg>Add Video to YouTube Playlist</button>
     </div>
     <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('typePickerModal')">Cancel</button>
   </div>
@@ -371,9 +379,10 @@ function stepSummary(step) {
     return parts.length ? parts.join(', ') : 'Add to ActiveCampaign';
   }
   if (step.type === 'add_update_contact_ac') return `Set ${['first', 'last', 'email', 'phone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} AC field(s)`;
+  if (step.type === 'youtube_add_to_playlist') return `Add ${escapeHtml(c.videoId || '—')} to playlist "${escapeHtml(c.playlistTitle || c.playlistId || '—')}"`;
   return '';
 }
-const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)' };
+const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist' };
 
 function stepCardHtml(stepId, isLast) {
   const step = flow.steps[stepId];
@@ -421,7 +430,7 @@ function renderChainHtml(startId, path) {
   return html;
 }
 
-const TRIGGER_LABELS = { webhook: 'A webhook is received', form_submitted: 'Form is submitted', booking_created: 'Booking is created' };
+const TRIGGER_LABELS = { webhook: 'A webhook is received', form_submitted: 'Form is submitted', booking_created: 'Booking is created', youtube_new_video: 'A new video is uploaded to a YouTube channel' };
 function render() {
   document.getElementById('flowName').value = flow.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (flow.active ? ' on' : '');
@@ -432,6 +441,7 @@ function render() {
   let trigLabel = TRIGGER_LABELS[trig.type] || '';
   if (trig.type === 'form_submitted') trigLabel = trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted';
   if (trig.type === 'booking_created') trigLabel = trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created';
+  if (trig.type === 'youtube_new_video') trigLabel = trig.config?.channelId ? `New video on YouTube channel ${escapeHtml(trig.config.channelId)}` : 'A new video is uploaded to a YouTube channel (pick the channel)';
   canvas.innerHTML = `
     <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
       <div class="pra-label">Start flow when</div>
@@ -659,6 +669,7 @@ function openTriggerModal() {
   updateTriggerFields();
   if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
+  if (trig.type === 'youtube_new_video') document.getElementById('youtubeChannelId').value = trig.config.channelId || '';
   if (trig.type === 'webhook') {
     const token = trig.config?.webhookToken;
     document.getElementById('webhookUrl').value = token ? `${location.origin}/api/webhooks/framer/${token}` : '';
@@ -672,7 +683,8 @@ function updateTriggerFields() {
   const label = document.getElementById('triggerTargetLabel');
   const select = document.getElementById('triggerTarget');
   document.getElementById('webhookConfigFields').style.display = type === 'webhook' ? 'block' : 'none';
-  document.getElementById('nonWebhookSampleFields').style.display = (type === 'form_submitted' || type === 'booking_created') ? 'block' : 'none';
+  document.getElementById('nonWebhookSampleFields').style.display = (type === 'form_submitted' || type === 'booking_created' || type === 'youtube_new_video') ? 'block' : 'none';
+  document.getElementById('youtubeConfigFields').style.display = type === 'youtube_new_video' ? 'block' : 'none';
   if (type === 'form_submitted') {
     field.style.display = 'block'; label.textContent = 'Form (any if left blank)';
     select.innerHTML = '<option value="">Any form</option>' + allForms.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
@@ -688,7 +700,7 @@ document.getElementById('saveTriggerBtn').onclick = async () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
   const oldConfig = flow.trigger?.config || {};
-  let config = type === 'form_submitted' ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : {};
+  let config = type === 'form_submitted' ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : type === 'youtube_new_video' ? { channelId: document.getElementById('youtubeChannelId').value.trim() } : {};
   if (type === 'webhook') {
     config = { webhookToken: flow.trigger?.type === 'webhook' ? oldConfig.webhookToken : undefined };
   }
@@ -811,6 +823,7 @@ function defaultConfig(type) {
   if (type === 'send_conversion_event') return { eventKey: '' };
   if (type === 'add_to_ac') return { acListId: '', acAutomationId: '' };
   if (type === 'add_update_contact_ac') return { first: '', last: '', email: '', phone: '', customFields: {} };
+  if (type === 'youtube_add_to_playlist') return { playlistId: '', playlistTitle: '', videoId: '{{payload.videoId}}' };
   return {};
 }
 
@@ -1178,6 +1191,15 @@ function openStepConfigModal(step, isNew) {
       <div class="pra-label" style="margin:12px 0 6px">ActiveCampaign custom fields (optional)</div>
       ${allAcCustomFields.length ? `<div id="cfgAcCustomFieldRows">${acCustomFieldsGridHtml(c.customFields || {})}</div>` : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields found in ActiveCampaign, or not connected yet.</div>`}
     `;
+  } else if (step.type === 'youtube_add_to_playlist') {
+    const c = step.config;
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Adds a video to a playlist on the connected YouTube channel. If the video is already in that playlist it's left alone, so a re-run never adds it twice.</div>
+      <div id="ytConnStatus" class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Checking YouTube connection…</div>
+      <div class="field"><label class="pra-label">Playlist</label><select class="pra-select" id="cfgYtPlaylist"><option value="${escapeHtml(c.playlistId || '')}">${escapeHtml(c.playlistTitle || c.playlistId || 'Loading playlists…')}</option></select></div>
+      <div class="field"><label class="pra-label">Video ID</label><div class="token-input-wrap">${tokenEditorHtml(c.videoId || '', { placeholder: '{{payload.videoId}}', attrs: 'id="cfgYtVideoId"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+    `;
+    loadYoutubePlaylists(c);
   }
   // Wires the "+" token-insert button next to every free-text input/textarea
   // in whatever step-type body was just rendered -- harmless no-op for a
@@ -1235,11 +1257,38 @@ function openStepConfigModal(step, isNew) {
       });
       step.config.customFields = acCustomFields;
     }
+    else if (step.type === 'youtube_add_to_playlist') {
+      const sel = document.getElementById('cfgYtPlaylist');
+      step.config.playlistId = sel.value;
+      step.config.playlistTitle = sel.value ? (sel.options[sel.selectedIndex]?.textContent || '').replace(/\s*\(\d+ videos?\)$/, '') : '';
+      step.config.videoId = getTokenEditorValue(document.getElementById('cfgYtVideoId')).trim();
+    }
     if (isNew) attachNewStep(step);
     closeModal('stepConfigModal');
     render(); saveDebounced();
   };
   openModal('stepConfigModal');
+}
+// Fills the YouTube step's playlist dropdown from the connected channel and
+// shows connection state, with a Connect/Reconnect link when there isn't one.
+async function loadYoutubePlaylists(c) {
+  const statusEl = document.getElementById('ytConnStatus');
+  const sel = document.getElementById('cfgYtPlaylist');
+  const connectLink = (label) => `<a href="/api/youtube/connect" target="_blank" rel="noopener" style="color:#009bff">${label}</a>`;
+  try {
+    const st = await (await fetch('/api/youtube/status')).json();
+    if (!st.configured) { statusEl.innerHTML = 'Google OAuth isn\'t configured on the server, so YouTube can\'t be connected.'; return; }
+    if (!st.connected) {
+      statusEl.innerHTML = `${st.needsReconnect ? 'The YouTube connection expired.' : 'YouTube isn\'t connected yet.'} ${connectLink(st.needsReconnect ? 'Reconnect YouTube' : 'Connect YouTube')} — sign in as the account that owns the channel, pick that channel if asked, then reopen this step.`;
+      return;
+    }
+    statusEl.innerHTML = `Connected as <b>${escapeHtml(st.channelTitle || st.channelId)}</b> · ${connectLink('switch channel')}`;
+    const d = await (await fetch('/api/youtube/playlists')).json();
+    if (d.error) { statusEl.innerHTML += `<br><span style="color:#ff6b6b">Couldn't load playlists: ${escapeHtml(d.error)}</span>`; return; }
+    const keep = c.playlistId;
+    sel.innerHTML = '<option value="">Choose a playlist…</option>' + d.playlists.map(p => `<option value="${escapeHtml(p.id)}" ${p.id === keep ? 'selected' : ''}>${escapeHtml(p.title)}${p.itemCount != null ? ` (${p.itemCount} video${p.itemCount === 1 ? '' : 's'})` : ''}</option>`).join('');
+    if (keep && !d.playlists.some(p => p.id === keep)) sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(keep)}" selected>${escapeHtml(c.playlistTitle || keep)} (not on the connected channel)</option>`);
+  } catch (e) { statusEl.textContent = 'Could not check the YouTube connection: ' + e.message; }
 }
 function wireSheetColRow(el) {
   const removeBtn = el.querySelector('[data-remove-sheet-col]');
