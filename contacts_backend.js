@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
-import { syncContactFields, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
+import { renewalForContact, syncContactFields, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
@@ -195,7 +195,9 @@ function backfillOrder(items, file) {
 export function getOrderedLists() { return backfillOrder(readJson(LISTS_FILE, []), LISTS_FILE); }
 export function getOrderedSegments() { return backfillOrder(readJson(SEGMENTS_FILE, []), SEGMENTS_FILE); }
 
-function publicContact(c) { return c; } // no sensitive fields to strip yet — placeholder for parity with auth's publicUser
+// No sensitive fields to strip; attaches the (computed, never stored) renewal alert for an ENROLLED
+// student near their END DATE. A shallow copy only when there's an alert, so cached records are never mutated.
+function publicContact(c) { const renewal = renewalForContact(c); return renewal ? { ...c, renewal } : c; }
 
 export function newContactRecord({ type, accountName, first, last, email, phone, status, tags, listIds, customFields, source, ownerId }) {
   return {

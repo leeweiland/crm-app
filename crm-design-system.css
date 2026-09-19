@@ -193,6 +193,14 @@ body { margin: 0; }
    leads a label, separated from it by a thin rule. */
 .contact-time { font-family: var(--font-primary); font-weight: 600; font-size: .74rem; letter-spacing: 0; text-transform: none; color: var(--pra-dim); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: help; }
 .contact-time.ct-lead { margin-right: 8px; padding-right: 8px; border-right: 1px solid var(--pra-border); }
+/* ct-trail = the chip follows a label ("Phone | 4:55 PM EDT"), thin rule on its left. */
+.contact-time.ct-trail { margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--pra-border); }
+/* Renewal alert (ENROLLED student within 2 months orange / 1 month pink of their END DATE) */
+.renew-pill { display: inline-block; padding: 2px 9px; border-radius: 10px; border: 1px solid currentColor; font-family: var(--font-secondary); font-size: .72rem; font-weight: 700; white-space: nowrap; vertical-align: middle; }
+.renew-pill.renew-orange { color: #ff9f1c; background: rgba(255,159,28,.13); }
+.renew-pill.renew-pink { color: #ff4fa3; background: rgba(255,79,163,.13); }
+.renew-text.renew-orange { color: #ff9f1c; font-weight: 700; }
+.renew-text.renew-pink { color: #ff4fa3; font-weight: 700; }
 .pra-tel-link { color: var(--pra-blue); text-decoration: none; }
 .pra-tel-link:hover { text-decoration: underline; }
 .pra-tel-link svg { width: 16px; height: 16px; vertical-align: middle; }

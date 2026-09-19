@@ -60,6 +60,7 @@
               <span id="contactTypeBadge"></span>
               <div class="pra-h1" id="contactName">Loading…</div>
               <span id="contactOwnerField"></span>
+              <span id="contactRenewPill"></span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
               <select class="status-pill-select" id="fStatus"></select>
@@ -81,7 +82,7 @@
             <div class="field"><label class="pra-label">Account / Company</label><input class="pra-input" id="fAccount"/></div>
             <div class="field-row">
               <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="fEmail"/></div>
-              <div class="field"><label class="pra-label"><span id="fPhoneTime"></span>Phone</label>
+              <div class="field"><label class="pra-label">Phone<span id="fPhoneTime"></span></label>
                 <div style="display:flex;gap:6px;align-items:center">
                   <input class="pra-input" id="fPhone"/>
                   <a class="pra-tel-link" id="fPhoneDial" title="Call" style="display:none;flex-shrink:0"><svg viewBox="0 0 24 24" fill="none"><path d="M6.5 3.5h3l1.5 4-2 1.5a11 11 0 0 0 5.5 5.5l1.5-2 4 1.5v3a1.5 1.5 0 0 1-1.6 1.5C11.5 18.2 5.8 12.5 5 5.1A1.5 1.5 0 0 1 6.5 3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></a>
@@ -271,9 +272,9 @@ function renderPhoneDialLink() {
   else { link.removeAttribute('href'); link.style.display = 'none'; }
   renderPhoneLocalTime(contact.phone);
 }
-// The contact's local time, left of the "Phone" label (contact-time.js).
+// The contact's local time, right of the "Phone" label (contact-time.js).
 function renderPhoneLocalTime(phone) {
-  PRAContactTime.mount(document.getElementById('fPhoneTime'), phone, { className: 'ct-lead' });
+  PRAContactTime.mount(document.getElementById('fPhoneTime'), phone, { className: 'ct-trail' });
 }
 // Live while typing, so editing the number updates the time before the
 // field's change event even saves it.
@@ -393,6 +394,9 @@ document.getElementById('deleteBtn').onclick = async () => {
   const ownerFieldEl = document.getElementById('contactOwnerField');
   ownerFieldEl.innerHTML = ownerFieldHtml(contact);
   wireOwnerFields(ownerFieldEl, (_, ownerId) => { contact.ownerId = ownerId; });
+  // "Renew by <end date>" right of the assigned user (server attaches contact.renewal for an ENROLLED student near their END DATE)
+  const rn = contact.renewal;
+  document.getElementById('contactRenewPill').innerHTML = rn ? `<span class="renew-pill renew-${rn.level}" title="Enrolled student -- end date ${rn.endDate}">Renew by ${new Date(...rn.endDate.split('-').map((x, i) => i === 1 ? x - 1 : +x)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>` : '';
   document.getElementById('fFirst').value = contact.first || '';
   document.getElementById('fLast').value = contact.last || '';
   document.getElementById('fAccount').value = contact.accountName || '';

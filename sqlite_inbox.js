@@ -333,6 +333,20 @@ function endDateMsFromContact(contact, fieldId = endDateFieldId()) {
   // the field definition first; the kickoff form also stores the raw answer under its code
   return parseEndDateMs((fieldId && cf[fieldId]) || cf.end_date);
 }
+// The same alert, computed from a full contact record -- attached (never stored) to every contact
+// the API returns (contacts_backend.js's publicContact), so the Contacts table, the contact page,
+// the Inbox contact popup and a chat opened by deep link can all show it without their own maths.
+let _endFieldCache = { at: 0, id: null };
+function endDateFieldIdCached() {
+  if (Date.now() - _endFieldCache.at > 30000) _endFieldCache = { at: Date.now(), id: endDateFieldId() };
+  return _endFieldCache.id;
+}
+export function renewalForContact(contact, win) {
+  if (!contact || contact.status !== "ENROLLED") return null; // cheap early-out: the full list endpoint calls this for every contact
+  const ms = endDateMsFromContact(contact, endDateFieldIdCached());
+  const level = renewalLevel(contact.status, ms, win || renewalWindow());
+  return level ? { level: level === 2 ? "pink" : "orange", endDate: new Date(ms).toISOString().slice(0, 10) } : null;
+}
 // Run at boot -- every contact that already has an end date gets its row
 // stamped without waiting for something to touch that contact.
 export function backfillRenewalDates(contacts) {

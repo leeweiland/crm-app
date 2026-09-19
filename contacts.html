@@ -855,7 +855,11 @@ const BASE_COLUMNS = [
   { key: 'createdAt', label: 'Created', sortable: true, render: c => `<span class="pra-muted">${fmtDate(c.firstSeenAt || c.createdAt)}</span>` },
 ];
 function customFieldColumns() {
-  return allCustomFields.map(f => ({ key: 'customFields.' + f.id, label: f.label, sortable: false, render: c => escapeHtml(c.customFields?.[f.id] || '') }));
+  return allCustomFields.map(f => ({ key: 'customFields.' + f.id, label: f.label, sortable: false, render: c => {
+    const text = escapeHtml(c.customFields?.[f.id] || '');
+    // END DATE goes orange (within 2 months) / pink (within 1 month) for an ENROLLED student -- same rule as the Inbox alerts (server sets c.renewal)
+    return f.label.trim().toUpperCase() === 'END DATE' && c.renewal && text ? `<span class="renew-text renew-${c.renewal.level}" title="Renew by ${escapeHtml(c.renewal.endDate)}">${text}</span>` : text;
+  } }));
 }
 function allColumnDefs() { return [...BASE_COLUMNS, ...customFieldColumns()]; }
 // Frozen columns (First/Last) always lead, in their fixed order -- their
