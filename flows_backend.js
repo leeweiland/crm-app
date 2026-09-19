@@ -825,6 +825,11 @@ export async function handleFlowsRequest(req, res, url) {
       // template's {{payload.<old label>}} token still finds a match here
       // too, not just at actual send time.
       const fieldLabels = {};
+      // From the form's own definition (not just the answered fields of the
+      // last few responses), so the picker can always tell a code from its
+      // label-keyed duplicate -- including on a form with no submissions yet.
+      const configuredForm = formId ? forms.find(f => f.id === formId) : null;
+      (configuredForm?.fields || []).forEach(f => { if (f.label && f.type !== "headline" && f.type !== "statement" && f.type !== "page_break") fieldLabels[f.code || f.label || f.type] = f.label; });
       const samples = responses.map(r => {
         const form = forms.find(f => f.id === r.formId);
         const labeled = {};

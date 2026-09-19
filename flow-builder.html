@@ -547,7 +547,15 @@ async function fetchRawSamples(force) {
   return cachedRawSamples;
 }
 async function fetchSamples(force) {
-  if (flow.trigger?.config?.selectedSample) return [flow.trigger.config.selectedSample];
+  if (flow.trigger?.config?.selectedSample) {
+    // The pinned sample supplies the VALUES, but the code -> label map that
+    // lets pickableKeys drop the label-keyed duplicate of every code-keyed
+    // field only ever comes from /samples. Without loading it here, a flow
+    // with a pinned sample listed every question twice ({{payload.height}}
+    // AND {{payload.Height}}).
+    if (!cachedRawSamples || force) await fetchRawSamples(force);
+    return [flow.trigger.config.selectedSample];
+  }
   return fetchRawSamples(force);
 }
 // Synchronous mirror of fetchSamples, for the initial render pass
