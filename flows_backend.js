@@ -9,6 +9,7 @@ import { sendEmail } from "./email_backend.js";
 import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
 import { claimByIdentity, getAdCaptureByIdentity } from "./tracking_backend.js";
 import { normalizePhoneForCapture } from "./phone_util.js";
+import { applyStatusOptOut } from "./compliance_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -364,6 +365,11 @@ async function advanceFlowRun(run, flow) {
         }
       }
       if (cfg.statusId) workingContact.status = cfg.statusId;
+      // A flow that moves someone to STOP/BLACKLIST gets the same opt-outs,
+      // hidden conversation, and Blacklist-sheet row a manual status change
+      // does -- applyStatusOptOut's own contract is "any path", but this one
+      // wrote the status directly and skipped it.
+      if (workingContact.status !== prevStatus) applyStatusOptOut(workingContact);
       // Extra emails/phones beyond the primary -- same altEmails/
       // altPhones arrays segments_shared.js's findContactMatch and every
       // inbound-matching function now checks (SMS, Gmail), not a second

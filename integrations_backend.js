@@ -1,5 +1,6 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
 import { DEFAULT_THEME } from "./block_editor_shared.js";
+import { parseSheetUrl, checkBlacklistSheet } from "./blacklist_sheet.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
@@ -156,6 +157,9 @@ export function getComplianceSettings() {
     blacklistAutoOptOut: c.blacklistAutoOptOut !== false,
     triggerKeywordsEnabled,
     triggerKeywords,
+    // Link to the team's Blacklist Google Sheet -- every contact marked
+    // Blacklist gets appended to it (see blacklist_sheet.js). "" = off.
+    blacklistSheetUrl: typeof c.blacklistSheetUrl === "string" ? c.blacklistSheetUrl : "",
   };
 }
 
@@ -265,8 +269,21 @@ export async function handleIntegrationsRequest(req, res, url) {
     if (Array.isArray(body.stopKeywords)) all.compliance.stopKeywords = body.stopKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
     if ("triggerKeywordsEnabled" in body) all.compliance.triggerKeywordsEnabled = !!body.triggerKeywordsEnabled;
     if (Array.isArray(body.triggerKeywords)) all.compliance.triggerKeywords = body.triggerKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    if ("blacklistSheetUrl" in body) {
+      const url = String(body.blacklistSheetUrl || "").trim();
+      if (url && !parseSheetUrl(url)) return sendJson(res, 400, { error: "That doesn't look like a Google Sheets link." });
+      all.compliance.blacklistSheetUrl = url;
+    }
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+  // Settings' "Check" button: is the pasted link reachable and editable by
+  // this CRM's Google account, and which tab/columns will rows land in.
+  if (p === "/api/integrations/compliance/blacklist-sheet-check" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const url = String(body.url ?? getComplianceSettings().blacklistSheetUrl ?? "").trim();
+    if (!url) return sendJson(res, 200, { ok: false, error: "Paste the Blacklist sheet link first." });
+    return sendJson(res, 200, await checkBlacklistSheet(url));
   }
 
   if (p === "/api/integrations/email-provider" && req.method === "POST") {

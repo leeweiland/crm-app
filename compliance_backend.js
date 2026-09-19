@@ -4,6 +4,8 @@ import { getContactMessages } from "./message_index.js";
 import { getComplianceSettings } from "./integrations_backend.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { syncContactFields } from "./sqlite_inbox.js";
+import { appendToBlacklistSheet } from "./blacklist_sheet.js";
+import { logMessage } from "./message_log.js";
 
 // Real carriers require the ENTIRE message body to be exactly one reserved
 // word (case/punctuation-insensitive) to trigger opt-out -- substring
@@ -93,6 +95,30 @@ export function recheckStopStatus(contactId) {
 // "BLACKLIST" to match this code, rather than the other way around.)
 export const BLACKLIST_STATUS_LABEL = "BLACKLIST";
 
+// Fire-and-forget: the status change that triggered this must never wait on
+// (or fail because of) a Google Sheets round trip. Works from a snapshot of
+// the contact's identity fields since the caller's object keeps mutating.
+// The outcome -- added, already listed, or WHY it couldn't be (link not
+// shared with the CRM's Google account, etc.) -- lands in the contact's own
+// thread, so a silently broken sheet link shows up on the very first
+// blacklisting instead of never.
+function queueBlacklistSheetAdd(contact, sheetUrl) {
+  const snapshot = { id: contact.id, first: contact.first, last: contact.last, email: contact.email, phone: contact.phone, programType: contact.programType };
+  (async () => {
+    const result = await appendToBlacklistSheet(sheetUrl, snapshot);
+    const detail = result.ok
+      ? (result.skipped ? `Already on the Blacklist sheet (tab "${result.tab}") -- not added again.` : `Added to the Blacklist sheet (tab "${result.tab}", row ${result.row}).`)
+      : `Could not add to the Blacklist sheet: ${result.error}`;
+    if (!result.ok) console.error(`[blacklist-sheet] ${snapshot.id}: ${result.error}`);
+    logMessage({
+      channel: "activity", direction: "inbound", contactId: snapshot.id,
+      sourceType: "blacklist_sheet", sourceId: null,
+      subject: result.ok ? (result.skipped ? "Already on Blacklist sheet" : "Added to Blacklist sheet") : "Blacklist sheet: could not add",
+      body: detail, bodyPreview: detail, status: "received",
+    });
+  })().catch(e => console.error("[blacklist-sheet] unexpected failure:", e.message));
+}
+
 // Applied whenever a contact's status is being set to STOP or the
 // blacklist status, from any path (manual status dropdown, the Inbox's
 // Blacklist context-menu action, etc). Mutates the in-memory contact only
@@ -109,6 +135,10 @@ export const BLACKLIST_STATUS_LABEL = "BLACKLIST";
 // should ever demand attention again.
 export function applyStatusOptOut(contact) {
   const settings = getComplianceSettings();
+  // Independent of the opt-out toggle below -- the team's Blacklist sheet is
+  // a separate list they maintain, and a blacklisted contact belongs on it
+  // whether or not auto opt-out is switched on.
+  if (contact.status === BLACKLIST_STATUS_LABEL && settings.blacklistSheetUrl) queueBlacklistSheetAdd(contact, settings.blacklistSheetUrl);
   if (!settings.blacklistAutoOptOut) return;
   if (contact.status === "STOP") { contact.smsOptOut = true; setConvoMeta(contact.id, { hidden: true }); }
   else if (contact.status === BLACKLIST_STATUS_LABEL) { contact.smsOptOut = true; contact.emailOptOut = true; setConvoMeta(contact.id, { hidden: true }); }

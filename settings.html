@@ -155,7 +155,18 @@
         <div class="field"><label class="pra-label">Keywords (comma-separated)</label><input class="pra-input" id="stopKeywordsList" placeholder="stop, stopall, unsubscribe, cancel, end, quit"/></div>
 
         <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out on suppression status</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Blacklist</b>, both SMS and email are opted out and the conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter, no unread alerts). Applies no matter how the status was changed (manually, or automatically above).</div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Blacklist</b>, both SMS and email are opted out and the conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter, no unread alerts). Applies no matter how the status was changed (manually, by a flow, or automatically above).</div>
+
+        <div class="field" style="margin-top:18px">
+          <label class="pra-label">Blacklist Google Sheet (link)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input class="pra-input" id="blacklistSheetUrl" style="min-width:0" placeholder="https://docs.google.com/spreadsheets/d/…/edit?gid=…"/>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="blacklistSheetCheckBtn" type="button" style="flex-shrink:0">Check</button>
+          </div>
+          <div class="pra-muted" id="blacklistSheetStatus" style="font-size:.78rem;margin-top:6px;min-height:1em"></div>
+        </div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Every contact marked <b>Blacklist</b> — by hand, by a flow, or by the trigger words below — is added to this sheet as a new row (<b>FIRST, LAST, EMAIL, PHONE, DATE</b>, matched by the tab's column headers; anyone already listed is skipped). Paste the link while you're on the blacklist tab so it includes that tab's <code>gid</code>. The sheet must be shared as <b>Editor</b> with the Google account this CRM uses for Sheets (the same one your Flows Google Sheet steps use). Each result is noted in that contact's conversation.</div>
+        <div style="border:1px solid var(--pra-border);border-radius:8px;padding:10px 12px;font-size:.8rem;margin-bottom:10px;background:rgba(255,255,255,0.03)"><b>Note:</b> anyone marked <b>Blacklist</b> is <b>opted out of SMS and unsubscribed from all emails</b>, and their conversation is hidden from the Inbox's default view. That's the "Auto opt-out on suppression status" switch above — keep it on.</div>
 
         <hr style="border-color:var(--pra-border);margin:20px 0 18px"/>
         <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="triggerKeywordsEnabled"/> Auto-blacklist on trigger words</label>
@@ -833,6 +844,8 @@ async function loadComplianceSettings() {
   document.getElementById('blacklistAutoOptOut').checked = !!c.blacklistAutoOptOut;
   document.getElementById('triggerKeywordsEnabled').checked = !!c.triggerKeywordsEnabled;
   document.getElementById('triggerKeywordsList').value = (c.triggerKeywords || []).join(', ');
+  document.getElementById('blacklistSheetUrl').value = c.blacklistSheetUrl || '';
+  if (c.blacklistSheetUrl) runBlacklistSheetCheck();
 }
 async function saveComplianceSettings() {
   const body = {
@@ -841,12 +854,31 @@ async function saveComplianceSettings() {
     blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked,
     triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked,
     triggerKeywords: document.getElementById('triggerKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
+    blacklistSheetUrl: document.getElementById('blacklistSheetUrl').value.trim(),
   };
   const msg = document.getElementById('complianceSaveMsg');
   msg.textContent = 'Saving…';
   const r = await fetch('/api/integrations/compliance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  msg.textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) { msg.textContent = 'Saved.'; if (body.blacklistSheetUrl !== blacklistSheetCheckedUrl) runBlacklistSheetCheck(); }
+  else msg.textContent = (await r.json().catch(() => ({}))).error || 'Could not save.';
 }
+// Does the pasted Blacklist sheet link open, is it editable by this CRM's
+// Google account, and which tab will rows land in -- shown right under the
+// field instead of only finding out the first time someone is blacklisted.
+let blacklistSheetCheckedUrl = null;
+async function runBlacklistSheetCheck() {
+  const status = document.getElementById('blacklistSheetStatus');
+  const url = document.getElementById('blacklistSheetUrl').value.trim();
+  status.style.color = '';
+  if (!url) { status.textContent = ''; blacklistSheetCheckedUrl = null; return; }
+  status.textContent = 'Checking…';
+  const r = await fetch('/api/integrations/compliance/blacklist-sheet-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+  const d = r.ok ? await r.json() : { ok: false, error: 'Could not check that link.' };
+  blacklistSheetCheckedUrl = url;
+  if (d.ok) status.textContent = `✓ Connected — “${d.spreadsheetTitle}” › tab “${d.tab}” (${d.rows} rows). New blacklists are added at the bottom.`;
+  else { status.style.color = 'var(--pra-red)'; status.textContent = d.error; }
+}
+document.getElementById('blacklistSheetCheckBtn').addEventListener('click', runBlacklistSheetCheck);
 let complianceSaveDebounce = null;
 document.querySelectorAll('#tab-emailsettings input[type=checkbox]').forEach(el => el.addEventListener('change', saveComplianceSettings));
 document.querySelectorAll('#tab-emailsettings input[type=text], #tab-emailsettings input:not([type])').forEach(el => el.addEventListener('input', () => {
