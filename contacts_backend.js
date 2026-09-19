@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, updateJsonArrayRecordsByIds, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
 import { renewalForContact, syncContactFields, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -247,6 +247,29 @@ export async function handleContactsRequest(req, res, url) {
     let synced = 0;
     for (const c of affected) { try { syncContactFields(c.id, c); synced++; } catch {} }
     return sendJson(res, 200, { ok: true, updated: affected.length, synced });
+  }
+
+  // Bulk delete from the Contacts page's selection bar. One in-place pass over
+  // the contacts file (updateJsonArrayRecordsByIds, updater -> null drops the
+  // record) rather than the single DELETE below's read-filter-write, which
+  // re-stringifies the whole ~190MB file and races with in-place patches from
+  // webhooks. The byte pre-check costs two indexOf per id per record, so the
+  // batch is capped -- the client sends larger selections in chunks.
+  if (p === "/api/contacts/bulk-delete" && req.method === "POST") {
+    const { ids } = await readJsonBody(req);
+    if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });
+    const unique = [...new Set(ids)];
+    if (unique.some(id => typeof id !== "string" || !/^[\w-]{1,64}$/.test(id))) return sendJson(res, 400, { error: "invalid contact id" });
+    if (unique.length > 100) return sendJson(res, 400, { error: "Delete at most 100 contacts per request" });
+    const deleted = [];
+    updateJsonArrayRecordsByIds(CONTACTS_FILE, unique, c => { deleted.push(c.id); return null; });
+    // Same orphan cleanup as the single DELETE below.
+    for (const id of deleted) {
+      removeConversationSummary(id);
+      deleteContactMessageFile(id);
+      try { deleteContactIndex(id); } catch (e) { console.error("[sqlite_inbox] contact index delete failed:", e.message); }
+    }
+    return sendJson(res, 200, { ok: true, deleted: deleted.length, requested: unique.length });
   }
 
   // ── Contacts ─────────────────────────────────────────────────────────

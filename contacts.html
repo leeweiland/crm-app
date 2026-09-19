@@ -143,6 +143,7 @@
 
         <div class="bulk-actions-row" id="bulkActionsRow">
           <span class="pra-muted" id="bulkSelectedCount" style="font-size:.85rem"></span>
+          <button class="pra-btn pra-btn-danger pra-btn-sm" id="bulkDeleteBtn" type="button">Delete</button>
           <span style="flex:1"></span>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="bulkAddToBtn" type="button">Add to...</button>
         </div>
@@ -821,6 +822,30 @@ function updateBulkActionsBar() {
   bar.classList.toggle('show', n > 0);
   if (n > 0) document.getElementById('bulkSelectedCount').textContent = `${n} contact${n === 1 ? '' : 's'} selected`;
 }
+document.getElementById('bulkDeleteBtn').onclick = async () => {
+  const ids = [...selectedContactIds];
+  if (!ids.length) return;
+  const label = `${ids.length} contact${ids.length === 1 ? '' : 's'}`;
+  if (!confirm(`Delete ${label}? This also removes their conversation history and cannot be undone.`)) return;
+  const btn = document.getElementById('bulkDeleteBtn');
+  btn.disabled = true; btn.textContent = 'Deleting...';
+  // Chunked -- the server caps a request at 100 ids (each id adds a byte scan
+  // over the whole contacts file), and it drops them all in one in-place pass.
+  let deleted = 0, failed = false;
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const r = await fetch('/api/contacts/bulk-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: chunk }) });
+    if (!r.ok) { failed = true; break; }
+    deleted += (await r.json()).deleted || 0;
+    chunk.forEach(id => selectedContactIds.delete(id));
+  }
+  btn.disabled = false; btn.textContent = 'Delete';
+  showToast(failed ? `Deleted ${deleted} of ${ids.length} — something went wrong` : `Deleted ${deleted} contact${deleted === 1 ? '' : 's'}`, failed);
+  updateBulkActionsBar();
+  contactsTotal = Math.max(0, contactsTotal - deleted);
+  contactsPage = Math.min(contactsPage, Math.max(1, Math.ceil(contactsTotal / contactsPageSize)));
+  loadContacts();
+};
 document.getElementById('bulkAddToBtn').onclick = () => {
   openAddToModal({ contactIds: [...selectedContactIds] }, `${selectedContactIds.size} selected contact${selectedContactIds.size === 1 ? '' : 's'}`);
 };
