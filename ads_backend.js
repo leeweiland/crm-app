@@ -239,26 +239,36 @@ async function fetchLiveAdSpend(startStr, endStr) {
 // "how many lead/application/booking events happened today" signal.
 // Matched by name substring, not hardcoded flow IDs, so this doesn't
 // silently go stale if a flow gets rebuilt with a new ID.
-export function fetchCrmLeadsAndBookings(startMs, endMs) {
+// The four conversion events, one entry per flow run (each run IS one event,
+// with the contact it happened to). Both fetchCrmLeadsAndBookings' totals and
+// the Ads Report's per-ad credit are built from this one list, so they can
+// never disagree about what counts.
+//   ONLINE EMAIL  = "ONLINE LEAD" flow    GYM EMAIL        = "GYM LEAD" flow
+//   ONLINE BOOKING = "ONLINE BOOKING"     GYM APPLICATION  = "GYM APPLICATION"
+// The emails are the ad platforms' "Registrations completed"; the booking/
+// application events are their "Leads".
+export const CRM_EVENTS = [
+  { needle: "ONLINE LEAD", event: "ONLINE EMAIL", program: "online", kind: "emails" },
+  { needle: "GYM LEAD", event: "GYM EMAIL", program: "gym", kind: "emails" },
+  { needle: "ONLINE BOOKING", event: "ONLINE BOOKING", program: "online", kind: "bookM" },
+  { needle: "GYM APPLICATION", event: "GYM APPLICATION", program: "gym", kind: "bookM" },
+];
+export function crmEventRuns(startMs, endMs) {
   const flows = readJson(FLOWS_FILE, []);
   const runs = readJson(RUNS_FILE, []);
-  const buckets = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
-
   const findFlowId = (needle) => flows.find(f => (f.name || "").toUpperCase().includes(needle))?.id || null;
-  const counters = [
-    { flowId: findFlowId("ONLINE LEAD"), bucket: "online", field: "emails" },
-    { flowId: findFlowId("GYM LEAD"), bucket: "gym", field: "emails" },
-    { flowId: findFlowId("ONLINE BOOKING"), bucket: "online", field: "bookM" },
-    { flowId: findFlowId("GYM APPLICATION"), bucket: "gym", field: "bookM" },
-  ].filter(c => c.flowId);
-
+  const defs = CRM_EVENTS.map(d => ({ ...d, flowId: findFlowId(d.needle) })).filter(d => d.flowId);
+  const out = [];
   for (const run of runs) {
     const enteredMs = new Date(run.enteredAt).getTime();
     if (enteredMs < startMs || enteredMs > endMs) continue;
-    for (const c of counters) {
-      if (run.flowId === c.flowId) buckets[c.bucket][c.field]++;
-    }
+    for (const d of defs) if (run.flowId === d.flowId) out.push({ contactId: run.contactId || null, event: d.event, program: d.program, kind: d.kind, atMs: enteredMs });
   }
+  return out;
+}
+export function fetchCrmLeadsAndBookings(startMs, endMs) {
+  const buckets = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
+  for (const e of crmEventRuns(startMs, endMs)) buckets[e.program][e.kind]++;
   return buckets;
 }
 

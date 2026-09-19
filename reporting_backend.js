@@ -8,7 +8,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
-import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings, anchorageMidnightUTC } from "./ads_backend.js";
+import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings, anchorageMidnightUTC, crmEventRuns } from "./ads_backend.js";
 import { getCachedTestContactIds } from "./contacts_backend.js";
 import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
@@ -276,7 +276,49 @@ export function computeAttribution(startMs, endMs) {
     return { el: key, visits: vs.visits, uniqueVisitors: vs.visitorIds.size, optIns: cs.optIns, bookings: cs.bookings, enrolled: cs.enrolled };
   }).sort((a, b) => b.visits - a.visits);
 
-  return { sources, byElStage };
+  return { sources, byElStage, firstTouchByContact, contactsById };
+}
+
+// A contact's first ad/source touch, for crediting their conversion events.
+// 1) the earliest tagged visit linked to them (the real click journey), else
+// 2) the click data stamped on the contact when they signed up (flows_backend.js's
+// add_update_contact: the ad's own id when the URL carried it, else just the
+// platform's click id). Null = nothing was ever captured -> "Untracked".
+function touchKeyForContact(contact, firstTouchByContact) {
+  const visitTouch = firstTouchByContact.get(contact.id);
+  if (visitTouch?.key) return visitTouch.key;
+  const ids = contact.clickIds;
+  if (!ids) return null;
+  if (ids.ads?.meta?.id) return `meta-ad:${ids.ads.meta.id}`;
+  if (ids.ads?.google?.id) return `google-ad:${ids.ads.google.id}`;
+  if (ids.fbclid) return "meta-ad:unknown";
+  if (ids.gclid || ids.gbraid || ids.wbraid) return "google-ad:unknown";
+  return null;
+}
+// Every conversion EVENT in the range (ONLINE/GYM EMAIL, ONLINE BOOKING, GYM
+// APPLICATION -- one per flow run, see ads_backend.js's crmEventRuns), credited to
+// the source of the contact's first touch. bySource: key -> {emails, bookings};
+// byKeyStage: "key|optIns" / "key|bookings" -> Set(contactId) for the drill-down.
+export function computeEventAttribution(startStr, endStr, attribution) {
+  const crmStartMs = anchorageMidnightUTC(startStr).getTime();
+  const crmEndMs = anchorageMidnightUTC(endStr).getTime() + 86400000 - 1;
+  const { firstTouchByContact, contactsById } = attribution;
+  const bySource = new Map(), byKeyStage = new Map();
+  const attributed = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
+  for (const ev of crmEventRuns(crmStartMs, crmEndMs)) {
+    const contact = ev.contactId ? contactsById.get(ev.contactId) : null;
+    const key = contact ? touchKeyForContact(contact, firstTouchByContact) : null;
+    if (!key) continue;
+    if (!bySource.has(key)) bySource.set(key, { emails: 0, bookings: 0 });
+    const s = bySource.get(key);
+    const stage = ev.kind === "emails" ? "optIns" : "bookings";
+    if (stage === "optIns") s.emails++; else s.bookings++;
+    attributed[ev.program][ev.kind]++;
+    const k = `${key}|${stage}`;
+    if (!byKeyStage.has(k)) byKeyStage.set(k, new Set());
+    byKeyStage.get(k).add(ev.contactId);
+  }
+  return { bySource, byKeyStage, attributed };
 }
 
 function slugify(s) {
@@ -311,6 +353,8 @@ const SOCIAL_PLATFORM_LABEL = { email: "Email", sms: "SMS", youtube: "YouTube", 
 // doesn't apply (an email/SMS/social source isn't inside a Meta ad set or
 // Google ad group), not when data is merely missing.
 function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
+  if (key === "meta-ad:unknown") return { title: "Meta ad (ad ID not captured)", adGroup: "—", campaign: "—", spend: 0, platform: "Meta" };
+  if (key === "google-ad:unknown") return { title: "Google ad (ad ID not captured)", adGroup: "—", campaign: "—", spend: 0, platform: "Google" };
   if (key.startsWith("meta-ad:")) {
     const id = key.slice(8);
     const info = metaAdMap?.get(id);
@@ -344,7 +388,16 @@ const money = (n) => (n && isFinite(n)) ? Math.round(n * 100) / 100 : null;
 // source is connected -- not computed from anything today, deliberately,
 // rather than showing a number that would just be wrong.
 export async function computeAdsReport(startMs, endMs, startStr, endStr) {
-  const { sources, byElStage } = computeAttribution(startMs, endMs);
+  const attribution = computeAttribution(startMs, endMs);
+  const { sources: visitSources } = attribution;
+  const ev = computeEventAttribution(startStr, endStr, attribution);
+  // One row per source that either got visits or converted -- visits/unique visitors from
+  // the tracked page-visit log, Emails/Bookings from the four conversion events above.
+  const sources = [...new Set([...visitSources.map(s => s.el), ...ev.bySource.keys()])].map(el => {
+    const vs = visitSources.find(s => s.el === el);
+    const e = ev.bySource.get(el) || { emails: 0, bookings: 0 };
+    return { el, visits: vs?.visits || 0, uniqueVisitors: vs?.uniqueVisitors || 0, optIns: e.emails, bookings: e.bookings };
+  }).sort((a, b) => b.visits - a.visits);
   const [metaSettled, googleSettled] = await Promise.allSettled([
     fetchLiveMetaAdLevel(startStr, endStr),
     fetchLiveGoogleAdLevel(startStr, endStr),
@@ -388,20 +441,8 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   const crmStartMs = anchorageMidnightUTC(startStr).getTime();
   const crmEndMs = anchorageMidnightUTC(endStr).getTime() + 86400000 - 1;
   const crmData = fetchCrmLeadsAndBookings(crmStartMs, crmEndMs);
-  const attributedContactIds = new Set();
-  for (const idSet of byElStage.values()) for (const id of idSet) attributedContactIds.add(id);
-  const contactsById = getContactsByIdsFast([...attributedContactIds]);
-  const attributedLeads = { online: 0, gym: 0 };
-  const attributedBookings = { online: 0, gym: 0 };
-  for (const [key, idSet] of byElStage) {
-    const stage = key.slice(key.lastIndexOf("|") + 1);
-    if (stage !== "optIns" && stage !== "bookings") continue;
-    const bucket = stage === "optIns" ? attributedLeads : attributedBookings;
-    for (const id of idSet) {
-      const program = contactsById.get(id)?.programType === "gym" ? "gym" : "online";
-      bucket[program]++;
-    }
-  }
+  const attributedLeads = { online: ev.attributed.online.emails, gym: ev.attributed.gym.emails };
+  const attributedBookings = { online: ev.attributed.online.bookM, gym: ev.attributed.gym.bookM };
   const untrackedRows = ["online", "gym"].map(program => ({
     source: "Untracked (no site visit or ad click ID)", platform: program === "online" ? "Online" : "Gym",
     adGroup: "—", campaign: "—",
@@ -412,7 +453,12 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
     key: `untracked-${program}`,
   })).filter(r => r.leads > 0 || r.bookings > 0);
 
-  return { rows: [...rows, ...untrackedRows], spendError };
+  // How much of the period's conversion events could be tied to an ad/source click at all --
+  // the rest ("Untracked") had no click journey captured for that contact.
+  const totalEmails = crmData.online.emails + crmData.gym.emails, totalBookings = crmData.online.bookM + crmData.gym.bookM;
+  const trackedEmails = attributedLeads.online + attributedLeads.gym, trackedBookings = attributedBookings.online + attributedBookings.gym;
+  const coverage = { emails: { total: totalEmails, tracked: Math.min(totalEmails, trackedEmails) }, bookings: { total: totalBookings, tracked: Math.min(totalBookings, trackedBookings) } };
+  return { rows: [...rows, ...untrackedRows], spendError, coverage };
 }
 
 // Shared with ads_backend.js's period presets on the frontend -- the
@@ -536,7 +582,11 @@ export async function handleReportingRequest(req, res, url) {
     // Drill-down: the exact contacts behind one source's one funnel stage.
     const el = url.searchParams.get("el");
     const stage = url.searchParams.get("stage"); // "optIns" | "bookings" | "enrolled"
-    const bucket = data.byElStage.get(`${el}|${stage}`);
+    // basis=events: the Ads Report's own counts (conversion events credited to first touch)
+    const eventBasis = url.searchParams.get("basis") === "events";
+    const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+    const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
+    const bucket = eventBasis ? computeEventAttribution(startStr, endStr, data).byKeyStage.get(`${el}|${stage}`) : data.byElStage.get(`${el}|${stage}`);
     if (!bucket) return sendJson(res, 200, { contacts: [] });
     const contacts = readJson(CONTACTS_FILE, []);
     const byId = new Map(contacts.map(c => [c.id, c]));
@@ -611,8 +661,8 @@ export async function handleReportingRequest(req, res, url) {
     const { startMs, endMs } = parseRangeParams(url);
     const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
     const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-    const { rows, spendError } = await computeAdsReport(startMs, endMs, startStr, endStr);
-    return sendJson(res, 200, { rows, spendError, start: startStr, end: endStr });
+    const { rows, spendError, coverage } = await computeAdsReport(startMs, endMs, startStr, endStr);
+    return sendJson(res, 200, { rows, spendError, coverage, start: startStr, end: endStr });
   }
 
   const campaignMatch = p.match(/^\/api\/reporting\/campaigns\/([^/]+)$/);
