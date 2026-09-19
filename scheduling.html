@@ -287,13 +287,19 @@ async function loadBookings() {
   const upcoming = [...bookings].sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
   body.innerHTML = upcoming.map(b => `
     <tr>
-      <td>${fmtWhen(b.startAt)}</td>
+      <td>${fmtWhen(b.startAt)}${b.timezone ? `<br/><span class="pra-muted" style="font-size:.72rem">invitee: ${escapeHtml(b.timezone)}</span>` : ''}</td>
       <td>${escapeHtml(b.name)}<br/><span class="pra-muted" style="font-size:.76rem">${escapeHtml(b.email)}</span></td>
       <td>${escapeHtml(b.eventType?.name || '—')}</td>
-      <td><span class="status-pill status-${b.status}">${b.status}</span></td>
-      <td>${b.status === 'confirmed' ? `<button class="pra-btn pra-btn-sm pra-btn-danger" data-cancel="${b.id}">Cancel</button>` : ''}</td>
+      <td><span class="status-pill status-${b.status}">${b.status}</span>${b.status === 'cancelled' && b.cancelledBy ? `<br/><span class="pra-muted" style="font-size:.72rem">by ${b.cancelledBy === 'invitee' ? 'the invitee' : 'staff'}${b.cancelledAt ? ' · ' + fmtWhen(b.cancelledAt) : ''}</span>` : ''}${b.status === 'confirmed' && !b.calendarEventId && new Date(b.startAt) > Date.now() ? `<br/><span style="font-size:.72rem;color:#f59e0b" title="${escapeHtml(b.calendarError || 'No Google Calendar event was recorded for this booking')}">⚠ Not on Google Calendar</span>` : ''}</td>
+      <td>${b.status === 'confirmed' ? `${!b.calendarEventId && new Date(b.startAt) > Date.now() ? `<button class="pra-btn pra-btn-sm" data-sync="${b.id}">Add to calendar</button> ` : ''}<button class="pra-btn pra-btn-sm pra-btn-danger" data-cancel="${b.id}">Cancel</button>` : ''}</td>
     </tr>
   `).join('');
+  document.querySelectorAll('[data-sync]').forEach(btn => btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'Adding…';
+    const r = await fetch('/api/scheduling/admin/bookings/' + btn.dataset.sync + '/sync-calendar', { method: 'POST' });
+    if (!r.ok) showToast('Calendar sync failed: ' + ((await r.json().catch(() => ({}))).error || r.status), true); else showToast('Added to Google Calendar');
+    loadBookings();
+  });
   document.querySelectorAll('[data-cancel]').forEach(btn => btn.onclick = async () => {
     if (!confirm('Cancel this booking?')) return;
     await fetch('/api/scheduling/admin/bookings/' + btn.dataset.cancel + '/cancel', { method: 'POST' });

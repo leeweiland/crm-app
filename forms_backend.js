@@ -9,6 +9,7 @@ import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_backend.js";
+import { normalizePhoneForRequest } from "./phone_util.js";
 import { EVENT_TYPES_FILE, BOOKINGS_FILE } from "./scheduling_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 
@@ -563,6 +564,13 @@ export async function handleFormsRequest(req, res, url) {
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);
     if (validationError) return sendJson(res, 400, { error: validationError });
+    // A phone typed in national format ("07956 650003") is made internationally
+    // dialable here, once, so the contact, the response record, the flow payload
+    // (-> notification email/Sheet) and every later SMS/call all see the same
+    // number -- see phone_util.js for how the country is decided.
+    for (const pf of form.fields.filter(ff => ff.type === "phone")) {
+      if (cleanAnswers[pf.id]) cleanAnswers[pf.id] = await normalizePhoneForRequest(req, cleanAnswers[pf.id]);
+    }
     // Defense in depth -- the client-side gate (a country/ai_disqualify
     // logic rule hiding Next) already keeps a normal visitor from ever
     // reaching Submit, but this is what actually stops a submission if

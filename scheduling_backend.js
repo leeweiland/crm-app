@@ -14,6 +14,7 @@ import { sendSms } from "./sms_backend.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { claimVisitorHistory } from "./tracking_backend.js";
+import { normalizePhoneForRequest } from "./phone_util.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -642,6 +643,94 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
   return contact;
 }
 
+// The invitee picks their own timezone on the booking page, and every
+// customer-facing time (confirmation, staff notification email) is rendered in
+// it -- with no label, so a staff member reading "Monday at 12:45 AM" had no
+// way to know it was the LEAD's clock and not the calendar's. These give the
+// flow payload / calendar description a labeled version of both clocks.
+function formatWhenInZone(date, timeZone) {
+  return date.toLocaleString("en-US", { timeZone, dateStyle: "full", timeStyle: "short" });
+}
+function formatWhenWithZoneName(date, timeZone) {
+  return date.toLocaleString("en-US", { timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+}
+
+// Everything staff sees on the Google Calendar event. Built from the saved
+// booking record (not local variables of the POST handler) so the admin
+// "retry calendar sync" path can rebuild the exact same event later.
+function buildCalendarDescription(booking) {
+  const start = new Date(booking.startAt);
+  const manageUrl = `${getPublicBaseUrl()}/book/${booking.eventTypeSlug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
+  const lines = [`Name: ${booking.name}`, `Email: ${booking.email}`];
+  if (booking.phone) lines.push(`Phone: ${booking.phone}`);
+  lines.push(`Invitee's timezone: ${booking.timezone} (their time: ${formatWhenInZone(start, booking.timezone)})`);
+  // formatExtraAnswers (-> notes) deliberately excludes the core identity
+  // fields, so a form with no custom questions beyond name/email/phone left
+  // this description with nothing but "Booked via CRM scheduling." --
+  // restating identity here too so the staff calendar event always carries
+  // the same details as the internal notification email. formAnswers (the
+  // outer form's own Q&A, e.g. an "ONLINE BOOKING" lead form embedding this
+  // "Body Mastery Call" calendar) is a separate merge -- see
+  // formatFormAnswers -- since an event type with no long_text question has
+  // no other way to carry those answers through at all.
+  const formAnswersText = formatFormAnswers(booking.formAnswers);
+  if (formAnswersText) lines.push("", formAnswersText);
+  if (booking.notes) lines.push("", booking.notes);
+  lines.push("", "Booked via CRM scheduling.");
+  // Staff-only -- the lead never sees this event or its description.
+  lines.push("", `Need to cancel? ${manageUrl}`);
+  return lines.join("\n");
+}
+
+// Creates the staff Google Calendar event for a saved booking and records the
+// outcome ON the booking. This used to be a bare try/catch inside the POST
+// handler that swallowed every failure -- a booking whose calendar write
+// failed looked identical to a good one, with nothing anywhere saying it
+// never reached the calendar. One retry covers a transient Google/network
+// blip; anything still failing is kept as booking.calendarError so the admin
+// Bookings tab can flag it and offer a manual retry.
+async function syncBookingToCalendar(booking, et, calendar) {
+  if (!calendarConfigured()) return;
+  const calendarId = calendar.email || getCalendarId();
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const created = await createCalendarEvent({
+        summary: `${et.name} — ${booking.name}`,
+        description: buildCalendarDescription(booking),
+        startISO: booking.startAt, durationMinutes: et.durationMinutes,
+        attendees: [{ email: booking.email, name: booking.name }], timezone: booking.timezone || calendar.availability.timezone,
+        calendarId,
+      });
+      booking.calendarEventId = created.id; booking.calendarId = calendarId; booking.calendarError = null;
+      return;
+    } catch (e) {
+      lastError = e;
+      console.error(`[scheduling] calendar event creation failed (attempt ${attempt}) for booking ${booking.id} on ${calendarId}: ${e.message}`);
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+  booking.calendarId = calendarId;
+  booking.calendarError = String(lastError?.message || lastError || "Unknown error").slice(0, 500);
+}
+
+// Cancellations used to leave no trace beyond status flipping to
+// "cancelled" -- no record of WHO cancelled, and nothing in the contact's
+// Inbox thread -- so "why isn't this booking on the calendar?" had no
+// answer short of reading the raw file.
+function logBookingCancellation(booking, et, by) {
+  try {
+    logMessage({
+      channel: "booking", direction: "inbound", contactId: booking.contactId,
+      sourceType: "booking", sourceId: booking.id,
+      subject: `Cancelled: ${et?.name || "Booking"}`,
+      body: `${formatWhenInZone(new Date(booking.startAt), booking.timezone)} (${booking.timezone}) — cancelled by ${by}`,
+      bodyPreview: `Cancelled by ${by}`,
+      status: "received",
+    });
+  } catch { /* the cancellation itself already succeeded */ }
+}
+
 function locationText(location) {
   if (!location) return "";
   if (location.type === "zoom") return location.detail || "Zoom link will be sent by email";
@@ -883,7 +972,16 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!startAt) return sendJson(res, 400, { error: "startAt is required" });
     const questionError = validateQuestionAnswers(et.questions, answers);
     if (questionError) return sendJson(res, 400, { error: questionError });
-    const { name, email, phone } = extractBookingIdentity(et.questions, answers);
+    const identity = extractBookingIdentity(et.questions, answers);
+    const { name, email } = identity;
+    // Made internationally dialable once, here (see phone_util.js) -- so the
+    // contact, the calendar event, the staff email/Sheet row and any later
+    // SMS all carry the same "+44…" instead of a UK "07…" nobody outside the
+    // UK can dial. Written back into answers too, since booking.answers keeps
+    // the raw answer set.
+    const phone = await normalizePhoneForRequest(req, identity.phone, timezone);
+    const phoneQ = (et.questions || []).find(q => q.type === "phone");
+    if (phoneQ && phone && answers && typeof answers === "object") answers[phoneQ.id] = phone;
     const notes = formatExtraAnswers(et.questions, answers);
     if (!name || !email) return sendJson(res, 400, { error: "Name and email are required" });
 
@@ -903,7 +1001,6 @@ export async function handleSchedulingRequest(req, res, url) {
     if (contact?.id && vid) claimVisitorHistory(vid, contact.id);
     const start = new Date(startAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
-    const calendarId = calendar.email || getCalendarId();
     // Generated up front (not inline in the booking object below) so the
     // same id/token can also go into the staff calendar event's description
     // -- staff needs a way to cancel from the calendar/notification email
@@ -913,38 +1010,6 @@ export async function handleSchedulingRequest(req, res, url) {
     const bookingId = randomUUID();
     const cancelToken = randomBytes(24).toString("hex");
     const manageUrl = `${getPublicBaseUrl()}/book/${et.slug}/manage?booking=${bookingId}&token=${cancelToken}`;
-
-    let calendarEventId = null;
-    if (calendarConfigured()) {
-      try {
-        // formatExtraAnswers (-> notes) deliberately excludes the core
-        // identity fields, so a form with no custom questions beyond
-        // name/email/phone left this description with nothing but "Booked
-        // via CRM scheduling." -- restating identity here too so the staff
-        // calendar event always carries the same details as the internal
-        // notification email. formAnswers (the outer form's own Q&A, e.g.
-        // an "ONLINE BOOKING" lead form embedding this "Body Mastery Call"
-        // calendar) is a separate merge -- see formatFormAnswers -- since
-        // an event type with no long_text question has no other way to
-        // carry those answers through at all.
-        const calendarDescriptionLines = [`Name: ${name}`, `Email: ${email}`];
-        if (phone) calendarDescriptionLines.push(`Phone: ${phone}`);
-        const formAnswersText = formatFormAnswers(formAnswers);
-        if (formAnswersText) calendarDescriptionLines.push("", formAnswersText);
-        if (notes) calendarDescriptionLines.push("", notes);
-        calendarDescriptionLines.push("", "Booked via CRM scheduling.");
-        // Staff-only -- the lead never sees this event or its description.
-        calendarDescriptionLines.push("", `Need to cancel? ${manageUrl}`);
-        const created = await createCalendarEvent({
-          summary: `${et.name} — ${name}`,
-          description: calendarDescriptionLines.join("\n"),
-          startISO: start.toISOString(), durationMinutes: et.durationMinutes,
-          attendees: [{ email, name }], timezone: timezone || calendar.availability.timezone,
-          calendarId,
-        });
-        calendarEventId = created.id;
-      } catch { /* degrade -- booking still saved internally below */ }
-    }
 
     const booking = {
       id: bookingId, eventTypeId: et.id, contactId: contact.id,
@@ -964,11 +1029,16 @@ export async function handleSchedulingRequest(req, res, url) {
       formAnswerLabels: formAnswerLabels && typeof formAnswerLabels === "object" ? formAnswerLabels : {},
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || calendar.availability.timezone,
-      status: "confirmed", calendarEventId, calendarId,
+      status: "confirmed", calendarEventId: null, calendarId: calendar.email || getCalendarId(), calendarError: null,
+      eventTypeSlug: et.slug,
+      // The staff calendar's own timezone at booking time -- flows_backend.js's
+      // samples endpoint needs it to show a real "Calendar Time" example.
+      calendarTimezone: calendar.availability.timezone,
       cancelToken,
       remindersSent: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
     };
+    await syncBookingToCalendar(booking, et, calendar);
     const bookings = readJson(BOOKINGS_FILE, []);
     bookings.push(booking);
     writeJson(BOOKINGS_FILE, bookings);
@@ -976,7 +1046,7 @@ export async function handleSchedulingRequest(req, res, url) {
     // Log the booking itself as an inbound Inbox activity, same as a form
     // submission -- "they booked a call" should be visible in the
     // conversation thread, not just as a row in the Scheduling tab.
-    const when = start.toLocaleString("en-US", { timeZone: booking.timezone, dateStyle: "full", timeStyle: "short" });
+    const when = formatWhenInZone(start, booking.timezone);
     logMessage({
       channel: "booking", direction: "inbound", contactId: contact.id,
       sourceType: "booking", sourceId: booking.id,
@@ -999,6 +1069,11 @@ export async function handleSchedulingRequest(req, res, url) {
       payload: {
         ...(formAnswers && typeof formAnswers === "object" ? formAnswers : {}),
         "Event Type": et.name, "When": when, "Name": name, "Email": booking.email, "Phone": booking.phone, "Notes": notes || "",
+        // "When" is rendered in the INVITEE's timezone. Timezone names it (e.g.
+        // "Europe/London"); Calendar Time is the same moment on the staff
+        // calendar's own clock, i.e. what they'll actually see in Google Calendar.
+        "Timezone": booking.timezone,
+        "Calendar Time": formatWhenWithZoneName(start, calendar.availability.timezone),
       },
     });
     checkConversionGoal("meeting_booked", contact.id);
@@ -1065,7 +1140,9 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!booking || booking.cancelToken !== token) return sendJson(res, 404, { error: "Not found" });
     if (booking.status === "confirmed") {
       booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
+      booking.cancelledBy = "invitee";
       writeJson(BOOKINGS_FILE, bookings);
+      logBookingCancellation(booking, getEventTypes().find(e => e.id === booking.eventTypeId), "the invitee (booking page)");
       if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
     }
     return sendJson(res, 200, { ok: true });
@@ -1182,10 +1259,31 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!booking) return sendJson(res, 404, { error: "Not found" });
     if (booking.status === "confirmed") {
       booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
+      booking.cancelledBy = "staff";
       writeJson(BOOKINGS_FILE, bookings);
+      logBookingCancellation(booking, getEventTypes().find(e => e.id === booking.eventTypeId), "staff (CRM)");
       if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
     }
     return sendJson(res, 200, { ok: true });
+  }
+  // Manual retry for a booking whose Google Calendar write failed (see
+  // syncBookingToCalendar) -- the Bookings tab shows this button only for a
+  // confirmed booking with no calendarEventId.
+  const adminSyncMatch = p.match(/^\/api\/scheduling\/admin\/bookings\/([^/]+)\/sync-calendar$/);
+  if (adminSyncMatch && req.method === "POST") {
+    const bookings = readJson(BOOKINGS_FILE, []);
+    const booking = bookings.find(b => b.id === adminSyncMatch[1]);
+    if (!booking) return sendJson(res, 404, { error: "Not found" });
+    if (booking.status !== "confirmed") return sendJson(res, 400, { error: "Only a confirmed booking can be added to the calendar" });
+    if (booking.calendarEventId) return sendJson(res, 200, { ok: true, calendarEventId: booking.calendarEventId });
+    const et = getEventTypes().find(e => e.id === booking.eventTypeId);
+    if (!et) return sendJson(res, 404, { error: "Event type no longer exists" });
+    if (!booking.eventTypeSlug) booking.eventTypeSlug = et.slug;
+    await syncBookingToCalendar(booking, et, resolveCalendarForEventType(et));
+    booking.updatedAt = new Date().toISOString();
+    writeJson(BOOKINGS_FILE, bookings);
+    if (!booking.calendarEventId) return sendJson(res, 502, { error: booking.calendarError || "Calendar sync failed" });
+    return sendJson(res, 200, { ok: true, calendarEventId: booking.calendarEventId });
   }
 
   return false;

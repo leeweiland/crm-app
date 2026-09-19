@@ -53,6 +53,11 @@ export function normalizePhoneToE164(phone) {
   const digits = raw.replace(/\D/g, "");
   if (digits.length === 10 && /^[2-9]/.test(digits)) return "+1" + digits;
   if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
+  // A leading 0 is a national trunk prefix, not part of an international
+  // number -- "+" + "07956650003" is never a real number (no country to
+  // attach it to here, phone_util.js does that at capture time), so leave
+  // it as-is for Twilio to reject rather than mangle it into a wrong one.
+  if (digits.startsWith("0")) return raw;
   return digits ? "+" + digits : raw;
 }
 

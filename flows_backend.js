@@ -855,6 +855,10 @@ export async function handleFlowsRequest(req, res, url) {
         "Event Type": eventTypes.find(e => e.id === b.eventTypeId)?.name || "",
         "When": new Date(b.startAt).toLocaleString(),
         "Name": b.name, "Email": b.email, "Phone": b.phone, "Notes": b.notes || "",
+        "Timezone": b.timezone || "",
+        // Same rendering as scheduling_backend.js's formatWhenWithZoneName --
+        // only bookings saved after calendarTimezone was recorded have one.
+        ...(b.calendarTimezone ? { "Calendar Time": new Date(b.startAt).toLocaleString("en-US", { timeZone: b.calendarTimezone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }) } : {}),
       }));
       return sendJson(res, 200, { samples, fieldLabels });
     }

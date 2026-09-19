@@ -36,6 +36,7 @@ import { setBackgroundWorker } from "./background_worker_handle.js";
 import { readJson, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex } from "./sqlite_inbox.js";
+import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Explicit path, not dotenv's default (process.cwd()) -- the preview
@@ -131,6 +132,7 @@ function warmCaches() {
   }
 }
 warmCaches();
+try { runRecentInternationalPhoneFix(); } catch (e) { console.error("[phone-fix] failed (non-fatal, will retry next boot):", e.message); }
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);

@@ -123,13 +123,15 @@ export function clientIp(req) {
 export async function lookupIpLocation(ip) {
   if (!ip || ip === "127.0.0.1" || ip === "::1") return null;
   const cache = readJson(IP_LOCATION_CACHE_FILE, {});
-  if (ip in cache) return cache[ip];
+  // Entries cached before countryCode was added (needed for phone-number
+  // country detection, see phone_util.js) are re-fetched once.
+  if (ip in cache && (cache[ip] === null || cache[ip].countryCode)) return cache[ip];
   let location = null;
   try {
-    const r = await fetch(`http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,city,regionName,country`);
+    const r = await fetch(`http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,city,regionName,country,countryCode`, { signal: AbortSignal.timeout(2500) });
     if (r.ok) {
       const d = await r.json();
-      if (d.status === "success") location = { city: d.city || "", region: d.regionName || "", country: d.country || "" };
+      if (d.status === "success") location = { city: d.city || "", region: d.regionName || "", country: d.country || "", countryCode: d.countryCode || "" };
     }
   } catch { /* lookup is best-effort -- a failed/rate-limited call just means no location signal for this visit, not a broken pageview log */ }
   cache[ip] = location;
