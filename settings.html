@@ -156,14 +156,14 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Automatic opt-out rules, so no one keeps getting texted or emailed after they've asked to stop.</div>
 
         <div class="pra-panel optout-card" id="optoutStop">
-          <div class="optout-card-head"><div class="optout-card-title">Stop keywords</div><div class="pra-muted optout-msg"></div></div>
+          <div class="optout-card-head"><div class="optout-card-title">Stop Keywords</div><div class="pra-muted optout-msg"></div></div>
           <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="stopKeywordsEnabled"/> Auto-detect SMS stop keywords</label>
           <div class="pra-muted optout-desc">When a reply's ENTIRE text is one of these words (not just mentioned in a sentence), SMS is opted out for that contact. Their pipeline status (ENROLLED, BOOKED, etc.) is never touched by this — someone can still very much be an active student and just want texts to stop. A stop keyword only ever opts out SMS — it never affects email.</div>
           <div class="field"><label class="pra-label">Keywords (comma-separated)</label><input class="pra-input" id="stopKeywordsList" placeholder="stop, stopall, unsubscribe, cancel, end, quit"/></div>
         </div>
 
         <div class="pra-panel optout-card" id="optoutBlacklist">
-          <div class="optout-card-head"><div class="optout-card-title">Blacklist suppression</div><div class="pra-muted optout-msg"></div></div>
+          <div class="optout-card-head"><div class="optout-card-title">Blacklist Suppression</div><div class="pra-muted optout-msg"></div></div>
           <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out when status is Blacklist</label>
           <div class="pra-muted optout-desc">Anyone whose status is set to <b>Blacklist</b> — by hand, by a flow, or automatically by a trigger word — is <b>opted out of SMS and unsubscribed from all emails sent from this CRM</b>, and their conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter, no unread alerts). Applies no matter how the status was changed.</div>
         </div>
@@ -182,9 +182,9 @@
         </div>
 
         <div class="pra-panel optout-card" id="optoutTriggers">
-          <div class="optout-card-head"><div class="optout-card-title">Blacklist trigger words</div><div class="pra-muted optout-msg"></div></div>
+          <div class="optout-card-head"><div class="optout-card-title">Blacklist Trigger Words</div><div class="pra-muted optout-msg"></div></div>
           <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="triggerKeywordsEnabled"/> Auto-blacklist on trigger words</label>
-          <div class="pra-muted optout-desc">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> — with everything that brings (see Blacklist suppression and the sheet above). Permanent: no reverse trigger.</div>
+          <div class="pra-muted optout-desc">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> — with everything that brings (see Blacklist Suppression and the Blacklist Google Sheet above). Permanent: no reverse trigger.</div>
           <div class="field"><label class="pra-label">Trigger keywords (comma-separated)</label><input class="pra-input" id="triggerKeywordsList" placeholder="e.g. fuck you, scam, leave me alone"/></div>
         </div>
       </div>
