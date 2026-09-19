@@ -186,12 +186,32 @@ async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
     const nextRow = (colData.values?.length || 0) + 1;
 
     const writeRange = encodeURIComponent(`'${sheetName}'!A${nextRow}:${endCol}${nextRow}`);
-    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    const put = () => fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ values: [rowValues] }),
     });
-    const d = await r.json();
+    let r = await put();
+    let d = await r.json();
+    // An explicit-row write (unlike values.append, which Zapier used) never
+    // grows the tab: once the last row of the grid is filled it fails with
+    // "exceeds grid limits" (the ONLINE LEADS tab hit its 178,217-row limit
+    // 2026-09-19 and every new lead silently missed the sheet). Add rows and retry.
+    if (!r.ok && /exceeds grid limits/i.test(d?.error?.message || "")) {
+      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties(sheetId,title)`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const meta = await metaRes.json();
+      const sheetId = meta.sheets?.find(s => s.properties.title === sheetName)?.properties.sheetId;
+      if (sheetId == null) throw new Error("Sheets write failed: " + JSON.stringify(d));
+      const grow = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: [{ appendDimension: { sheetId, dimension: "ROWS", length: 1000 } }] }),
+      });
+      if (!grow.ok) throw new Error("Sheets could not add rows: " + JSON.stringify(await grow.json()));
+      console.log(`[flows] '${sheetName}' was out of rows -- added 1000`);
+      r = await put();
+      d = await r.json();
+    }
     if (!r.ok) throw new Error("Sheets write failed: " + JSON.stringify(d));
     return d;
   });

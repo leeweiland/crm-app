@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync, unlinkSync, ftruncateSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync, closeSync, readSync, fstatSync, renameSync, unlinkSync, ftruncateSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
@@ -368,8 +368,31 @@ export function readJson(file, fallback) {
 // concurrent reader could catch the file mid-write. Confirmed live tonight:
 // the live server hit "SyntaxError: Unexpected end of JSON input" reading
 // contacts.json while the bulk import's flush was still writing it.
+// The temp name must be unique per write, not just per process: during a
+// Railway redeploy the old and new containers run at the same time against
+// the same /data volume and each is PID 33, so a pid-only name
+// ("crm_contacts.json.tmp33") had both writing the SAME file -- interleaved
+// bytes, then one rename won with a corrupt file (crm_contacts.json and
+// crm_conversation_index.json were both corrupted that way 2026-09-19).
+export function tmpPathFor(p) {
+  return `${p}.tmp${process.pid}_${randomBytes(4).toString("hex")}`;
+}
+// Temp files orphaned by a crash/deploy mid-write (each can be ~200MB).
+// Only ones untouched for a while, so a write in progress in an overlapping
+// container is never deleted out from under it.
+export function removeStaleTmpFiles(maxAgeMs = 15 * 60 * 1000) {
+  let removed = 0;
+  try {
+    for (const name of readdirSync(DATA_DIR)) {
+      if (!/\.json\.tmp\d+(_[0-9a-f]{8})?$/.test(name)) continue;
+      const full = join(DATA_DIR, name);
+      try { if (Date.now() - statSync(full).mtimeMs > maxAgeMs) { unlinkSync(full); removed++; } } catch { /* raced with its owner */ }
+    }
+  } catch { /* data dir unreadable -- nothing to clean */ }
+  if (removed) console.log(`[data] removed ${removed} stale temp file(s)`);
+}
 function writeJsonToDisk(p, data) {
-  const tmp = `${p}.tmp${process.pid}`;
+  const tmp = tmpPathFor(p);
   if (!Array.isArray(data)) {
     writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
   } else {
@@ -557,7 +580,7 @@ export function appendJsonRecords(file, newRecords) {
   if (!newRecords || !newRecords.length) return;
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) { writeJsonToDisk(p, newRecords); return; }
-  const tmp = `${p}.tmp${process.pid}`;
+  const tmp = tmpPathFor(p);
   const srcFd = openSync(p, "r");
   let bodyEnd, isEmpty;
   try {
@@ -638,7 +661,7 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
   const needleCompact = Buffer.from(`"${field}":"${value}"`);
   const needleSpaced = Buffer.from(`"${field}": "${value}"`);
   let found = null;
-  const tmp = `${p}.tmp${process.pid}`;
+  const tmp = tmpPathFor(p);
   const dstFd = openSync(tmp, "w");
   let wroteAny = false;
   try {
@@ -686,7 +709,7 @@ export function updateAllJsonArrayRecordsByField(file, field, value, updater) {
   const needleCompact = Buffer.from(`"${field}":"${value}"`);
   const needleSpaced = Buffer.from(`"${field}": "${value}"`);
   let changedCount = 0;
-  const tmp = `${p}.tmp${process.pid}`;
+  const tmp = tmpPathFor(p);
   const dstFd = openSync(tmp, "w");
   let wroteAny = false;
   try {
@@ -750,7 +773,7 @@ export function removeValuesFromArrayField(file, fieldName, valuesToRemove) {
   const valueSet = new Set(valuesToRemove);
   const needles = valuesToRemove.map(v => Buffer.from(v));
   let changedCount = 0;
-  const tmp = `${p}.tmp${process.pid}`;
+  const tmp = tmpPathFor(p);
   const dstFd = openSync(tmp, "w");
   let wroteAny = false;
   try {
@@ -792,7 +815,7 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
   const needles = ids.flatMap(id => [Buffer.from(`"id":"${id}"`), Buffer.from(`"id": "${id}"`)]);
   const updated = [];
   let changed = false;
-  const tmp = `${p}.tmp${process.pid}`;
+  const tmp = tmpPathFor(p);
   const dstFd = openSync(tmp, "w");
   let wroteAny = false;
   try {
