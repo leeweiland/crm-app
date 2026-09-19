@@ -732,7 +732,8 @@ function logBookingCancellation(booking, et, by) {
 }
 
 function locationText(location) {
-  if (!location) return "";
+  // "none" is a deliberate blank -- the admin chose not to show a location at all.
+  if (!location || location.type === "none") return "";
   if (location.type === "zoom") return location.detail || "Zoom link will be sent by email";
   if (location.type === "phone") return "Phone call — we'll call you";
   if (location.type === "in_person") return location.detail || "In person";
@@ -804,7 +805,7 @@ async function sendBookingEmail(booking, eventType, contact, isReminder) {
     : [{
         id: "b1", type: "text", html: `<p>Hi ${contact.first || "there"},</p>
     <p>${isReminder ? "Just a reminder — you're booked for" : "You're booked for"} <b>${eventType.name}</b>.</p>
-    <p><b>When:</b> ${when}<br/><b>Where:</b> ${locationText(eventType.location)}</p>
+    <p><b>When:</b> ${when}${locationText(eventType.location) ? `<br/><b>Where:</b> ${locationText(eventType.location)}` : ""}</p>
     ${booking.notes ? `<p><b>Notes:</b> ${booking.notes}</p>` : ""}`,
       }];
 

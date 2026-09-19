@@ -260,6 +260,7 @@
                         <option value="phone">Phone call</option>
                         <option value="in_person">In person</option>
                         <option value="custom">Custom</option>
+                        <option value="none">None (show nothing)</option>
                       </select>
                       <div id="locIconField" style="display:none">
                         <input id="locIcon" placeholder="Icon or emoji (optional)"/>
@@ -524,7 +525,7 @@ function setTextUnlessFocused(el, value) {
 // user-chosen icon/emoji instead of a fixed one, since it has no natural
 // default (unlike zoom/phone/in_person).
 function locationLabel(loc) {
-  if (!loc) return '';
+  if (!loc || loc.type === 'none') return '';
   if (loc.type === 'zoom') return '📹 ' + (loc.detail || 'Zoom (link sent by email)');
   if (loc.type === 'phone') return '📞 ' + (loc.detail || 'Phone call');
   if (loc.type === 'in_person') return '📍 ' + (loc.detail || 'In person');
@@ -536,7 +537,14 @@ function renderPreview() {
   setTextUnlessFocused(document.getElementById('pvTitle'), draft.name || '');
   setTextUnlessFocused(document.getElementById('pvDesc'), draft.description || '');
   document.getElementById('pvDuration').textContent = `⏱ ${draft.durationMinutes} min`;
-  document.getElementById('pvLocation').textContent = locationLabel(draft.location);
+  // A blank location would leave the preview row empty (and un-clickable,
+  // so there'd be no way back to the popover) -- show an editor-only hint
+  // instead. Visitors see nothing at all; see book.html's infoPanelHtml.
+  const locEl = document.getElementById('pvLocation');
+  const locText = locationLabel(draft.location);
+  locEl.textContent = locText || 'No location shown — click to set';
+  locEl.style.opacity = locText ? '' : '.45';
+  locEl.style.fontStyle = locText ? '' : 'italic';
 
   const logoImg = document.getElementById('pvLogoImg'), placeholder = document.getElementById('pvLogoPlaceholder');
   if (draft.branding.logoUrl) { logoImg.src = draft.branding.logoUrl; logoImg.style.display = 'block'; placeholder.style.display = 'none'; }
@@ -1096,17 +1104,23 @@ document.getElementById('pvTitle').addEventListener('input', (e) => { draft.name
 document.getElementById('pvDesc').addEventListener('input', (e) => { draft.description = e.target.textContent; saveDebounced(); });
 
 // ── Click-to-edit location (type + detail + optional custom icon) ───────
+// Icon field only for "custom"; the detail box is pointless for "none".
+function syncLocFields() {
+  const t = draft.location.type;
+  document.getElementById('locIconField').style.display = t === 'custom' ? 'block' : 'none';
+  document.getElementById('locDetail').style.display = t === 'none' ? 'none' : '';
+}
 document.getElementById('pvLocation').addEventListener('click', (e) => {
   e.stopPropagation();
   document.getElementById('locType').value = draft.location.type;
   document.getElementById('locDetail').value = draft.location.detail || '';
   document.getElementById('locIcon').value = draft.location.icon || '';
-  document.getElementById('locIconField').style.display = draft.location.type === 'custom' ? 'block' : 'none';
+  syncLocFields();
   document.getElementById('locPopover').style.display = 'block';
 });
 document.getElementById('locType').addEventListener('change', () => {
   draft.location.type = document.getElementById('locType').value;
-  document.getElementById('locIconField').style.display = draft.location.type === 'custom' ? 'block' : 'none';
+  syncLocFields();
   renderPreview(); saveDebounced();
 });
 document.getElementById('locDetail').addEventListener('input', () => {

@@ -248,7 +248,7 @@ function applyBranding(branding) {
 }
 function renderError(msg) { card().innerHTML = `<div style="padding:60px;text-align:center;color:#dc2626">${escapeHtml(msg)}</div>`; }
 function locationLabel(loc) {
-  if (!loc) return '';
+  if (!loc || loc.type === 'none') return ''; // "none" = admin chose to show no location at all
   if (loc.type === 'zoom') return '📹 ' + (loc.detail || 'Zoom (link sent by email)');
   if (loc.type === 'phone') return '📞 ' + (loc.detail || 'Phone call');
   if (loc.type === 'in_person') return '📍 ' + (loc.detail || 'In person');
@@ -293,7 +293,7 @@ function infoPanelHtml() {
     <div class="bk-brand">${escapeHtml(b.brandName || '')}</div>
     <div class="bk-title">${escapeHtml(eventType.name)}</div>
     <div class="bk-meta-row">⏱ ${eventType.durationMinutes} min</div>
-    <div class="bk-meta-row">${locationLabel(eventType.location)}</div>
+    ${locationLabel(eventType.location) ? `<div class="bk-meta-row">${locationLabel(eventType.location)}</div>` : ''}
     ${eventType.description ? `<div class="bk-desc">${escapeHtml(eventType.description)}</div>` : ''}
   `;
 }
