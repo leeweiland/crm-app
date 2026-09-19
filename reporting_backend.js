@@ -383,6 +383,33 @@ function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
   return { title: niceTitle(key), adGroup: "—", campaign: "—", spend: 0, platform: "Other" };
 }
 
+// Ad Attribution's raw tags -> readable rows: an ad ID becomes the ad's own
+// name with its ad set/group and campaign, and a YouTube video ID (from y=<id>
+// or the tail of an el=yt-<name>-<id> tag) becomes the video's title. Same
+// lookups as the Ads Report; anything unresolvable keeps the prettified tag,
+// and the raw tag always stays visible in the UI.
+const YT_TAG_ID = /^yt-(?:.+-)?([A-Za-z0-9_-]{11})$/;
+async function labelAttributionSources(keys, startStr, endStr) {
+  const [metaS, googleS] = await Promise.allSettled([
+    keys.some(k => k.startsWith("meta-ad:")) ? fetchLiveMetaAdLevel(startStr, endStr) : null,
+    keys.some(k => k.startsWith("google-ad:")) ? fetchLiveGoogleAdLevel(startStr, endStr) : null,
+  ]);
+  const metaAdMap = metaS.status === "fulfilled" ? metaS.value : null;
+  const googleAdMap = googleS.status === "fulfilled" ? googleS.value : null;
+  const slugIndex = buildSlugNameIndex();
+  const videoIdOf = (k) => k.startsWith("youtube:") ? k.slice(8) : YT_TAG_ID.exec(k)?.[1] || null;
+  const titles = await lookupVideoTitles(keys.map(videoIdOf).filter(Boolean));
+  const out = new Map();
+  for (const key of keys) {
+    const m = sourceMeta(key, metaAdMap, googleAdMap, slugIndex);
+    let { title, platform } = m;
+    if (key.startsWith("yt-")) { platform = "YouTube"; title = titles.get(videoIdOf(key)) || niceTitle(key.slice(3)); }
+    else if (key.startsWith("youtube:")) title = titles.get(videoIdOf(key)) || title;
+    out.set(key, { label: title, platform, adGroup: m.adGroup, campaign: m.campaign });
+  }
+  return out;
+}
+
 const money = (n) => (n && isFinite(n)) ? Math.round(n * 100) / 100 : null;
 // Combines computeAttribution's real lead/booking counts (per source) with
 // ad-hierarchy names and per-ad spend from Meta/Google's own APIs. Revenue/
@@ -579,7 +606,9 @@ export async function handleReportingRequest(req, res, url) {
     const { startMs, endMs } = parseRangeParams(url);
     const data = computeAttribution(startMs, endMs);
     if (p === "/api/reporting/attribution") {
-      return sendJson(res, 200, { sources: data.sources, start: url.searchParams.get("start"), end: url.searchParams.get("end") });
+      const start = url.searchParams.get("start"), end = url.searchParams.get("end");
+      const labels = await labelAttributionSources(data.sources.map(s => s.el), start, end);
+      return sendJson(res, 200, { sources: data.sources.map(s => ({ ...s, ...labels.get(s.el) })), start, end });
     }
     // Drill-down: the exact contacts behind one source's one funnel stage.
     const el = url.searchParams.get("el");

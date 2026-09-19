@@ -552,8 +552,8 @@ function renderAttributionTable() {
   if (!allAttributionSources.length) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">No tracked visits in this range.</td></tr>`; return; }
   const { field, dir } = attributionSort;
   const rows = [...allAttributionSources].sort((a, b) => {
-    const av = field === 'el' ? a.el.toLowerCase() : a[field];
-    const bv = field === 'el' ? b.el.toLowerCase() : b[field];
+    const av = field === 'el' ? (a.label || a.el).toLowerCase() : a[field];
+    const bv = field === 'el' ? (b.label || b.el).toLowerCase() : b[field];
     return av < bv ? -dir : av > bv ? dir : 0;
   });
   document.querySelectorAll('#tab-attribution th.sortable').forEach(th => {
@@ -566,7 +566,11 @@ function renderAttributionTable() {
     : `<td style="text-align:right;padding:10px 16px;color:var(--pra-dim)">0</td>`;
   body.innerHTML = rows.map(s => `
     <tr style="border-top:1px solid var(--pra-border)">
-      <td style="padding:10px 16px;font-weight:600">${escapeHtml(s.el)}</td>
+      <td style="padding:10px 16px">
+        <div style="font-weight:600">${escapeHtml(s.label || s.el)}</div>
+        <div class="pra-muted" style="font-size:.72rem">${[s.platform, s.adGroup && s.adGroup !== '—' ? `${s.platform === 'Google' ? 'Ad group' : 'Ad set'}: ${s.adGroup}` : '', s.campaign && s.campaign !== '—' ? `Campaign: ${s.campaign}` : ''].filter(Boolean).map(escapeHtml).join(' · ')}</div>
+        ${s.label && s.label !== s.el ? `<div class="pra-muted" style="font-size:.66rem;opacity:.65">${escapeHtml(s.el)}</div>` : ''}
+      </td>
       <td style="text-align:right;padding:10px 16px">${s.visits.toLocaleString()}</td>
       <td style="text-align:right;padding:10px 16px">${s.uniqueVisitors.toLocaleString()}</td>
       ${cell(s.optIns, 'optIns', s.el)}
@@ -666,7 +670,7 @@ async function loadAdsReportTable() {
     const pct = (o) => o.total ? Math.round(100 * o.tracked / o.total) : 0;
     const e = d.coverage.emails, b = d.coverage.bookings;
     cov.style.display = 'block';
-    cov.innerHTML = `<b>Click tracking coverage:</b> ${e.tracked} of ${e.total} Emails (${pct(e)}%) and ${b.tracked} of ${b.total} Bookings/Apps (${pct(b)}%) are tied to a click${d.coverage.inferred ? ` (${d.coverage.inferred} of those linked by timing -- exactly one visitor on the form page just before the sign-up)` : ''}. The rest show as "Untracked" -- no ad click was recorded for that person (visits weren't being saved before Sep 19, so earlier days can't be recovered).`;
+    cov.innerHTML = `<b>Click tracking coverage:</b> ${e.tracked} of ${e.total} Emails (${pct(e)}%) and ${b.tracked} of ${b.total} Bookings/Apps (${pct(b)}%) are tied to a click${d.coverage.inferred ? ` (${d.coverage.inferred} of those linked by timing -- the visitor who was on the form page just before the sign-up, and who loaded the thank-you page seconds after)` : ''}. The rest show as "Untracked" -- no ad click was recorded for that person (visits weren't being saved before Sep 19, so earlier days can't be recovered).`;
   } else cov.style.display = 'none';
   renderAdsReportTable();
 }
@@ -752,9 +756,9 @@ function renderAdsReportTable() {
   const totalsRow = {
     source: 'Totals', platform: `${allAdsReportRows.length} source${allAdsReportRows.length === 1 ? '' : 's'}`,
     adGroup: '—', campaign: '—',
-    spend: totalSpend || null, revenue: totalRevenue, sales: totalSales, costPerSale: totalSales ? money(totalSpend / totalSales) : null,
-    bookings: totalBookings, costPerBooking: totalBookings ? money(totalSpend / totalBookings) : null,
-    leads: totalLeads, costPerLead: totalLeads ? money(totalSpend / totalLeads) : null,
+    spend: totalSpend || null, revenue: totalRevenue, sales: totalSales, costPerSale: totalSales ? totalSpend / totalSales : null,
+    bookings: totalBookings, costPerBooking: totalBookings ? totalSpend / totalBookings : null,
+    leads: totalLeads, costPerLead: totalLeads ? totalSpend / totalLeads : null,
     visits: totalVisits, key: '__totals__',
   };
   const totalsCellFor = (key) => key === 'bookings'
