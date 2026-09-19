@@ -158,10 +158,11 @@ export function enrollContactInWorkflow(workflow, contactId, context) {
   if (workflow.recipientSettings?.runMode !== "multiple") {
     if (enrollments.some(e => e.workflowId === workflow.id && e.contactId === contactId && e.status === "active")) return;
   }
-  if (!workflow.steps.length) return;
+  const startIndex = firstNonGoalIndex(workflow, 0);
+  if (!workflow.steps[startIndex]) return;
   const enrollment = {
-    id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: 0,
-    enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[0]),
+    id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: startIndex,
+    enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[startIndex]),
     completedAt: null, goalMetAt: null, bookingId: context?.bookingId || null,
   };
   enrollments.push(enrollment);
@@ -204,18 +205,40 @@ export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, form
 // Called from sms_backend.js's inbound webhook and contacts_backend.js's
 // status-change PATCH -- see CONVERSION_GOAL_TYPES comment above for what's
 // actually wired vs. selectable-but-dormant.
+//
+// A "goal" is a step in the sequence like any other (config.trigger says which
+// event it listens for). A contact who reaches it normally just passes
+// through; a contact still EARLIER in the sequence when the event happens is
+// pulled down to the goal step and carries on with whatever follows it --
+// skipping everything between (same behavior as automations_backend.js's
+// goal step). A contact already past the goal is left alone.
 export function checkConversionGoal(trigger, contactId) {
   if (!contactId || !CONVERSION_GOAL_TYPES.includes(trigger)) return;
-  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && (w.conversionGoals || []).some(g => g.trigger === trigger));
+  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && (w.steps || []).some(s => s.type === "goal" && s.config?.trigger === trigger));
   if (!workflows.length) return;
   const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
-  let changed = false;
-  workflows.forEach(w => {
-    enrollments.filter(e => e.workflowId === w.id && e.contactId === contactId && e.status === "active").forEach(e => {
-      e.status = "goal_met"; e.goalMetAt = new Date().toISOString(); changed = true;
-    });
-  });
-  if (changed) writeJson(WF_ENROLLMENTS_FILE, enrollments);
+  for (const w of workflows) {
+    for (const e of enrollments.filter(x => x.workflowId === w.id && x.contactId === contactId && x.status === "active")) {
+      const goalIdx = w.steps.findIndex((s, i) => i > e.currentStepIndex && s.type === "goal" && s.config?.trigger === trigger);
+      if (goalIdx === -1) continue;
+      const nextIndex = firstNonGoalIndex(w, goalIdx + 1);
+      const now = new Date().toISOString();
+      e.goalHits = [...(e.goalHits || []), w.steps[goalIdx].id];
+      e.goalMetAt = now;
+      e.stepRetryCount = 0;
+      e.currentStepIndex = nextIndex;
+      if (w.steps[nextIndex]) e.nextStepDueAt = computeStepDueDate(w, now, w.steps[nextIndex]);
+      else { e.status = "goal_met"; e.nextStepDueAt = null; } // goal was the last step
+      saveWfEnrollment(e);
+    }
+  }
+}
+// First index at/after `from` that isn't a goal step -- a goal is never
+// somewhere an enrollment waits or fires from, it's just a marker to jump to.
+function firstNonGoalIndex(workflow, from) {
+  let i = from;
+  while (workflow.steps[i]?.type === "goal") i++;
+  return i;
 }
 
 // Called by scheduler.js every tick.
@@ -261,7 +284,7 @@ export async function advanceDueWorkflowEnrollments() {
       enrollment.stepRetryCount = 0;
     }
 
-    const nextIndex = enrollment.currentStepIndex + 1;
+    const nextIndex = firstNonGoalIndex(workflow, enrollment.currentStepIndex + 1);
     const nextStep = workflow.steps[nextIndex];
     enrollment.currentStepIndex = nextIndex;
     if (enrollment.status === "active") {
@@ -289,7 +312,7 @@ function workflowStats(workflowId) {
     active: enrollments.filter(e => e.status === "active").length,
     enrolled: enrollments.length,
     completed: enrollments.filter(e => e.status === "completed").length,
-    goalMet: enrollments.filter(e => e.status === "goal_met").length,
+    goalMet: enrollments.filter(e => e.status === "goal_met" || (e.goalHits || []).length).length,
     bounced: enrollments.filter(e => e.status === "bounced").length,
     errored: enrollments.filter(e => e.status === "errored").length,
   };

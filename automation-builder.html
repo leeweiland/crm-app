@@ -53,6 +53,7 @@
   .add-trigger-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px; min-width: 320px; text-align: left; position: relative; transition: border-color .12s; }
   .step-card:hover { border-color: var(--pra-blue); }
+  .step-card.goal-step { border-color: var(--pra-green); }
   .step-card .step-type { font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
   .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
   .step-card .step-actions { position: absolute; top: 8px; right: 10px; display: flex; gap: 6px; }
@@ -141,21 +142,6 @@
       <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
       <button class="pra-btn pra-btn-danger" id="deleteTriggerBtn" style="display:none">Remove</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal-backdrop" id="goalModal">
-  <div class="pra-panel modal-box">
-    <div class="pra-h2" style="margin-bottom:6px">Goal</div>
-    <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">When a contact hits this, they're pulled straight to Completed -- skipping any remaining steps -- no matter where they are in the automation.</div>
-    <div class="field"><label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="goalEnabled"/> Enable a goal for this automation</label></div>
-    <div id="goalConfigFields">
-      <div class="field"><label class="pra-label">Status changes to (leave blank for any status change)</label><select class="pra-select" id="goalStatus"><option value="">Any status change</option></select></div>
-    </div>
-    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
-      <button class="pra-btn" id="saveGoalBtn" style="flex:1">Save</button>
-      <button class="pra-btn pra-btn-ghost" onclick="closeModal('goalModal')">Cancel</button>
     </div>
   </div>
 </div>
@@ -378,9 +364,10 @@ function stepSummary(step) {
   }
   if (step.type === 'jump_to_automation') return `Add to: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
   if (step.type === 'end_automation') return `End: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
+  if (step.type === 'goal') return step.config.status ? `Goal: status changes to ${escapeHtml(step.config.status)}` : 'Goal: any status change';
   return '';
 }
-const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation' };
+const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation', goal: 'Goal' };
 let facebookIsConfigured = false;
 
 function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
@@ -413,7 +400,7 @@ function stepCardHtml(stepId, isLast) {
     ? `<a class="step-link" draggable="false" data-open-step="${stepId}" href="automation-builder.html?id=${automationId}&step=${stepId}" style="cursor:pointer;color:inherit;text-decoration:none;display:block">${body}</a>`
     : `<div data-open-step="${stepId}" style="cursor:pointer">${body}</div>`;
   return `
-    <div class="step-card" data-step-id="${stepId}"${step.type !== 'condition' ? ' draggable="true"' : ''}>
+    <div class="step-card${step.type === 'goal' ? ' goal-step' : ''}" data-step-id="${stepId}"${step.type !== 'condition' ? ' draggable="true"' : ''}>
       <div class="step-actions">
         <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
@@ -473,7 +460,32 @@ function renderOverview(stats) {
     <div class="pra-card" style="padding:16px"><div class="pra-label">${l}</div><div class="pra-h1">${r[k] ?? 0}</div></div>
   `).join('');
 }
+// Any re-render (adding a trigger, inserting/deleting a step, ...) rebuilds the
+// whole canvas, and because the content is centered in the layer, a change in
+// the trigger row's width or the height of anything above shifts the steps on
+// screen. Pin whichever step is nearest the middle of the view so it stays
+// exactly where it was and only the surrounding cards make room.
 function render() {
+  const wrap = document.getElementById('canvasWrap') || document.getElementById('canvas').parentElement;
+  const cardsBefore = [...document.querySelectorAll('#canvas .step-card[data-step-id]')];
+  let anchor = null;
+  if (cardsBefore.length && wrap) {
+    const wr = wrap.getBoundingClientRect();
+    const midY = wr.top + wr.height / 2;
+    const best = cardsBefore.reduce((a, c) => { const r = c.getBoundingClientRect(); const d = Math.abs(r.top + r.height / 2 - midY); return !a || d < a.d ? { c, d } : a; }, null);
+    const r = best.c.getBoundingClientRect();
+    anchor = { id: best.c.dataset.stepId, cx: r.left + r.width / 2, y: r.top };
+  }
+  renderCanvasContent();
+  if (!anchor) return;
+  const el = document.querySelector('#canvas .step-card[data-step-id="' + anchor.id + '"]');
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  panX += anchor.cx - (r.left + r.width / 2);
+  panY += anchor.y - r.top;
+  applyTransform();
+}
+function renderCanvasContent() {
   emailNumbers = new Map();
   computeEmailNumbers(automation.startStepId);
   document.getElementById('autoName').value = automation.name;
@@ -493,19 +505,7 @@ function render() {
     return map[trig.type] || trig.type;
   }
   const triggers = automation.triggers || [];
-  // Not part of automation.steps -- a goal can fire at any point during
-  // enrollment, not at a fixed position in the chain -- so it's a fixed
-  // card right after Trigger rather than something spliced into the chain.
-  const goalHtml = automation.goal ? `
-    <div class="goal-card" id="goalCardBtn">
-      <div class="pra-label">Goal</div>
-      <div style="margin-top:4px">${automation.goal.status ? escapeHtml(automation.goal.status) : 'Any status change'}</div>
-    </div>
-  ` : '';
-  // Only one of these two arrows is ever "the one right before the step
-  // chain starts" -- when there's a goal card, that's the arrow after it
-  // (trigger->goal stays a plain arrow); with no goal, it's the arrow right
-  // after the trigger itself. That's the one that gets the insert-step
+  // The arrow right after the trigger is the one that gets the insert-step
   // affordance, gated on there actually being an existing first step to
   // insert ahead of.
   const triggerCardsHtml = triggers.length
@@ -535,8 +535,6 @@ function render() {
       </div>
       ${triggers.length ? '<button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>' : ''}
     </div>
-    ${automation.goal ? arrowHtml(false, '', '') : ''}
-    ${goalHtml}
     ${arrowHtml(!!automation.startStepId, 'root', '__start__')}
     ${renderChainHtml(automation.startStepId, 'root')}
   `;
@@ -552,8 +550,6 @@ function render() {
   }));
   const addTriggerBtn = document.getElementById('addTriggerBtn');
   if (addTriggerBtn) addTriggerBtn.onclick = () => openTriggerModal(null);
-  const goalCardBtn = document.getElementById('goalCardBtn');
-  if (goalCardBtn) goalCardBtn.onclick = openGoalModal;
   canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {
     if (e.target.closest('[data-delete]')) return;
     // A send-email step's opener is a real <a href> -- a plain left-click
@@ -581,7 +577,7 @@ async function saveAutomation(opts) {
   const removedStepIds = pendingRemovedStepIds.slice();
   const r = await fetch('/api/automations/' + automation.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: automation.name, triggers: automation.triggers, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal, removedStepIds }),
+    body: JSON.stringify({ name: automation.name, triggers: automation.triggers, steps: automation.steps, startStepId: automation.startStepId, removedStepIds }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (r.ok) pendingRemovedStepIds = pendingRemovedStepIds.filter(id => !removedStepIds.includes(id));
@@ -664,23 +660,6 @@ function updateTriggerTargetField() {
 }
 document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
 
-// ── Goal ───────────────────────────────────────────────────────────────
-function openGoalModal() {
-  document.getElementById('goalStatus').innerHTML = '<option value="">Any status change</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
-  const goal = automation.goal || null;
-  document.getElementById('goalEnabled').checked = !!goal;
-  document.getElementById('goalConfigFields').style.display = goal ? 'block' : 'none';
-  document.getElementById('goalStatus').value = goal?.status || '';
-  openModal('goalModal');
-}
-document.getElementById('goalEnabled').addEventListener('change', (e) => { document.getElementById('goalConfigFields').style.display = e.target.checked ? 'block' : 'none'; });
-document.getElementById('saveGoalBtn').onclick = () => {
-  const enabled = document.getElementById('goalEnabled').checked;
-  automation.goal = enabled ? { trigger: 'lead_status_change', status: document.getElementById('goalStatus').value || null } : null;
-  closeModal('goalModal');
-  render(); saveDebounced();
-  showToast('Goal saved');
-};
 document.getElementById('saveTriggerBtn').onclick = () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
@@ -721,7 +700,6 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
   btn.onclick = () => {
     const type = btn.dataset.type;
     closeModal('typePickerModal');
-    if (type === 'goal') { openGoalModal(); return; }
     const step = { id: uid(), type, config: defaultConfig(type), nextStepId: null, yesStepId: null, noStepId: null, position: { x: 0, y: 0 } };
     if (type === 'send_email') { openEmailStepEditor(step, true); return; }
     openStepConfigModal(step, true);
@@ -734,6 +712,7 @@ function defaultConfig(type) {
   if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };
   if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
   if (type === 'jump_to_automation' || type === 'end_automation') return { automationId: '' };
+  if (type === 'goal') return { trigger: 'lead_status_change', status: null };
   return {};
 }
 
@@ -974,6 +953,10 @@ function openStepConfigModal(step, isNew) {
     }
     fieldSel.addEventListener('change', updateValueOptions);
     updateValueOptions();
+  } else if (step.type === 'goal') {
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">When a contact hits this goal, anyone still above it in this automation is moved straight down to here and continues with the next step. Contacts already past it aren't affected.</div>
+      <div class="field"><label class="pra-label">Status changes to (leave blank for any status change)</label><select class="pra-select" id="cfgGoalStatus"><option value="">Any status change</option>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${step.config.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'jump_to_automation' || step.type === 'end_automation') {
     const others = allAutomations.filter(a => a.id !== automation.id);
     body.innerHTML = `<div class="field"><label class="pra-label">Automation</label><select class="pra-select" id="cfgAutomation">${others.map(a => `<option value="${a.id}" ${step.config.automationId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>`;
@@ -984,6 +967,7 @@ function openStepConfigModal(step, isNew) {
     else if (step.type === 'add_to_facebook_audience') { step.config.audienceName = document.getElementById('cfgFbName').value.trim(); step.config.audienceId = document.getElementById('cfgFbId').value.trim(); }
     else if (step.type === 'condition') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
     else if (step.type === 'jump_to_automation' || step.type === 'end_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
+    else if (step.type === 'goal') { step.config = { trigger: 'lead_status_change', status: document.getElementById('cfgGoalStatus').value || null }; }
     if (isNew) attachNewStep(step);
     closeModal('stepConfigModal');
     render(); saveDebounced();

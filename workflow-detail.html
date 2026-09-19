@@ -58,6 +58,7 @@
   .insert-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
   .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 12px 18px 12px 30px; min-width: 320px; max-width: 100%; text-align: left; position: relative; transition: border-color .12s, opacity .12s; }
   .step-card[data-step-type="sms"] { min-width: 480px; }
+  .step-card[data-step-type="goal"] { border-color: var(--pra-green); }
   .step-card.dragging { opacity: .4; }
   /* Its own draggable handle, separate from the card -- dragging from
      inside the message textarea or the delay input needs to keep doing
@@ -178,18 +179,6 @@
       <button class="pra-btn" id="saveTriggerBtn" style="flex:1">Save</button>
       <button class="pra-btn pra-btn-ghost" onclick="closeModal('triggerModal')">Cancel</button>
       <button class="pra-btn pra-btn-danger" id="deleteTriggerBtn" style="display:none">Remove</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal-backdrop" id="goalsModal">
-  <div class="pra-panel modal-box">
-    <div class="pra-h2" style="margin-bottom:6px">Goals</div>
-    <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">When a goal is met, the contact's enrollment pauses and is marked converted -- they stop receiving further steps.</div>
-    <div id="goalsList"></div>
-    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
-      <button class="pra-btn" id="saveGoalsBtn" style="flex:1">Save</button>
-      <button class="pra-btn pra-btn-ghost" onclick="closeModal('goalsModal')">Cancel</button>
     </div>
   </div>
 </div>
@@ -336,7 +325,32 @@ function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHei
 function arrowHtml(afterStep) {
   return `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-insert-after="${afterStep ? afterStep.id : ''}" title="Insert a step here">+</button></div>`;
 }
+// Any re-render (adding a trigger, inserting/deleting a step, ...) rebuilds the
+// whole canvas, and because the content is centered in the layer, a change in
+// the trigger row's width or the height of anything above shifts the steps on
+// screen. Pin whichever step is nearest the middle of the view so it stays
+// exactly where it was and only the surrounding cards make room.
 function renderCanvas() {
+  const wrap = document.getElementById('canvasWrap');
+  const cardsBefore = [...document.querySelectorAll('#wfCanvas .step-card[data-step-id]')];
+  let anchor = null;
+  if (cardsBefore.length && wrap) {
+    const wr = wrap.getBoundingClientRect();
+    const midY = wr.top + wr.height / 2;
+    const best = cardsBefore.reduce((a, c) => { const r = c.getBoundingClientRect(); const d = Math.abs(r.top + r.height / 2 - midY); return !a || d < a.d ? { c, d } : a; }, null);
+    const r = best.c.getBoundingClientRect();
+    anchor = { id: best.c.dataset.stepId, cx: r.left + r.width / 2, y: r.top };
+  }
+  renderCanvasContent();
+  if (!anchor) return;
+  const el = document.querySelector('#wfCanvas .step-card[data-step-id="' + anchor.id + '"]');
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  panX += anchor.cx - (r.left + r.width / 2);
+  panY += anchor.y - r.top;
+  applyTransform();
+}
+function renderCanvasContent() {
   const canvas = document.getElementById('wfCanvas');
   // Steps render in their true storage (array) order now -- this IS the
   // backend's actual execution order (advanceDueWorkflowEnrollments walks
@@ -356,7 +370,15 @@ function renderCanvas() {
     // the chain reaches them. "Send after" only ever meant something for a
     // Wait step now; spacing between messages comes entirely from explicit
     // Wait steps, so the stepper/unit-select only render for those.
-    const delayRowHtml = step.type === 'wait' ? `
+    const goalRowHtml = `
+      <div class="step-delay-row">
+        <span class="step-delay-label">Goal</span>
+        <select class="step-unit-select" data-goal-for="${step.id}" style="flex:1;min-width:0">${GOAL_TYPES.map(g => `<option value="${g.key}" ${g.key === (step.config?.trigger || 'incoming_sms') ? 'selected' : ''}>${g.label}</option>`).join('')}</select>
+        <span class="${count ? '' : 'pra-muted'}" style="font-size:.76rem;margin-left:8px${count ? ';color:#009bff;font-weight:700' : ''}">${countLabel}</span>
+      </div>
+      <div class="pra-muted" style="font-size:.74rem;margin-top:6px">Anyone still above this step when this happens jumps straight down to here and continues with the next step.</div>
+    `;
+    const delayRowHtml = step.type === 'goal' ? goalRowHtml : step.type === 'wait' ? `
       <div class="step-delay-row">
         <span class="step-delay-label">Wait</span>
         <div class="step-day-stepper">
@@ -402,16 +424,6 @@ function renderCanvas() {
     ${i < workflow.steps.length - 1 ? arrowHtml(step) : '<div class="chain-arrow">&darr;</div>'}
   `;
   }).join('');
-  // The goal card isn't part of workflow.steps (goals aren't day-ordered --
-  // they can fire at any point during enrollment), so it's a fixed card
-  // right after Trigger rather than something that sorts into the chain.
-  const goalHtml = (workflow.conversionGoals || []).length ? `
-    <div class="goal-card" id="goalCardBtn">
-      <div class="pra-label">Goal</div>
-      <div style="margin-top:4px">${workflow.conversionGoals.map(g => escapeHtml(GOAL_SHORT_LABELS[g.trigger] || g.trigger)).join(', ')}</div>
-    </div>
-    <div class="chain-arrow">&darr;</div>
-  ` : '';
   // Same centered, side-by-side-when-multiple layout as automation-builder.html's
   // trigger-row -- a single trigger centers on its own (flex justify-content:
   // center with only one child), several lay out side by side, still centered
@@ -443,8 +455,7 @@ function renderCanvas() {
       </div>
       ${triggers.length ? '<button class="add-trigger-btn" id="addTriggerBtn" type="button">+ Add another start trigger</button>' : ''}
     </div>
-    ${!goalHtml && workflow.steps.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
-    ${goalHtml}
+    ${workflow.steps.length ? arrowHtml(null) : '<div class="chain-arrow">&darr;</div>'}
     ${stepHtml}
     <button class="add-step-btn" id="addStepBtn">+ Add Step</button>
   `;
@@ -460,8 +471,6 @@ function renderCanvas() {
   }));
   const addTriggerBtn = document.getElementById('addTriggerBtn');
   if (addTriggerBtn) addTriggerBtn.onclick = () => openTriggerModal(null);
-  const goalCardBtn = document.getElementById('goalCardBtn');
-  if (goalCardBtn) goalCardBtn.onclick = openGoalsModal;
   document.getElementById('addStepBtn').onclick = () => { pendingInsertAfterId = undefined; openModal('typePickerModal'); };
   canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => {
     e.stopPropagation();
@@ -537,6 +546,12 @@ function renderCanvas() {
     input.value = (Number(input.value) || 0) + 1;
     input.dispatchEvent(new Event('change'));
   });
+  canvas.querySelectorAll('[data-goal-for]').forEach(sel => sel.addEventListener('change', () => {
+    const step = workflow.steps.find(s => s.id === sel.dataset.goalFor);
+    if (!step) return;
+    step.config = { trigger: sel.value };
+    saveDebounced();
+  }));
   canvas.querySelectorAll('[data-unit-for]').forEach(sel => sel.addEventListener('change', () => {
     commitDelay(sel.dataset.unitFor, step => { step.delayUnit = sel.value; });
   }));
@@ -570,7 +585,6 @@ function renderCanvas() {
 
 document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => btn.onclick = () => {
   closeModal('typePickerModal');
-  if (btn.dataset.type === 'goal') { openGoalsModal(); return; }
   const type = btn.dataset.type;
   // Insertion index: undefined -> end of the chain (Add Step button), ''
   // -> before the first step, an id -> right after that step. Falls back
@@ -590,13 +604,15 @@ document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => btn.onc
     const neighborWait = [workflow.steps[insertIdx - 1], workflow.steps[insertIdx]].find(s => s?.type === 'wait');
     const delay = neighborWait ? { value: neighborWait.delayValue ?? neighborWait.dayOffset ?? 0, unit: neighborWait.delayUnit || 'days' } : { value: 1, unit: 'days' };
     step = { id: uid(), order: workflow.steps.length, delayValue: delay.value, delayUnit: delay.unit, type, config: {} };
+  } else if (type === 'goal') {
+    step = { id: uid(), order: workflow.steps.length, type, config: { trigger: 'incoming_sms' } };
   } else {
     step = { id: uid(), order: workflow.steps.length, type, config: { body: '' } };
   }
   workflow.steps.splice(insertIdx, 0, step);
   renderCanvas(); saveDebounced();
   const wfCanvas = document.getElementById('wfCanvas');
-  const toFocus = wfCanvas.querySelector(`[data-body-for="${step.id}"]`) || wfCanvas.querySelector(`.step-day-input[data-day-for="${step.id}"]`);
+  const toFocus = wfCanvas.querySelector(`[data-body-for="${step.id}"]`) || wfCanvas.querySelector(`.step-day-input[data-day-for="${step.id}"]`) || wfCanvas.querySelector(`[data-goal-for="${step.id}"]`);
   if (toFocus) toFocus.focus();
 });
 
@@ -604,7 +620,7 @@ function saveDebounced() { clearTimeout(saveTimer); saveTimer = setTimeout(saveW
 async function saveWorkflow() {
   const r = await fetch('/api/workflows/' + workflow.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: workflow.name, triggers: workflow.triggers, steps: workflow.steps, conversionGoals: workflow.conversionGoals, recipientSettings: workflow.recipientSettings }),
+    body: JSON.stringify({ name: workflow.name, triggers: workflow.triggers, steps: workflow.steps, recipientSettings: workflow.recipientSettings }),
   });
   if (r.ok) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
 }
@@ -686,18 +702,6 @@ const GOAL_TYPES = [
   { key: 'lead_status_change', label: 'Lead status change' },
   { key: 'outcome_met', label: 'Outcome met (not yet wired)' },
 ];
-function openGoalsModal() {
-  document.getElementById('goalsList').innerHTML = GOAL_TYPES.map(g => `
-    <label class="goal-row"><input type="checkbox" data-goal="${g.key}" ${workflow.conversionGoals.some(x => x.trigger === g.key) ? 'checked' : ''}/> ${g.label}</label>
-  `).join('');
-  openModal('goalsModal');
-}
-document.getElementById('saveGoalsBtn').onclick = () => {
-  workflow.conversionGoals = [...document.querySelectorAll('[data-goal]')].filter(el => el.checked).map(el => ({ trigger: el.dataset.goal, config: {} }));
-  closeModal('goalsModal');
-  renderCanvas(); saveDebounced();
-  showToast('Goals saved');
-};
 
 // ── Recipients ───────────────────────────────────────────────────────────
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];

@@ -50,7 +50,7 @@ function automationSnapshotFields(automation) {
 // "add_to_facebook_audience" degrades gracefully -- see facebook_backend.js
 // -- same "not configured yet" pattern as SES/Twilio.
 export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created"];
-export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation"];
+export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal"];
 
 function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
 function saveContact(contact) {
@@ -70,23 +70,59 @@ function completeEnrollment(enrollment) {
   saveEnrollment(enrollment);
 }
 
-// Goal: when a contact hits the automation's defined goal (currently just
-// "their status changed to X"), pull them straight to completed regardless
-// of which step they're on -- mirrors workflows_backend.js's
-// checkConversionGoal, called from the same contacts_backend.js status-PATCH
-// hook. A blank goal.status means "any status change counts."
+// Goal step: a "goal" is a step like any other, wherever it was added. A
+// contact who walks into it normally just passes through. But when the goal
+// event happens (currently: their status changed to X -- blank status means
+// any change) while they're still EARLIER in the flow, they're pulled down to
+// that goal step and carry on with whatever follows it (skipping everything
+// between). A contact already past the goal, or on a branch that never
+// reaches it, is left alone. Called from the same contacts_backend.js /
+// flows_backend.js status-change hooks as before.
+function goalStepMatches(step, statusValue) {
+  const cfg = step.config || {};
+  return (cfg.trigger || "lead_status_change") === "lead_status_change" && (!cfg.status || cfg.status === statusValue);
+}
+// Nearest matching goal step ahead of fromStepId, following next/yes/no links
+// breadth-first.
+function findGoalAhead(automation, fromStepId, statusValue) {
+  const seen = new Set();
+  const queue = [fromStepId];
+  while (queue.length) {
+    const id = queue.shift();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const s = automation.steps[id];
+    if (!s) continue;
+    if (s.type === "goal" && goalStepMatches(s, statusValue)) return s;
+    if (s.type === "condition") queue.push(s.yesStepId, s.noStepId); else queue.push(s.nextStepId);
+  }
+  return null;
+}
+function moveEnrollmentToGoal(enrollment, automation, goalStep) {
+  const now = new Date().toISOString();
+  enrollment.history.push({ stepId: goalStep.id, at: now, goal: true });
+  enrollment.goalHits = [...(enrollment.goalHits || []), goalStep.id];
+  enrollment.goalMetAt = now;
+  enrollment.waitUntil = null;
+  enrollment.stepRetryCount = 0;
+  delete enrollment.reenterCurrentStep;
+  enrollment.currentStepId = goalStep.nextStepId || null;
+  enrollment.updatedAt = now;
+  if (!enrollment.currentStepId) { enrollment.status = "goal_met"; saveEnrollment(enrollment); return; } // goal was the last step
+  saveEnrollment(enrollment);
+  advanceEnrollment(enrollment, automation).catch(e => console.error("[automations] advance after goal failed", e.message));
+}
 export function checkAutomationGoal(trigger, contactId, statusValue) {
   if (!contactId || trigger !== "lead_status_change") return;
-  const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && a.goal?.trigger === "lead_status_change" && (!a.goal.status || a.goal.status === statusValue));
+  const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && Object.values(a.steps || {}).some(s => s.type === "goal"));
   if (!automations.length) return;
   const enrollments = readJson(ENROLLMENTS_FILE, []);
-  let changed = false;
-  automations.forEach(a => {
-    enrollments.filter(e => e.automationId === a.id && e.contactId === contactId && e.status === "active").forEach(e => {
-      e.status = "goal_met"; e.goalMetAt = new Date().toISOString(); changed = true;
-    });
-  });
-  if (changed) writeJson(ENROLLMENTS_FILE, enrollments);
+  for (const a of automations) {
+    for (const e of enrollments.filter(x => x.automationId === a.id && x.contactId === contactId && x.status === "active")) {
+      const goal = findGoalAhead(a, e.currentStepId, statusValue);
+      if (goal) moveEnrollmentToGoal(e, a, goal);
+    }
+  }
 }
 
 // ── Trigger firing — called from contacts_backend.js (list/tag changes)
@@ -295,7 +331,7 @@ function automationStats(automationId) {
     active: enrollments.filter(e => e.status === "active").length,
     enrolled: enrollments.length,
     completed: enrollments.filter(e => e.status === "completed").length,
-    goalMet: enrollments.filter(e => e.status === "goal_met").length,
+    goalMet: enrollments.filter(e => e.status === "goal_met" || (e.goalHits || []).length).length,
     cancelled: enrollments.filter(e => e.status === "cancelled").length,
   };
 }
