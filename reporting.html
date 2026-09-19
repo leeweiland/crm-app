@@ -213,7 +213,7 @@
       </div>
 
       <div class="tab-panel" id="tab-adsreport">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">One row per source -- a specific Meta/Google ad, or an email/SMS/social tag -- with its ad group/campaign hierarchy where that applies, and emails/bookings/sales it drove. "Emails" are the ONLINE EMAIL and GYM EMAIL events (a new contact entering the system -- the ad platforms' Registrations completed), and "Bookings/Apps" are ONLINE BOOKING and GYM APPLICATION events (the platforms' Leads). Each event is credited to the first ad/source click in that person's own click journey. Revenue/Sales/$-per-Sale read $0 until a real sales data source is connected (see Settings). Click any Emails or Bookings count to see the contacts behind it.</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">One row per source -- a specific Meta/Google ad, or an email/SMS/social tag -- with its ad group/campaign hierarchy where that applies, and emails/bookings/sales it drove. "Emails" are the ONLINE EMAIL and GYM EMAIL events (a new contact entering the system -- the ad platforms' Registrations completed), and "Bookings/Apps" are ONLINE BOOKING and GYM APPLICATION events (the platforms' Leads). Each event is credited to the first ad/source click in that person's own click journey. Revenue/Sales/$-per-Sale come from Hyros purchase tags only (an estimate, for contacts carrying the source tag) and read $0 for live sources until a real sales data source is connected (see Settings). Click any Emails or Bookings count to see the contacts behind it.</div>
         <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
         <div id="adsCoverage" style="display:none;font-size:.8rem;margin-bottom:12px;padding:10px 14px;border:1px solid var(--pra-border);border-radius:8px;background:rgba(255,255,255,0.03)"></div>
         <div class="pra-panel" style="padding:0;overflow-x:auto">
@@ -665,6 +665,7 @@ const ADS_REPORT_COLUMNS = {
 };
 const ADS_REPORT_DEFAULT_ORDER = Object.keys(ADS_REPORT_COLUMNS);
 let allAdsReportRows = [];
+let allAdsReportTotals = null; // server's one-per-contact totals when Hyros source tags are in the report (rows overlap)
 let adsReportSort = { field: 'leads', dir: -1 };
 let adsReportColumnOrder = [...ADS_REPORT_DEFAULT_ORDER];
 let adsReportDragKey = null;
@@ -677,6 +678,7 @@ async function loadAdsReportTable() {
   if (!r.ok) { body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
   const d = await r.json();
   allAdsReportRows = d.rows;
+  allAdsReportTotals = d.totals || null;
   if (d.spendError) msg.textContent = `Note: some ad spend may be missing (${d.spendError}).`;
   showHyrosNote('adsHyrosNote', d.hyrosNote, document.getElementById('adsCoverage'), 'after');
   // How much of the period's conversion events (ONLINE/GYM EMAIL, ONLINE BOOKING, GYM APPLICATION)
@@ -764,10 +766,11 @@ function renderAdsReportTable() {
   // per-row $/Email etc. values directly would weight a $0 source the same
   // as a $2,000 one, which isn't what a blended cost-per-lead means.
   const totalSpend = allAdsReportRows.reduce((s, r) => s + (r.spend || 0), 0);
-  const totalRevenue = allAdsReportRows.reduce((s, r) => s + (r.revenue || 0), 0);
-  const totalSales = allAdsReportRows.reduce((s, r) => s + (r.sales || 0), 0);
-  const totalBookings = allAdsReportRows.reduce((s, r) => s + (r.bookings || 0), 0);
-  const totalLeads = allAdsReportRows.reduce((s, r) => s + (r.leads || 0), 0);
+  const T = allAdsReportTotals; // Hyros source-tag rows overlap, so the server sends true totals instead of a row sum
+  const totalRevenue = T ? T.revenue : allAdsReportRows.reduce((s, r) => s + (r.revenue || 0), 0);
+  const totalSales = T ? T.sales : allAdsReportRows.reduce((s, r) => s + (r.sales || 0), 0);
+  const totalBookings = T ? T.bookings : allAdsReportRows.reduce((s, r) => s + (r.bookings || 0), 0);
+  const totalLeads = T ? T.leads : allAdsReportRows.reduce((s, r) => s + (r.leads || 0), 0);
   const totalVisits = allAdsReportRows.reduce((s, r) => s + (r.visits || 0), 0);
   const totalsRow = {
     source: 'Totals', platform: `${allAdsReportRows.length} source${allAdsReportRows.length === 1 ? '' : 's'}`,
