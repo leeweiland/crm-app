@@ -563,7 +563,10 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
     else if (bucket === "unresponded") {
       // Unread inbound OR an ENROLLED student inside the renewal window whose alert
       // hasn't been handled (not marked done, or the alert has since stepped up to pink).
-      where.push("(unread_count > 0 OR (status = 'ENROLLED' AND renew_by_ms BETWEEN :renewLo AND :renewOrange AND (done = 0 OR renew_ack < (CASE WHEN renew_by_ms <= :renewPink THEN 2 ELSE 1 END))))");
+      // Two indexed lookups unioned into a key list (idx_unread / idx_renew), NOT a plain
+      // "unread_count > 0 OR ..." -- that OR stops SQLite using either index and made this
+      // (the default) view scan the whole ~170k-row table: measured ~255ms vs ~0ms.
+      where.push("key IN (SELECT key FROM conversations WHERE archived = 0 AND hidden = 0 AND unread_count > 0 UNION SELECT key FROM conversations INDEXED BY idx_renew WHERE renew_by_ms BETWEEN :renewLo AND :renewOrange AND status = 'ENROLLED' AND archived = 0 AND hidden = 0 AND (done = 0 OR renew_ack < (CASE WHEN renew_by_ms <= :renewPink THEN 2 ELSE 1 END)))");
       params.renewLo = renewWin.lo; params.renewOrange = renewWin.orange; params.renewPink = renewWin.pink;
     }
     else if (bucket === "favorites") where.push("starred = 1");
