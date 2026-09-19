@@ -54,6 +54,33 @@ try { if (window.self !== window.top) document.documentElement.classList.add('pf
   .pf-progress span { flex: 1; height: 3px; border-radius: 2px; background: var(--pra-border); }
   .pf-progress span.done { background: var(--pra-blue); }
   .pf-field { margin-bottom: 20px; }
+  /* Date question: a typeable field plus a calendar popover (see bindDatePickers).
+     Colors derive from the form's own theme variables via color-mix, so the
+     popover lifts off the card on dark AND light themes alike. */
+  .pf-date { position: relative; }
+  .pf-date .pf-date-text { padding-right: 44px; cursor: pointer; }
+  .pf-date-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 36px; height: 34px; display: flex; align-items: center; justify-content: center; background: none; border: none; color: var(--pra-blue); cursor: pointer; border-radius: 8px; padding: 0; }
+  .pf-date-btn:hover { background: var(--pra-blue-dim); }
+  .pf-date-btn svg { width: 19px; height: 19px; }
+  .pf-cal { position: absolute; z-index: 50; top: calc(100% + 8px); left: 0; width: 304px; max-width: 100%; box-sizing: border-box; padding: 14px; border-radius: calc(var(--pf-radius, 12px) * .9); border: 1px solid color-mix(in srgb, var(--pra-white) 18%, transparent); background: color-mix(in srgb, var(--pra-panel) 86%, var(--pra-white) 14%); box-shadow: 0 14px 40px rgba(0,0,0,.45); color: var(--pra-white); font-family: var(--font-primary); user-select: none; }
+  .pf-cal[hidden] { display: none; }
+  .pf-cal-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .pf-cal-nav { width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--pra-white); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0; }
+  .pf-cal-nav:hover { background: color-mix(in srgb, var(--pra-white) 10%, transparent); }
+  .pf-cal-sel { flex: 1; min-width: 0; -webkit-appearance: none; appearance: none; background: color-mix(in srgb, var(--pra-white) 6%, transparent); color: var(--pra-white); border: 1px solid color-mix(in srgb, var(--pra-white) 14%, transparent); border-radius: 8px; padding: 6px 8px; font-family: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; text-align: center; outline: none; }
+  .pf-cal-sel:focus { border-color: var(--pra-blue); }
+  .pf-cal-sel option { background: var(--pra-panel); color: var(--pra-white); }
+  .pf-cal-dow, .pf-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .pf-cal-dow span { text-align: center; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; padding: 4px 0 6px; color: color-mix(in srgb, var(--pra-white) 55%, transparent); }
+  .pf-cal-day { height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: none; border: 1px solid transparent; color: var(--pra-white); font-family: inherit; font-size: .85rem; cursor: pointer; padding: 0; }
+  .pf-cal-day:hover { background: color-mix(in srgb, var(--pra-white) 12%, transparent); }
+  .pf-cal-day.other { color: color-mix(in srgb, var(--pra-white) 35%, transparent); }
+  .pf-cal-day.today { border-color: var(--pra-blue); }
+  .pf-cal-day.sel, .pf-cal-day.sel:hover { background: var(--pra-blue); border-color: var(--pra-blue); color: #fff; font-weight: 700; }
+  .pf-cal-foot { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--pra-white) 12%, transparent); }
+  .pf-cal-foot button { background: none; border: none; color: var(--pra-blue); font-family: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+  .pf-cal-foot button:hover { background: var(--pra-blue-dim); }
+  @media (max-width: 560px) { .pf-cal { width: 100%; } .pf-cal-day { height: 40px; } }
   .pf-label { font-family: var(--font-primary); font-weight: 700; font-size: 1.05rem; margin-bottom: 4px; }
   .pf-required { color: var(--pra-blue); margin-left: 3px; }
   .pf-help { font-family: var(--font-secondary); color: var(--pra-dim); font-size: .8rem; margin-bottom: 10px; }
@@ -423,7 +450,12 @@ function renderField(f) {
       <label class="pf-choice-row"><input type="checkbox" data-field="${f.id}" value="${escapeHtml(o.label)}" ${arr.includes(o.label) ? 'checked' : ''}/> <span${optionsStyle(f)}>${escapeHtml(o.label)}</span></label>
     `).join('')}<div class="pf-error" id="err-${f.id}"></div></div>`;
   }
-  const inputType = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
+  if (f.type === 'date') {
+    // Real value (ISO yyyy-mm-dd, same as the native date input always produced) lives in the hidden
+    // data-field input so answers/validation/flows are unchanged; the visible box is display + typing.
+    return `<div class="pf-field">${label}<div class="pf-date"><input type="hidden" data-field="${f.id}" value="${escapeHtml(val || '')}"/><input class="pra-input pf-date-text" type="text" autocomplete="off" data-date-text placeholder="${escapeHtml(f.placeholder || 'Select a date')}" value="${escapeHtml(formatDateDisplay(val))}"/><button type="button" class="pf-date-btn" data-date-open aria-label="Open calendar">${CAL_ICON}</button><div class="pf-cal" hidden></div></div><div class="pf-error" id="err-${f.id}"></div></div>`;
+  }
+  const inputType = f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : f.type === 'number' ? 'number' : 'text';
   return `<div class="pf-field">${label}<input class="pra-input" type="${inputType}" data-field="${f.id}" placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(val || '')}"/><div class="pf-error" id="err-${f.id}"></div></div>`;
 }
 
@@ -481,6 +513,87 @@ async function detectCountryForStep(fields) {
   } catch { /* no location signal for this visit -- rules against it just won't match */ }
   updateNextVisibility();
 }
+
+// ── Date picker ─────────────────────────────────────────────────────────
+const CAL_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const isoOf = (y, m, d) => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+function parseIso(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '')); return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null; }
+// Local-time formatting on purpose (new Date('2026-09-21') is UTC and can shift a day).
+function formatDateDisplay(iso) { const p = parseIso(iso); return p ? new Date(p.y, p.m, p.d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''; }
+// What a person might type: 9/21/2026, 09-21-2026, 2026-09-21, "Sep 21 2026". A first number over 12 is read as day-first.
+function parseTypedDate(text) {
+  const t = String(text || '').trim(); if (!t) return '';
+  let y, m, d, mt;
+  if ((mt = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/.exec(t))) { y = +mt[1]; m = +mt[2] - 1; d = +mt[3]; }
+  else if ((mt = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2}|\d{4})$/.exec(t))) { let a = +mt[1], b = +mt[2]; y = +mt[3]; if (y < 100) y += y > 40 ? 1900 : 2000; if (a > 12) { d = a; m = b - 1; } else { m = a - 1; d = b; } }
+  else { const dt = new Date(t + ' 12:00'); if (isNaN(dt)) return null; y = dt.getFullYear(); m = dt.getMonth(); d = dt.getDate(); }
+  const check = new Date(y, m, d);
+  return check.getFullYear() === y && check.getMonth() === m && check.getDate() === d ? isoOf(y, m, d) : null;
+}
+function bindDatePickers() {
+  document.querySelectorAll('.pf-date').forEach(wrap => {
+    const hidden = wrap.querySelector('input[type=hidden][data-field]');
+    const text = wrap.querySelector('[data-date-text]');
+    const cal = wrap.querySelector('.pf-cal');
+    let view = { y: 0, m: 0 };
+    const setValue = (iso) => {
+      hidden.value = iso || '';
+      text.value = formatDateDisplay(iso);
+      hidden.dispatchEvent(new Event('input', { bubbles: true })); // reuses bindStepInputs' handler (answers, validation, Next state)
+    };
+    const close = () => { cal.hidden = true; };
+    const render = () => {
+      const sel = parseIso(hidden.value), now = new Date();
+      const first = new Date(view.y, view.m, 1), start = first.getDay(), dim = new Date(view.y, view.m + 1, 0).getDate();
+      const years = []; for (let y = now.getFullYear() + 10; y >= now.getFullYear() - 100; y--) years.push(y);
+      if (!years.includes(view.y)) years.push(view.y);
+      const cells = [];
+      for (let i = 0; i < 42; i++) {
+        const dt = new Date(view.y, view.m, 1 - start + i);
+        const iso = isoOf(dt.getFullYear(), dt.getMonth(), dt.getDate());
+        const cls = ['pf-cal-day', dt.getMonth() !== view.m ? 'other' : '', iso === isoOf(now.getFullYear(), now.getMonth(), now.getDate()) ? 'today' : '', sel && iso === hidden.value ? 'sel' : ''].filter(Boolean).join(' ');
+        cells.push('<button type="button" class="' + cls + '" data-iso="' + iso + '">' + dt.getDate() + '</button>');
+      }
+      cal.innerHTML = '<div class="pf-cal-head"><button type="button" class="pf-cal-nav" data-nav="-1" aria-label="Previous month">&#8249;</button>'
+        + '<select class="pf-cal-sel" data-cal-month aria-label="Month">' + MONTHS.map((n, i) => '<option value="' + i + '"' + (i === view.m ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>'
+        + '<select class="pf-cal-sel" data-cal-year aria-label="Year" style="flex:.75">' + years.sort((a, b) => b - a).map(y => '<option' + (y === view.y ? ' selected' : '') + '>' + y + '</option>').join('') + '</select>'
+        + '<button type="button" class="pf-cal-nav" data-nav="1" aria-label="Next month">&#8250;</button></div>'
+        + '<div class="pf-cal-dow">' + ['Su','Mo','Tu','We','Th','Fr','Sa'].map(x => '<span>' + x + '</span>').join('') + '</div>'
+        + '<div class="pf-cal-grid">' + cells.join('') + '</div>'
+        + '<div class="pf-cal-foot"><button type="button" data-cal-clear>Clear</button><button type="button" data-cal-today>Today</button></div>';
+    };
+    const open = () => {
+      document.querySelectorAll('.pf-cal').forEach(c => { if (c !== cal) c.hidden = true; });
+      const p = parseIso(hidden.value) || { y: new Date().getFullYear(), m: new Date().getMonth() };
+      view = { y: p.y, m: p.m };
+      render(); cal.hidden = false;
+    };
+    wrap.querySelector('[data-date-open]').addEventListener('click', () => cal.hidden ? open() : close());
+    text.addEventListener('click', () => { if (cal.hidden) open(); });
+    text.addEventListener('focus', () => { if (cal.hidden) open(); });
+    // Typing: commit on blur/Enter; anything unreadable snaps back to the last good date.
+    const commitTyped = () => { const iso = parseTypedDate(text.value); if (iso === null) { text.value = formatDateDisplay(hidden.value); } else if (iso !== hidden.value) { setValue(iso); } else { text.value = formatDateDisplay(iso); } };
+    text.addEventListener('blur', () => setTimeout(() => { if (!wrap.contains(document.activeElement)) commitTyped(); }, 0));
+    text.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commitTyped(); close(); } else if (e.key === 'Escape') close(); });
+    cal.addEventListener('click', e => {
+      const t = e.target.closest('button'); if (!t) return;
+      if (t.dataset.nav) { view.m += +t.dataset.nav; if (view.m < 0) { view.m = 11; view.y--; } if (view.m > 11) { view.m = 0; view.y++; } render(); }
+      else if (t.dataset.iso) { setValue(t.dataset.iso); close(); text.blur(); }
+      else if ('calToday' in t.dataset) { const n = new Date(); setValue(isoOf(n.getFullYear(), n.getMonth(), n.getDate())); close(); text.blur(); }
+      else if ('calClear' in t.dataset) { setValue(''); close(); text.blur(); }
+    });
+    cal.addEventListener('change', e => {
+      if (e.target.matches('[data-cal-month]')) view.m = +e.target.value; else if (e.target.matches('[data-cal-year]')) view.y = +e.target.value; else return;
+      render(); cal.querySelector(e.target.matches('[data-cal-month]') ? '[data-cal-month]' : '[data-cal-year]').focus();
+    });
+    // The buttons inside the popover must not steal focus from the text box before a click registers.
+    cal.addEventListener('mousedown', e => { if (!e.target.closest('select')) e.preventDefault(); });
+  });
+}
+// One outside-click / Escape listener for every picker on the page.
+document.addEventListener('mousedown', e => { if (!e.target.closest('.pf-date')) document.querySelectorAll('.pf-cal').forEach(c => { c.hidden = true; }); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.pf-cal').forEach(c => { c.hidden = true; }); });
 
 function bindStepInputs() {
   const dataFieldEls = document.querySelectorAll('[data-field]');
@@ -702,6 +815,7 @@ function renderStep() {
     </div>
   `;
   bindStepInputs();
+  bindDatePickers();
   updateNextVisibility();
   activateRawEmbeds(card);
   loadCalendarWidgetsForStep(fields);
