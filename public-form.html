@@ -724,7 +724,7 @@ function renderStep() {
       btn.disabled = false; btn.textContent = isLast ? (form.settings.submitButtonText || 'Submit') : 'Next';
       if (!result.success) { errEl.textContent = result.error || 'Could not book that time — please try again.'; errEl.style.display = 'block'; return; }
       errEl.style.display = 'none';
-      if (result.booking) bookedIdentity = { name: result.booking.name, email: result.booking.email, phone: result.booking.phone };
+      if (result.booking) bookedIdentity = { name: result.booking.name, email: result.booking.email, phone: result.booking.phone, timezone: result.booking.timezone };
     }
     if (!isLast) { stepIndex++; renderStep(); return; }
     await submit();
@@ -737,7 +737,10 @@ async function submit() {
   try {
     const r = await fetch(`/api/public/forms/${formId}/submit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers, vid: visitorId, bookedIdentity }),
+      // The timezone the visitor picked on an embedded calendar step if
+      // there was one, else their browser's -- becomes {{payload.Timezone}}
+      // in a form_submitted flow (e.g. to fill a Sheet column).
+      body: JSON.stringify({ answers, vid: visitorId, bookedIdentity, timezone: bookedIdentity?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     const d = await r.json();
     if (!r.ok) { btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit'; alert(d.error || 'Something went wrong — please try again.'); return; }

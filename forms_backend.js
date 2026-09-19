@@ -560,7 +560,11 @@ export async function handleFormsRequest(req, res, url) {
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
     selfHealFieldCodes(form, forms);
-    const { answers, vid, bookedIdentity } = await readJsonBody(req);
+    const { answers, vid, bookedIdentity, timezone: rawTimezone } = await readJsonBody(req);
+    // IANA name ("Europe/London") from the visitor's browser -- validated
+    // since this is an unauthenticated body that ends up in a Sheet/email.
+    let timezone = "";
+    try { if (typeof rawTimezone === "string" && rawTimezone.length < 64) { new Intl.DateTimeFormat("en-US", { timeZone: rawTimezone }); timezone = rawTimezone; } } catch { /* not a real timezone -- leave blank */ }
     const cleanAnswers = answers && typeof answers === "object" ? answers : {};
     const validationError = validateAnswers(form.fields, cleanAnswers);
     if (validationError) return sendJson(res, 400, { error: validationError });
@@ -612,7 +616,7 @@ export async function handleFormsRequest(req, res, url) {
       // claimVisitorHistory's own comment for why.
       if (result?.contact.id && vid) claimVisitorHistory(vid, result.contact.id);
       const responses = readJson(RESPONSES_FILE, []);
-      const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, submittedAt: new Date().toISOString() };
+      const response = { id: randomUUID(), formId: form.id, contactId: result?.contact.id || null, answers: cleanAnswers, timezone, submittedAt: new Date().toISOString() };
       responses.push(response);
       writeJson(RESPONSES_FILE, responses);
 
@@ -660,6 +664,9 @@ export async function handleFormsRequest(req, res, url) {
             if (f.label) labeledAnswers[f.label] = val;
           }
         });
+        // Not an answerable question, so it's added here -- never over a
+        // real question a form happens to have labeled "Timezone".
+        if (timezone && !("Timezone" in labeledAnswers)) labeledAnswers["Timezone"] = timezone;
         fireFlowTrigger("form_submitted", { contactId: result.contact.id, formId: form.id, payload: labeledAnswers });
       }
     });

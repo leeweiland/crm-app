@@ -836,6 +836,10 @@ export async function handleFlowsRequest(req, res, url) {
             if (f.label) { labeled[f.label] = val; fieldLabels[key] = f.label; }
           }
         });
+        // Always present (blank for a response taken before this was
+        // captured) so "Timezone" is offered in the token picker right away,
+        // not only after the next submission -- see forms_backend.js.
+        if (!("Timezone" in labeled)) labeled["Timezone"] = r.timezone || "";
         return labeled;
       });
       return sendJson(res, 200, { samples, fieldLabels });
