@@ -635,6 +635,10 @@ window.BlockEditor = (function () {
 
       canvas.querySelectorAll('.be-block').forEach(el => {
         el.addEventListener('click', (e) => {
+          // A linked image or button is a live <a> in the canvas preview --
+          // clicking it to select/edit the block was also following the link
+          // (text blocks already guard this in their own handler below).
+          if (e.target.closest('a')) e.preventDefault();
           if (e.target.closest('[data-move],[data-remove],[data-drag]')) return;
           // Already the selected block -- don't re-render. selectBlock()
           // rebuilds canvasInner.innerHTML from scratch, which (mid-click)
