@@ -264,11 +264,15 @@ export async function advanceDueEnrollments() {
     if (!automation.active) continue; // leave waitUntil as-is -- fires as soon as reactivated, not lost
     const currentStep = automation.steps[enrollment.currentStepId];
     enrollment.waitUntil = null;
+    const reenter = enrollment.reenterCurrentStep;
+    delete enrollment.reenterCurrentStep;
     // A genuine "wait" step advances past itself once due -- but a
     // send_email step that set waitUntil for its own retry (see
     // advanceEnrollment's send_email branch) needs to be RE-ATTEMPTED, not
     // skipped, so currentStepId only moves for an actual wait step here.
-    if (currentStep?.type === "wait") enrollment.currentStepId = currentStep.nextStepId || null;
+    // reenterCurrentStep: the enrollment was just repointed here (its old step
+    // was deleted), so a Wait step here still has to be waited out, not skipped.
+    if (currentStep?.type === "wait" && !reenter) enrollment.currentStepId = currentStep.nextStepId || null;
     if (!enrollment.currentStepId) { completeEnrollment(enrollment); continue; }
     await advanceEnrollment(enrollment, automation);
   }
@@ -479,6 +483,48 @@ export async function handleAutomationsRequest(req, res, url) {
               enrollment.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
               touched = true;
             }
+          }
+          if (touched) writeJson(ENROLLMENTS_FILE, enrollments);
+        }
+
+        // Steps the builder reports as deliberately deleted (removedStepIds --
+        // sent only by the delete button, never inferred from a save that
+        // merely lacks a step: a stale tab's autosave would otherwise look like
+        // a mass delete). Anyone parked on one would hit advanceEnrollment's
+        // "step no longer exists" branch and be silently completed, skipping
+        // the rest of the sequence. Move them to the first step that still
+        // exists after the removed one instead (the step that replaced it in
+        // the chain); complete them only when nothing follows.
+        const removedStepIds = (Array.isArray(body.removedStepIds) ? body.removedStepIds : [])
+          .filter(id => id in oldSteps && !(id in newSteps));
+        if (removedStepIds.length) {
+          const survivorAfter = (id) => {
+            let cur = id, guard = 0;
+            while (cur && !(cur in newSteps) && guard++ < 500) {
+              const s = oldSteps[cur];
+              cur = s && s.type !== "condition" ? (s.nextStepId || null) : null;
+            }
+            return cur || null;
+          };
+          const enrollments = readJson(ENROLLMENTS_FILE, []);
+          const nowIso = new Date().toISOString();
+          let touched = false;
+          for (const enrollment of enrollments) {
+            if (enrollment.automationId !== automation.id || enrollment.status !== "active" || !removedStepIds.includes(enrollment.currentStepId)) continue;
+            const target = survivorAfter(enrollment.currentStepId);
+            if (target) {
+              // reenterCurrentStep: advanceDueEnrollments treats a due
+              // enrollment on a Wait step as "finished waiting, move past
+              // it" -- this one hasn't started the step it now points at.
+              enrollment.currentStepId = target;
+              enrollment.waitUntil = nowIso;
+              enrollment.reenterCurrentStep = true;
+            } else {
+              enrollment.status = "completed";
+              enrollment.waitUntil = null;
+            }
+            enrollment.updatedAt = nowIso;
+            touched = true;
           }
           if (touched) writeJson(ENROLLMENTS_FILE, enrollments);
         }

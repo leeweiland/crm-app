@@ -415,7 +415,7 @@ function stepCardHtml(stepId, isLast) {
   return `
     <div class="step-card" data-step-id="${stepId}"${step.type !== 'condition' ? ' draggable="true"' : ''}>
       <div class="step-actions">
-        ${isLast ? `<button data-delete="${stepId}" title="Delete">&times;</button>` : ''}
+        <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
       ${cardOpener}
     </div>
@@ -578,11 +578,13 @@ function saveDebounced() {
   saveTimer = setTimeout(saveAutomation, 400);
 }
 async function saveAutomation(opts) {
+  const removedStepIds = pendingRemovedStepIds.slice();
   const r = await fetch('/api/automations/' + automation.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: automation.name, triggers: automation.triggers, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal }),
+    body: JSON.stringify({ name: automation.name, triggers: automation.triggers, steps: automation.steps, startStepId: automation.startStepId, goal: automation.goal, removedStepIds }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
+  if (r.ok) pendingRemovedStepIds = pendingRemovedStepIds.filter(id => !removedStepIds.includes(id));
   if (r.ok && !opts?.keepalive) document.getElementById('savedMsg').textContent = 'Saved at ' + new Date().toLocaleTimeString();
 }
 async function flushSave() {
@@ -740,18 +742,46 @@ function editStep(stepId) {
   if (step.type === 'send_email') { openEmailStepEditor(step, false); return; }
   openStepConfigModal(step, false);
 }
+// Every step of a chain starting at startId, including both branches of any
+// condition along the way (a condition ends its chain and hangs two more off
+// yesStepId/noStepId).
+function collectChainIds(startId, out) {
+  let cur = startId;
+  while (cur && automation.steps[cur] && !out.includes(cur)) {
+    out.push(cur);
+    const s = automation.steps[cur];
+    if (s.type === 'condition') { collectChainIds(s.yesStepId, out); collectChainIds(s.noStepId, out); cur = null; }
+    else cur = s.nextStepId || null;
+  }
+}
+// Deleting a step splices it out: whatever pointed at it now points at
+// whatever followed it, so the rest of the chain stays connected. Deleting a
+// condition also removes both of its branches (they hang off it and have
+// nowhere else to attach). The ids are reported to the server on the next
+// save (removedStepIds) so anyone parked on a removed step is moved to the
+// next surviving step instead of being silently completed.
+let pendingRemovedStepIds = [];
 function deleteStep(stepId) {
-  if (!confirm('Delete this step?')) return;
-  // Only ever called on a chain's last step (see stepCardHtml), so no
-  // dangling pointer cleanup needed elsewhere -- just find whoever points
-  // at it and clear that pointer.
-  if (automation.startStepId === stepId) automation.startStepId = null;
-  Object.values(automation.steps).forEach(s => {
-    if (s.nextStepId === stepId) s.nextStepId = null;
-    if (s.yesStepId === stepId) s.yesStepId = null;
-    if (s.noStepId === stepId) s.noStepId = null;
-  });
-  delete automation.steps[stepId];
+  const step = automation.steps[stepId];
+  if (!step) return;
+  const gone = [];
+  if (step.type === 'condition') { collectChainIds(stepId, gone); }
+  else gone.push(stepId);
+  const branchCount = gone.length - 1;
+  const here = gone.reduce((n, id) => n + (stepCounts[id] || 0), 0);
+  let msg = step.type === 'condition' && branchCount > 0
+    ? `Delete this condition and the ${branchCount} step${branchCount === 1 ? '' : 's'} in its YES/NO branches?`
+    : 'Delete this step?';
+  if (here > 0) {
+    msg += step.type === 'condition' && branchCount > 0
+      ? `\n\n${here} contact${here === 1 ? ' is' : 's are'} on these steps right now and will be marked completed.`
+      : `\n\n${here} contact${here === 1 ? ' is' : 's are'} on this step right now and will move on to the next step${step.nextStepId ? '' : ' (none -- they will be marked completed)'}.`;
+  }
+  if (!confirm(msg)) return;
+  const ref = findParentRef(stepId);
+  if (ref) setRef(ref, step.type === 'condition' ? null : (step.nextStepId || null));
+  gone.forEach(id => { delete automation.steps[id]; });
+  pendingRemovedStepIds.push(...gone);
   render(); saveDebounced();
 }
 
