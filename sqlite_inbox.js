@@ -558,7 +558,9 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
   if (bucket === "hidden") { where.push("hidden = 1"); }
   else if (bucket === "archived") { where.push("archived = 1", "hidden = 0"); }
   else {
-    where.push("archived = 0", "hidden = 0");
+    // Unresponded enforces archived/hidden inside its own subquery below. Repeating them out here
+    // makes SQLite drive the query off idx_sort_default (a full scan) instead of the key list.
+    if (bucket !== "unresponded") where.push("archived = 0", "hidden = 0");
     if (bucket === "done") where.push("done = 1");
     else if (bucket === "unresponded") {
       // Unread inbound OR an ENROLLED student inside the renewal window whose alert
