@@ -107,10 +107,12 @@ function todayAnchorage() {
   return new Intl.DateTimeFormat("en-US", { timeZone: "America/Anchorage", year: "numeric", month: "numeric", day: "numeric" }).format(new Date());
 }
 
-// Read-only look at the link, plus a no-op write (an empty batchUpdate: no
-// changes made, but Google rejects it for view-only access) so a bad link or
-// missing Editor share shows up in Settings instead of silently failing the
-// first time someone is blacklisted.
+// Read-only look at the link, plus a no-op write (renaming the spreadsheet to
+// the title it already has: changes nothing, but Google rejects it for
+// view-only access) so a bad link or missing Editor share shows up in
+// Settings instead of silently failing the first time someone is blacklisted.
+// (An empty batchUpdate would be the obvious probe, but Google refuses it
+// outright: "Must specify at least one request".)
 export async function checkBlacklistSheet(sheetUrl) {
   if (!sheetsConfigured()) return { ok: false, error: "Google isn't connected for Sheets on this CRM yet." };
   const parsed = parseSheetUrl(sheetUrl);
@@ -123,7 +125,7 @@ export async function checkBlacklistSheet(sheetUrl) {
     const cols = mapColumns(rows[0]);
     const w = await fetch(`${SHEETS}/${parsed.spreadsheetId}:batchUpdate`, {
       method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ requests: [] }),
+      body: JSON.stringify({ requests: [{ updateSpreadsheetProperties: { properties: { title: tab.spreadsheetTitle }, fields: "title" } }] }),
     });
     if (!w.ok) {
       const wd = await w.json().catch(() => ({}));
