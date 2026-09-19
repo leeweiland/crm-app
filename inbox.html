@@ -161,6 +161,14 @@
   .convo-icon-btn.pin-btn.on { color: var(--pra-blue); }
   .convo-icon-btn.star-btn.on { color: #ffd54a; }
   .convo-icon-btn svg { width: 14px; height: 14px; }
+  /* Renewal alerts (an ENROLLED student within 2 months / 1 month of their END DATE) --
+     orange, then pink. Same badge as the unread count: "R" until an inbound message
+     arrives, then the message count in the same color. */
+  .convo-unread-badge.renew-orange { background: #ff9f1c; }
+  .convo-unread-badge.renew-pink { background: #ff4fa3; }
+  .renew-tag { font-weight: 700; white-space: nowrap; }
+  .renew-tag.renew-orange { color: #ff9f1c; }
+  .renew-tag.renew-pink { color: #ff4fa3; }
   .convo-unread-badge { background: #39ff14; color: #0a0a0d; font-family: var(--font-secondary); font-size: .68rem; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
   .convo-add-btn { flex-shrink: 0; }
   .type-badge-short { display: none; }
@@ -543,9 +551,15 @@ const STATUS_GLOW = {
 // not the selected one, so CSS width:auto alone still renders it as a wide
 // bar regardless of which status is actually showing.
 function statusSelectWidthRule(status) { return `width:${(status || 'Change status...').length + 8}ch`; }
-function avatarStyle(status, email) {
+const RENEW_COLOR = { orange: '#ff9f1c', pink: '#ff4fa3' };
+function fmtRenewDate(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function avatarStyle(status, email, renewal) {
   const isStaff = email && allUsers.some(u => u.email?.toLowerCase() === email.toLowerCase());
-  const glow = isStaff ? '#009bff' : STATUS_GLOW[status];
+  // A student in their renewal window glows orange/pink instead of their status color.
+  const glow = renewal ? RENEW_COLOR[renewal.level] : (isStaff ? '#009bff' : STATUS_GLOW[status]);
   return glow ? `--status-glow:${glow};--status-glow-soft:${glow}88` : '';
 }
 const PIN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 2.5a1.5 1.5 0 0 1 2.1 0l4.9 4.9a1.5 1.5 0 0 1 0 2.1l-2.1 2.1-1.4-1.4-3.5 3.5.5 4.6-1.6 1.6-4.2-4.2-5.4 5.4-1.1-1.1 5.4-5.4-4.2-4.2 1.6-1.6 4.6.5 3.5-3.5-1.4-1.4Z"/></svg>';
@@ -920,6 +934,9 @@ function convoRowHtml(c) {
   // that badge while it's up -- deliberately different things, see
   // selectConversation's comment.
   const hasUnread = !!c.hasUnseen;
+  const rn = c.renewal || null;
+  // "R" while the renewal alert is unhandled (Mark Done clears it) -- replaced by the inbound count once a message arrives.
+  const showR = !!rn && rn.unhandled && !recentlyConfirmedDone.has(c.contactId);
   const showTicks = !hasUnread && c.lastDirection === 'outbound' && c.lastStatus;
   const previewTicks = showTicks ? readReceiptTicksHtml(c.lastStatus, c.lastOpened) : '';
   // Historical Close-import sequence-subscription rows carry their raw
@@ -931,7 +948,7 @@ function convoRowHtml(c) {
   const previewText = escapeHtml(previewRaw.replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
   return `
     <div class="convo-row${selectedConvo?.key === c.key ? ' selected' : ''}${c.pinned ? ' pinned' : ''}${selectedConvoKeys.has(c.key) ? ' multi-selected' : ''}" data-convo="${c.key}">
-      <div class="pra-avatar convo-avatar${hasUnread ? ' has-unread' : ''}" style="${avatarStyle(c.contact?.status, c.contact?.email)}">${initials(c.displayName)}</div>
+      <div class="pra-avatar convo-avatar${hasUnread ? ' has-unread' : ''}" style="${avatarStyle(c.contact?.status, c.contact?.email, rn)}">${initials(c.displayName)}</div>
       <div class="convo-meta">
         <div class="convo-top">
           ${c.pinned ? `<span class="convo-pinned-mark" title="Pinned">${PIN_ICON}</span>` : ''}
@@ -943,11 +960,11 @@ function convoRowHtml(c) {
           <div class="convo-time${hasUnread ? ' has-unread' : ''}">${fmtShort(c.lastAt)}</div>
         </div>
         <div class="convo-bottom">
-          <div class="convo-preview">${c.lastDirection === 'outbound' ? previewTicks + ' You: ' : ''}${previewText}</div>
+          <div class="convo-preview">${rn ? `<span class="renew-tag renew-${rn.level}">Renew by ${fmtRenewDate(rn.endDate)}</span> ` : ''}${c.lastDirection === 'outbound' ? previewTicks + ' You: ' : ''}${previewText}</div>
           ${!c.contactId ? '<button class="pra-btn pra-btn-ghost pra-btn-sm convo-add-btn" data-add-contact type="button">+ Add Contact</button>' : ''}
           ${c.contactId ? `<button class="convo-icon-btn pin-btn${c.pinned ? ' on' : ''}" data-pin="${c.contactId}" data-pin-on="${c.pinned ? '0' : '1'}" title="${c.pinned ? 'Unpin' : 'Pin to top'}">${PIN_ICON}</button>` : ''}
           ${c.contactId ? `<button class="convo-icon-btn star-btn${c.starred ? ' on' : ''}" data-star="${c.contactId}" data-star-on="${c.starred ? '0' : '1'}" title="${c.starred ? 'Unstar' : 'Star'}">${STAR_ICON}</button>` : ''}
-          ${hasUnread ? `<div class="convo-unread-badge">${c.unreadCount > 99 ? '99+' : c.unreadCount}</div>` : ''}
+          ${hasUnread || showR ? `<div class="convo-unread-badge${rn ? ' renew-' + rn.level : ''}">${c.unreadCount > 0 || !showR ? (c.unreadCount > 99 ? '99+' : c.unreadCount) : 'R'}</div>` : ''}
         </div>
       </div>
     </div>

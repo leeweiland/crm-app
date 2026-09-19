@@ -116,6 +116,14 @@ export function sqliteInboxAvailable() {
   if (!existingCols.has("preview_fixed")) {
     db.exec(`ALTER TABLE conversations ADD COLUMN preview_fixed INTEGER DEFAULT 0`);
   }
+  // Renewal alerts (2026-09-19): renew_by_ms is the student's END DATE (UTC
+  // midnight of that date; set by syncContactFields / backfillRenewalDates),
+  // renew_ack is the alert level (1 orange / 2 pink) that was already
+  // "handled" when the thread was last marked done -- so Mark Done clears the
+  // alert but the step up to pink (1 month out) raises it again.
+  if (!existingCols.has("renew_by_ms")) db.exec(`ALTER TABLE conversations ADD COLUMN renew_by_ms INTEGER`);
+  if (!existingCols.has("renew_ack")) db.exec(`ALTER TABLE conversations ADD COLUMN renew_ack INTEGER DEFAULT 0`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_renew ON conversations(renew_by_ms)`);
   // Deliberately separate from `done`/unread_count -- viewing a thread and
   // responding to it are two different things (see inbox.html's
   // selectConversation comment): opening it should clear the per-row
@@ -214,11 +222,11 @@ export function syncMessageFields(g) {
       (key, contact_id, display_name, first, last, email, phone, first_seen_at, status, program_type, owner_id,
        last_at_ms, last_inbound_at_ms, unread_count,
        last_channel, last_direction, last_preview, last_status, last_opened, last_message_id, last_by_channel_json,
-       preview_fixed)
+       preview_fixed, renew_by_ms)
     VALUES (:key, :contactId, :displayName, :first, :last, :email, :phone, :firstSeenAt, :status, :programType, :ownerId,
             :lastAtMs, :lastInboundAtMs, :unreadCount,
             :lastChannel, :lastDirection, :lastPreview, :lastStatus, :lastOpened, :lastMessageId, :lastByChannelJson,
-            1)
+            1, :renewByMs)
     ON CONFLICT(key) DO UPDATE SET
       last_at_ms=excluded.last_at_ms, last_inbound_at_ms=excluded.last_inbound_at_ms, unread_count=excluded.unread_count,
       last_channel=excluded.last_channel, last_direction=excluded.last_direction, last_preview=excluded.last_preview,
@@ -237,6 +245,7 @@ export function syncMessageFields(g) {
     lastPreview: g.last?.bodyPreview || g.last?.subject || "",
     lastStatus: g.lastMine?.status || null, lastOpened: g.lastMine?.opened ? 1 : 0,
     lastMessageId: g.last?.id || null, lastByChannelJson: JSON.stringify(g.lastByChannel || {}),
+    renewByMs: contact ? endDateMsFromContact(contact) : null, // only used when this call CREATES the row (see ON CONFLICT above)
   });
 }
 
@@ -274,6 +283,69 @@ export function deleteConversationRow(key) {
   db.prepare("DELETE FROM conversations WHERE key = ?").run(key);
 }
 
+// ── Renewal alerts ─────────────────────────────────────────────────────
+// An ENROLLED student whose END DATE (the "END DATE" contact custom field, set
+// from the kickoff form) is within 2 months gets an orange alert, within 1
+// month a pink one. The alert stays through the end date and for 30 days
+// after (a student who's just lapsed still needs the conversation); beyond
+// that they're treated as gone, so an old, never-updated ENROLLED contact
+// with a long-past end date can't flood Unresponded.
+const DAY_MS = 86400000;
+function alaskaTodayMs() {
+  return Date.parse(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Anchorage" }).format(new Date()) + "T00:00:00Z");
+}
+function addMonthsMs(ms, n) {
+  const d = new Date(ms), day = d.getUTCDate();
+  d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + n);
+  const dim = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, dim));
+  return d.getTime();
+}
+export function renewalWindow() {
+  const today = alaskaTodayMs();
+  return { lo: today - 30 * DAY_MS, orange: addMonthsMs(today, 2), pink: addMonthsMs(today, 1) };
+}
+// 0 = no alert, 1 = orange (<= 2 months), 2 = pink (<= 1 month)
+export function renewalLevel(status, renewByMs, win = renewalWindow()) {
+  if (status !== "ENROLLED" || renewByMs == null) return 0;
+  if (renewByMs < win.lo || renewByMs > win.orange) return 0;
+  return renewByMs <= win.pink ? 2 : 1;
+}
+// The end date is a plain text custom field, so people (or the kickoff form's
+// date picker) may have produced ISO, m/d/yyyy, or "Sep 11, 2027".
+export function parseEndDateMs(text) {
+  const t = String(text ?? "").trim();
+  if (!t) return null;
+  let y, m, d, mt;
+  if ((mt = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t))) { y = +mt[1]; m = +mt[2]; d = +mt[3]; }
+  else if ((mt = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/.exec(t))) { y = +mt[3]; m = +mt[1]; d = +mt[2]; if (m > 12) { const x = m; m = d; d = x; } }
+  else { const dt = new Date(t + " 12:00 UTC"); if (isNaN(dt)) return null; return Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()); }
+  const ms = Date.UTC(y, m - 1, d);
+  const chk = new Date(ms);
+  return chk.getUTCFullYear() === y && chk.getUTCMonth() === m - 1 && chk.getUTCDate() === d ? ms : null;
+}
+function endDateFieldId() {
+  const defs = readJson("crm_custom_fields.json", []);
+  return defs.find(f => f.entityType === "contact" && String(f.label).trim().toUpperCase() === "END DATE")?.id || null;
+}
+function endDateMsFromContact(contact, fieldId = endDateFieldId()) {
+  const cf = contact?.customFields || {};
+  // the field definition first; the kickoff form also stores the raw answer under its code
+  return parseEndDateMs((fieldId && cf[fieldId]) || cf.end_date);
+}
+// Run at boot -- every contact that already has an end date gets its row
+// stamped without waiting for something to touch that contact.
+export function backfillRenewalDates(contacts) {
+  if (!sqliteInboxAvailable()) return 0;
+  const fieldId = endDateFieldId();
+  const upd = db.prepare("UPDATE conversations SET renew_by_ms = :ms WHERE contact_id = :id AND renew_by_ms IS NOT :ms");
+  let n = 0;
+  db.exec("BEGIN");
+  try { for (const c of contacts) { const ms = endDateMsFromContact(c, fieldId); if (ms != null) { upd.run({ ms, id: c.id }); n++; } } db.exec("COMMIT"); }
+  catch (e) { db.exec("ROLLBACK"); throw e; }
+  return n;
+}
+
 // conversation_meta.js's setConvoMeta -- pin/star/archive/done. Silently
 // no-ops if this contact has no conversation row yet (meta can be set
 // before any message exists in some flows) -- syncMessageFields will pick
@@ -292,6 +364,10 @@ export function syncMetaFields(contactId, meta) {
     archived: meta.archived ? 1 : 0, done: meta.done ? 1 : 0, hidden: meta.hidden ? 1 : 0,
     lastSeenByJson: JSON.stringify(meta.lastSeenBy || {}),
   });
+  const rn = db.prepare("SELECT status, renew_by_ms FROM conversations WHERE contact_id = ?").get(contactId);
+  if (rn && rn.renew_by_ms != null) {
+    db.prepare("UPDATE conversations SET renew_ack = :ack WHERE contact_id = :contactId").run({ ack: meta.done ? renewalLevel(rn.status, rn.renew_by_ms) : 0, contactId });
+  }
 }
 
 // contacts_backend.js's PATCH -- status/type/name/email/assignment. Same
@@ -302,10 +378,10 @@ export function syncContactFields(contactId, contact) {
   db.prepare(`
     UPDATE conversations SET display_name = :displayName, first = :first, last = :last, email = :email,
       phone = :phone, first_seen_at = :firstSeenAt,
-      status = :status, program_type = :programType, owner_id = :ownerId
+      status = :status, program_type = :programType, owner_id = :ownerId, renew_by_ms = :renewByMs
     WHERE contact_id = :contactId
   `).run({
-    contactId, displayName,
+    contactId, displayName, renewByMs: endDateMsFromContact(contact),
     first: contact.first || null, last: contact.last || null, email: contact.email || null,
     phone: contact.phone || null, firstSeenAt: contact.firstSeenAt || null,
     status: contact.status || null, programType: contact.programType || null, ownerId: contact.ownerId || null,
@@ -473,6 +549,7 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
 
   const where = [];
   const params = {};
+  const renewWin = renewalWindow();
   // Hidden (blacklisted contacts, set via compliance_backend.js's
   // applyStatusOptOut -- permanent, no reverse trigger) is its own
   // dedicated bucket, kept separate from generic "archived" so a plain
@@ -483,7 +560,12 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
   else {
     where.push("archived = 0", "hidden = 0");
     if (bucket === "done") where.push("done = 1");
-    else if (bucket === "unresponded") where.push("unread_count > 0");
+    else if (bucket === "unresponded") {
+      // Unread inbound OR an ENROLLED student inside the renewal window whose alert
+      // hasn't been handled (not marked done, or the alert has since stepped up to pink).
+      where.push("(unread_count > 0 OR (status = 'ENROLLED' AND renew_by_ms BETWEEN :renewLo AND :renewOrange AND (done = 0 OR renew_ack < (CASE WHEN renew_by_ms <= :renewPink THEN 2 ELSE 1 END))))");
+      params.renewLo = renewWin.lo; params.renewOrange = renewWin.orange; params.renewPink = renewWin.pink;
+    }
     else if (bucket === "favorites") where.push("starred = 1");
   }
   if (statusFilter) { where.push("status = :status"); params.status = statusFilter; }
@@ -564,10 +646,12 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
       try { last = JSON.parse(r.last_by_channel_json || "{}")[channel]; } catch { last = null; }
     }
     const lastSeenMs = lastSeenByMeMs(r, currentUserId);
+    const rLevel = r.contact_id ? renewalLevel(r.status, r.renew_by_ms, renewWin) : 0;
+    const renewal = rLevel ? { level: rLevel === 2 ? "pink" : "orange", endDate: new Date(r.renew_by_ms).toISOString().slice(0, 10), unhandled: !r.done || (r.renew_ack || 0) < rLevel } : null;
     return {
-      key: r.key, contactId: r.contact_id,
+      key: r.key, contactId: r.contact_id, renewal,
       hasUpcomingBooking: !!r.contact_id && bookedContactIds.has(r.contact_id),
-      contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id } : null,
+      contact: r.contact_id ? { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id, renewal } : null,
       displayName: r.display_name,
       lastChannel: last?.channel || r.last_channel, lastDirection: last?.direction || r.last_direction,
       lastPreview: last?.bodyPreview || last?.subject || r.last_preview,

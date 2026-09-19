@@ -35,7 +35,7 @@ import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
 import { readJson, DATA_DIR } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex } from "./sqlite_inbox.js";
+import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
 import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 import { seedKickoffForms } from "./seed_kickoff_forms.js";
 import { seedKickoffFlows } from "./seed_kickoff_flows.js";
@@ -129,6 +129,9 @@ function warmCaches() {
       const n = backfillContactsIndex(contacts);
       console.log(`[warmup] contacts_idx backfilled (${n} rows) in ${Date.now() - bt0}ms`);
     }
+    // Renewal alerts (see sqlite_inbox.js): stamps each conversation with its student's END DATE.
+    const stamped = backfillRenewalDates(contacts);
+    if (stamped) console.log(`[warmup] renewal end dates stamped on ${stamped} contact(s)`);
     console.log(`[warmup] caches primed in ${Date.now() - t0}ms`);
   } catch (e) {
     console.error("[warmup] failed (non-fatal, first real request will just pay the cost instead):", e.message);

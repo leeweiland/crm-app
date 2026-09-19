@@ -667,6 +667,15 @@
       config.onThreadLoaded?.(state.threadItems);
     }
 
+    // "Renew by <end date>" right of the assigned user -- orange within 2 months of
+    // an enrolled student's END DATE, pink within 1 (server decides, see sqlite_inbox.js).
+    function renewPillHtml(rn) {
+      const color = rn.level === 'pink' ? '#ff4fa3' : '#ff9f1c';
+      const [y, m, d] = String(rn.endDate).split('-').map(Number);
+      const label = new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `<span title="Enrolled student -- end date ${label}" style="margin-left:8px;padding:2px 9px;border-radius:10px;border:1px solid ${color};background:${color}22;color:${color};font-size:.72rem;font-weight:700;white-space:nowrap">Renew by ${label}</span>`;
+    }
+
     // ── Full render ─────────────────────────────────────────────────────
     function render() {
       const contact = getContact();
@@ -683,6 +692,7 @@
               <span class="pra-badge pra-badge-${contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${contact?.programType ? escapeHtml(contact.programType) : 'SET TYPE'}</span>
               <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(config.getDisplayName ? (config.getDisplayName() || '') : `${contact?.first || ''} ${contact?.last || ''}`.trim())}</a>
               ${contactId ? ownerFieldHtml(contact) : ''}
+              ${contact?.renewal ? renewPillHtml(contact.renewal) : ''}
             </span>
             <div class="chat-panel-sub">${[
               contact?.email ? escapeHtml(contact.email) : '',
