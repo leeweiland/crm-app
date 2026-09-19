@@ -125,6 +125,43 @@ export async function fetchLiveGoogleAdLevel(startStr, endStr) {
   return byAdId;
 }
 
+// Name/ad set/campaign for ONE ad, by the ad ID a landing URL carried
+// (h_ad_id) -- used to tell a lead which ad it came from. Reuses the two
+// ad-level fetches above (last 30 days, which always includes an ad that
+// just got a click) and caches every ad they return for 6 hours, so a burst
+// of leads costs one API call, not one each. Returns null (never throws) if
+// the platform isn't connected or the ad isn't in the window; a stale cached
+// name is preferred over nothing when a refresh fails.
+const AD_INFO_CACHE_FILE = "crm_ad_info_cache.json";
+const AD_INFO_TTL_MS = 6 * 3600 * 1000;
+const adInfoRefreshes = new Map();
+export async function lookupAdInfo(platform, adId) {
+  if (!adId || (platform !== "meta" && platform !== "google")) return null;
+  const key = `${platform}:${adId}`;
+  const hit = readJson(AD_INFO_CACHE_FILE, {})[key];
+  if (hit && Date.now() - hit.at < AD_INFO_TTL_MS) return hit.info;
+  if (!adInfoRefreshes.has(platform)) {
+    adInfoRefreshes.set(platform, (async () => {
+      const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+      const map = await (platform === "meta" ? fetchLiveMetaAdLevel : fetchLiveGoogleAdLevel)(day(Date.now() - 29 * 86400000), day(Date.now()));
+      if (!map) return false;
+      const cache = readJson(AD_INFO_CACHE_FILE, {});
+      const now = Date.now();
+      for (const [id, i] of map) cache[`${platform}:${id}`] = { at: now, info: { name: i.name, adGroup: i.adGroup, campaign: i.campaign } };
+      writeJson(AD_INFO_CACHE_FILE, cache);
+      return true;
+    })().catch(e => { console.error(`[ads] ${platform} ad lookup failed:`, e.message); return false; }).finally(() => adInfoRefreshes.delete(platform)));
+  }
+  const refreshed = await adInfoRefreshes.get(platform);
+  const cache = readJson(AD_INFO_CACHE_FILE, {});
+  if (refreshed && !cache[key]) {
+    // "Not found" is cached too, so an unknown/mistyped ad ID can't trigger an API call per lead.
+    cache[key] = { at: Date.now(), info: null };
+    writeJson(AD_INFO_CACHE_FILE, cache);
+  }
+  return cache[key]?.info ?? hit?.info ?? null;
+}
+
 // Diagnostic only -- the connected customer's own "AW-xxxxxxxxx" Google tag
 // ID, so a gtag conversion snippet's send_to value (set once in Framer,
 // years ago) can be checked against whichever Google Ads account is

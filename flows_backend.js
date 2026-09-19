@@ -7,7 +7,7 @@ import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
-import { claimByIdentity, getClickIdsByIdentity } from "./tracking_backend.js";
+import { claimByIdentity, getAdCaptureByIdentity } from "./tracking_backend.js";
 import { normalizePhoneForCapture } from "./phone_util.js";
 
 export const FLOWS_FILE = "crm_flows.json";
@@ -201,6 +201,18 @@ async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
 // actually fired (run.enteredAt) -- not "whenever this step happens to
 // execute", which would read differently if an earlier delay step pushed
 // this step minutes/hours/days past the real capture time.
+// {{clickIds.gclid}} / {{clickIds.fbclid}} started as bare click IDs (flows
+// already use them). They now print the ad behind the click -- "Ad name · Ad
+// set · Campaign (click ID: ...)" -- so those flows pick it up unedited. Falls
+// back to just the click ID when the ad couldn't be identified, or to just the
+// ad when there's no click ID, and to "" for a lead from the other platform.
+function describeAdClick(clickIds, platform) {
+  if (!clickIds) return "";
+  const id = clickIds[platform === "google" ? "gclid" : "fbclid"] || "";
+  const ad = clickIds.ads?.[platform];
+  const adText = ad ? [ad.name || `Ad ${ad.id}`, ad.adGroup && `${platform === "google" ? "Ad group" : "Ad set"}: ${ad.adGroup}`, ad.campaign && `Campaign: ${ad.campaign}`].filter(Boolean).join(" · ") : "";
+  return adText && id ? `${adText} (click ID: ${id})` : adText || id;
+}
 function resolveTemplate(str, { contact, payload, timestamp }) {
   // [^{}]+ (not [\w.]+) -- a raw webhook field name is often a human label
   // like "First Name" or "Work Email", spaces and all. The old \w-only
@@ -209,6 +221,7 @@ function resolveTemplate(str, { contact, payload, timestamp }) {
   // resolving (or even blanking) it.
   return String(str || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, path) => {
     if (path === "timestamp") return timestamp || "";
+    if (path === "clickIds.gclid" || path === "clickIds.fbclid") return describeAdClick(contact?.clickIds, path === "clickIds.gclid" ? "google" : "meta");
     if (path.startsWith("payload.")) {
       // Payload keys are always flat (the raw webhook body / form answers /
       // booking fields) -- no further dot-splitting, so a field literally
@@ -327,8 +340,21 @@ async function advanceFlowRun(run, flow) {
         claimByIdentity(resolvedEmail, resolvedPhone, workingContact.id);
         // Replaces (not merges) so a returning lead's newest click isn't
         // mixed with an older click's other ID. Persisted by saveContact below.
-        const clickIds = getClickIdsByIdentity(resolvedEmail, resolvedPhone);
-        if (clickIds) workingContact.clickIds = { ...clickIds, capturedAt: new Date().toISOString() };
+        const capture = getAdCaptureByIdentity(resolvedEmail, resolvedPhone);
+        if (capture) {
+          const clickIds = { ...(capture.clickIds || {}), capturedAt: new Date().toISOString() };
+          // fbc_id marks a Meta click, gc_id a Google one (same rule as
+          // reporting_backend.js's attributionKeyForVisit). The lookup is
+          // bounded and best-effort -- without it the tokens still print the click ID.
+          const ap = capture.adParams;
+          const platform = ap?.fbc_id ? "meta" : ap?.gc_id ? "google" : null;
+          if (platform) {
+            const { lookupAdInfo } = await import("./ads_backend.js");
+            const info = await withTimeout(lookupAdInfo(platform, ap.h_ad_id), 8000, "ad name lookup").catch(() => null);
+            clickIds.ads = { [platform]: { id: ap.h_ad_id, ...(info || {}) } };
+          }
+          workingContact.clickIds = clickIds;
+        }
       }
       const prevStatus = workingContact.status;
       for (const field of ["first", "last", "email", "phone", "programType"]) {

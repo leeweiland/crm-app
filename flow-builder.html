@@ -1271,8 +1271,8 @@ async function getAvailableTokens() {
     { label: 'Email', token: '{{email}}', example: exampleFor(['email', 'emailaddress']) },
     { label: 'Phone', token: '{{phone}}', example: exampleFor(['phone', 'phonenumber', 'mobile', 'mobilenumber']) },
     // Click IDs come from the site's submit beacon (tracking_backend.js), stamped onto the contact at run time -- never in a webhook sample.
-    { label: 'Google Ads Click ID (gclid)', token: '{{clickIds.gclid}}', example: null },
-    { label: 'Meta Ads Click ID (fbclid)', token: '{{clickIds.fbclid}}', example: null },
+    { label: 'Google Ad (name + click ID)', token: '{{clickIds.gclid}}', example: null },
+    { label: 'Meta Ad (name + click ID)', token: '{{clickIds.fbclid}}', example: null },
     { label: 'Date/Time Captured', token: '{{timestamp}}', example: null }, // stamped at run time, not part of any pulled sample
   ];
   // A raw webhook field that's really just first/last/email/phone under a
@@ -1305,7 +1305,7 @@ async function getAvailableTokens() {
 function tokenLabel(raw) {
   const m = raw.match(/^\{\{(.+)\}\}$/);
   if (!m) return raw;
-  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured', 'clickIds.gclid': 'Google Ads Click ID (gclid)', 'clickIds.fbclid': 'Meta Ads Click ID (fbclid)' };
+  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured', 'clickIds.gclid': 'Google Ad (name + click ID)', 'clickIds.fbclid': 'Meta Ad (name + click ID)' };
   if (KNOWN[m[1]]) return KNOWN[m[1]];
   const pm = m[1].match(/^payload\.(.+)$/);
   if (!pm) return m[1];

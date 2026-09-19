@@ -73,10 +73,25 @@ const TRACK_SNIPPET = `(function(){
   // submit a form -- so they're kept in first-party cookies (90 days, like
   // Google's own _gcl_aw) and sent along with the submit beacon below.
   var CLICK_KEYS = ['gclid','gbraid','wbraid','fbclid'];
+  // The ad's own ID rides in the ad-platform URL templates (Settings ->
+  // Tracking): h_ad_id, plus fbc_id (Meta) or gc_id (Google) saying which platform.
+  var AD_KEYS = ['h_ad_id','fbc_id','gc_id'];
   var qs = new URLSearchParams(location.search);
+  function saveParam(k, v){ document.cookie = 'crm_'+k+'='+encodeURIComponent(v)+'; max-age=7776000; path=/; SameSite=Lax'; }
+  function dropParam(k){ document.cookie = 'crm_'+k+'=; max-age=0; path=/; SameSite=Lax'; }
   for (var ck=0; ck<CLICK_KEYS.length; ck++){
     var cv = qs.get(CLICK_KEYS[ck]);
-    if (cv) document.cookie = 'crm_'+CLICK_KEYS[ck]+'='+encodeURIComponent(cv)+'; max-age=7776000; path=/; SameSite=Lax';
+    if (cv) saveParam(CLICK_KEYS[ck], cv);
+  }
+  // A new ad click replaces the previous one's ad params outright, so a stale
+  // fbc_id can't sit next to a newer Google click's h_ad_id.
+  if (qs.get('h_ad_id') && (qs.get('fbc_id') || qs.get('gc_id'))){
+    for (var ak=0; ak<AD_KEYS.length; ak++){ var av = qs.get(AD_KEYS[ak]); if (av) saveParam(AD_KEYS[ak], av); else dropParam(AD_KEYS[ak]); }
+  }
+  function adParams(){
+    var out = {}, any = false;
+    for (var i=0;i<AD_KEYS.length;i++){ var v = getCookie('crm_'+AD_KEYS[i]); if (v){ out[AD_KEYS[i]] = v; any = true; } }
+    return any ? out : null;
   }
   function clickIds(){
     var out = {}, any = false;
@@ -113,7 +128,7 @@ const TRACK_SNIPPET = `(function(){
     if (email || phone) {
       fetch('${"__BASE_URL__"}/api/track/identify', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ vid: vid, email: email, phone: phone, clickIds: clickIds() })
+        body: JSON.stringify({ vid: vid, email: email, phone: phone, clickIds: clickIds(), adParams: adParams() })
       }).catch(function(){});
     }
   }, true);
@@ -276,7 +291,7 @@ export async function handleTrackingRequest(req, res, url) {
     const email = parsed.email ? String(parsed.email).trim().toLowerCase() : "";
     const phone = parsed.phone ? String(parsed.phone).trim() : "";
     if (vid && (email || phone)) {
-      recordVisitorIdentity(vid, email, phone, sanitizeClickIds(parsed.clickIds));
+      recordVisitorIdentity(vid, email, phone, sanitizeClickIds(parsed.clickIds), sanitizeAdParams(parsed.adParams));
       const contacts = readJson(CONTACTS_FILE, []);
       const match = findContactMatch(contacts, email, phone);
       if (match) claimVisitorHistory(vid, match.id);
@@ -316,12 +331,12 @@ const normPhoneDigits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 // webhook, whose payload carries none of this). Pruned to the last 48h on
 // every write since this only has to survive that few-second race, not
 // live forever.
-export function recordVisitorIdentity(vid, email, phone, clickIds = null) {
+export function recordVisitorIdentity(vid, email, phone, clickIds = null, adParams = null) {
   if (!vid || (!email && !phone)) return;
   const all = readJson(VISITOR_IDENTITIES_FILE, []);
   const cutoff = Date.now() - 48 * 3600000;
   const fresh = all.filter(e => new Date(e.at).getTime() > cutoff);
-  fresh.push({ vid, email: email ? String(email).toLowerCase() : null, phone: phone ? normPhoneDigits(phone) : null, clickIds, at: new Date().toISOString() });
+  fresh.push({ vid, email: email ? String(email).toLowerCase() : null, phone: phone ? normPhoneDigits(phone) : null, clickIds, adParams, at: new Date().toISOString() });
   writeJson(VISITOR_IDENTITIES_FILE, fresh);
 }
 
@@ -337,17 +352,29 @@ function sanitizeClickIds(raw) {
   }
   return Object.keys(out).length ? out : null;
 }
+// Ad IDs are numeric in practice, but only the shape is enforced here.
+const AD_PARAM_KEYS = ["h_ad_id", "fbc_id", "gc_id"];
+function sanitizeAdParams(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  for (const k of AD_PARAM_KEYS) {
+    const v = typeof raw[k] === "string" ? raw[k].trim() : "";
+    if (v && v.length <= 64 && /^[A-Za-z0-9_\-.]+$/.test(v)) out[k] = v;
+  }
+  return out.h_ad_id ? out : null;
+}
 
-// Click IDs the submit beacon reported for this email/phone (newest record
-// wins) -- flows_backend.js's add_update_contact stamps them onto the
-// contact so a flow step can use them as {{clickIds.gclid}}/{{clickIds.fbclid}}.
-export function getClickIdsByIdentity(email, phone) {
+// What the submit beacon reported for this email/phone (newest record that
+// carried anything wins): the ad click IDs and the ad's own ID params.
+// flows_backend.js's add_update_contact stamps these onto the contact so a
+// flow step can use {{clickIds.gclid}}/{{clickIds.fbclid}}.
+export function getAdCaptureByIdentity(email, phone) {
   const all = readJson(VISITOR_IDENTITIES_FILE, []);
   const normEmail = email ? String(email).toLowerCase() : null;
   const normPhoneVal = phone ? normPhoneDigits(phone) : null;
   let found = null;
   for (const e of all) {
-    if (e.clickIds && ((normEmail && e.email === normEmail) || (normPhoneVal && e.phone === normPhoneVal))) found = e.clickIds;
+    if ((e.clickIds || e.adParams) && ((normEmail && e.email === normEmail) || (normPhoneVal && e.phone === normPhoneVal))) found = { clickIds: e.clickIds || null, adParams: e.adParams || null };
   }
   return found;
 }
