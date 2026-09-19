@@ -76,6 +76,17 @@ export function inferCountryFromFormat(digits) {
   return "";
 }
 
+const DIAL_CODES = new Set(Object.values(DIAL));
+function dropTrunkZeroAfterDialCode(digits) {
+  for (const len of [1, 2, 3]) {
+    const code = digits.slice(0, len);
+    // +1 (US/Canada) has no trunk digit; Italy (+39) keeps its leading 0 as part of the number.
+    if (code === "39") return digits;
+    if (DIAL_CODES.has(code) && digits[len] === "0") return code + digits.slice(len + 1);
+  }
+  return digits;
+}
+
 // raw phone + { countryCode (ISO alpha-2 from the request IP), timezone }.
 // Returns the phone unchanged unless it can be confidently made
 // internationally dialable ("+" + country code + national number).
@@ -87,7 +98,9 @@ export function normalizePhoneForCapture(raw, { countryCode, timezone } = {}) {
   const digits = cleaned.replace(/\D/g, "");
   if (digits.length < 6) return input;
 
-  if (cleaned.startsWith("+")) return "+" + digits;
+  // Already international -- but people type "+44 07956..." (trunk 0 kept
+  // after the country code, e.g. "+4407956495093"), which isn't dialable.
+  if (cleaned.startsWith("+")) return "+" + dropTrunkZeroAfterDialCode(digits);
   if (cleaned.startsWith("00") && digits.length >= 10) return "+" + digits.slice(2);
 
   // US/Canada-shaped (10 digits, or 11 with a leading 1) -- never touched.

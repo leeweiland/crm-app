@@ -132,7 +132,7 @@ function warmCaches() {
   }
 }
 warmCaches();
-try { runRecentInternationalPhoneFix(); } catch (e) { console.error("[phone-fix] failed (non-fatal, will retry next boot):", e.message); }
+try { runRecentInternationalPhoneFix(); runRecentInternationalPhoneFix("2026-09-19-v2"); } catch (e) { console.error("[phone-fix] failed (non-fatal, will retry next boot):", e.message); }
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);

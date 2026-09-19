@@ -19,15 +19,20 @@ import { upsertContactIndex, syncContactFields } from "./sqlite_inbox.js";
 import { normalizePhoneForCapture, countryFromName } from "./phone_util.js";
 
 const PHONE_FIX_SINCE = "2026-09-11";
-const PHONE_FIX_MARKER = join(DATA_DIR, "_phone_fix_2026-09-18.done");
-const PHONE_FIX_REPORT = join(DATA_DIR, "_phone_fix_2026-09-18_report.json");
 const BOOKINGS_FILE = "crm_bookings.json";
 
-export function runRecentInternationalPhoneFix() {
+// Run once per tag. "2026-09-18" was the first pass (national-format numbers
+// only). "2026-09-19-v2" re-runs it for what arrived through the Framer
+// webhook between that deploy and the webhook fix, and also canonicalizes
+// numbers that already had a "+" (e.g. "+4407956495093", trunk 0 left in).
+export function runRecentInternationalPhoneFix(tag = "2026-09-18") {
+  const PHONE_FIX_MARKER = join(DATA_DIR, `_phone_fix_${tag}.done`);
+  const PHONE_FIX_REPORT = join(DATA_DIR, `_phone_fix_${tag}_report.json`);
   if (existsSync(PHONE_FIX_MARKER)) return;
+  const includePlus = tag !== "2026-09-18";
   const t0 = Date.now();
   const contacts = readJson(CONTACTS_FILE, []);
-  const candidates = contacts.filter(c => (c.createdAt >= PHONE_FIX_SINCE || c.updatedAt >= PHONE_FIX_SINCE) && String(c.phone || "").trim() && !String(c.phone).trim().startsWith("+") && !/^1?[2-9]\d{2}[2-9]\d{6}$/.test(String(c.phone).replace(/\D/g, "")));
+  const candidates = contacts.filter(c => (c.createdAt >= PHONE_FIX_SINCE || c.updatedAt >= PHONE_FIX_SINCE) && String(c.phone || "").trim() && (includePlus || !String(c.phone).trim().startsWith("+")) && !/^1?[2-9]\d{2}[2-9]\d{6}$/.test(String(c.phone).replace(/\D/g, "")));
   if (!candidates.length) { writeFileSync(PHONE_FIX_MARKER, new Date().toISOString()); return; }
 
   // Evidence beyond the number's own shape: the country the visitor's IP
@@ -46,7 +51,7 @@ export function runRecentInternationalPhoneFix() {
   for (const c of candidates) {
     const next = normalizePhoneForCapture(c.phone, { countryCode: visitCountry.get(c.id) || "", timezone: bookingTz.get(c.id) || "" });
     if (next && next !== String(c.phone).trim() && next.startsWith("+")) changes.push({ id: c.id, name: `${c.first || ""} ${c.last || ""}`.trim(), from: c.phone, to: next });
-    else skipped.push({ id: c.id, name: `${c.first || ""} ${c.last || ""}`.trim(), phone: c.phone, reason: "no confident country for this number" });
+    else if (!String(c.phone).trim().startsWith("+")) skipped.push({ id: c.id, name: `${c.first || ""} ${c.last || ""}`.trim(), phone: c.phone, reason: "no confident country for this number" });
   }
 
   const byId = new Map(changes.map(ch => [ch.id, ch.to]));

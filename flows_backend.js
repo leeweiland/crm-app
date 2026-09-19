@@ -8,6 +8,7 @@ import { syncContactFields } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
 import { claimByIdentity } from "./tracking_backend.js";
+import { normalizePhoneForCapture } from "./phone_util.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -601,6 +602,16 @@ export async function handleFlowsRequest(req, res, url) {
     // 2xx.
     sendJson(res, 200, { ok: true, deduped: isDuplicate });
     if (isDuplicate) return true;
+
+    // A Framer phone field sends whatever was typed -- national format ("07497
+    // 519636", "0431 414 124") with no country code -- and nothing after this
+    // point (the flow's Add/Update Contact step, the notification email, the
+    // Sheet row) ever adds one. Fixed here, once, before it fans out. Number
+    // shape only (see phone_util.js) -- deliberately no IP guess, because this
+    // request may come from Framer's servers rather than the visitor's browser.
+    for (const [k, v] of Object.entries(fields)) {
+      if (typeof v === "string" && v.trim() && (flow.trigger.config?.fieldMap?.[k] === "phone" || /^(phone|mobile|cell|tel)/i.test(k))) fields[k] = normalizePhoneForCapture(v);
+    }
 
     // Captured even while the flow is still being built (inactive) -- same
     // "send a real test hit and we'll show you what arrived" flow Zapier's
