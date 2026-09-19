@@ -606,6 +606,12 @@ async function loadRefs() {
   updateAwayToggleUi();
   updateEmailProviderToggleUi();
   populateActivityUserSelect();
+  // The panel may have already rendered before allStatuses existed (see
+  // getChatPanelConfig's getters) -- re-render it once, and only in that
+  // stale case (its status dropdown has no options), so this never wipes a
+  // draft someone has already started typing.
+  const panelStatusSel = document.getElementById('chatStatusSelect');
+  if (chatPanelInstance && panelStatusSel && panelStatusSel.options.length <= 1 && allStatuses.length) chatPanelInstance.render();
 }
 
 // ── Tab switching ───────────────────────────────────────────────────────
@@ -1347,7 +1353,15 @@ document.getElementById('saveConfirmBtn').onclick = async () => {
 let chatPanelInstance = null;
 function getChatPanelConfig() {
   return {
-    allStatuses, currentUser, teamUsers,
+    // Live getters, not captured values: init() runs loadRefs() and
+    // loadConversations() concurrently, so the first conversation's panel can
+    // be built before loadRefs() has assigned these. Captured by value they
+    // stayed the empty initial arrays for that panel's whole life -- an empty
+    // status dropdown (just "Change status...") and no "send as" picker --
+    // depending purely on which request happened to finish first.
+    get allStatuses() { return allStatuses; },
+    get currentUser() { return currentUser; },
+    get teamUsers() { return teamUsers; },
     layout: 'full',
     getContact: () => selectedConvo?.contact,
     getDisplayName: () => selectedConvo?.displayName,
