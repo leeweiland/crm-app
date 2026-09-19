@@ -827,13 +827,26 @@ async function openJourney(contactId) {
   currentJourneyItems = [...items, ...clickItems].sort((a, b) => new Date(a.at) - new Date(b.at));
   renderJourneyTimeline();
 }
+// Hyros-imported history (first/last ad click, sales, booked calls) comes back
+// from the inbox endpoint as 'activity' items with a subject/body, not a
+// title -- without this they rendered as blank bullet rows.
+function hyrosKind(item) {
+  if (item.itemType !== 'activity' || item.sourceType !== 'hyros_import') return null;
+  const s = item.subject || '';
+  return /^(First|Last) ad click/.test(s) ? 'click' : /^Sale:/.test(s) ? 'sale' : 'call';
+}
+function hyrosClickCategory(item) {
+  const platform = String(item.body || '').split(' · ')[0].toLowerCase(), tag = item.bodyPreview || '';
+  if (/organic|^@yt-|^@ig|^@instagram|^@fb-post/.test(tag) || platform.includes('youtube')) return 'media';
+  return platform === 'google' || platform === 'facebook' ? 'ad' : 'other';
+}
 function renderJourneyTimeline() {
   const timeline = document.getElementById('journeyTimeline');
   const filtered = currentJourneyItems.filter(item => {
     if (journeySubtab === 'all') return true;
-    if (journeySubtab === 'click') return item.itemType === 'click';
-    if (journeySubtab === 'ad') return item.itemType === 'click' && item.category === 'ad';
-    if (journeySubtab === 'media') return item.itemType === 'click' && item.category === 'media';
+    if (journeySubtab === 'click') return item.itemType === 'click' || hyrosKind(item) === 'click';
+    if (journeySubtab === 'ad') return (item.itemType === 'click' && item.category === 'ad') || (hyrosKind(item) === 'click' && hyrosClickCategory(item) === 'ad');
+    if (journeySubtab === 'media') return (item.itemType === 'click' && item.category === 'media') || (hyrosKind(item) === 'click' && hyrosClickCategory(item) === 'media');
     if (journeySubtab === 'email') return item.itemType === 'email';
     if (journeySubtab === 'sms') return item.itemType === 'sms';
     return true;
@@ -844,10 +857,11 @@ function renderJourneyTimeline() {
     if (isClick) preview = `<span class="journey-click-label">Clicked: ${escapeHtml(item.title)}</span>${item.path ? ` <span class="pra-muted" style="font-size:.78rem">(${escapeHtml(item.path)})</span>` : ''}`;
     else if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
     else if (item.itemType === 'call') preview = `${escapeHtml(item.direction || '')} call${item.duration ? ', ' + item.duration + 'min' : ''}`;
+    else if (hyrosKind(item)) preview = `<span class="journey-click-label">${escapeHtml(item.subject)}</span>${item.body ? ` <span class="pra-muted" style="font-size:.78rem">(${escapeHtml(item.body)}${item.bodyPreview ? ' · ' + escapeHtml(item.bodyPreview) : ''})</span>` : ''} <span class="pra-muted" style="font-size:.7rem">Hyros history</span>`;
     else preview = escapeHtml(item.title || '');
     return `
       <div class="journey-timeline-item${isClick ? ' click-item' : ''}">
-        <div class="journey-icon ${item.itemType}">${JOURNEY_ICONS[item.itemType] || '•'}</div>
+        <div class="journey-icon ${item.itemType}">${{ click: JOURNEY_ICONS.click, sale: '💵', call: JOURNEY_ICONS.call }[hyrosKind(item)] || JOURNEY_ICONS[item.itemType] || '•'}</div>
         <div style="flex:1">
           <div style="font-size:.86rem">${preview}</div>
           <div class="pra-muted" style="font-size:.74rem">${fmtDate(item.at)}${item.status ? ' · ' + escapeHtml(item.status) : ''}</div>
