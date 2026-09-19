@@ -212,7 +212,9 @@ createServer(async (req, res) => {
 
 // One-time START/END DATE fill from the kickoff sheets (see sync_kickoff_dates.js). Production only
 // (the volume path is what marks it), and delayed so an old container overlapping this deploy is gone first.
-if (process.env.RAILWAY_VOLUME_MOUNT_PATH) {
+// DISABLED 2026-09-20: streaming ~12 batches through the 181MB contacts file blocked the event loop and made the CRM
+// unresponsive while it ran. Needs a non-blocking approach before it's re-enabled.
+if (false && process.env.RAILWAY_VOLUME_MOUNT_PATH) {
   setTimeout(() => syncKickoffDates().catch(e => console.error("[kickoff-dates] failed (non-fatal, retries next boot):", e.message)), 120000);
 }
 
