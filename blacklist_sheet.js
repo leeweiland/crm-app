@@ -62,13 +62,26 @@ function friendlyError(e) {
   return e.message || String(e);
 }
 
-// The tab named by the link's gid (or the first tab when the link has none).
+// The tab named by the link's gid. A link without one is only accepted when
+// there's no ambiguity: a single-tab spreadsheet, or exactly one tab with
+// "blacklist" in its name. The team's real workbook has ~34 tabs and the
+// first is "SOURCES" -- silently defaulting to the first tab would file
+// blacklisted people into the wrong sheet.
 async function resolveTab(accessToken, { spreadsheetId, gid }) {
-  const meta = await sheetsGet(accessToken, `${spreadsheetId}?fields=properties.title,sheets.properties(sheetId,title)`);
+  const meta = await sheetsGet(accessToken, `${spreadsheetId}?fields=properties.title,sheets.properties(sheetId,title,gridProperties.rowCount)`);
   const tabs = meta.sheets || [];
-  const tab = gid == null ? tabs[0] : tabs.find(t => t.properties.sheetId === gid);
-  if (!tab) throw new SheetsError(400, "That link points at a tab that doesn't exist in the spreadsheet.");
-  return { title: tab.properties.title, spreadsheetTitle: meta.properties?.title || "" };
+  let tab;
+  if (gid != null) {
+    tab = tabs.find(t => t.properties.sheetId === gid);
+    if (!tab) throw new SheetsError(400, "That link points at a tab that doesn't exist in the spreadsheet.");
+  } else if (tabs.length === 1) {
+    tab = tabs[0];
+  } else {
+    const named = tabs.filter(t => /black\s*list/i.test(t.properties.title));
+    if (named.length !== 1) throw new SheetsError(400, `This spreadsheet has ${tabs.length} tabs and the link doesn't say which one is the Blacklist. Open the Blacklist tab in Google Sheets and copy the link from there.`);
+    tab = named[0];
+  }
+  return { title: tab.properties.title, sheetId: tab.properties.sheetId, rowCount: tab.properties.gridProperties?.rowCount || 0, spreadsheetTitle: meta.properties?.title || "" };
 }
 
 const q = (title) => `'${String(title).replace(/'/g, "''")}'`;
@@ -91,15 +104,29 @@ const HEADER_FIELDS = {
   date: ["date", "dateadded", "dateblacklisted", "blacklisted", "added"],
   program: ["program", "type", "programtype"],
 };
-function mapColumns(headerRow) {
+// Throws (rather than guessing a column layout) when row 1 has no header we
+// recognize: that's what pointing at the wrong tab looks like, and appending
+// by guessed position would scatter blacklisted people's details into it.
+function mapColumns(headerRow, tabTitle) {
   const cols = {};
   (headerRow || []).forEach((h, i) => {
     const n = norm(h);
     for (const [field, aliases] of Object.entries(HEADER_FIELDS)) if (cols[field] == null && aliases.includes(n)) cols[field] = i;
   });
-  // No recognizable header at all -> assume the sheet's known 5-column layout.
-  if (!["first", "last", "name", "email", "phone"].some(f => cols[f] != null)) return { first: 0, last: 1, email: 2, phone: 3, date: 4 };
+  if (!["first", "last", "name", "email", "phone"].some(f => cols[f] != null)) {
+    const found = (headerRow || []).filter(Boolean).slice(0, 6).join(", ");
+    throw new SheetsError(400, `Row 1 of the "${tabTitle}" tab needs headers like FIRST, LAST, EMAIL, PHONE, DATE${found ? ` (found: ${found})` : " (the tab looks empty)"}. Open the Blacklist tab and copy the link from there.`);
+  }
   return cols;
+}
+
+// Resolves the tab and validates its header row from a one-row read BEFORE
+// pulling the tab's full contents (a wrong pick can be a 178k-row tab).
+async function openTab(accessToken, parsed) {
+  const tab = await resolveTab(accessToken, parsed);
+  const head = await sheetsGet(accessToken, `${parsed.spreadsheetId}/values/${encodeURIComponent(`${q(tab.title)}!A1:Z1`)}`);
+  const cols = mapColumns((head.values || [])[0], tab.title);
+  return { tab, cols };
 }
 
 const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
@@ -119,10 +146,9 @@ export async function checkBlacklistSheet(sheetUrl) {
   if (!parsed) return { ok: false, error: "That doesn't look like a Google Sheets link." };
   try {
     const accessToken = await getAccessToken();
-    const tab = await resolveTab(accessToken, parsed);
+    const { tab, cols } = await openTab(accessToken, parsed);
     const data = await sheetsGet(accessToken, `${parsed.spreadsheetId}/values/${encodeURIComponent(`${q(tab.title)}!A:Z`)}`);
     const rows = data.values || [];
-    const cols = mapColumns(rows[0]);
     const w = await fetch(`${SHEETS}/${parsed.spreadsheetId}:batchUpdate`, {
       method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ requests: [{ updateSpreadsheetProperties: { properties: { title: tab.spreadsheetTitle }, fields: "title" } }] }),
@@ -161,10 +187,9 @@ export async function appendToBlacklistSheet(sheetUrl, contact) {
   try {
     return await withLock(`${parsed.spreadsheetId}::${parsed.gid}`, async () => {
       const accessToken = await getAccessToken();
-      const tab = await resolveTab(accessToken, parsed);
+      const { tab, cols } = await openTab(accessToken, parsed);
       const data = await sheetsGet(accessToken, `${parsed.spreadsheetId}/values/${encodeURIComponent(`${q(tab.title)}!A:Z`)}`);
       const rows = data.values || [];
-      const cols = mapColumns(rows[0]);
 
       const email = String(contact.email || "").trim().toLowerCase();
       const phone10 = last10(contact.phone);
@@ -197,6 +222,19 @@ export async function appendToBlacklistSheet(sheetUrl, contact) {
       // as a name -- USER_ENTERED would evaluate it as a formula. RAW also
       // keeps "+1 907..." phones as typed instead of turning them into numbers.
       const nextRow = rows.length + 1; // rows preserves gap rows as [], so this is the true bottom
+      // A values write never grows the sheet (only values.append does), so a
+      // tab whose last row is filled -- this one had 8 spare rows -- would
+      // reject the write as "exceeds grid limits". Add rows first.
+      if (nextRow > tab.rowCount) {
+        const g = await fetch(`${SHEETS}/${parsed.spreadsheetId}:batchUpdate`, {
+          method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ requests: [{ appendDimension: { sheetId: tab.sheetId, dimension: "ROWS", length: Math.max(100, nextRow - tab.rowCount) } }] }),
+        });
+        if (!g.ok) {
+          const gd = await g.json().catch(() => ({}));
+          throw new SheetsError(g.status, gd.error?.message || `HTTP ${g.status}`);
+        }
+      }
       const range = `${q(tab.title)}!A${nextRow}:${columnLetter(width)}${nextRow}`;
       const r = await fetch(`${SHEETS}/${parsed.spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
         method: "PUT", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
