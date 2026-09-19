@@ -428,7 +428,7 @@
     <div class="field"><label class="pra-label">Account / Company</label><input class="pra-input" id="ovAccount"/></div>
     <div class="field-row">
       <div class="field"><label class="pra-label">Email</label><input class="pra-input" type="email" id="ovEmail"/></div>
-      <div class="field"><label class="pra-label">Phone</label><input class="pra-input" id="ovPhone"/></div>
+      <div class="field"><label class="pra-label"><span id="ovPhoneTime"></span>Phone</label><input class="pra-input" id="ovPhone"/></div>
     </div>
     <div class="ov-sub-label" style="display:flex;align-items:center;gap:8px">Tags <span id="ovTagsToggleSlot"></span></div>
     <div id="ovTagsWrap"></div>
@@ -449,6 +449,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/contact-time.js"></script>
 <script src="/conversation-panel.js"></script>
 <script src="/inline-edit.js"></script>
 <script>
@@ -1454,6 +1455,7 @@ async function openContactOverlay(contactId) {
   document.getElementById('ovAccount').value = overlayContact.accountName || '';
   document.getElementById('ovEmail').value = overlayContact.email || '';
   document.getElementById('ovPhone').value = overlayContact.phone || '';
+  renderOverlayPhoneTime();
   document.getElementById('ovEmailOptOut').checked = !!overlayContact.emailOptOut;
   document.getElementById('ovSmsOptOut').checked = !!overlayContact.smsOptOut;
   renderOverlayOptOutBadges();
@@ -1626,6 +1628,13 @@ function renderOverlayOptOutBadges() {
   document.getElementById('ovOptOutBadges').innerHTML =
     (emailOptOut ? badge('EMAIL OPT-OUT') : '') + (smsOptOut ? badge('SMS OPT-OUT') : '');
 }
+// The contact's local time, left of the "Phone" label (contact-time.js) --
+// re-derived on every keystroke so editing the number updates it live,
+// not just after the field's change event saves.
+function renderOverlayPhoneTime() {
+  PRAContactTime.mount(document.getElementById('ovPhoneTime'), document.getElementById('ovPhone').value, { className: 'ct-lead' });
+}
+document.getElementById('ovPhone').addEventListener('input', renderOverlayPhoneTime);
 ['ovFirst', 'ovLast', 'ovAccount', 'ovEmail', 'ovPhone', 'ovEmailOptOut', 'ovSmsOptOut'].forEach(id => document.getElementById(id).addEventListener('change', collectAndAutoSaveOverlay));
 document.getElementById('ovEmailOptOut').addEventListener('change', renderOverlayOptOutBadges);
 document.getElementById('ovSmsOptOut').addEventListener('change', renderOverlayOptOutBadges);

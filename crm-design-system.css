@@ -187,6 +187,12 @@ body { margin: 0; }
 .pra-badge-online { background: rgba(0,155,255,0.15); color: #009bff; border-color: rgba(0,155,255,0.35); }
 .pra-badge-gym { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
 
+/* Contact-local time chip (contact-time.js) -- sits inline next to a phone
+   number. text-transform/letter-spacing reset so it also reads correctly when
+   dropped inside an uppercase, letter-spaced .pra-label. ct-lead = the chip
+   leads a label, separated from it by a thin rule. */
+.contact-time { font-family: var(--font-primary); font-weight: 600; font-size: .74rem; letter-spacing: 0; text-transform: none; color: var(--pra-dim); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: help; }
+.contact-time.ct-lead { margin-right: 8px; padding-right: 8px; border-right: 1px solid var(--pra-border); }
 .pra-tel-link { color: var(--pra-blue); text-decoration: none; }
 .pra-tel-link:hover { text-decoration: underline; }
 .pra-tel-link svg { width: 16px; height: 16px; vertical-align: middle; }

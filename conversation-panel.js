@@ -687,6 +687,10 @@
             <div class="chat-panel-sub">${[
               contact?.email ? escapeHtml(contact.email) : '',
               contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(contact.phone)}</a>` : '',
+              // The contact's own local time, right after their number (see
+              // contact-time.js) -- '' (dropped by the filter) when the
+              // number doesn't reveal a timezone or that script isn't loaded.
+              contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
               zoomLinkHtml(config.currentUser),
               contact?.firstSeenAt ? `<span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(contact.firstSeenAt)}</span>` : '',
             ].filter(Boolean).join(' · ')}</div>
