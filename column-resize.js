@@ -47,6 +47,19 @@ window.wireColumnResize = function (headRowSelector, prefKey) {
       document.head.appendChild(styleTag);
     }
     styleTag.textContent = rules;
+    // Sticky ("frozen-col-N", contacts.html) columns carry hard-coded `left`
+    // offsets in the page CSS, worked out for their DEFAULT widths. Once one
+    // is resized the next would sit at the wrong offset and, on horizontal
+    // scroll, cover part of it -- so recompute each offset from the real
+    // widths (measured after the width rules above are in place).
+    let left = 0;
+    const leftRules = [];
+    [...headRow.children].forEach((th, i) => {
+      if (!/\bfrozen-col-\d\b/.test(th.className)) return;
+      leftRules.push(`#${table.id} > thead > tr > th:nth-child(${i + 1}), #${table.id} > tbody > tr > td:nth-child(${i + 1}) { left:${left}px; }`);
+      left += th.getBoundingClientRect().width;
+    });
+    if (leftRules.length) styleTag.textContent = rules + '\n' + leftRules.join('\n');
   }
 
   function repositionHandles() {
