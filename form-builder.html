@@ -9,6 +9,11 @@
   .fb-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 6px; }
   .fb-name-input { font-family: var(--font-primary); font-weight: 700; font-size: 1.4rem; background: none; border: none; color: #fff; outline: none; flex: 1; min-width: 120px; border-bottom: 1px solid transparent; }
   .fb-name-input:focus { border-bottom-color: var(--pra-blue); }
+  .undo-redo { display: inline-flex; gap: 6px; }
+  .undo-redo button { width: 32px; height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white, #fff); cursor: pointer; }
+  .undo-redo button:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
+  .undo-redo button:disabled { opacity: .3; cursor: default; }
+  .undo-redo svg { width: 16px; height: 16px; }
   .status-toggle-btn { font-size: .72rem; text-transform: uppercase; padding: 5px 12px; border-radius: 10px; border: 1px solid var(--pra-border); cursor: pointer; background: rgba(255,255,255,0.06); color: var(--pra-dim); }
   .status-toggle-btn.published { background: rgba(57,255,20,0.15); color: var(--pra-green); border-color: rgba(57,255,20,0.35); }
   .tabs { display: flex; gap: 6px; margin: 16px 0; border-bottom: 1px solid var(--pra-border); }
@@ -237,6 +242,10 @@
         <a class="pra-link" href="/forms.html">&larr; Back to Forms</a>
         <div class="fb-header" style="margin-top:14px">
           <input class="fb-name-input" id="formName"/>
+          <div class="undo-redo">
+            <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+            <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+          </div>
           <button class="status-toggle-btn" id="statusToggle"></button>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="embedBtn">Embed</button>
           <a class="pra-btn pra-btn-ghost pra-btn-sm" id="viewLink" target="_blank">View</a>
@@ -769,12 +778,65 @@ async function loadForm() {
   form = (await r.json()).form;
   form.theme = { ...THEME_DEFAULTS, ...(form.theme || {}) };
   render();
+  initHistory();
 }
 
 function saveDebounced() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveForm, 400);
+  scheduleHistoryCommit();
 }
+
+// ── Undo / redo ──────────────────────────────────────────────────────────
+// Whole-form snapshots (name, fields, settings, theme), taken after each
+// change settles -- every edit already funnels through saveDebounced, so
+// that's the one hook. Rapid edits (typing) inside HISTORY_COALESCE_MS
+// collapse into a single step. Deliberately NOT part of a snapshot:
+// status (undo must never silently unpublish/republish a live form) and
+// the calendar field's gear-panel data (saved through its own routes).
+const HISTORY_LIMIT = 100, HISTORY_COALESCE_MS = 600;
+let historyStack = [], historyIdx = -1, historyTimer;
+function snapshotForm() { return JSON.stringify({ name: form.name, fields: form.fields, settings: form.settings, theme: form.theme }); }
+function initHistory() { historyStack = [snapshotForm()]; historyIdx = 0; updateUndoButtons(); }
+function scheduleHistoryCommit() { clearTimeout(historyTimer); historyTimer = setTimeout(commitHistory, HISTORY_COALESCE_MS); }
+function commitHistory() {
+  clearTimeout(historyTimer);
+  if (!form || historyIdx < 0) return;
+  const snap = snapshotForm();
+  if (snap === historyStack[historyIdx]) return;
+  historyStack = historyStack.slice(0, historyIdx + 1);
+  historyStack.push(snap);
+  if (historyStack.length > HISTORY_LIMIT) historyStack.shift();
+  historyIdx = historyStack.length - 1;
+  updateUndoButtons();
+}
+function updateUndoButtons() {
+  document.getElementById('undoBtn').disabled = historyIdx <= 0;
+  document.getElementById('redoBtn').disabled = historyIdx < 0 || historyIdx >= historyStack.length - 1;
+}
+function restoreHistory(idx) {
+  historyIdx = idx;
+  const snap = JSON.parse(historyStack[idx]);
+  form.name = snap.name; form.fields = snap.fields; form.settings = snap.settings; form.theme = snap.theme;
+  openPanel = null; paletteOpenAt = null;
+  render();
+  updateUndoButtons();
+  clearTimeout(saveTimer);
+  saveForm();
+}
+function undoForm() { commitHistory(); if (historyIdx > 0) restoreHistory(historyIdx - 1); }
+function redoForm() { commitHistory(); if (historyIdx < historyStack.length - 1) restoreHistory(historyIdx + 1); }
+document.getElementById('undoBtn').onclick = undoForm;
+document.getElementById('redoBtn').onclick = redoForm;
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  if (!form || !document.getElementById('tab-build').classList.contains('active')) return;
+  if (document.querySelector('.modal-backdrop.show')) return;
+  e.preventDefault(); // replaces the browser's own per-field text undo -- every edit is a snapshot above
+  if (k === 'y' || e.shiftKey) redoForm(); else undoForm();
+});
 async function saveForm() {
   const r = await fetch('/api/forms/' + form.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
