@@ -666,7 +666,7 @@ async function loadAdsReportTable() {
     const pct = (o) => o.total ? Math.round(100 * o.tracked / o.total) : 0;
     const e = d.coverage.emails, b = d.coverage.bookings;
     cov.style.display = 'block';
-    cov.innerHTML = `<b>Click tracking coverage:</b> ${e.tracked} of ${e.total} Emails (${pct(e)}%) and ${b.tracked} of ${b.total} Bookings/Apps (${pct(b)}%) are tied to a click. The rest show as "Untracked" -- no ad click was recorded for that person (visits weren't being saved before Sep 19, so earlier days can't be recovered).`;
+    cov.innerHTML = `<b>Click tracking coverage:</b> ${e.tracked} of ${e.total} Emails (${pct(e)}%) and ${b.tracked} of ${b.total} Bookings/Apps (${pct(b)}%) are tied to a click${d.coverage.inferred ? ` (${d.coverage.inferred} of those linked by timing -- exactly one visitor on the form page just before the sign-up)` : ''}. The rest show as "Untracked" -- no ad click was recorded for that person (visits weren't being saved before Sep 19, so earlier days can't be recovered).`;
   } else cov.style.display = 'none';
   renderAdsReportTable();
 }

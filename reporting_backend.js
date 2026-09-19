@@ -239,7 +239,7 @@ export function computeAttribution(startMs, endMs) {
     }
     if (v.contactId) {
       const existing = firstTouchByContact.get(v.contactId);
-      if (!existing || atMs < existing.atMs) firstTouchByContact.set(v.contactId, { key, atMs });
+      if (!existing || atMs < existing.atMs) firstTouchByContact.set(v.contactId, { key, atMs, inferred: !!v.inferred });
     }
   }
 
@@ -305,6 +305,7 @@ export function computeEventAttribution(startStr, endStr, attribution) {
   const { firstTouchByContact, contactsById } = attribution;
   const bySource = new Map(), byKeyStage = new Map();
   const attributed = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
+  let inferred = 0; // credited via a timing-inferred link (attribution_backfill.js), not a recorded sign-up beacon
   for (const ev of crmEventRuns(crmStartMs, crmEndMs)) {
     const contact = ev.contactId ? contactsById.get(ev.contactId) : null;
     const key = contact ? touchKeyForContact(contact, firstTouchByContact) : null;
@@ -314,11 +315,12 @@ export function computeEventAttribution(startStr, endStr, attribution) {
     const stage = ev.kind === "emails" ? "optIns" : "bookings";
     if (stage === "optIns") s.emails++; else s.bookings++;
     attributed[ev.program][ev.kind]++;
+    if (firstTouchByContact.get(contact.id)?.inferred) inferred++;
     const k = `${key}|${stage}`;
     if (!byKeyStage.has(k)) byKeyStage.set(k, new Set());
     byKeyStage.get(k).add(ev.contactId);
   }
-  return { bySource, byKeyStage, attributed };
+  return { bySource, byKeyStage, attributed, inferred };
 }
 
 function slugify(s) {
@@ -457,7 +459,7 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   // the rest ("Untracked") had no click journey captured for that contact.
   const totalEmails = crmData.online.emails + crmData.gym.emails, totalBookings = crmData.online.bookM + crmData.gym.bookM;
   const trackedEmails = attributedLeads.online + attributedLeads.gym, trackedBookings = attributedBookings.online + attributedBookings.gym;
-  const coverage = { emails: { total: totalEmails, tracked: Math.min(totalEmails, trackedEmails) }, bookings: { total: totalBookings, tracked: Math.min(totalBookings, trackedBookings) } };
+  const coverage = { emails: { total: totalEmails, tracked: Math.min(totalEmails, trackedEmails) }, bookings: { total: totalBookings, tracked: Math.min(totalBookings, trackedBookings) }, inferred: ev.inferred };
   return { rows: [...rows, ...untrackedRows], spendError, coverage };
 }
 
@@ -652,7 +654,7 @@ export async function handleReportingRequest(req, res, url) {
         : category === "sms" ? `SMS: ${sourceMsg?.body ? sourceMsg.body.slice(0, 60) : flowName}`
         : flowName;
       const fullUrl = (siteBaseUrl ? siteBaseUrl : "") + (v.path || "") + (v.search || "");
-      return { at: v.at, path: v.path, fullUrl, key, label, category, sourceSubject: sourceMsg?.subject || null };
+      return { at: v.at, path: v.path, fullUrl, key, label: v.inferred ? `${label} (linked by timing)` : label, category, sourceSubject: sourceMsg?.subject || null };
     }).filter(Boolean);
     return sendJson(res, 200, { clicks });
   }

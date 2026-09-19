@@ -39,6 +39,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
 import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 import { seedKickoffForms } from "./seed_kickoff_forms.js";
+import { runInferredAttributionBackfill } from "./attribution_backfill.js";
 import { seedKickoffFlows } from "./seed_kickoff_flows.js";
 import { syncKickoffFlows } from "./sync_kickoff_flows.js";
 
@@ -140,6 +141,7 @@ function warmCaches() {
 }
 warmCaches();
 try { runRecentInternationalPhoneFix(); runRecentInternationalPhoneFix("2026-09-19-v2"); } catch (e) { console.error("[phone-fix] failed (non-fatal, will retry next boot):", e.message); }
+try { runInferredAttributionBackfill(); } catch (e) { console.error("[attribution-inference] failed (non-fatal):", e.message); }
 try { seedKickoffForms(); } catch (e) { console.error("[seed] kickoff forms failed (non-fatal):", e.message); }
 try { seedKickoffFlows(); } catch (e) { console.error("[seed] kickoff flows failed (non-fatal):", e.message); }
 try { syncKickoffFlows(); } catch (e) { console.error("[sync] kickoff flows failed (non-fatal):", e.message); }
