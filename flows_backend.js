@@ -7,7 +7,7 @@ import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
-import { claimByIdentity } from "./tracking_backend.js";
+import { claimByIdentity, getClickIdsByIdentity } from "./tracking_backend.js";
 import { normalizePhoneForCapture } from "./phone_util.js";
 
 export const FLOWS_FILE = "crm_flows.json";
@@ -325,6 +325,10 @@ async function advanceFlowRun(run, flow) {
         // visits (and thus its whole attribution story) went permanently
         // unclaimed.
         claimByIdentity(resolvedEmail, resolvedPhone, workingContact.id);
+        // Replaces (not merges) so a returning lead's newest click isn't
+        // mixed with an older click's other ID. Persisted by saveContact below.
+        const clickIds = getClickIdsByIdentity(resolvedEmail, resolvedPhone);
+        if (clickIds) workingContact.clickIds = { ...clickIds, capturedAt: new Date().toISOString() };
       }
       const prevStatus = workingContact.status;
       for (const field of ["first", "last", "email", "phone", "programType"]) {

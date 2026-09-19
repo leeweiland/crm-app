@@ -1270,6 +1270,9 @@ async function getAvailableTokens() {
     { label: 'Last Name', token: '{{last}}', example: exampleFor(['lastname', 'lname']) },
     { label: 'Email', token: '{{email}}', example: exampleFor(['email', 'emailaddress']) },
     { label: 'Phone', token: '{{phone}}', example: exampleFor(['phone', 'phonenumber', 'mobile', 'mobilenumber']) },
+    // Click IDs come from the site's submit beacon (tracking_backend.js), stamped onto the contact at run time -- never in a webhook sample.
+    { label: 'Google Ads Click ID (gclid)', token: '{{clickIds.gclid}}', example: null },
+    { label: 'Meta Ads Click ID (fbclid)', token: '{{clickIds.fbclid}}', example: null },
     { label: 'Date/Time Captured', token: '{{timestamp}}', example: null }, // stamped at run time, not part of any pulled sample
   ];
   // A raw webhook field that's really just first/last/email/phone under a
@@ -1302,7 +1305,7 @@ async function getAvailableTokens() {
 function tokenLabel(raw) {
   const m = raw.match(/^\{\{(.+)\}\}$/);
   if (!m) return raw;
-  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured' };
+  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured', 'clickIds.gclid': 'Google Ads Click ID (gclid)', 'clickIds.fbclid': 'Meta Ads Click ID (fbclid)' };
   if (KNOWN[m[1]]) return KNOWN[m[1]];
   const pm = m[1].match(/^payload\.(.+)$/);
   if (!pm) return m[1];
@@ -1408,7 +1411,7 @@ function exampleValueForToken(raw, samples) {
 // single flow, always, since there's structurally no sample data for it
 // to ever match. Chip callers check this before deciding to warn.
 function isRuntimeOnlyToken(raw) {
-  return raw === '{{timestamp}}';
+  return raw === '{{timestamp}}' || raw.startsWith('{{clickIds.');
 }
 // Applies a resolved answer (or the lack of one) to an already-rendered
 // chip -- updates the label text, and toggles the amber "unresolved"
@@ -1715,6 +1718,18 @@ function insertQaPair(editor, label, token, exampleValue) {
   if (sel.rangeCount && editor.contains(sel.anchorNode)) range = sel.getRangeAt(0);
   else { range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); }
   range.deleteContents();
+  // The block only LOOKS like its own line -- in the saved string, text typed
+  // right before it would run straight into its bold label, so end that line first.
+  const pre = document.createRange();
+  pre.selectNodeContents(editor);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const holder = document.createElement('div');
+  holder.appendChild(pre.cloneContents());
+  const textBefore = getTokenEditorValue(holder);
+  if (textBefore && !textBefore.endsWith('\n')) {
+    range.insertNode(document.createElement('br'));
+    range.collapse(false);
+  }
   const tmp = document.createElement('div');
   tmp.innerHTML = qaBlockHtml(label, token, exampleValue);
   const block = tmp.firstElementChild;
@@ -1762,6 +1777,29 @@ function wireTokenEditors(root) {
       if (e.key !== 'Enter') return;
       e.preventDefault();
       if (multiline) { insertLineBreak(editor); editor.dispatchEvent(new Event('input', { bubbles: true })); }
+    });
+    // A Q&A block is a non-editable BLOCK, and a contenteditable can't hold a
+    // caret after one that's its last child (no line box to put it on) -- a
+    // click below the last block lands nowhere or snaps back above it, so
+    // nothing could be typed or inserted after the final answer. Clicking
+    // there gives it the same <br><br> line insertQaPair leaves after every
+    // block, with the caret on the second line (typed text starts on its
+    // own line, not glued to the answer).
+    if (multiline) editor.addEventListener('mousedown', (e) => {
+      if (e.target !== editor) return;
+      const last = editor.lastElementChild;
+      if (!last || !last.classList.contains('qa-block') || e.clientY < last.getBoundingClientRect().bottom) return;
+      e.preventDefault();
+      const br1 = document.createElement('br'), br2 = document.createElement('br');
+      editor.append(br1, br2);
+      editor.focus();
+      const range = document.createRange();
+      range.setStartBefore(br2);
+      range.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
     });
     editor.addEventListener('paste', (e) => {
       e.preventDefault();

@@ -68,6 +68,27 @@ const TRACK_SNIPPET = `(function(){
   window.addEventListener('message', function(e){
     if (e.data && e.data.type === 'pf-identify' && e.data.contactId) setCid(e.data.contactId);
   });
+  // Ad click IDs (Google gclid/gbraid/wbraid, Meta fbclid) only exist in the
+  // landing URL, and the visitor has usually navigated on by the time they
+  // submit a form -- so they're kept in first-party cookies (90 days, like
+  // Google's own _gcl_aw) and sent along with the submit beacon below.
+  var CLICK_KEYS = ['gclid','gbraid','wbraid','fbclid'];
+  var qs = new URLSearchParams(location.search);
+  for (var ck=0; ck<CLICK_KEYS.length; ck++){
+    var cv = qs.get(CLICK_KEYS[ck]);
+    if (cv) document.cookie = 'crm_'+CLICK_KEYS[ck]+'='+encodeURIComponent(cv)+'; max-age=7776000; path=/; SameSite=Lax';
+  }
+  function clickIds(){
+    var out = {}, any = false;
+    for (var i=0;i<CLICK_KEYS.length;i++){ var v = getCookie('crm_'+CLICK_KEYS[i]); if (v){ out[CLICK_KEYS[i]] = v; any = true; } }
+    // Google's/Meta's own cookies cover a click that landed before this script
+    // started saving its own: _gcl_aw = GCL.<ts>.<gclid>, _fbc = fb.1.<ts>.<fbclid>
+    var aw = getCookie('_gcl_aw');
+    if (!out.gclid && aw){ var a = aw.split('.'); if (a.length >= 3){ out.gclid = a.slice(2).join('.'); any = true; } }
+    var fbc = getCookie('_fbc');
+    if (!out.fbclid && fbc){ var f = fbc.split('.'); if (f.length >= 4){ out.fbclid = f.slice(3).join('.'); any = true; } }
+    return any ? out : null;
+  }
   // Watches every form submit on the page (any form, anywhere on the
   // site -- no per-form setup) and reports this visit's vid plus whatever
   // email/phone it can find among the submitted fields straight to our own
@@ -92,7 +113,7 @@ const TRACK_SNIPPET = `(function(){
     if (email || phone) {
       fetch('${"__BASE_URL__"}/api/track/identify', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ vid: vid, email: email, phone: phone })
+        body: JSON.stringify({ vid: vid, email: email, phone: phone, clickIds: clickIds() })
       }).catch(function(){});
     }
   }, true);
@@ -255,7 +276,7 @@ export async function handleTrackingRequest(req, res, url) {
     const email = parsed.email ? String(parsed.email).trim().toLowerCase() : "";
     const phone = parsed.phone ? String(parsed.phone).trim() : "";
     if (vid && (email || phone)) {
-      recordVisitorIdentity(vid, email, phone);
+      recordVisitorIdentity(vid, email, phone, sanitizeClickIds(parsed.clickIds));
       const contacts = readJson(CONTACTS_FILE, []);
       const match = findContactMatch(contacts, email, phone);
       if (match) claimVisitorHistory(vid, match.id);
@@ -295,13 +316,40 @@ const normPhoneDigits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 // webhook, whose payload carries none of this). Pruned to the last 48h on
 // every write since this only has to survive that few-second race, not
 // live forever.
-export function recordVisitorIdentity(vid, email, phone) {
+export function recordVisitorIdentity(vid, email, phone, clickIds = null) {
   if (!vid || (!email && !phone)) return;
   const all = readJson(VISITOR_IDENTITIES_FILE, []);
   const cutoff = Date.now() - 48 * 3600000;
   const fresh = all.filter(e => new Date(e.at).getTime() > cutoff);
-  fresh.push({ vid, email: email ? String(email).toLowerCase() : null, phone: phone ? normPhoneDigits(phone) : null, at: new Date().toISOString() });
+  fresh.push({ vid, email: email ? String(email).toLowerCase() : null, phone: phone ? normPhoneDigits(phone) : null, clickIds, at: new Date().toISOString() });
   writeJson(VISITOR_IDENTITIES_FILE, fresh);
+}
+
+// The beacon body is client-supplied, so only known keys with plain
+// id-shaped values are kept.
+const CLICK_ID_KEYS = ["gclid", "gbraid", "wbraid", "fbclid"];
+function sanitizeClickIds(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  for (const k of CLICK_ID_KEYS) {
+    const v = typeof raw[k] === "string" ? raw[k].trim() : "";
+    if (v && v.length <= 300 && /^[A-Za-z0-9_\-.=]+$/.test(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Click IDs the submit beacon reported for this email/phone (newest record
+// wins) -- flows_backend.js's add_update_contact stamps them onto the
+// contact so a flow step can use them as {{clickIds.gclid}}/{{clickIds.fbclid}}.
+export function getClickIdsByIdentity(email, phone) {
+  const all = readJson(VISITOR_IDENTITIES_FILE, []);
+  const normEmail = email ? String(email).toLowerCase() : null;
+  const normPhoneVal = phone ? normPhoneDigits(phone) : null;
+  let found = null;
+  for (const e of all) {
+    if (e.clickIds && ((normEmail && e.email === normEmail) || (normPhoneVal && e.phone === normPhoneVal))) found = e.clickIds;
+  }
+  return found;
 }
 
 // Called once a contact is created/matched (flows_backend.js's
