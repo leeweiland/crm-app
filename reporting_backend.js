@@ -9,7 +9,7 @@ import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
 import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings, anchorageMidnightUTC, crmEventRuns } from "./ads_backend.js";
-import { getCachedTestContactIds } from "./contacts_backend.js";
+import { getCachedTestContactIds, TAGS_FILE } from "./contacts_backend.js";
 import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
 
@@ -269,15 +269,74 @@ export function computeAttribution(startMs, endMs) {
     if (contact.status === "ENROLLED") { c.enrolled++; addToStage(touch.key, "enrolled", contactId); }
   }
 
-  const allKeys = new Set([...visitStats.keys(), ...conversionStats.keys()]);
+  // Hyros source tags. Every contact already carries the "@tag" for each source Hyros
+  // tracked for them, and a tag minus its "@" is the same key as an el= tag
+  // (@yt-5moves -> yt-5moves, @email-foo -> email-foo), so they're used as they are: a
+  // contact counts under each source tag it has, dated by their own Hyros first-seen date
+  // (an imported contact's createdAt is just the import date -- createdAt itself is not
+  // touched). A contact with a live tracked touch keeps that instead.
+  const hyrosStats = new Map(), hyrosByStage = new Map();
+  const tagInfo = hyrosTagInfo();
+  if (tagInfo.sourceKeyById.size) {
+    const addHy = (key, stage, id) => { const k = `${key}|${stage}`; if (!hyrosByStage.has(k)) hyrosByStage.set(k, new Set()); hyrosByStage.get(k).add(id); };
+    for (const c of contacts) {
+      if (!c.tags?.length || firstTouchByContact.has(c.id)) continue;
+      let keys = null;
+      for (const id of c.tags) { const k = tagInfo.sourceKeyById.get(id); if (k) (keys ||= new Set()).add(k); }
+      if (!keys) continue;
+      const leadMs = hyrosLeadMs(c);
+      if (!(leadMs >= startMs && leadMs <= endMs)) continue;
+      const booked = bookedContactIds.has(c.id) || c.tags.some(id => tagInfo.bookedIds.has(id));
+      const enrolled = c.status === "ENROLLED" || c.tags.some(id => tagInfo.purchaseIds.has(id));
+      for (const key of keys) {
+        if (!hyrosStats.has(key)) hyrosStats.set(key, { optIns: 0, bookings: 0, enrolled: 0 });
+        const s = hyrosStats.get(key);
+        s.optIns++; addHy(key, "optIns", c.id);
+        if (booked) { s.bookings++; addHy(key, "bookings", c.id); }
+        if (enrolled) { s.enrolled++; addHy(key, "enrolled", c.id); }
+      }
+    }
+  }
+
+  const allKeys = new Set([...visitStats.keys(), ...conversionStats.keys(), ...hyrosStats.keys()]);
   const sources = [...allKeys].map(key => {
     const vs = visitStats.get(key) || { visits: 0, visitorIds: new Set() };
     const cs = conversionStats.get(key) || { optIns: 0, bookings: 0, enrolled: 0 };
-    return { el: key, visits: vs.visits, uniqueVisitors: vs.visitorIds.size, optIns: cs.optIns, bookings: cs.bookings, enrolled: cs.enrolled };
+    const hs = hyrosStats.get(key);
+    return {
+      el: key, visits: vs.visits, uniqueVisitors: vs.visitorIds.size, optIns: cs.optIns, bookings: cs.bookings, enrolled: cs.enrolled,
+      // Hyros counts kept separate from the live ones (the Ads Report adds them to its own event-based counts)
+      hyrosOptIns: hs?.optIns || 0, hyrosBookings: hs?.bookings || 0, hyrosEnrolled: hs?.enrolled || 0,
+      hyrosOnly: !visitStats.has(key) && !conversionStats.has(key),
+    };
   }).sort((a, b) => b.visits - a.visits);
 
-  return { sources, byElStage, firstTouchByContact, contactsById };
+  return { sources, byElStage, hyrosByStage, hyrosSourceCount: hyrosStats.size, firstTouchByContact, contactsById };
 }
+
+// Which tags are Hyros source tags ("@..."), booking tags ("$call"/"$application"), and
+// purchase tags (any other "$..."), by tag id -- read from the tags list every contact's
+// tags point into.
+function hyrosTagInfo() {
+  const sourceKeyById = new Map(), bookedIds = new Set(), purchaseIds = new Set();
+  for (const t of readJson(TAGS_FILE, [])) {
+    const n = String(t.name || "");
+    if (n.length > 1 && n[0] === "@") sourceKeyById.set(t.id, n.slice(1));
+    else if (n === "$call" || n === "$application") bookedIds.add(t.id);
+    else if (n[0] === "$" && n !== "$examplesale") purchaseIds.add(t.id);
+  }
+  return { sourceKeyById, bookedIds, purchaseIds };
+}
+// When a Hyros-imported contact became a lead: their firstSeenAt clock digits read as UTC (the
+// import stamped a wrong -09:00 offset on it). Everyone else: createdAt, as always.
+function hyrosLeadMs(c) {
+  if (c.source === "hyros_import") {
+    const m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)/.exec(String(c.firstSeenAt || ""));
+    if (m) return Date.parse(m[1] + "Z");
+  }
+  return new Date(c.createdAt).getTime();
+}
+const HYROS_NOTE = "Includes Hyros source tags: a contact counts under every source tag it carries, dated by their Hyros first-seen date.";
 
 // A contact's first ad/source touch, for crediting their conversion events.
 // 1) the earliest tagged visit linked to them (the real click journey), else
@@ -425,7 +484,8 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   const sources = [...new Set([...visitSources.map(s => s.el), ...ev.bySource.keys()])].map(el => {
     const vs = visitSources.find(s => s.el === el);
     const e = ev.bySource.get(el) || { emails: 0, bookings: 0 };
-    return { el, visits: vs?.visits || 0, uniqueVisitors: vs?.uniqueVisitors || 0, optIns: e.emails, bookings: e.bookings };
+    // + the Hyros source tags' counts (contacts carrying that tag, see computeAttribution)
+    return { el, visits: vs?.visits || 0, uniqueVisitors: vs?.uniqueVisitors || 0, optIns: e.emails + (vs?.hyrosOptIns || 0), bookings: e.bookings + (vs?.hyrosBookings || 0), hyrosOnly: !!vs?.hyrosOnly };
   }).sort((a, b) => b.visits - a.visits);
   const [metaSettled, googleSettled] = await Promise.allSettled([
     fetchLiveMetaAdLevel(startStr, endStr),
@@ -439,7 +499,7 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   const rows = sources.map(s => {
     const meta = sourceMeta(s.el, metaAdMap, googleAdMap, slugIndex);
     return {
-      source: meta.title, platform: meta.platform, adGroup: meta.adGroup, campaign: meta.campaign,
+      source: meta.title, platform: s.hyrosOnly && meta.platform === "Other" ? "Hyros" : meta.platform, adGroup: meta.adGroup, campaign: meta.campaign,
       leads: s.optIns, costPerLead: s.optIns ? money(meta.spend / s.optIns) : null,
       bookings: s.bookings, costPerBooking: s.bookings ? money(meta.spend / s.bookings) : null,
       revenue: 0, sales: 0, costPerSale: null,
@@ -487,7 +547,7 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   const totalEmails = crmData.online.emails + crmData.gym.emails, totalBookings = crmData.online.bookM + crmData.gym.bookM;
   const trackedEmails = attributedLeads.online + attributedLeads.gym, trackedBookings = attributedBookings.online + attributedBookings.gym;
   const coverage = { emails: { total: totalEmails, tracked: Math.min(totalEmails, trackedEmails) }, bookings: { total: totalBookings, tracked: Math.min(totalBookings, trackedBookings) }, inferred: ev.inferred };
-  return { rows: [...rows, ...untrackedRows], spendError, coverage };
+  return { rows: [...rows, ...untrackedRows], spendError, coverage, hyrosNote: attribution.hyrosSourceCount ? HYROS_NOTE : null };
 }
 
 // Shared with ads_backend.js's period presets on the frontend -- the
@@ -608,7 +668,16 @@ export async function handleReportingRequest(req, res, url) {
     if (p === "/api/reporting/attribution") {
       const start = url.searchParams.get("start"), end = url.searchParams.get("end");
       const labels = await labelAttributionSources(data.sources.map(s => s.el), start, end);
-      return sendJson(res, 200, { sources: data.sources.map(s => ({ ...s, ...labels.get(s.el) })), start, end });
+      const sources = data.sources.map(s => {
+        const l = labels.get(s.el);
+        return {
+          ...s, ...l,
+          platform: s.hyrosOnly && l.platform === "Other" ? "Hyros" : l.platform,
+          optIns: s.optIns + s.hyrosOptIns, bookings: s.bookings + s.hyrosBookings, enrolled: s.enrolled + s.hyrosEnrolled,
+          hyros: s.hyrosOptIns > 0,
+        };
+      });
+      return sendJson(res, 200, { sources, hyrosNote: data.hyrosSourceCount ? HYROS_NOTE : null, start, end });
     }
     // Drill-down: the exact contacts behind one source's one funnel stage.
     const el = url.searchParams.get("el");
@@ -618,10 +687,12 @@ export async function handleReportingRequest(req, res, url) {
     const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
     const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
     const bucket = eventBasis ? computeEventAttribution(startStr, endStr, data).byKeyStage.get(`${el}|${stage}`) : data.byElStage.get(`${el}|${stage}`);
-    if (!bucket) return sendJson(res, 200, { contacts: [] });
-    const contacts = readJson(CONTACTS_FILE, []);
-    const byId = new Map(contacts.map(c => [c.id, c]));
-    return sendJson(res, 200, { contacts: [...bucket].map(id => byId.get(id)).filter(Boolean) });
+    const ids = [...new Set([...(bucket || []), ...(data.hyrosByStage.get(`${el}|${stage}`) || [])])];
+    if (!ids.length) return sendJson(res, 200, { contacts: [] });
+    // A Hyros source tag can hold thousands of contacts -- list the first 500 and say how many there are.
+    const need = new Set(ids.slice(0, 500));
+    const list = readJson(CONTACTS_FILE, []).filter(c => need.has(c.id));
+    return sendJson(res, 200, { contacts: list, total: ids.length, truncated: ids.length > list.length });
   }
 
   // One contact's own tracked page visits, formatted as journey-timeline
@@ -685,15 +756,18 @@ export async function handleReportingRequest(req, res, url) {
       const fullUrl = (siteBaseUrl ? siteBaseUrl : "") + (v.path || "") + (v.search || "");
       return { at: v.at, path: v.path, fullUrl, key, label: v.inferred ? `${label} (linked by timing)` : label, category, sourceSubject: sourceMsg?.subject || null };
     }).filter(Boolean);
-    return sendJson(res, 200, { clicks });
+    // The contact's Hyros source tags ("@...") as they're already set on them.
+    const tagNames = new Map(readJson(TAGS_FILE, []).map(t => [t.id, t.name]));
+    const sourceTags = (contactForOwnEmails?.tags || []).map(id => tagNames.get(id)).filter(n => n && n[0] === "@").sort();
+    return sendJson(res, 200, { clicks, sourceTags });
   }
 
   if (p === "/api/reporting/ads-report" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
     const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
     const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-    const { rows, spendError, coverage } = await computeAdsReport(startMs, endMs, startStr, endStr);
-    return sendJson(res, 200, { rows, spendError, coverage, start: startStr, end: endStr });
+    const { rows, spendError, coverage, hyrosNote } = await computeAdsReport(startMs, endMs, startStr, endStr);
+    return sendJson(res, 200, { rows, spendError, coverage, hyrosNote, start: startStr, end: endStr });
   }
 
   const campaignMatch = p.match(/^\/api\/reporting\/campaigns\/([^/]+)$/);

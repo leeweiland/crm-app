@@ -539,12 +539,26 @@ function adsSegmentCardHtml(title, data) {
 // ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
 let allAttributionSources = [];
 let attributionSort = { field: 'visits', dir: -1 };
+// One-line note about Hyros source tags (server text; null hides it), created on first use next to `anchor`.
+function showHyrosNote(id, text, anchor, where) {
+  let note = document.getElementById(id);
+  if (!note) {
+    if (!anchor) return;
+    note = document.createElement('div');
+    note.id = id; note.className = 'pra-muted'; note.style.cssText = 'font-size:.8rem;margin-bottom:10px';
+    anchor[where]?.(note);
+  }
+  note.textContent = text || '';
+  note.style.display = text ? 'block' : 'none';
+}
 async function loadAttributionReport() {
   const body = document.getElementById('attributionBody');
   body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
   const r = await fetch(`/api/reporting/attribution?start=${currentStart}&end=${currentEnd}`);
   if (!r.ok) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
-  allAttributionSources = (await r.json()).sources;
+  const d = await r.json();
+  allAttributionSources = d.sources;
+  showHyrosNote('attributionHyrosNote', d.hyrosNote, body.closest('.pra-panel'), 'before');
   renderAttributionTable();
 }
 function renderAttributionTable() {
@@ -571,8 +585,8 @@ function renderAttributionTable() {
         <div class="pra-muted" style="font-size:.72rem">${[s.platform, s.adGroup && s.adGroup !== '—' ? `${s.platform === 'Google' ? 'Ad group' : 'Ad set'}: ${s.adGroup}` : '', s.campaign && s.campaign !== '—' ? `Campaign: ${s.campaign}` : ''].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         ${s.label && s.label !== s.el ? `<div class="pra-muted" style="font-size:.66rem;opacity:.65">${escapeHtml(s.el)}</div>` : ''}
       </td>
-      <td style="text-align:right;padding:10px 16px">${s.visits.toLocaleString()}</td>
-      <td style="text-align:right;padding:10px 16px">${s.uniqueVisitors.toLocaleString()}</td>
+      <td style="text-align:right;padding:10px 16px">${s.hyrosOnly ? '—' : s.visits.toLocaleString()}</td>
+      <td style="text-align:right;padding:10px 16px">${s.hyrosOnly ? '—' : s.uniqueVisitors.toLocaleString()}</td>
       ${cell(s.optIns, 'optIns', s.el)}
       ${cell(s.bookings, 'bookings', s.el)}
       ${cell(s.enrolled, 'enrolled', s.el)}
@@ -617,9 +631,10 @@ async function openAttributionDrilldown(el, stage, basis) {
   list.innerHTML = '<div class="pra-muted">Loading…</div>';
   document.getElementById('attributionDrilldownModal').classList.add('show');
   const r = await fetch(`/api/reporting/attribution/contacts?start=${currentStart}&end=${currentEnd}&el=${encodeURIComponent(el)}&stage=${stage}${basis ? '&basis=' + basis : ''}`);
-  const { contacts } = r.ok ? await r.json() : { contacts: [] };
+  const { contacts, total, truncated } = r.ok ? await r.json() : { contacts: [] };
   if (!contacts.length) { list.innerHTML = '<div class="pra-muted">No contacts found.</div>'; return; }
-  list.innerHTML = contacts.map(c => `
+  const capNote = truncated ? `<div class="pra-muted" style="padding:8px 0;font-size:.8rem">Showing ${contacts.length.toLocaleString()} of ${total.toLocaleString()} contacts.</div>` : '';
+  list.innerHTML = capNote + contacts.map(c => `
     <div style="padding:10px 0;border-bottom:1px solid var(--pra-border);display:flex;justify-content:space-between;align-items:center">
       <div>
         <a class="pra-link" href="/contact-detail.html?id=${c.id}" style="font-weight:600">${escapeHtml(c.first)} ${escapeHtml(c.last)}</a>
@@ -663,6 +678,7 @@ async function loadAdsReportTable() {
   const d = await r.json();
   allAdsReportRows = d.rows;
   if (d.spendError) msg.textContent = `Note: some ad spend may be missing (${d.spendError}).`;
+  showHyrosNote('adsHyrosNote', d.hyrosNote, document.getElementById('adsCoverage'), 'after');
   // How much of the period's conversion events (ONLINE/GYM EMAIL, ONLINE BOOKING, GYM APPLICATION)
   // could be tied to an ad/source click. The rest sit in the Untracked rows.
   const cov = document.getElementById('adsCoverage');
@@ -822,7 +838,9 @@ async function openJourney(contactId) {
   ]);
   if (!msgRes.ok) { timeline.innerHTML = '<div class="pra-muted">Could not load.</div>'; return; }
   const { items } = await msgRes.json();
-  const { clicks } = clickRes.ok ? await clickRes.json() : { clicks: [] };
+  const { clicks, sourceTags } = clickRes.ok ? await clickRes.json() : { clicks: [], sourceTags: [] };
+  // The contact's Hyros source tags, as already set on them, above the timeline.
+  showHyrosNote('journeyTags', sourceTags && sourceTags.length ? `Hyros source tags: ${sourceTags.join('  ')}` : '', timeline, 'before');
   const clickItems = clicks.map(c => ({ itemType: 'click', category: c.category, at: c.at, title: c.label, path: c.fullUrl || c.path }));
   currentJourneyItems = [...items, ...clickItems].sort((a, b) => new Date(a.at) - new Date(b.at));
   renderJourneyTimeline();
