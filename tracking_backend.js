@@ -75,8 +75,8 @@ const TRACK_SNIPPET = `(function(){
   // goes (a Framer webhook, a third party, whatever). Same approach Hyros
   // used: observe the DOM directly instead of depending on carrying a
   // field through someone else's integration payload.
-  function looksLikeEmail(v){ return /.+@.+\..+/.test(v); }
-  function looksLikePhone(v){ return /\d{7,}/.test(String(v).replace(/\D/g, '')); }
+  function looksLikeEmail(v){ return /.+@.+\\..+/.test(v); }
+  function looksLikePhone(v){ return /\\d{7,}/.test(String(v).replace(/\\D/g, '')); }
   document.addEventListener('submit', function(e){
     var form = e.target;
     if (!form || !form.querySelectorAll) return;
@@ -145,7 +145,9 @@ export async function handleTrackingRequest(req, res, url) {
   if (p === "/track.js" && req.method === "GET") {
     const baseUrl = getPublicBaseUrl() || `${url.protocol}//${url.host}`;
     res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(TRACK_SNIPPET.replace("__BASE_URL__", baseUrl));
+    // replaceAll, not replace: the snippet references the base URL twice
+    // (identify + pageview), and a string-pattern replace() only swaps the first.
+    res.end(TRACK_SNIPPET.replaceAll("__BASE_URL__", baseUrl));
     return true;
   }
 
