@@ -30,11 +30,9 @@ export function isStopKeyword(text, keywords) {
 // contact.status = "STOP", and a live audit of imported Close leads found
 // real ENROLLED/APPLICATION/BOOKED people whose status had been clobbered
 // this way, with no way to recover what it used to be. smsOptOut is the
-// one and only source of truth for "don't text this person" now; a
-// contact's status value of "STOP" is reserved for someone a human
-// deliberately moved to that pipeline stage themselves (see
-// applyStatusOptOut below, which reacts to a MANUAL status change instead
-// of driving one).
+// one and only source of truth for "don't text this person" now (there is
+// no STOP pipeline status any more; applyStatusOptOut below only reacts to
+// BLACKLIST).
 //
 // Always re-derives from the contact's chronologically LATEST inbound SMS
 // in the full log, rather than trusting whichever single message triggered
@@ -119,29 +117,34 @@ function queueBlacklistSheetAdd(contact, sheetUrl) {
   })().catch(e => console.error("[blacklist-sheet] unexpected failure:", e.message));
 }
 
-// Applied whenever a contact's status is being set to STOP or the
-// blacklist status, from any path (manual status dropdown, the Inbox's
-// Blacklist context-menu action, etc). Mutates the in-memory contact only
-// -- the caller already owns the writeJson(CONTACTS_FILE, ...) for this
-// edit -- but does update the conversation directly, since that's a
-// separate file.
+// Applied whenever a contact's status is being set to the blacklist status,
+// from any path (manual status dropdown, the Inbox's Blacklist context-menu
+// action, a Flow's add/update-contact step, the trigger-word auto-blacklist
+// below). Mutates the in-memory contact only -- the caller already owns the
+// writeJson(CONTACTS_FILE, ...) for this edit -- but does update the
+// conversation directly, since that's a separate file.
 //
-// Both STOP and BLACKLIST hide the conversation (not archive it) -- same
-// bucket the Inbox sidebar's "Hidden" filter already shows, so there's one
-// single place to review every quarantined contact rather than splitting
-// them across Hidden and Archived. STOP's hide is reversible (see
-// checkAutoTriggers, which un-hides on the contact's next genuine reply);
-// BLACKLIST's is not -- permanently quarantined, not something that
+// BLACKLIST is the only status this reacts to: there used to be a STOP
+// pipeline status handled here too (SMS-only opt-out), but it no longer
+// exists in Settings -> Statuses, and a STOP text reply is handled purely by
+// the stop-keyword path (recheckStopStatus above), independent of status.
+//
+// Hides the conversation (not archive it) -- same bucket the Inbox sidebar's
+// "Hidden" filter already shows, so there's one single place to review every
+// quarantined contact rather than splitting them across Hidden and
+// Archived. Not reversible -- permanently quarantined, not something that
 // should ever demand attention again.
 export function applyStatusOptOut(contact) {
   const settings = getComplianceSettings();
+  if (contact.status !== BLACKLIST_STATUS_LABEL) return;
   // Independent of the opt-out toggle below -- the team's Blacklist sheet is
   // a separate list they maintain, and a blacklisted contact belongs on it
   // whether or not auto opt-out is switched on.
-  if (contact.status === BLACKLIST_STATUS_LABEL && settings.blacklistSheetUrl) queueBlacklistSheetAdd(contact, settings.blacklistSheetUrl);
+  if (settings.blacklistSheetUrl) queueBlacklistSheetAdd(contact, settings.blacklistSheetUrl);
   if (!settings.blacklistAutoOptOut) return;
-  if (contact.status === "STOP") { contact.smsOptOut = true; setConvoMeta(contact.id, { hidden: true }); }
-  else if (contact.status === BLACKLIST_STATUS_LABEL) { contact.smsOptOut = true; contact.emailOptOut = true; setConvoMeta(contact.id, { hidden: true }); }
+  contact.smsOptOut = true;
+  contact.emailOptOut = true;
+  setConvoMeta(contact.id, { hidden: true });
 }
 
 // A reply CONTAINING (not being exactly) one of these words moves the

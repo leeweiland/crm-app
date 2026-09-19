@@ -11,6 +11,11 @@
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
+  .optout-card { padding: 18px 20px; margin-bottom: 16px; }
+  .optout-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; margin-bottom: 12px; }
+  .optout-card-title { font-family: var(--font-primary); font-weight: 700; font-size: 1rem; flex-shrink: 0; }
+  .optout-desc { font-size: .8rem; margin-bottom: 10px; }
+  .optout-msg { font-size: .78rem; text-align: right; min-height: 1em; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
   .row-item:last-child { border-bottom: none; }
   .add-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
@@ -146,34 +151,42 @@
         <div class="pra-muted" id="twilioSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
-      <div class="tab-panel pra-panel" id="tab-emailsettings" style="padding:22px;max-width:560px">
+      <div class="tab-panel" id="tab-emailsettings" style="max-width:600px">
         <div class="pra-h2" style="margin-bottom:6px">Opt Out</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Automatic opt-out rules, so no one keeps getting texted or emailed after they've asked to stop.</div>
 
-        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="stopKeywordsEnabled"/> Auto-detect SMS stop keywords</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a reply's ENTIRE text is one of these words (not just mentioned in a sentence), SMS is opted out for that contact. Their pipeline status (ENROLLED, BOOKED, etc.) is never touched by this — someone can still very much be an active student and just want texts to stop, so status stays whatever a human set it to. This never affects email — email opt-out only happens via an explicit unsubscribe link click.</div>
-        <div class="field"><label class="pra-label">Keywords (comma-separated)</label><input class="pra-input" id="stopKeywordsList" placeholder="stop, stopall, unsubscribe, cancel, end, quit"/></div>
-
-        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:16px 0 8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out on suppression status</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">When a contact's status is set to <b>STOP</b>, SMS is opted out. When set to <b>Blacklist</b>, both SMS and email are opted out and the conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter, no unread alerts). Applies no matter how the status was changed (manually, by a flow, or automatically above).</div>
-
-        <div class="field" style="margin-top:18px">
-          <label class="pra-label">Blacklist Google Sheet (link)</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input class="pra-input" id="blacklistSheetUrl" style="min-width:0" placeholder="https://docs.google.com/spreadsheets/d/…/edit?gid=…"/>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="blacklistSheetCheckBtn" type="button" style="flex-shrink:0">Check</button>
-          </div>
-          <div class="pra-muted" id="blacklistSheetStatus" style="font-size:.78rem;margin-top:6px;min-height:1em"></div>
+        <div class="pra-panel optout-card" id="optoutStop">
+          <div class="optout-card-head"><div class="optout-card-title">Stop keywords</div><div class="pra-muted optout-msg"></div></div>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="stopKeywordsEnabled"/> Auto-detect SMS stop keywords</label>
+          <div class="pra-muted optout-desc">When a reply's ENTIRE text is one of these words (not just mentioned in a sentence), SMS is opted out for that contact. Their pipeline status (ENROLLED, BOOKED, etc.) is never touched by this — someone can still very much be an active student and just want texts to stop. A stop keyword only ever opts out SMS — it never affects email.</div>
+          <div class="field"><label class="pra-label">Keywords (comma-separated)</label><input class="pra-input" id="stopKeywordsList" placeholder="stop, stopall, unsubscribe, cancel, end, quit"/></div>
         </div>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Every contact marked <b>Blacklist</b> — by hand, by a flow, or by the trigger words below — is added to this sheet as a new row (<b>FIRST, LAST, EMAIL, PHONE, DATE</b>, matched by the tab's column headers; anyone already listed is skipped). Paste the link while you're on the blacklist tab so it includes that tab's <code>gid</code>. The sheet must be shared as <b>Editor</b> with the Google account this CRM uses for Sheets (the same one your Flows Google Sheet steps use). Each result is noted in that contact's conversation.</div>
-        <div style="border:1px solid var(--pra-border);border-radius:8px;padding:10px 12px;font-size:.8rem;margin-bottom:10px;background:rgba(255,255,255,0.03)"><b>Note:</b> anyone marked <b>Blacklist</b> is <b>opted out of SMS and unsubscribed from all emails sent from this CRM</b>, and their conversation is hidden from the Inbox's default view. That's the "Auto opt-out on suppression status" switch above — keep it on.</div>
 
-        <hr style="border-color:var(--pra-border);margin:20px 0 18px"/>
-        <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="triggerKeywordsEnabled"/> Auto-blacklist on trigger words</label>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> -- both SMS and email opted out, conversation hidden. Permanent: no reverse trigger.</div>
-        <div class="field"><label class="pra-label">Trigger keywords (comma-separated)</label><input class="pra-input" id="triggerKeywordsList" placeholder="e.g. fuck you, scam, leave me alone"/></div>
+        <div class="pra-panel optout-card" id="optoutBlacklist">
+          <div class="optout-card-head"><div class="optout-card-title">Blacklist suppression</div><div class="pra-muted optout-msg"></div></div>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="blacklistAutoOptOut"/> Auto opt-out when status is Blacklist</label>
+          <div class="pra-muted optout-desc">Anyone whose status is set to <b>Blacklist</b> — by hand, by a flow, or automatically by a trigger word — is <b>opted out of SMS and unsubscribed from all emails sent from this CRM</b>, and their conversation is hidden from the Inbox's default view (visible under the <b>Hidden</b> filter, no unread alerts). Applies no matter how the status was changed.</div>
+        </div>
 
-        <div class="pra-muted" id="complianceSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+        <div class="pra-panel optout-card" id="optoutSheet">
+          <div class="optout-card-head"><div class="optout-card-title">Blacklist Google Sheet</div><div class="pra-muted optout-msg"></div></div>
+          <div class="pra-muted optout-desc">Every contact marked <b>Blacklist</b> is added to your blacklist sheet as a new row (<b>FIRST, LAST, EMAIL, PHONE, DATE</b>, matched by the tab's column headers; anyone already listed is skipped). Copy the link while you're on the blacklist tab so it includes that tab's <code>gid</code>. The sheet must be shared as <b>Editor</b> with the Google account this CRM uses for Sheets (the same one your Flows Google Sheet steps use). Each result is noted in that contact's conversation. This works whether or not the suppression switch above is on.</div>
+          <div class="field">
+            <label class="pra-label">Sheet link</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="pra-input" id="blacklistSheetUrl" style="min-width:0" placeholder="https://docs.google.com/spreadsheets/d/…/edit?gid=…"/>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="blacklistSheetCheckBtn" type="button" style="flex-shrink:0">Check</button>
+            </div>
+            <div class="pra-muted" id="blacklistSheetStatus" style="font-size:.78rem;margin-top:6px;min-height:1em"></div>
+          </div>
+        </div>
+
+        <div class="pra-panel optout-card" id="optoutTriggers">
+          <div class="optout-card-head"><div class="optout-card-title">Blacklist trigger words</div><div class="pra-muted optout-msg"></div></div>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="triggerKeywordsEnabled"/> Auto-blacklist on trigger words</label>
+          <div class="pra-muted optout-desc">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> — with everything that brings (see Blacklist suppression and the sheet above). Permanent: no reverse trigger.</div>
+          <div class="field"><label class="pra-label">Trigger keywords (comma-separated)</label><input class="pra-input" id="triggerKeywordsList" placeholder="e.g. fuck you, scam, leave me alone"/></div>
+        </div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-tracking" style="padding:22px;max-width:600px">
@@ -847,20 +860,24 @@ async function loadComplianceSettings() {
   document.getElementById('blacklistSheetUrl').value = c.blacklistSheetUrl || '';
   if (c.blacklistSheetUrl) runBlacklistSheetCheck();
 }
-async function saveComplianceSettings() {
-  const body = {
-    stopKeywordsEnabled: document.getElementById('stopKeywordsEnabled').checked,
-    stopKeywords: document.getElementById('stopKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
-    blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked,
-    triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked,
-    triggerKeywords: document.getElementById('triggerKeywordsList').value.split(',').map(s => s.trim()).filter(Boolean),
-    blacklistSheetUrl: document.getElementById('blacklistSheetUrl').value.trim(),
-  };
-  const msg = document.getElementById('complianceSaveMsg');
+// Each Opt Out card saves ONLY its own fields (the endpoint takes partial
+// bodies), so e.g. a half-typed sheet link can't block a keyword edit in
+// another card, and each card shows its own Saved/error line.
+const splitKeywords = id => document.getElementById(id).value.split(',').map(s => s.trim()).filter(Boolean);
+const OPTOUT_CARDS = {
+  optoutStop: () => ({ stopKeywordsEnabled: document.getElementById('stopKeywordsEnabled').checked, stopKeywords: splitKeywords('stopKeywordsList') }),
+  optoutBlacklist: () => ({ blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked }),
+  optoutSheet: () => ({ blacklistSheetUrl: document.getElementById('blacklistSheetUrl').value.trim() }),
+  optoutTriggers: () => ({ triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked, triggerKeywords: splitKeywords('triggerKeywordsList') }),
+};
+async function saveOptoutCard(cardId) {
+  const body = OPTOUT_CARDS[cardId]();
+  const msg = document.querySelector('#' + cardId + ' .optout-msg');
+  msg.style.color = '';
   msg.textContent = 'Saving…';
   const r = await fetch('/api/integrations/compliance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (r.ok) { msg.textContent = 'Saved.'; if (body.blacklistSheetUrl !== blacklistSheetCheckedUrl) runBlacklistSheetCheck(); }
-  else msg.textContent = (await r.json().catch(() => ({}))).error || 'Could not save.';
+  if (r.ok) { msg.textContent = 'Saved.'; if ('blacklistSheetUrl' in body && body.blacklistSheetUrl !== blacklistSheetCheckedUrl) runBlacklistSheetCheck(); }
+  else { msg.style.color = 'var(--pra-red)'; msg.textContent = (await r.json().catch(() => ({}))).error || 'Could not save.'; }
 }
 // Does the pasted Blacklist sheet link open, is it editable by this CRM's
 // Google account, and which tab will rows land in -- shown right under the
@@ -879,12 +896,15 @@ async function runBlacklistSheetCheck() {
   else { status.style.color = 'var(--pra-red)'; status.textContent = d.error; }
 }
 document.getElementById('blacklistSheetCheckBtn').addEventListener('click', runBlacklistSheetCheck);
-let complianceSaveDebounce = null;
-document.querySelectorAll('#tab-emailsettings input[type=checkbox]').forEach(el => el.addEventListener('change', saveComplianceSettings));
-document.querySelectorAll('#tab-emailsettings input[type=text], #tab-emailsettings input:not([type])').forEach(el => el.addEventListener('input', () => {
-  clearTimeout(complianceSaveDebounce);
-  complianceSaveDebounce = setTimeout(saveComplianceSettings, 600);
-}));
+const optoutSaveTimers = {};
+Object.keys(OPTOUT_CARDS).forEach(cardId => {
+  const card = document.getElementById(cardId);
+  card.querySelectorAll('input[type=checkbox]').forEach(el => el.addEventListener('change', () => saveOptoutCard(cardId)));
+  card.querySelectorAll('input:not([type=checkbox])').forEach(el => el.addEventListener('input', () => {
+    clearTimeout(optoutSaveTimers[cardId]);
+    optoutSaveTimers[cardId] = setTimeout(() => saveOptoutCard(cardId), 600);
+  }));
+});
 
 // ── Website / tracking ───────────────────────────────────────────────────
 let siteSettingsCache = {};

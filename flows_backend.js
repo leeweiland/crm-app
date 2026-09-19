@@ -367,7 +367,7 @@ async function advanceFlowRun(run, flow) {
         }
       }
       if (cfg.statusId) workingContact.status = cfg.statusId;
-      // A flow that moves someone to STOP/BLACKLIST gets the same opt-outs,
+      // A flow that moves someone to BLACKLIST gets the same opt-outs,
       // hidden conversation, and Blacklist-sheet row a manual status change
       // does -- applyStatusOptOut's own contract is "any path", but this one
       // wrote the status directly and skipped it.
