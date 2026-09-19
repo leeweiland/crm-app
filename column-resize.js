@@ -62,13 +62,59 @@ window.wireColumnResize = function (headRowSelector, prefKey) {
     if (leftRules.length) styleTag.textContent = rules + '\n' + leftRules.join('\n');
   }
 
+  const isFrozen = th => /\bfrozen-col-\d\b/.test(th.className);
+
+  // Handle positions are derived from where each <th> actually IS, so this
+  // has to re-run whenever that can change (see the observers below) -- not
+  // just once after render. Measuring once left every line to the right of
+  // the Timezone column 54-68px off (its live clock text changes that
+  // column's width after the handles were placed), and made the sticky
+  // First/Last lines drift by exactly the scroll distance.
   function repositionHandles() {
     const tableLeft = table.getBoundingClientRect().left;
+    let frozenEdge = -Infinity;
+    [...headRow.children].forEach(th => { if (isFrozen(th)) frozenEdge = Math.max(frozenEdge, th.getBoundingClientRect().right); });
     table.querySelectorAll(':scope > .col-resize-handle').forEach(handle => {
-      const r = handle._th.getBoundingClientRect();
+      const th = handle._th;
+      if (!th.isConnected) return;
+      const r = th.getBoundingClientRect();
       handle.style.left = Math.round(r.right - tableLeft - 3) + 'px';
+      // A column scrolled underneath the pinned First/Last columns is hidden
+      // there, so its line must not float over them.
+      handle.style.visibility = !isFrozen(th) && r.right - 3 < frozenEdge ? 'hidden' : '';
     });
   }
+
+  // Re-measure on anything that moves a column edge: any header cell (or the
+  // table) changing size -- data/fonts loading, the Timezone clock text, a
+  // resize -- horizontal scroll (pinned columns move relative to the table),
+  // and window resizes. Torn down and rebuilt on every call so re-rendering
+  // pages don't pile up observers/listeners.
+  if (table._colResizeTeardown) table._colResizeTeardown();
+  // rAF for smooth tracking while scrolling, plus a timer fallback: a
+  // backgrounded tab pauses rAF entirely, and lines must still be right the
+  // moment it's shown again.
+  let raf = 0, timer = 0;
+  const schedule = () => {
+    if (raf) return;
+    const run = () => { cancelAnimationFrame(raf); clearTimeout(timer); raf = timer = 0; repositionHandles(); };
+    raf = requestAnimationFrame(run);
+    timer = setTimeout(run, 120);
+  };
+  let scroller = table.parentElement;
+  while (scroller && scroller !== document.body && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowX)) scroller = scroller.parentElement;
+  const ro = new ResizeObserver(schedule);
+  ro.observe(table);
+  [...headRow.children].forEach(th => ro.observe(th));
+  scroller?.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', schedule);
+  document.fonts?.ready.then(schedule);
+  table._colResizeTeardown = () => {
+    ro.disconnect();
+    scroller?.removeEventListener('scroll', schedule);
+    window.removeEventListener('resize', schedule);
+    cancelAnimationFrame(raf); clearTimeout(timer); raf = timer = 0;
+  };
 
   // Clear + rebuild handles fresh every call -- the header <tr> may have
   // just been rebuilt (contacts.html/reporting.html Ads Report re-render
