@@ -11,6 +11,7 @@ import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.
 import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings, anchorageMidnightUTC } from "./ads_backend.js";
 import { getCachedTestContactIds } from "./contacts_backend.js";
 import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
+import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -364,6 +365,10 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
       key: s.el,
     };
   });
+  // A y=<video id> tag is labelled with the video's real title (unresolvable
+  // ones keep the prettified tag).
+  const ytTitles = await lookupVideoTitles(rows.filter(r => r.key.startsWith("youtube:")).map(r => r.key.slice(8)));
+  for (const r of rows) if (r.key.startsWith("youtube:") && ytTitles.has(r.key.slice(8))) r.source = ytTitles.get(r.key.slice(8));
 
   // computeAttribution can only ever see leads/bookings tied to a TRACKED
   // PAGE VISIT -- confirmed live this misses most real leads, since native
@@ -579,6 +584,7 @@ export async function handleReportingRequest(req, res, url) {
       return outboundByChannel[channel].find(m => new Date(m.createdAt).getTime() <= atMs) || null;
     }
     const siteBaseUrl = (readJson("crm_integrations.json", {}).site?.websiteUrl || "").replace(/\/+$/, "");
+    const ytTitles = await lookupVideoTitles(visits.map(attributionKeyForVisit).filter(k => k?.startsWith("youtube:")).map(k => k.slice(8)));
     const clicks = visits.map(v => {
       const key = attributionKeyForVisit(v);
       if (!key) return null;
@@ -591,7 +597,7 @@ export async function handleReportingRequest(req, res, url) {
       // (e.g. the click happened before any tracked send, or the message
       // predates getContactMessages' own history) -- never blank.
       const label = isAd ? `${key.startsWith("meta-ad:") ? "Meta" : key.startsWith("google-ad:") ? "Google" : "Ad"} — ${key.split(":")[1]}`
-        : socialMatch ? `${SOCIAL_PLATFORM_LABEL[socialMatch[1]]} — ${niceTitle(socialMatch[2])}`
+        : socialMatch ? `${SOCIAL_PLATFORM_LABEL[socialMatch[1]]} — ${(socialMatch[1] === "youtube" && ytTitles.get(socialMatch[2])) || niceTitle(socialMatch[2])}`
         : category === "email" ? `Email: ${sourceMsg?.subject || flowName}`
         : category === "sms" ? `SMS: ${sourceMsg?.body ? sourceMsg.body.slice(0, 60) : flowName}`
         : flowName;

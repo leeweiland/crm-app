@@ -52,6 +52,39 @@ async function getAccessToken() {
   return d.access_token;
 }
 
+// Video ID -> title, for labelling y=<video id> link tags in Reporting. Uses
+// YouTube's public oEmbed endpoint: no login, no API key, no quota, and it
+// works for unlisted videos too. Titles are cached for 30 days; a video that
+// can't be found (private/deleted/not actually an ID) is cached as a miss for
+// 7 days so a bad tag can't cost a request per report load. Never throws --
+// anything unresolved just isn't in the returned Map.
+const YT_TITLES_FILE = "crm_youtube_titles.json";
+export const isYouTubeVideoId = (s) => /^[A-Za-z0-9_-]{11}$/.test(String(s || ""));
+export async function lookupVideoTitles(ids) {
+  const cache = readJson(YT_TITLES_FILE, {});
+  const now = Date.now();
+  const titles = new Map();
+  const missing = [];
+  for (const id of new Set(ids.filter(isYouTubeVideoId))) {
+    const hit = cache[id];
+    const ttl = hit && (hit.title ? 30 : 7) * 86400000;
+    if (hit && now - hit.at < ttl) { if (hit.title) titles.set(id, hit.title); } else missing.push(id);
+  }
+  if (!missing.length) return titles;
+  await Promise.all(missing.map(async (id) => {
+    let title = null;
+    try {
+      const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}&format=json`, { signal: AbortSignal.timeout(5000) });
+      if (r.ok) title = (await r.json())?.title || null;
+      else if (r.status !== 400 && r.status !== 401 && r.status !== 403 && r.status !== 404) return; // transient (5xx/429) -- retry next load, don't cache
+    } catch { return; }
+    cache[id] = { title, at: now };
+    if (title) titles.set(id, title);
+  }));
+  writeJson(YT_TITLES_FILE, cache);
+  return titles;
+}
+
 // A channel's public uploads feed (newest first, ~15 entries) -- no API key,
 // no quota. Public videos only, which is what "new video in channel" means.
 function decodeXml(s) {
