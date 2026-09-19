@@ -887,6 +887,42 @@ async function deleteStep(stepId) {
 function sheetColRowHtml(value) {
   return `<div class="sheet-col-row" data-sheet-col-row><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}} {{last}}, {{email}}, {{payload.message}}…', attrs: 'data-sheet-col', expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-remove-sheet-col>&times;</button></div>`;
 }
+// A brand-new Google Sheet step used to start with every column blank, even
+// for headers that obviously mean a specific field (First, Email, Timezone).
+// Suggests a token per header -- matched by normalized name, never guessed
+// beyond that -- so only columns nobody could map automatically stay empty.
+// Called only when nothing is saved yet for this sheet/tab (see
+// renderSheetColumns), so it never overrides a mapping someone chose.
+function suggestSheetToken(header) {
+  const norm = (x) => String(x).toLowerCase().replace(/[^a-z]/g, '');
+  const h = norm(header);
+  if (!h) return '';
+  const type = flow.trigger?.type;
+  const CONTACT = { first: '{{first}}', firstname: '{{first}}', last: '{{last}}', lastname: '{{last}}', email: '{{email}}', emailaddress: '{{email}}',
+    phone: '{{phone}}', phonenumber: '{{phone}}', mobile: '{{phone}}', mobilenumber: '{{phone}}', name: '{{first}} {{last}}', fullname: '{{first}} {{last}}',
+    // the moment the row is written -- e.g. "BOOKED WHEN" in the existing ONLINE BOOKINGS sheet step
+    bookedwhen: '{{timestamp}}', datebooked: '{{timestamp}}', bookedon: '{{timestamp}}', dateadded: '{{timestamp}}', timestamp: '{{timestamp}}', submitted: '{{timestamp}}', datesubmitted: '{{timestamp}}' };
+  if (CONTACT[h]) return CONTACT[h];
+  if (type === 'booking_created' || type === 'form_submitted') {
+    if (h === 'timezone' || h === 'tz' || h === 'timezonename') return '{{payload.Timezone}}';
+  }
+  if (type === 'booking_created') {
+    // the call's own time ("BOOKED FOR" in the existing sheet step), not when they booked it
+    if (['dateofcall', 'calldate', 'calltime', 'callwhen', 'datetimeofcall', 'bookedfor', 'when', 'callscheduled', 'scheduledfor', 'appointment', 'appointmenttime'].includes(h)) return '{{payload.When}}';
+  }
+  // A trigger field (form question / booking field) whose name matches the
+  // header exactly, or whose long question text starts with it ("Career" ->
+  // "Career (if you're retired ...)"). Keys only, from whatever samples are loaded.
+  const samples = cachedSamplesSync();
+  const labels = cachedFieldLabels || {};
+  const STANDARD_NAMES = new Set(Object.keys(CONTACT).concat(['timezone', 'when', 'eventtype', 'calendartime']));
+  for (const k of pickableKeys(samples, labels)) {
+    const label = norm(labels[k] || k);
+    if (STANDARD_NAMES.has(norm(k)) && norm(k) !== h) continue;
+    if (label === h || norm(k) === h || (h.length >= 5 && label.startsWith(h))) return `{{payload.${k}}}`;
+  }
+  return '';
+}
 function sheetColHeaderRowHtml(header, value, index) {
   return `<div class="sheet-col-row" data-sheet-col-row><div class="sheet-col-label" title="${escapeHtml(header)}">${escapeHtml(header) || `Column ${index + 1}`}</div><div class="token-input-wrap" style="flex:1">${tokenEditorHtml(value, { placeholder: '{{first}}, static text, …', attrs: 'data-sheet-col', expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>`;
 }
@@ -970,6 +1006,7 @@ function openStepConfigModal(step, isNew) {
       </div>
       <div id="sheetColumnsArea" style="display:none">
         <div class="pra-label" style="margin:14px 0 8px">Columns <span class="pra-muted" style="text-transform:none;font-weight:400">— type a value, or start typing to search available fields</span></div>
+        <div class="pra-muted" id="sheetAutoNote" style="display:none;font-size:.76rem;margin-bottom:8px"></div>
         <div id="sheetColRows"></div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSheetColBtn" style="display:none;margin-top:6px">+ Add Column</button>
       </div>
@@ -979,10 +1016,22 @@ function openStepConfigModal(step, isNew) {
       const wrap = document.getElementById('sheetColRows');
       const addBtn = document.getElementById('addSheetColBtn');
       const savedColumns = (step.config.spreadsheetId === sheetPicked.id && step.config.sheetName === sheetPicked.tab) ? (step.config.columns || []) : [];
+      const autoNote = document.getElementById('sheetAutoNote');
       if (sheetPicked.headers.length) {
         addBtn.style.display = 'none';
-        wrap.innerHTML = sheetPicked.headers.map((h, i) => sheetColHeaderRowHtml(h, savedColumns[i], i)).join('');
+        // Nothing saved for this sheet/tab yet -> pre-fill the columns whose
+        // header clearly names a field; anything already saved is untouched.
+        const autofill = !savedColumns.some(v => v);
+        let filled = 0;
+        wrap.innerHTML = sheetPicked.headers.map((h, i) => {
+          let v = savedColumns[i];
+          if (autofill) { v = suggestSheetToken(h); if (v) filled++; }
+          return sheetColHeaderRowHtml(h, v, i);
+        }).join('');
+        autoNote.style.display = filled ? 'block' : 'none';
+        autoNote.textContent = filled ? `Filled ${filled} column${filled === 1 ? '' : 's'} automatically from matching names -- check them, and fill in the rest.` : '';
       } else {
+        autoNote.style.display = 'none';
         addBtn.style.display = 'inline-block';
         wrap.innerHTML = (savedColumns.length ? savedColumns : ['']).map(sheetColRowHtml).join('');
       }
@@ -1015,6 +1064,7 @@ function openStepConfigModal(step, isNew) {
       const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/headers?tab=${encodeURIComponent(tab)}`);
       const d = await r.json();
       sheetPicked.headers = (r.ok && d.headers) || [];
+      await fetchSamples(false); // loaded now so suggestSheetToken can match trigger fields too
       renderSheetColumns();
     }
     document.getElementById('cfgSheetTab').addEventListener('change', (e) => onTabChosen(e.target.value));
