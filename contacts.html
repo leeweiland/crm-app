@@ -361,6 +361,7 @@
 <script src="/inline-edit.js"></script>
 <script src="/condition-row-client.js"></script>
 <script src="/column-resize.js"></script>
+<script src="/contact-time.js"></script>
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
 let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
@@ -840,6 +841,10 @@ const BASE_COLUMNS = [
   { key: 'last', label: 'Last', sortable: true, frozen: 2, always: true, render: c => escapeHtml(c.last) },
   { key: 'email', label: 'Email', sortable: true, render: c => escapeHtml(c.email || '') },
   { key: 'phone', label: 'Phone', sortable: true, render: c => c.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.phone.replace(/[^\d+]/g, ''))}" onclick="event.stopPropagation()">${escapeHtml(c.phone)}</a>` : '' },
+  // Estimated from the phone number (contact-time.js) -- shows the contact's
+  // current local time + zone, e.g. "3:42 PM EDT". Not sortable: it's derived
+  // client-side, so the server has nothing to order by. Off by default.
+  { key: 'timezone', label: 'Timezone', sortable: false, render: c => (c.phone && window.PRAContactTime?.chipHtml(c.phone)) || '<span class="pra-muted" style="font-size:.75rem">—</span>' },
   { key: 'status', label: 'Status', sortable: true, editable: true, render: c => c.status ? `<span class="pra-badge" style="${statusBadgeStyle(c.status)}">${escapeHtml(c.status)}</span>` : '<span class="pra-muted" style="font-size:.75rem">—</span>' },
   // Deliberately separate from Status -- a contact can be genuinely
   // ENROLLED/BOOKED/mid-APPLICATION and still have texted STOP or clicked
