@@ -720,6 +720,13 @@ body { margin: 0; }
 .task-panel-row button:hover { color: var(--pra-red); }
 .task-panel-add { display: flex; flex-direction: column; gap: 6px; }
 .task-panel-add input { font-size: .82rem; padding: 6px 8px; }
-.task-panel-add-row { display: flex; gap: 6px; }
-.task-panel-add-row input[type="date"], .task-panel-add-row input[type="time"] { flex: 1; min-width: 0; }
+/* Date + time share the first line; anything else in the row (the meeting
+   popover's duration <select>) wraps to its own full-width line. Without
+   wrapping, .pra-select's width:100% became that select's flex-basis and
+   shoved the date/time inputs down to their bare padding (~18px wide, empty
+   and untappable) -- the "calendar scheduler isn't working" report. */
+.task-panel-add-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-panel-add-row input[type="date"] { flex: 1.25 1 120px; min-width: 0; }
+.task-panel-add-row input[type="time"] { flex: 1 1 96px; min-width: 0; }
+.task-panel-add-row select { flex: 1 1 100%; width: auto; }
 .task-panel-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
