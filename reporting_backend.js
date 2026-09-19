@@ -281,17 +281,20 @@ export function computeAttribution(startMs, endMs) {
   if (tagInfo.sourceKeyById.size) {
     const addHy = (key, stage, id) => { const k = `${key}|${stage}`; if (!hyrosByStage.has(k)) hyrosByStage.set(k, new Set()); hyrosByStage.get(k).add(id); };
     for (const c of contacts) {
-      if (!c.tags?.length || firstTouchByContact.has(c.id)) continue;
+      const imported = c.source === "hyros_import";
+      if (firstTouchByContact.has(c.id) || (!imported && !c.tags?.length)) continue;
       let keys = null;
-      for (const id of c.tags) { const k = tagInfo.sourceKeyById.get(id); if (k) (keys ||= new Set()).add(k); }
-      if (!keys) continue;
+      for (const id of c.tags || []) { const k = tagInfo.sourceKeyById.get(id); if (k) (keys ||= new Set()).add(k); }
+      // A Hyros contact with no source tag (some bought without one) still counts, in its own row, so totals stay complete.
+      if (!keys) { if (!imported) continue; keys = new Set([HYROS_NO_SOURCE]); }
       const leadMs = hyrosLeadMs(c);
       if (!(leadMs >= startMs && leadMs <= endMs)) continue;
-      const booked = bookedContactIds.has(c.id) || c.tags.some(id => tagInfo.bookedIds.has(id));
-      const enrolled = c.status === "ENROLLED" || c.tags.some(id => tagInfo.purchaseIds.has(id));
+      const ctags = c.tags || [];
+      const booked = bookedContactIds.has(c.id) || ctags.some(id => tagInfo.bookedIds.has(id));
+      const enrolled = c.status === "ENROLLED" || ctags.some(id => tagInfo.purchaseIds.has(id));
       // Revenue: add up the dollar amounts in the contact's own $ purchase tags ($stripe-2000, $pra-...-pif-3800).
       let revenue = 0;
-      for (const id of c.tags) revenue += tagInfo.amountById.get(id) || 0;
+      for (const id of ctags) revenue += tagInfo.amountById.get(id) || 0;
       hyrosUnique.optIns++;
       if (booked) hyrosUnique.bookings++;
       if (enrolled) hyrosUnique.enrolled++;
@@ -351,7 +354,8 @@ function hyrosLeadMs(c) {
   }
   return new Date(c.createdAt).getTime();
 }
-const HYROS_NOTE = "Includes Hyros source tags: a contact counts under every source tag it carries (so rows overlap), dated by their Hyros first-seen date. Revenue is estimated from each contact's $ purchase tags -- in a test against recorded Hyros sales it came to about 82% of actual payments (never over), and refunds aren't reflected.";
+const HYROS_NO_SOURCE = "hyros-no-source";
+const HYROS_NOTE ="Includes Hyros source tags: a contact counts under every source tag it carries (so rows overlap), dated by their Hyros first-seen date. Revenue is estimated from each contact's $ purchase tags -- in a test against recorded Hyros sales it came to about 82% of actual payments (never over), and refunds aren't reflected.";
 
 // A contact's first ad/source touch, for crediting their conversion events.
 // 1) the earliest tagged visit linked to them (the real click journey), else
@@ -429,6 +433,7 @@ const SOCIAL_PLATFORM_LABEL = { email: "Email", sms: "SMS", youtube: "YouTube", 
 // doesn't apply (an email/SMS/social source isn't inside a Meta ad set or
 // Google ad group), not when data is merely missing.
 function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
+  if (key === HYROS_NO_SOURCE) return { title: "No source tag (Hyros)", adGroup: "—", campaign: "—", spend: 0, platform: "Hyros" };
   if (key === "meta-ad:unknown") return { title: "Meta ad (ad ID not captured)", adGroup: "—", campaign: "—", spend: 0, platform: "Meta" };
   if (key === "google-ad:unknown") return { title: "Google ad (ad ID not captured)", adGroup: "—", campaign: "—", spend: 0, platform: "Google" };
   if (key.startsWith("meta-ad:")) {
