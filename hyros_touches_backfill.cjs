@@ -22,6 +22,7 @@ const DATA = process.env.DATA_DIR || "/data";
 const DUTY = Math.min(1, Math.max(0.05, Number(process.env.DUTY || 0.5)));
 const BATCH = Number(process.env.BATCH || 100);
 const LIMIT = process.env.LIMIT ? Number(process.env.LIMIT) : Infinity;
+const PID_FILE = path.join(DATA, "hyros_backfill.pid");
 const IDS_FILE = path.join(DATA, "hyros_backfill_ids.json");
 const PROGRESS_FILE = path.join(DATA, "hyros_backfill_progress.json");
 const OUT_DB = path.join(DATA, "hyros_touches.db");
@@ -115,6 +116,23 @@ function buildIdList() {
   return ids;
 }
 
+// Only one copy may ever run (two writers on the output file collide). The pid file is
+// created exclusively; a leftover one from a killed run (redeploy, kill -9) is detected as
+// stale by checking /proc, so a relaunch after a restart just takes over.
+function acquireLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { fs.writeFileSync(PID_FILE, String(process.pid), { flag: "wx" }); return true; }
+    catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      let alive = false;
+      try { const pid = Number(fs.readFileSync(PID_FILE, "utf8")); alive = pid > 0 && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("hyros_touches_backfill"); } catch { /* no /proc or no such process -> stale */ }
+      if (alive) return false;
+      try { fs.unlinkSync(PID_FILE); } catch { /* raced with another launcher */ }
+    }
+  }
+  return false;
+}
+
 function status() {
   const ids = readJson(IDS_FILE, null), p = readJson(PROGRESS_FILE, null);
   const out = { totalContacts: ids ? ids.length : null, progress: p };
@@ -131,9 +149,12 @@ function status() {
 
 async function main() {
   if (process.argv.includes("--status")) return status();
+  if (!acquireLock()) return; // another copy is already running -- exit quietly
+  process.on("exit", () => { try { if (fs.readFileSync(PID_FILE, "utf8") === String(process.pid)) fs.unlinkSync(PID_FILE); } catch { /* already gone */ } });
   const ids = buildIdList();
   const total = Math.min(ids.length, LIMIT);
   const prog = readJson(PROGRESS_FILE, { next: 0, rows: 0, noHyros: 0, missingFile: 0, errors: 0, startedAt: new Date().toISOString() });
+  if (prog.next >= total) return; // already finished -- nothing to do
   const db = openOut();
   const upsert = db.prepare(`INSERT OR REPLACE INTO touches
     (contact_id, lead_at, lead_ms, first_at, first_tag, first_platform, first_json, last_json, calls_json, sales_json, n_calls, n_sales)
