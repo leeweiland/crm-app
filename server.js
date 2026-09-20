@@ -21,7 +21,7 @@ import { handleFormsRequest } from "./forms_backend.js";
 import { handleSchedulingRequest } from "./scheduling_backend.js";
 import { handleIntegrationsRequest } from "./integrations_backend.js";
 import { handleUploadsRequest } from "./uploads_backend.js";
-import { handleAdsRequest } from "./ads_backend.js";
+import { handleAdsRequest, startCallsSyncTimer } from "./ads_backend.js";
 import { handleFlowsRequest } from "./flows_backend.js";
 import { handleDuplicatesRequest } from "./duplicates_backend.js";
 import { handleAiAgentsRequest, handleCacheRequest } from "./ai_agents_backend.js";
@@ -211,6 +211,9 @@ createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": mime });
   res.end(readFileSync(filePath));
 }).listen(PORT, () => console.log(`crm-app running on port ${PORT}`));
+
+// Keeps the ads sheet's sales columns current from CALLS TRACKING (production only -- it writes to the live sheet)
+if (process.env.RAILWAY_ENVIRONMENT) startCallsSyncTimer();
 
 // BACKGROUND_WORKER (2026-09-16, off by default): runs the whole scheduler
 // tick and all Twilio/SES webhook processing on a separate OS thread

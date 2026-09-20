@@ -327,19 +327,23 @@ function callsPayments(rows) {
   }
   return out;
 }
-async function loadCallsTracking() {
-  if (callsCache && Date.now() - callsCache.at < CALLS_TTL_MS) return callsCache.data;
+async function googleAccessToken() {
+  const { clientId, clientSecret, refreshToken } = googleCreds();
+  if (!clientId || !clientSecret || !refreshToken) throw new Error("Google Sheets isn't configured");
+  const tr = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const accessToken = (await tr.json()).access_token;
+  if (!accessToken) throw new Error("Google token refresh failed");
+  return accessToken;
+}
+async function loadCallsTracking(fresh = false) {
+  if (!fresh && callsCache && Date.now() - callsCache.at < CALLS_TTL_MS) return callsCache.data;
   try {
-    const { clientId, clientSecret, refreshToken } = googleCreds();
-    if (!clientId || !clientSecret || !refreshToken) throw new Error("Google Sheets isn't configured");
-    const tr = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const accessToken = (await tr.json()).access_token;
-    if (!accessToken) throw new Error("Google token refresh failed");
-    const id = readSettings().ads?.callsSheetId || DEFAULT_CALLS_SHEET_ID;
+    const accessToken = await googleAccessToken();
+    const id = getAdsSettings().callsSheetId;
     const ranges = ["'ONLINE'!A1:P6000", "'GYM'!A1:P6000", "'ONLINE RENEWALS & PAYOFFS'!A1:D3000", "'ONLINE TRAVEL'!A1:D3000", "'GYM RENEWALS & PAYOFFS'!A1:D3000", "'GYM TRAVEL'!A1:D3000"];
     const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${ranges.map(x => "ranges=" + encodeURIComponent(x)).join("&")}`, {
       headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30000),
@@ -369,6 +373,106 @@ export async function fetchCallsTrackingSales(startStr, endStr) {
   return { online: build(data.online), gym: build(data.gym) };
 }
 
+// ── CALLS TRACKING → ADS TRACKING SHEET ──
+// Writes each day's sales from every CALLS TRACKING tab into that day's row of the ads sheet's
+// month tab ("ONLINE SEPTEMBER 2026" etc.), in the columns whose headers link to CALLS TRACKING:
+//   U closes (not renewals)   V renewals & payoffs (count)   X $ collected (new enrollments)
+//   Y $ all cash              Z new students                 AA $ renewals & payoffs   AB $ travel
+// The Reporting Overview then reads those columns like it always did. Only those seven columns are
+// touched, only cells that are plain values (never a formula), and only cells whose number changed.
+const SYNC_COLS = [20, 21, 23, 24, 25, 26, 27];
+const colLetter = (i) => { let s = ""; for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + ((i - 1) % 26)) + s; return s; };
+const round2 = (n) => Math.round(n * 100) / 100;
+function callsDayValues(p) {
+  const byDay = new Map();
+  const slot = (d) => { let s = byDay.get(d); if (!s) byDay.set(d, s = { closes: [], renew: [], travel: [] }); return s; };
+  for (const x of p.closes) slot(x.d).closes.push(x);
+  for (const x of p.renew) slot(x.d).renew.push(x);
+  for (const x of p.travel) slot(x.d).travel.push(x);
+  const sum = (a) => a.reduce((s, x) => s + x.amt, 0);
+  return (d) => {
+    const s = byDay.get(d) || { closes: [], renew: [], travel: [] };
+    const coll = sum(s.closes), renewAmt = sum(s.renew), travelAmt = sum(s.travel);
+    // indexes line up with SYNC_COLS
+    return [s.closes.length, s.renew.length, round2(coll), round2(coll + renewAmt + travelAmt), s.closes.length, round2(renewAmt), round2(travelAmt)];
+  };
+}
+function syncMonths(fromMonth) {
+  const t = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Anchorage", year: "numeric", month: "2-digit" }).format(new Date()).split("-").map(Number);
+  let [y, m] = /^(\d{4})-(\d\d)$/.test(fromMonth || "") ? fromMonth.split("-").map(Number) : [t[0], t[1] - 2]; // default: this month + the 2 before it
+  if (m < 1) { m += 12; y--; }
+  const out = [];
+  while (y < t[0] || (y === t[0] && m <= t[1])) {
+    out.push(new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" }).toUpperCase() + " " + y);
+    if (++m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+const syncState = { at: 0, promise: null, last: null };
+export function syncCallsToAdsSheet({ dryRun = false, fromMonth = null, throttleMs = 0 } = {}) {
+  if (!dryRun) {
+    if (syncState.promise) return syncState.promise;
+    if (throttleMs && syncState.last && Date.now() - syncState.at < throttleMs) return Promise.resolve(syncState.last);
+  }
+  const run = (async () => {
+    const { sheetId, onlinePrefix, gymPrefix } = getAdsSettings();
+    const token = await googleAccessToken();
+    const data = await loadCallsTracking(true);
+    const auth = { Authorization: `Bearer ${token}` };
+    const getRange = async (range, render) => {
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueRenderOption=${render}`, { headers: auth, signal: AbortSignal.timeout(30000) });
+      if (r.status === 400) return null; // no such tab (yet)
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.error?.message || `sheets_http_${r.status}`);
+      return d.values || [];
+    };
+    const changes = [], tabs = [];
+    for (const [prefix, program] of [[onlinePrefix, "online"], [gymPrefix, "gym"]]) {
+      const dayValues = callsDayValues(data[program]);
+      for (const label of syncMonths(fromMonth)) {
+        const tab = `${prefix} ${label}`;
+        const vals = await getRange(`'${tab}'!A10:AB41`, "UNFORMATTED_VALUE");
+        if (!vals) { tabs.push({ tab, exists: false, changed: 0 }); continue; }
+        const forms = await getRange(`'${tab}'!U10:AB41`, "FORMULA") || [];
+        let n = 0;
+        vals.forEach((row, i) => {
+          if (typeof row[0] !== "number") return;
+          const date = serialToDate(row[0]).toISOString().slice(0, 10);
+          const want = dayValues(date);
+          SYNC_COLS.forEach((idx, k) => {
+            const f = forms[i]?.[idx - 20];
+            if (typeof f === "string" && f.startsWith("=")) return; // never overwrite a formula
+            const cur = row[idx];
+            if (Math.abs((Number(cur) || 0) - want[k]) < 0.005) return;
+            changes.push({ tab, cell: `${colLetter(idx)}${10 + i}`, date, from: cur ?? "", to: want[k] });
+            n++;
+          });
+        });
+        tabs.push({ tab, exists: true, changed: n });
+      }
+    }
+    if (!dryRun && changes.length) {
+      for (let i = 0; i < changes.length; i += 300) {
+        const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`, {
+          method: "POST", headers: { ...auth, "Content-Type": "application/json" }, signal: AbortSignal.timeout(30000),
+          body: JSON.stringify({ valueInputOption: "RAW", data: changes.slice(i, i + 300).map(c => ({ range: `'${c.tab}'!${c.cell}`, values: [[c.to]] })) }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error?.message || `sheets_write_http_${r.status}`);
+      }
+    }
+    return { ok: true, dryRun, at: new Date().toISOString(), changed: changes.length, tabs, changes };
+  })();
+  if (dryRun) return run;
+  syncState.promise = run;
+  return run.then(res => { syncState.at = Date.now(); syncState.last = res; return res; }).finally(() => { syncState.promise = null; });
+}
+// Keeps the ads sheet current even when nobody has Reporting open
+export function startCallsSyncTimer(everyMs = 30 * 60 * 1000) {
+  const tick = () => syncCallsToAdsSheet().then(r => { if (r.changed) console.log(`[ads] synced ${r.changed} cell(s) from CALLS TRACKING into the ads sheet`); }).catch(e => console.error("[ads] calls sync failed:", e.message));
+  setTimeout(tick, 60 * 1000).unref?.();
+  setInterval(tick, everyMs).unref?.();
+}
+
 function readSettings() {
   return readJson(INTEGRATIONS_FILE, { ads: {} });
 }
@@ -378,6 +482,7 @@ function getAdsSettings() {
     sheetId: a.sheetId || DEFAULT_SHEET_ID,
     onlinePrefix: a.onlinePrefix || "ONLINE",
     gymPrefix: a.gymPrefix || "GYM",
+    callsSheetId: a.callsSheetId || DEFAULT_CALLS_SHEET_ID,
     // One or more Coupler.io "incoming webhook" URLs (one per data flow --
     // e.g. separate Online/Gym or Meta/Google flows), newline or comma
     // separated. Coupler.io flows run on their own daily schedule already;
@@ -510,6 +615,13 @@ async function fetchAdsReport(period, customStart, customEnd) {
   const sheetConfigured = !!(clientId && clientSecret && refreshToken);
   let onlineResult = { exists: false, data: zero() }, gymResult = { exists: false, data: zero() }, sheetError = null;
 
+  // Bring the ads sheet's sales columns up to date from CALLS TRACKING first (at most once every 5
+  // minutes), then read them back out of the sheet below like every other column.
+  let salesSyncError = null;
+  if (sheetConfigured) {
+    try { await syncCallsToAdsSheet({ throttleMs: CALLS_TTL_MS }); } catch (e) { salesSyncError = e.message; }
+  }
+
   if (sheetConfigured) {
     try {
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -586,15 +698,18 @@ async function fetchAdsReport(period, customStart, customEnd) {
   const crmData = fetchCrmLeadsAndBookings(crmStartMs, crmEndMs);
   Object.assign(o, crmData.online);
   Object.assign(g, crmData.gym);
-  // Closes/Sales/collected cash come from CALLS TRACKING (see above); if it can't be read, the ads
-  // sheet's hand-entered columns already loaded above stay in place.
+  // Closes/Sales/collected cash are the ads sheet's own columns, kept current by the sync above. Only
+  // if that sync failed do we read CALLS TRACKING directly so the cards don't fall back to zeros.
   let salesSource = "ads-sheet", salesError = null;
-  try {
-    const calls = await fetchCallsTrackingSales(startStr, endStr);
-    Object.assign(o, calls.online);
-    Object.assign(g, calls.gym);
-    salesSource = "calls-tracking";
-  } catch (e) { salesError = e.message; }
+  if (salesSyncError) {
+    try {
+      const calls = await fetchCallsTrackingSales(startStr, endStr);
+      Object.assign(o, calls.online);
+      Object.assign(g, calls.gym);
+      salesSource = "calls-tracking";
+      salesError = `The ads sheet couldn't be updated (${salesSyncError}); showing CALLS TRACKING directly.`;
+    } catch (e) { salesError = `${salesSyncError}; ${e.message}`; }
+  }
   const combined = {
     spend: o.spend + g.spend, metaSpend: o.metaSpend + g.metaSpend, googleSpend: o.googleSpend + g.googleSpend,
     emails: o.emails + g.emails,
@@ -636,6 +751,11 @@ export async function handleAdsRequest(req, res, url) {
     const all = readSettings();
     all.ads = all.ads || {};
     for (const k of ["sheetId", "onlinePrefix", "gymPrefix", "googleRefreshToken"]) if (k in body) all.ads[k] = String(body[k]).trim();
+    // Accepts a pasted sheet URL as well as a bare ID
+    if ("callsSheetId" in body) {
+      const raw = String(body.callsSheetId).trim();
+      all.ads.callsSheetId = (/\/d\/([A-Za-z0-9_-]+)/.exec(raw) || [])[1] || raw;
+    }
     // Not returned by config-status (see that handler) -- only overwrite
     // when the admin actually typed something, same "blank means untouched"
     // rule as every masked secret field in this app.
@@ -647,7 +767,21 @@ export async function handleAdsRequest(req, res, url) {
   if (p === "/api/ads/manual-update" && req.method === "POST") {
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
     const result = await triggerCouplerRefresh();
-    return sendJson(res, 200, result);
+    // Manual Update also re-syncs sales from CALLS TRACKING into the ads sheet right now
+    let callsSync = null;
+    try { const s = await syncCallsToAdsSheet(); callsSync = { ok: true, changed: s.changed }; } catch (e) { callsSync = { ok: false, error: e.message }; }
+    return sendJson(res, 200, { ...result, callsSync });
+  }
+
+  if (p === "/api/ads/sync-calls" && req.method === "POST") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const body = await readJsonBody(req).catch(() => ({}));
+    try {
+      const s = await syncCallsToAdsSheet({ dryRun: !!body.dryRun, fromMonth: body.fromMonth || null });
+      return sendJson(res, 200, { ...s, changes: s.changes.slice(0, 300) });
+    } catch (e) {
+      return sendJson(res, 200, { ok: false, error: e.message });
+    }
   }
 
   if (p === "/api/ads/google-tag-id" && req.method === "GET") {
