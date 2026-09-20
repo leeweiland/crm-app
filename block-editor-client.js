@@ -256,6 +256,72 @@ window.BlockEditor = (function () {
     return text;
   }
 
+  // Rewrites every run of blank lines inside `root` (in place) to one gap
+  // size, and zeroes <p> margins. Pasted content (Google Docs especially)
+  // ends up with the gap doubled: Docs separates paragraphs with a <br>
+  // blank line AND gives each <p> margin:0pt, which the paste handler strips
+  // along with all other margins -- so browser-default <p> margins come back
+  // on top of the blank line. mode: 'none' | 'small' | 'line'.
+  const BLOCK_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'TABLE', 'HR']);
+  const isBlankText = (t) => !t.replace(/[\s ​]/g, '');
+  function isEmptyBlock(el) {
+    if (el.nodeType !== 1 || (el.tagName !== 'P' && el.tagName !== 'DIV')) return false;
+    if (el.querySelector('img,hr,table,ul,ol,a,iframe')) return false;
+    return isBlankText(el.textContent);
+  }
+  function normalizeBlankLines(root, mode) {
+    // Docs wraps everything in one inline <b>/<span id="docs-internal-guid-*">
+    // containing block-level <p>s; re-inserting that as-is makes the browser
+    // split the wrapper and leave stray empty <p>s (with default margins).
+    root.querySelectorAll('[id^="docs-internal-guid"]').forEach(w => w.replaceWith(...w.childNodes));
+    root.querySelectorAll('p').forEach(p => { p.style.margin = '0'; });
+    const gapNode = (kind) => {
+      const d = document.createElement('div');
+      if (kind === 'small') { d.style.cssText = 'height:8px;line-height:8px;font-size:8px'; d.innerHTML = '&nbsp;'; }
+      else d.innerHTML = '<br>';
+      return d;
+    };
+    (function process(container) {
+      // Children first, so wrappers (e.g. Docs' <span id="docs-internal-guid">
+      // around all its <p>s) get their own runs handled at their own level.
+      [...container.children].forEach(child => { if (!isEmptyBlock(child) && child.tagName !== 'BR') process(child); });
+      const kids = [...container.childNodes];
+      const kindOf = (n) => (n.nodeType === 1 && (n.tagName === 'BR' || isEmptyBlock(n))) ? 'blank' : (n.nodeType === 3 && isBlankText(n.textContent)) ? 'ws' : 'other';
+      let i = 0;
+      while (i < kids.length) {
+        if (kindOf(kids[i]) !== 'blank') { i++; continue; }
+        // Extend the run over blanks and whitespace-only text between them.
+        let j = i, lastBlank = i;
+        while (j < kids.length && kindOf(kids[j]) !== 'other') { if (kindOf(kids[j]) === 'blank') lastBlank = j; j++; }
+        const run = kids.slice(i, lastBlank + 1);
+        const prev = kids.slice(0, i).reverse().find(n => kindOf(n) !== 'ws') || null;
+        const next = kids.slice(lastBlank + 1).find(n => kindOf(n) !== 'ws') || null;
+        const prevIsBlock = !prev || (prev.nodeType === 1 && BLOCK_TAGS.has(prev.tagName));
+        const brCount = run.filter(n => n.tagName === 'BR').length;
+        const emptyBlocks = run.filter(n => n.tagName !== 'BR' && n.nodeType === 1).length;
+        // After inline text, a leading <br> just ends that line -- only the
+        // ones beyond it are blank lines. (A lone <br> between two words is
+        // an ordinary line break and is left completely alone.)
+        const terminator = !prevIsBlock && run[0].tagName === 'BR';
+        const lines = brCount - (terminator ? 1 : 0) + emptyBlocks;
+        if (lines > 0) {
+          const anchor = run[run.length - 1].nextSibling;
+          run.forEach(n => n.remove());
+          // Leading/trailing blank lines are just wasted space (the block's
+          // own padding handles distance to its neighbours).
+          if (prev && next && mode !== 'none') {
+            if (terminator) container.insertBefore(document.createElement('br'), anchor);
+            if (terminator && mode === 'line') container.insertBefore(document.createElement('br'), anchor);
+            else container.insertBefore(gapNode(mode), anchor);
+          } else if (prev && next && terminator) {
+            container.insertBefore(document.createElement('br'), anchor);
+          }
+        }
+        i = lastBlank + 1;
+      }
+    })(root);
+  }
+
   // initialState: { blocks: [...], theme: {background, maxWidth} }
   // onChange receives the full { blocks, theme } state on every body edit.
   // onFooterChange (optional) receives { blocks: footerBlocks } on every
@@ -349,6 +415,7 @@ window.BlockEditor = (function () {
               <option value="Aldrich, Arial, sans-serif">Aldrich</option>
             </select>
             <select id="beFontSize" title="Font size"><option value="">Size...</option><option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="14">14</option><option value="16">16</option><option value="18">18</option><option value="20">20</option><option value="24">24</option><option value="28">28</option><option value="32">32</option><option value="36">36</option><option value="48">48</option></select>
+            <select id="beSpacing" title="Gaps between paragraphs -- fixes doubled blank lines from pasted text (applies to this whole text block)"><option value="">Spacing...</option><option value="none">No gaps</option><option value="small">Small gaps</option><option value="line">One blank line</option></select>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option>${(opts.extraPersonalizeOptions || []).map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>
             <span class="be-link-popover" id="beLinkPopover">
               <input type="text" id="beLinkUrl" placeholder="Link URL (select text first)"/>
@@ -723,12 +790,22 @@ window.BlockEditor = (function () {
           if (html) {
             const frag = document.createElement('div');
             frag.innerHTML = html;
+            // Google Docs wraps every paragraph in one inline <b id="docs-
+            // internal-guid-*"> -- inserting that as-is makes the browser
+            // split the wrapper and leave stray empty <p>s, i.e. phantom
+            // blank lines between paragraphs that had none.
+            frag.querySelectorAll('[id^="docs-internal-guid"]').forEach(w => w.replaceWith(...w.childNodes));
             frag.querySelectorAll('[style]').forEach(node => {
+              // Docs gives every <p> an explicit margin:0pt; merely stripping
+              // it (below) would swap that for the browser's default 1em <p>
+              // margins and double every gap, so a source-declared zero stays zero.
+              const zeroMargin = node.tagName === 'P' && parseFloat(node.style.marginTop) === 0 && parseFloat(node.style.marginBottom) === 0;
               node.style.removeProperty('padding');
               ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'].forEach(p => node.style.removeProperty(p));
               node.style.removeProperty('margin');
               ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach(p => node.style.removeProperty(p));
               node.style.removeProperty('border');
+              if (zeroMargin) node.style.margin = '0';
               if (!node.getAttribute('style')) node.removeAttribute('style');
             });
             document.execCommand('insertHTML', false, frag.innerHTML);
@@ -809,6 +886,23 @@ window.BlockEditor = (function () {
     toolbar.querySelector('#beFontFamily').addEventListener('change', (e) => {
       if (!e.target.value) return;
       document.execCommand('fontName', false, e.target.value);
+      syncSelectedText();
+    });
+    toolbar.querySelector('#beSpacing').addEventListener('change', (e) => {
+      const mode = e.target.value;
+      e.target.value = '';
+      const body = canvas.querySelector(`.be-block-body[data-id="${selectedId}"]`);
+      if (!mode || !body) return;
+      const clone = body.cloneNode(true);
+      normalizeBlankLines(clone, mode);
+      // insertHTML over the whole body (instead of assigning innerHTML) keeps
+      // this one Ctrl+Z away from being undone.
+      body.focus();
+      const range = document.createRange();
+      range.selectNodeContents(body);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand('insertHTML', false, clone.innerHTML);
       syncSelectedText();
     });
     // The Font, Size, and Link fields all reflect whatever's under the
