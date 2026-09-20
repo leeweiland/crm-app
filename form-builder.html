@@ -758,6 +758,28 @@ const TIMEZONE_OPTIONS = (() => {
   return ['America/Anchorage', 'America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'Pacific/Honolulu', 'UTC'];
 })();
 let saveTimer, dragFromIdx = null, dragToIdx = null;
+// Auto-scroll while a block is being dragged. The browser's own drag
+// auto-scroll only kicks in within a few pixels of the window edge (and not at
+// all reliably), so on a long form there was no way to carry a question to a
+// spot above or below what was on screen. Registered once here (not inside
+// renderCanvas, which re-runs constantly): within DRAG_SCROLL_ZONE px of the
+// top/bottom of the window the page scrolls, faster the closer to the edge,
+// via a rAF loop that keeps going while the pointer is held still there.
+const DRAG_SCROLL_ZONE = 110, DRAG_SCROLL_MAX = 28;
+let dragScrollSpeed = 0, dragScrollRaf = null;
+function dragScrollTick() {
+  if (dragFromIdx === null || !dragScrollSpeed) { dragScrollRaf = null; return; }
+  window.scrollBy(0, dragScrollSpeed);
+  dragScrollRaf = requestAnimationFrame(dragScrollTick);
+}
+document.addEventListener('dragover', (e) => {
+  if (dragFromIdx === null) return;
+  const fromTop = Math.max(e.clientY, 0), fromBottom = Math.max(window.innerHeight - e.clientY, 0);
+  dragScrollSpeed = fromTop < DRAG_SCROLL_ZONE ? -Math.ceil(DRAG_SCROLL_MAX * (1 - fromTop / DRAG_SCROLL_ZONE))
+    : fromBottom < DRAG_SCROLL_ZONE ? Math.ceil(DRAG_SCROLL_MAX * (1 - fromBottom / DRAG_SCROLL_ZONE)) : 0;
+  if (dragScrollSpeed && !dragScrollRaf) dragScrollRaf = requestAnimationFrame(dragScrollTick);
+});
+['dragend', 'drop'].forEach(t => document.addEventListener(t, () => { dragScrollSpeed = 0; }));
 let openPanel = null; // { idx, kind: 'gear'|'logic' } | null
 let paletteOpenAt = null; // index into form.fields where a new field would be inserted, or null if no gap's palette is open
 
