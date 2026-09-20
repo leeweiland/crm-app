@@ -49,8 +49,6 @@
           <button class="tab-btn" data-tab="twilio">Twilio</button>
           <button class="tab-btn" data-tab="emailsettings">Opt Out</button>
           <button class="tab-btn" data-tab="tracking">Tracking</button>
-          <button class="tab-btn" data-tab="ads">Ads Tracking Sheet</button>
-          <button class="tab-btn" data-tab="calls">Calls Tracking Sheet</button>
           <button class="tab-btn" data-tab="users">Users</button>
           <button class="tab-btn" data-tab="account">My Account</button>
           <button class="tab-btn" data-tab="cache">Cache</button>
@@ -287,9 +285,8 @@
         </div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="sendTestEventBtn">Send Test Event</button>
         <pre id="testEventResult" class="pra-muted" style="font-size:.76rem;margin-top:10px;white-space:pre-wrap;max-height:220px;overflow:auto"></pre>
-      </div>
 
-      <div class="tab-panel pra-panel" id="tab-ads" style="padding:22px;max-width:520px">
+        <div id="tab-ads" style="margin-top:28px;padding-top:22px;border-top:1px solid var(--pra-border)">
         <div class="pra-h2" style="margin-bottom:6px">Ads Tracking Sheet</div>
         <div class="pra-muted" id="adsStatusMsg" style="font-size:.82rem;margin-bottom:16px">Loading...</div>
         <div class="field"><label class="pra-label">Google Sheet ID</label><input class="pra-input" id="adsSheetId"/></div>
@@ -305,15 +302,16 @@
         <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Lets Reporting's "Manual Update" button ask Coupler.io to pull fresh data right now, on top of its own automatic daily run. One flow per line if you have separate Online/Gym or Meta/Google flows.</div>
         <button class="pra-btn" id="saveAdsBtn">Save</button>
         <div class="pra-muted" id="adsSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
-      </div>
+        </div>
 
-      <div class="tab-panel pra-panel" id="tab-calls" style="padding:22px;max-width:520px">
+        <div id="tab-calls" style="margin-top:28px;padding-top:22px;border-top:1px solid var(--pra-border)">
         <div class="pra-h2" style="margin-bottom:6px">Calls Tracking Sheet</div>
         <div class="pra-muted" id="callsStatusMsg" style="font-size:.82rem;margin-bottom:16px">Loading...</div>
         <div class="field"><label class="pra-label">Google Sheet ID or URL</label><input class="pra-input" id="callsSheetId" placeholder="https://docs.google.com/spreadsheets/d/.../edit"/></div>
         <div class="pra-muted" style="font-size:.76rem;margin:-4px 0 10px">Every sale is read from this sheet (the ONLINE and GYM tabs, their RENEWALS &amp; PAYOFFS and TRAVEL tabs) and written into the daily rows of the Ads Tracking Sheet, which Reporting's ROAS and MAR read.</div>
         <button class="pra-btn" id="saveCallsBtn">Save</button>
         <div class="pra-muted" id="callsSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+        </div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-users" style="padding:22px">
