@@ -531,6 +531,7 @@ function adsSegmentCardHtml(title, data) {
     ['Spend', fmtMoney(data.spend), ''], ['Meta', fmtMoney(data.metaSpend), ''], ['Google', fmtMoney(data.googleSpend), ''],
     ['Leads', data.emails, ''], ['Bookings/Apps', data.bookM, ''], ['Closes', data.closes, ''], ['Sales (incl. renewals)', data.sales, ''],
     ['$ New Enrollments', fmtMoney(data.coll), ''], ['$ Payoffs, Renewals, Travel', fmtMoney((data.all || 0) - (data.coll || 0)), ''],
+    ['Total Revenue', fmtMoney(data.all), ''],
     ['ROAS', fmtRatio(roas), 'roas-row'], ['MAR (Total ROAS)', fmtRatio(mar), 'mar-row'],
   ];
   return `
