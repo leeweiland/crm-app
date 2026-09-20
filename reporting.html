@@ -488,6 +488,10 @@ async function loadOverview() {
   document.getElementById('overviewAdsCards').innerHTML = ads.ok
     ? adsSegmentCardHtml('Online', ads.online) + adsSegmentCardHtml('Gym', ads.gym) + adsSegmentCardHtml('Combined', ads.combined)
     : '<div class="pra-muted">Could not load ads data.</div>';
+  showHyrosNote('adsSalesNote', !ads.ok ? '' : ads.salesSource === 'calls-tracking'
+    ? 'Closes, Sales and $ figures come from the CALLS TRACKING sheet (enrolled rows, renewals & payoffs, travel). ROAS = new enrollments ÷ spend; MAR = all cash collected ÷ spend.'
+    : `Couldn't read the CALLS TRACKING sheet${ads.salesError ? ' (' + ads.salesError + ')' : ''} -- showing the ads sheet's hand-entered Closes/Sales/$ instead.`,
+    document.getElementById('overviewAdsCards'), 'after');
 }
 
 // ── Email / SMS daily charts ────────────────────────────────────────────
@@ -526,7 +530,7 @@ function adsSegmentCardHtml(title, data) {
   const rows = [
     ['Spend', fmtMoney(data.spend), ''], ['Meta', fmtMoney(data.metaSpend), ''], ['Google', fmtMoney(data.googleSpend), ''],
     ['Leads', data.emails, ''], ['Bookings/Apps', data.bookM, ''], ['Closes', data.closes, ''], ['Sales (incl. renewals)', data.sales, ''],
-    ['$ New Enrollments', fmtMoney(data.coll), ''], ['$ Payoffs, Renewals, Travel', fmtMoney(data.all), ''],
+    ['$ New Enrollments', fmtMoney(data.coll), ''], ['$ Payoffs, Renewals, Travel', fmtMoney((data.all || 0) - (data.coll || 0)), ''],
     ['ROAS', fmtRatio(roas), 'roas-row'], ['MAR (Total ROAS)', fmtRatio(mar), 'mar-row'],
   ];
   return `

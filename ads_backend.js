@@ -272,6 +272,103 @@ export function fetchCrmLeadsAndBookings(startMs, endMs) {
   return buckets;
 }
 
+// ── Closes / Sales / collected cash, straight from the CALLS TRACKING sheet ──
+// The ads sheet's CLOSES / RENEWALS / COLLECTED / ALL columns are typed in by hand each day
+// (its own header says so) and had gone unfilled since Aug 8, so the Overview read zeros --
+// while every enrollment, payoff/renewal and travel payment is already recorded in CALLS
+// TRACKING. Same definitions the ads sheet uses (checked against its hand-entered days, to
+// the dollar): closes = "Enrolled" rows (ONLINE by Date Of Call, GYM by Applied Date);
+// collected = their Amount Paid; all cash = collected + RENEWALS & PAYOFFS + TRAVEL amounts;
+// sales = closes + renewals/payoffs rows.
+const DEFAULT_CALLS_SHEET_ID = "1ue2wI4Nm5StnRhOSCYvMCjwiDMgqnWOuifGWbUQB92w";
+const CALLS_TTL_MS = 5 * 60 * 1000;
+let callsCache = null; // { at, data }
+const SHEET_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+// The sheet's dates are typed in many shapes ("August 4, 2026", "Thursday, September 17, 2026 at
+// 5:00 PM", "2026-08-23 6:24:31", "9/2/26", "8/22"). A year-less "8/22" means the most recent one.
+function parseSheetDate(raw) {
+  const s = String(raw || "").trim();
+  let m;
+  const ymd = (y, mo, d) => (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) ? `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
+  if ((m = /(\d{4})-(\d\d)-(\d\d)/.exec(s))) return ymd(m[1], +m[2], +m[3]);
+  if ((m = /([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/.exec(s)) && SHEET_MONTHS[m[1].toLowerCase()]) return ymd(m[3], SHEET_MONTHS[m[1].toLowerCase()], +m[2]);
+  if ((m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/.exec(s))) {
+    let y = m[3] ? Number(m[3]) : null;
+    if (y != null && y < 100) y += 2000;
+    if (y == null) {
+      const now = new Date();
+      y = now.getUTCFullYear();
+      if (Date.UTC(y, +m[1] - 1, +m[2]) > now.getTime() + 14 * 86400000) y--;
+    }
+    return ymd(y, +m[1], +m[2]);
+  }
+  return null;
+}
+const sheetNum = (v) => { const n = Number(String(v ?? "").replace(/[$,\s]/g, "")); return Number.isFinite(n) ? n : 0; };
+function callsCloses(rows, dateHeader) {
+  const hdr = (rows[0] || []).map(c => String(c).trim().toLowerCase());
+  const di = hdr.indexOf(dateHeader), ri = hdr.indexOf("result"), ai = hdr.indexOf("amount paid");
+  if (di < 0 || ri < 0 || ai < 0) throw new Error(`CALLS TRACKING tab is missing a "${dateHeader}", "Result" or "Amount Paid" column`);
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!/^enrolled/i.test(String(r[ri] || "").trim())) continue;
+    const d = parseSheetDate(r[di]);
+    if (d) out.push({ d, amt: sheetNum(r[ai]) });
+  }
+  return out;
+}
+// RENEWALS & PAYOFFS and TRAVEL tabs: FIRST | LAST | DATE | AMOUNT
+function callsPayments(rows) {
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const d = parseSheetDate(rows[i][2]), amt = sheetNum(rows[i][3]);
+    if (d && amt) out.push({ d, amt });
+  }
+  return out;
+}
+async function loadCallsTracking() {
+  if (callsCache && Date.now() - callsCache.at < CALLS_TTL_MS) return callsCache.data;
+  try {
+    const { clientId, clientSecret, refreshToken } = googleCreds();
+    if (!clientId || !clientSecret || !refreshToken) throw new Error("Google Sheets isn't configured");
+    const tr = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: "refresh_token" }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const accessToken = (await tr.json()).access_token;
+    if (!accessToken) throw new Error("Google token refresh failed");
+    const id = readSettings().ads?.callsSheetId || DEFAULT_CALLS_SHEET_ID;
+    const ranges = ["'ONLINE'!A1:P6000", "'GYM'!A1:P6000", "'ONLINE RENEWALS & PAYOFFS'!A1:D3000", "'ONLINE TRAVEL'!A1:D3000", "'GYM RENEWALS & PAYOFFS'!A1:D3000", "'GYM TRAVEL'!A1:D3000"];
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${ranges.map(x => "ranges=" + encodeURIComponent(x)).join("&")}`, {
+      headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30000),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.error?.message || `sheets_http_${r.status}`);
+    const v = (d.valueRanges || []).map(x => x.values || []);
+    const data = {
+      online: { closes: callsCloses(v[0] || [], "date of call"), renew: callsPayments(v[2] || []), travel: callsPayments(v[3] || []) },
+      gym: { closes: callsCloses(v[1] || [], "applied date"), renew: callsPayments(v[4] || []), travel: callsPayments(v[5] || []) },
+    };
+    callsCache = { at: Date.now(), data };
+    return data;
+  } catch (e) {
+    if (callsCache && Date.now() - callsCache.at < 3600000) return callsCache.data; // a brief Google/sheet hiccup shouldn't blank the cards
+    throw e;
+  }
+}
+export async function fetchCallsTrackingSales(startStr, endStr) {
+  const data = await loadCallsTracking();
+  const within = (a) => a.filter(x => x.d >= startStr && x.d <= endStr);
+  const sum = (a) => a.reduce((s, x) => s + x.amt, 0);
+  const build = (p) => {
+    const c = within(p.closes), rn = within(p.renew), tv = within(p.travel), coll = sum(c);
+    return { closes: c.length, sales: c.length + rn.length, coll, all: coll + sum(rn) + sum(tv) };
+  };
+  return { online: build(data.online), gym: build(data.gym) };
+}
+
 function readSettings() {
   return readJson(INTEGRATIONS_FILE, { ads: {} });
 }
@@ -489,10 +586,19 @@ async function fetchAdsReport(period, customStart, customEnd) {
   const crmData = fetchCrmLeadsAndBookings(crmStartMs, crmEndMs);
   Object.assign(o, crmData.online);
   Object.assign(g, crmData.gym);
+  // Closes/Sales/collected cash come from CALLS TRACKING (see above); if it can't be read, the ads
+  // sheet's hand-entered columns already loaded above stay in place.
+  let salesSource = "ads-sheet", salesError = null;
+  try {
+    const calls = await fetchCallsTrackingSales(startStr, endStr);
+    Object.assign(o, calls.online);
+    Object.assign(g, calls.gym);
+    salesSource = "calls-tracking";
+  } catch (e) { salesError = e.message; }
   const combined = {
     spend: o.spend + g.spend, metaSpend: o.metaSpend + g.metaSpend, googleSpend: o.googleSpend + g.googleSpend,
     emails: o.emails + g.emails,
-    bookM: o.bookM + g.emails, // matches ads-dashboard.html's GYM_KEYS quirk -- see comment there
+    bookM: o.bookM + g.bookM,
     closes: o.closes + g.closes, sales: o.sales + g.sales, coll: o.coll + g.coll, all: o.all + g.all,
   };
 
@@ -500,6 +606,7 @@ async function fetchAdsReport(period, customStart, customEnd) {
     ok: true, period, start: startStr, end: endStr, monthLabels,
     onlineSheetExists: onlineResult.exists, gymSheetExists: gymResult.exists,
     liveSpendUsed: !!liveSpend, liveSpendError: liveSpend?.partialError || liveSpendError,
+    salesSource, salesError,
     online: o, gym: g, combined,
   };
 }
