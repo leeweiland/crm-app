@@ -28,6 +28,21 @@ export const RESPONSES_FILE = "crm_form_responses.json";
 // reporting.html's own date-range picker uses -- so the Drop-offs tab's
 // period filter buckets consistently with every other report in the app.
 export const STEP_VIEWS_FILE = "crm_form_step_views.json";
+// The first Drop-offs release (Sep 13, 10:33 AKDT) stored each step's visitors as
+// a plain ARRAY of ids; the date-range picker shipped two hours later switched
+// to { id: "YYYY-MM-DD" } objects with no migration. A step still holding the
+// old array made every later view a silent no-op (setting a string key on an
+// array is dropped by JSON.stringify) -- ONLINE APP's steps all stayed arrays,
+// so nothing was recorded for it after that morning -- and the date filter
+// never matched the old array's ids either. Old entries were all recorded that
+// first morning, hence the fixed date.
+const LEGACY_STEP_VIEW_DATE = "2026-09-13";
+function normalizeStepViews(forForm) {
+  for (const [idx, val] of Object.entries(forForm)) {
+    if (Array.isArray(val)) forForm[idx] = Object.fromEntries(val.map(sid => [sid, LEGACY_STEP_VIEW_DATE]));
+  }
+  return forForm;
+}
 // Same "which Anchorage calendar day does this instant fall on" question
 // ads_backend.js's resolveRange answers for ad spend -- duplicated (not
 // imported) since it's a one-line Intl call, not worth a shared module for.
@@ -546,7 +561,7 @@ export async function handleFormsRequest(req, res, url) {
       const idx = Number(stepIndex);
       if (Number.isInteger(idx) && idx >= 0 && sid) {
         const views = readJson(STEP_VIEWS_FILE, {});
-        const forForm = views[form.id] || (views[form.id] = {});
+        const forForm = normalizeStepViews(views[form.id] || (views[form.id] = {}));
         const forStep = forForm[idx] || (forForm[idx] = {});
         if (!(sid in forStep)) { forStep[sid] = anchorageDateStr(new Date()); writeJson(STEP_VIEWS_FILE, views); }
       }
@@ -837,7 +852,7 @@ export async function handleFormsRequest(req, res, url) {
       cur.push(f);
     }
     stepLabels.push(cur);
-    const views = readJson(STEP_VIEWS_FILE, {})[form.id] || {};
+    const views = normalizeStepViews({ ...(readJson(STEP_VIEWS_FILE, {})[form.id] || {}) });
     const steps = Array.from({ length: stepCount }, (_, i) => ({
       views: Object.values(views[i] || {}).filter(inRange).length,
       label: (stepLabels[i]?.find(f => !["statement", "headline", "image", "video", "calendar", "page_break"].includes(f.type))?.label)
