@@ -803,6 +803,15 @@ window.BlockEditor = (function () {
               node.style.removeProperty('margin');
               ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach(p => node.style.removeProperty(p));
               node.style.removeProperty('border');
+              // Word processors stamp every span with its own explicit body
+              // size (Docs' default is 11pt = ~14.7px, shown as 15), so pasted
+              // text would ignore the email's default size and sit a hair
+              // smaller than the text around it. Ordinary body-size values
+              // (10.5-12.5pt / 14-16.7px) are dropped so the text inherits
+              // the email's default; headings and fine print keep their size.
+              const fs = node.style.fontSize;
+              const fsPx = /pt$/.test(fs) ? parseFloat(fs) * 4 / 3 : /px$/.test(fs) ? parseFloat(fs) : NaN;
+              if (fsPx >= 14 && fsPx <= 16.7) node.style.removeProperty('font-size');
               if (zeroMargin) node.style.margin = '0';
               if (!node.getAttribute('style')) node.removeAttribute('style');
             });
