@@ -104,6 +104,26 @@ async function openInlineEditMenu({ x, y, field, contactId, onSaved, owner }) {
 // carry data-inline-field + data-contact-id. Safe at any row count since
 // it's a single listener on the container, not N listeners.
 function wireInlineEditTable(containerEl, { onSaved } = {}) {
+  // Capture phase so this runs BEFORE the row's own onclick (which navigates
+  // to the contact page) -- a bubble-phase listener on the container would
+  // fire after the row had already started navigating away. Left-click is
+  // the discoverable path; right-click below still works too.
+  containerEl.addEventListener('click', (e) => {
+    const cell = e.target.closest('[data-inline-field]');
+    if (!cell) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (_inlineEditMenuOwner === cell) { closeInlineEditMenu(); return; }
+    const rect = cell.getBoundingClientRect();
+    openInlineEditMenu({
+      x: rect.left,
+      y: rect.bottom + 4,
+      field: cell.dataset.inlineField,
+      contactId: cell.dataset.contactId,
+      onSaved: (value) => onSaved && onSaved(cell, value),
+      owner: cell,
+    });
+  }, true);
   containerEl.addEventListener('contextmenu', (e) => {
     const cell = e.target.closest('[data-inline-field]');
     if (!cell) return;

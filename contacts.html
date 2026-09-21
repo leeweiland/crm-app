@@ -1147,7 +1147,7 @@ function renderContactsTable() {
     body.innerHTML = currentContacts.map(c => `
       <tr class="clickable" onclick="location.href='/contact-detail.html?id=${c.id}'">
         <td class="frozen-col-0" onclick="event.stopPropagation()"><input type="checkbox" data-select-contact="${c.id}" ${selectedContactIds.has(c.id) ? 'checked' : ''}/></td>
-        ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}"${col.editable ? ` data-inline-field="${col.key}" data-contact-id="${c.id}" title="Right-click to change"` : ''}>${col.render(c)}</td>`).join('')}
+        ${cols.map(col => `<td class="${col.frozen === 1 ? 'frozen-col-1' : col.frozen === 2 ? 'frozen-col-2' : ''}"${col.editable ? ` data-inline-field="${col.key}" data-contact-id="${c.id}" title="Click to change" style="cursor:pointer"` : ''}>${col.render(c)}</td>`).join('')}
       </tr>
     `).join('');
     wireOwnerFields(body, (contactId, ownerId) => {
