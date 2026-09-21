@@ -418,10 +418,8 @@ window.BlockEditor = (function () {
             <select id="beSpacing" title="Gaps between paragraphs -- fixes doubled blank lines from pasted text (applies to this whole text block)"><option value="">Spacing...</option><option value="none">No gaps</option><option value="small">Small gaps</option><option value="line">One blank line</option></select>
             <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option>${(opts.extraPersonalizeOptions || []).map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>
             <span class="be-link-popover" id="beLinkPopover">
-              <input type="text" id="beLinkUrl" placeholder="Link URL (select text first)"/>
+              <input type="text" id="beLinkUrl" placeholder="Link URL (select text first)" title="Type or paste a URL -- it's applied to the selected text automatically. Clear it to remove the link."/>
               ${hexColorFieldHtml('beLinkColor', '')}
-              <button type="button" id="beLinkApply">Apply</button>
-              <button type="button" id="beLinkUnlink">Unlink</button>
             </span>
           </div>
           <div class="be-canvas-toprow">
@@ -983,7 +981,7 @@ window.BlockEditor = (function () {
       setLinkEditHighlight(existingLink ? range : null);
     }
     document.addEventListener('selectionchange', syncToolbarFromSelection);
-    wireHexColorField(toolbar, 'beLinkColor', () => { linkColorTouched = true; });
+    wireHexColorField(toolbar, 'beLinkColor', () => { linkColorTouched = true; scheduleLinkCommit('color', 150); });
     // A collapsed selection (just a cursor, no highlight) inside an existing
     // link can't be re-linked/unlinked as-is -- execCommand needs
     // characters selected. Expand to the whole link's text so Apply/Unlink
@@ -998,10 +996,53 @@ window.BlockEditor = (function () {
       }
       return savedRange;
     }
-    toolbar.querySelector('#beLinkApply').addEventListener('click', () => {
-      const url = linkUrlInput.value.trim();
+    // There are no Apply/Unlink buttons: whatever is in the URL/color fields
+    // sticks. Typing or pasting a URL applies it to the selected text after
+    // a short pause (and immediately on blur/Enter), clearing the field
+    // removes the link, and picking a color re-applies the link with it.
+    // reason: 'url' (from the URL field) or 'color'.
+    let linkCommitTimer = null;
+    function scheduleLinkCommit(reason, delay) {
+      clearTimeout(linkCommitTimer);
+      linkCommitTimer = setTimeout(() => commitLink(reason), delay);
+    }
+    function commitLink(reason) {
+      clearTimeout(linkCommitTimer);
       const range = rangeForLinkAction();
-      if (!url || !range) return;
+      const bodyEl = canvas.querySelector(`.be-block-body[data-id="${selectedId}"]`);
+      // savedRange can be stale (the block re-rendered since, e.g. another
+      // block got selected) -- only act on a live range inside the block
+      // currently being edited.
+      if (!range || !bodyEl || !bodyEl.contains(range.commonAncestorContainer)) return;
+      const url = linkUrlInput.value.trim();
+      const existingLink = findLinkAncestor(range.startContainer) || findLinkAncestor(range.commonAncestorContainer);
+      // Just a cursor in plain text: nothing to link (createLink would
+      // insert the URL itself as new link text).
+      if (range.collapsed && !existingLink) return;
+      // Applying moves the document selection into the editor, which pulls
+      // focus out of whichever field the user is typing in -- put it back
+      // (caret included) so the next keystroke doesn't land in the email.
+      const active = document.activeElement;
+      const caret = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+      if (!url) {
+        if (reason === 'url' && existingLink) unlinkRange(range);
+      } else if (!(existingLink && existingLink.getAttribute('href') === url && !linkColorTouched)) {
+        applyLinkToRange(range, url);
+      }
+      if (active && active !== document.body && document.activeElement !== active && active.isConnected) {
+        active.focus({ preventScroll: true });
+        if (caret && active.setSelectionRange) { try { active.setSelectionRange(caret[0], caret[1]); } catch { /* not a text field */ } }
+      }
+    }
+    function unlinkRange(range) {
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('unlink', false, null);
+      syncSelectedText();
+      syncToolbarFromSelection();
+    }
+    function applyLinkToRange(range, url) {
       // Captured before unlink/createLink mutate the DOM -- those can
       // replace the text nodes range pointed at, so the range itself isn't
       // safe to re-query afterward, but the containing block-body element
@@ -1042,19 +1083,11 @@ window.BlockEditor = (function () {
       }
       syncSelectedText();
       syncToolbarFromSelection();
-    });
-    toolbar.querySelector('#beLinkUnlink').addEventListener('click', () => {
-      const range = rangeForLinkAction();
-      if (!range) return;
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      document.execCommand('unlink', false, null);
-      syncSelectedText();
-      syncToolbarFromSelection();
-    });
+    }
+    linkUrlInput.addEventListener('input', () => scheduleLinkCommit('url', 600));
+    linkUrlInput.addEventListener('change', () => commitLink('url'));
     linkUrlInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); toolbar.querySelector('#beLinkApply').click(); }
+      if (e.key === 'Enter') { e.preventDefault(); commitLink('url'); }
     });
     toolbar.querySelector('#bePersonalize').addEventListener('change', (e) => {
       if (!e.target.value) return;
