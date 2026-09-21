@@ -812,7 +812,17 @@ document.getElementById('editSegmentSaveBtn').onclick = async () => {
   const built = window.ConditionRowBuilder.buildFilter(document.getElementById('editSegmentRows'), 'all'); // conds only; match mode applied below
   const conds = [...(built?.all || []), ...editingSegment.preserved];
   if (!conds.length) return fail('Add at least one condition (rows with no value are ignored).');
-  const filter = document.getElementById('editSegmentMatch').value === 'any' ? { any: conds } : { all: conds };
+  const matchMode = document.getElementById('editSegmentMatch').value;
+  // Match ALL with two different "Status is X" (or "Type is X") rows can never
+  // be true -- a contact has one status/type -- so it always saves as an empty
+  // segment. Almost certainly meant "is any of" (or Match ANY); say so now.
+  if (matchMode === 'all') {
+    for (const field of ['status', 'programType']) {
+      const vals = [...new Set(conds.filter(c => c.field === field && c.op === 'eq').map(c => c.value))];
+      if (vals.length > 1) return fail(`"${field === 'status' ? 'Status' : 'Type'} is ${vals.join('" and "')}" can never both be true with Match ALL, so this would match nobody. Use one "${field === 'status' ? 'Status' : 'Type'} is any of" row and pick both, or switch Match to ANY.`);
+    }
+  }
+  const filter = matchMode === 'any' ? { any: conds } : { all: conds };
   const btn = document.getElementById('editSegmentSaveBtn');
   btn.disabled = true; btn.textContent = 'Saving...';
   let r;

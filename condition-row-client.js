@@ -71,6 +71,12 @@ window.ConditionRowBuilder = (function () {
   // instead of on a page-global object, so it can live inside an arbitrary
   // condition row.
   function renderMultiSelectInto(el, items, selected, onChange) {
+    // The host must be the dropdown's positioning context (.ms-dropdown is
+    // position:absolute; top:100%). Without this the list opened at the
+    // bottom-left of the page -- outside a modal's clipped box, so the Status
+    // "is any of" picker showed no options at all.
+    el.style.position = 'relative';
+    el.style.display = 'block';
     el.innerHTML = `<div class="ms-chips"></div><input class="pra-input ms-search" type="text" placeholder="Search..."/><div class="ms-dropdown"></div>`;
     const chipsEl = el.querySelector('.ms-chips');
     const searchEl = el.querySelector('.ms-search');
