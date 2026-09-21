@@ -9,6 +9,7 @@ import { readJson } from "./auth_backend.js";
 
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
+export const STAFF_ACTIVITY_FILE = "crm_staff_activity.json";
 // Duplicated from statuses_backend.js's own STATUSES_FILE (not imported) --
 // statuses_backend.js needs to import CONTACTS_FILE/sqlite sync helpers
 // from here and sqlite_inbox.js to cascade-rename a status across every
@@ -132,6 +133,13 @@ export function leadDateMs(contact) {
 //   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
 //   | "within_last_days"                                           (new -- value is a number of days, emailOpened/emailClicked only: latest such event within the last N days, incl. imported ActiveCampaign history)
 //   | "after"                                                       (new -- value is a single ISO timestamp, firstSeenAt/createdAt only; a FIXED lower bound with no upper bound, so it keeps matching every new contact from that point forward -- e.g. "leads since Sep 6, 2026, ongoing".)
+//   | "gt" | "gte" | "lt" | "lte"                                  (new -- customFields.<id> only; numeric comparison, value is a number. "$85,000" / "85,000" read as 85000; a blank or non-numeric field never matches, so "income > 60000" can't be satisfied by a contact with no estimate.)
+//
+// field "staffActivity:<userId>" with op "within_last_days" | "not_within_last_days"
+// (value = number of days): whether that team member has an email or SMS
+// conversation with the contact -- any message they sent, or an email
+// received at their own address -- in the last N days. Backed by the small
+// crm_staff_activity.json index (staff_activity.js), never the message log.
 //
 // emailOpened/emailClicked and visitedPage are deliberately NOT read from
 // crm_message_log.json / crm_page_visits.json here -- both can grow huge in
@@ -193,6 +201,12 @@ function evalCondition(contact, cond) {
     return ageMs >= 0 && ageMs <= Number(value) * 24 * 3600 * 1000;
   }
 
+  if (field.startsWith("staffActivity:") && (op === "within_last_days" || op === "not_within_last_days")) {
+    const lastAt = Date.parse(staffActivityIndex()[field.slice("staffActivity:".length)]?.[contact.id] || "");
+    const recent = !isNaN(lastAt) && Date.now() - lastAt <= Number(value) * 24 * 3600 * 1000;
+    return op === "within_last_days" ? recent : !recent;
+  }
+
   if (field === "visitedPage") {
     const paths = contact.visitedPaths || [];
     switch (op) {
@@ -240,8 +254,27 @@ function evalCondition(contact, cond) {
     case "all_of": return Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v));
     case "not_any_of": return !(Array.isArray(value) && (Array.isArray(actual) ? value.some(v => actual.includes(v)) : value.includes(actual)));
     case "not_all_of": return !(Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v)));
+    case "gt": case "gte": case "lt": case "lte": {
+      const a = toNumber(actual), b = toNumber(value);
+      if (isNaN(a) || isNaN(b)) return false;
+      return op === "gt" ? a > b : op === "gte" ? a >= b : op === "lt" ? a < b : a <= b;
+    }
     default: return false;
   }
+}
+// Custom-field values are free text -- tolerate "$85,000" but never treat a
+// blank as zero (Number("") is 0, which would make every empty field "< 60000").
+function toNumber(v) {
+  const s = String(v ?? "").replace(/[$,\s]/g, "");
+  return s === "" ? NaN : Number(s);
+}
+// crm_staff_activity.json: { [userId]: { [contactId]: lastActivityISO } }. A
+// segment pass calls evalCondition once per contact, and readJson stats the
+// file every time -- a 2-second memo keeps a full-contacts pass to one read.
+let _staffIdx = null, _staffIdxAt = 0;
+function staffActivityIndex() {
+  if (!_staffIdx || Date.now() - _staffIdxAt > 2000) { _staffIdx = readJson(STAFF_ACTIVITY_FILE, {}); _staffIdxAt = Date.now(); }
+  return _staffIdx;
 }
 export function matchesSegment(contact, filter) {
   if (!filter) return true;

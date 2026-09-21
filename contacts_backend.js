@@ -7,6 +7,8 @@ import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
 import { logMessage } from "./message_log.js";
+import { applyIncomeEstimates } from "./income_estimate.js";
+import { mergeStaffActivity } from "./staff_activity.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -244,6 +246,23 @@ export async function handleContactsRequest(req, res, url) {
   // a separate one-off script, since a separate script sharing this
   // container kept crashing it. Idempotent -- safe to hit more than once,
   // becomes a no-op once nothing matches the old label.
+  // Bulk loaders for the two derived datasets segments read: AI income
+  // estimates (income_estimate.js) and the team-member conversation index
+  // (staff_activity.js). Both run in THIS process so their writes are
+  // serialized with every other write the app makes, instead of a side
+  // script racing the live server on the same files. Idempotent.
+  if (p === "/api/contacts/admin/income-estimates" && req.method === "POST") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { results } = await readJsonBody(req);
+    if (!Array.isArray(results)) return sendJson(res, 400, { error: "results must be an array" });
+    return sendJson(res, 200, { ok: true, ...applyIncomeEstimates(results) });
+  }
+  if (p === "/api/contacts/admin/staff-activity" && req.method === "POST") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { entries } = await readJsonBody(req);
+    if (!entries || typeof entries !== "object") return sendJson(res, 400, { error: "entries must be an object" });
+    return sendJson(res, 200, { ok: true, ...mergeStaffActivity(entries) });
+  }
   if (p === "/api/contacts/admin/fix-blacklist-status" && req.method === "GET") {
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
     const contacts = readJson(CONTACTS_FILE, []);

@@ -3,6 +3,7 @@ import { appendJsonRecordFast, appendToJsonObjectFast, readJson } from "./auth_b
 import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
+import { noteStaffActivity } from "./staff_activity.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -73,6 +74,9 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
   appendSourceMessage(row);
   recordDailyStatsNew(row);
   upsertConversationSummary(row);
+  // Which team member (if any) this message puts in conversation with the
+  // contact -- feeds the "emailed/texted with <person>" segment condition.
+  noteStaffActivity(row);
   // A conversation marked Done stays that way forever otherwise (done is a
   // sticky manual flag -- see conversation_meta.js -- never cleared just
   // because unread_count went back up). A genuinely new inbound message

@@ -847,6 +847,51 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
   return updated;
 }
 
+// updateJsonArrayRecordsByIds above builds two byte needles PER id and tests
+// every one against every element -- fine for a handful of ids, hopeless for
+// thousands (11K ids x 176K contacts is billions of buffer scans). This one
+// reads each element's own id off the front of the record and does a Set
+// lookup instead, so a bulk patch of any size is still ONE pass and ONE
+// rewrite of the file. An element whose id isn't the first key (none the app
+// writes, but hand-edited data exists) falls back to a real parse rather than
+// being skipped.
+export function updateJsonArrayRecordsByIdSet(file, idSet, updater) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p) || !idSet || !idSet.size) return [];
+  const updated = [];
+  let changed = false;
+  const tmp = tmpPathFor(p);
+  const dstFd = openSync(tmp, "w");
+  let wroteAny = false;
+  try {
+    writeSync(dstFd, "[");
+    forEachJsonArrayElement(p, (buf, start, end) => {
+      const view = buf.subarray(start, end);
+      const head = view.subarray(0, Math.min(view.length, 120)).toString("latin1");
+      const m = head.match(/^\s*\{\s*"id"\s*:\s*"([^"]+)"/);
+      let obj = null, toWrite = null;
+      if (m) {
+        if (idSet.has(m[1])) { try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; } }
+      } else {
+        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+        if (obj && !idSet.has(obj.id)) obj = null;
+      }
+      if (obj) {
+        const result = updater(obj);
+        if (result !== null) { toWrite = result || obj; updated.push(toWrite); changed = true; }
+      }
+      if (wroteAny) writeSync(dstFd, ",");
+      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+      else writeSync(dstFd, buf, start, end - start);
+      wroteAny = true;
+    });
+    writeSync(dstFd, "]");
+  } finally { closeSync(dstFd); }
+  if (changed) { renameSync(tmp, p); _mtimeCache.delete(file); }
+  else { try { unlinkSync(tmp); } catch {} }
+  return updated;
+}
+
 export function readJsonBody(req) {
   return new Promise((resolve) => {
     let body = "";
