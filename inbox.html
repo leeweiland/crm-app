@@ -421,6 +421,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span id="ovTypeBadge"></span>
           <div class="pra-h2" id="contactOverlayName" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Contact</div>
+          <span id="ovCreatedPill" style="flex-shrink:0"></span>
           <span id="ovRenewPill" style="flex-shrink:0"></span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
@@ -1470,6 +1471,7 @@ async function openContactOverlay(contactId) {
   if (!contactRes.ok) { showToast('Could not load contact', true); return; }
   overlayContact = (await contactRes.json()).contact;
   document.getElementById('contactOverlayName').textContent = `${overlayContact.first} ${overlayContact.last}`.trim() || 'Contact';
+  document.getElementById('ovCreatedPill').innerHTML = window.ConversationPanel.createdPillHtml(overlayContact);
   document.getElementById('ovRenewPill').innerHTML = overlayContact.renewal ? `<span class="renew-pill renew-${overlayContact.renewal.level}">Renew by ${fmtRenewDate(overlayContact.renewal.endDate)}</span>` : '';
   document.getElementById('ovTypeBadge').innerHTML = overlayContact.programType ? `<span class="pra-badge pra-badge-${overlayContact.programType}">${escapeHtml(overlayContact.programType)}</span>` : '';
   // Same dedicated-tab pattern as contact-detail.html/conversation-panel.js's

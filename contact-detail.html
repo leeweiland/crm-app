@@ -62,6 +62,7 @@
               <span id="contactTypeBadge"></span>
               <div class="pra-h1" id="contactName">Loading…</div>
               <span id="contactOwnerField"></span>
+              <span id="contactCreatedPill"></span>
               <span id="contactRenewPill"></span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
@@ -403,6 +404,9 @@ function readDetailsForm() {
   };
 }
 // "Renew by <end date>" right of the assigned user (server attaches contact.renewal for an ENROLLED student near their END DATE)
+function renderCreatedPill() {
+  document.getElementById('contactCreatedPill').innerHTML = window.ConversationPanel.createdPillHtml(contact);
+}
 function renderRenewPill(rn) {
   document.getElementById('contactRenewPill').innerHTML = rn ? `<span class="renew-pill renew-${rn.level}" title="Enrolled student -- end date ${rn.endDate}">Renew by ${new Date(...rn.endDate.split('-').map((x, i) => i === 1 ? x - 1 : +x)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>` : '';
 }
@@ -445,6 +449,7 @@ document.getElementById('deleteBtn').onclick = async () => {
   ownerFieldEl.innerHTML = ownerFieldHtml(contact);
   wireOwnerFields(ownerFieldEl, (_, ownerId) => { contact.ownerId = ownerId; });
   renderRenewPill(contact.renewal);
+  renderCreatedPill();
   document.getElementById('fFirst').value = contact.first || '';
   document.getElementById('fLast').value = contact.last || '';
   document.getElementById('fAccount').value = contact.accountName || '';

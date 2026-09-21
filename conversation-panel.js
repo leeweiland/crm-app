@@ -33,6 +33,29 @@
   }
   function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
   function fmtCreatedDate(iso) { return iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''; }
+  // The date a contact FIRST appeared anywhere: the earlier of firstSeenAt (Hyros /
+  // Close / ActiveCampaign, filled in by imports and syncs -- a contact created here
+  // has none yet, sometimes for weeks) and createdAt (when THIS CRM got them -- for an
+  // imported contact that's just the bulk-import day, so it can't be used alone).
+  // Mirrors leadDateMs in segments_shared.js, including its Hyros correction: Hyros
+  // stamps UTC clock digits with a wrong -09:00 offset.
+  function leadDateMs(contact) {
+    if (!contact) return null;
+    const times = [];
+    const fs = contact.firstSeenAt;
+    if (fs) {
+      const t = contact.source === 'hyros_import' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?-09:00$/.test(fs) ? Date.parse(fs.slice(0, 19) + 'Z') : new Date(fs).getTime();
+      if (!isNaN(t)) times.push(t);
+    }
+    if (contact.createdAt) { const t = new Date(contact.createdAt).getTime(); if (!isNaN(t)) times.push(t); }
+    return times.length ? Math.min(...times) : null;
+  }
+  // The "Since <date>" pill shown beside the owner in every contact header.
+  function createdPillHtml(contact) {
+    const ms = leadDateMs(contact);
+    if (ms == null) return '';
+    return `<span class="chat-panel-created" style="margin-left:8px;white-space:nowrap" title="Earliest date this person appeared in any connected system (Hyros, Close, ActiveCampaign or this CRM)">Since ${fmtCreatedDate(new Date(ms).toISOString())}</span>`;
+  }
   // Compact date -- toLocaleString() always includes a time, which reads as
   // noise ("12:00:00 AM") for a task/note that was only ever given a date.
   // Only shows a time when one was actually set (non-midnight).
@@ -692,6 +715,7 @@
               <span class="pra-badge pra-badge-${contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${contact?.programType ? escapeHtml(contact.programType) : 'SET TYPE'}</span>
               <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(config.getDisplayName ? (config.getDisplayName() || '') : `${contact?.first || ''} ${contact?.last || ''}`.trim())}</a>
               ${contactId ? ownerFieldHtml(contact) : ''}
+              ${contactId ? createdPillHtml(contact) : ''}
               ${contact?.renewal ? renewPillHtml(contact.renewal) : ''}
             </span>
             <div class="chat-panel-sub">${[
@@ -702,7 +726,6 @@
               // number doesn't reveal a timezone or that script isn't loaded.
               contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
               zoomLinkHtml(config.currentUser),
-              contact?.firstSeenAt ? `<span class="chat-panel-created" title="Earliest known date across Close/ActiveCampaign">Since ${fmtCreatedDate(contact.firstSeenAt)}</span>` : '',
             ].filter(Boolean).join(' · ')}</div>
           </div>
           ${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
@@ -1063,5 +1086,5 @@
     return instance;
   }
 
-  window.ConversationPanel = { init };
+  window.ConversationPanel = { init, createdPillHtml };
 })();
