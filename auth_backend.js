@@ -857,8 +857,17 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
 // re-stringified. Everything else is byte-copied untouched. Returns the
 // changed records. Synchronous, like its siblings: the file is streamed once.
 export function patchJsonArrayRecordsByIdMap(file, patchesById, apply) {
+  return patchJsonArrayRecordsByKeyMap(file, patchesById, apply, {
+    keyOf: (buf, start, end) => /"id"\s*:\s*"([^"]+)"/.exec(buf.toString("latin1", start, Math.min(end, start + 400)))?.[1] ?? null,
+    verify: (obj, key) => obj.id === key,
+  });
+}
+// Same pass, keyed by any field a caller can cheaply read straight off the
+// element's bytes: keyOf(buf, start, end) -> key string or null (no parse),
+// verify(parsedRecord, key) guards against a byte-level false positive.
+export function patchJsonArrayRecordsByKeyMap(file, patchesByKey, apply, { keyOf, verify }) {
   const p = join(DATA_DIR, file);
-  if (!existsSync(p) || !patchesById || !patchesById.size) return [];
+  if (!existsSync(p) || !patchesByKey || !patchesByKey.size) return [];
   const changed = [];
   const tmp = `${p}.tmp${process.pid}`;
   const dstFd = openSync(tmp, "w");
@@ -867,11 +876,11 @@ export function patchJsonArrayRecordsByIdMap(file, patchesById, apply) {
     writeSync(dstFd, "[");
     forEachJsonArrayElement(p, (buf, start, end) => {
       let toWrite = null;
-      const m = /"id"\s*:\s*"([^"]+)"/.exec(buf.toString("latin1", start, Math.min(end, start + 400)));
-      if (m && patchesById.has(m[1])) {
+      const key = keyOf(buf, start, end);
+      if (key != null && patchesByKey.has(key)) {
         let obj;
         try { obj = JSON.parse(buf.toString("utf8", start, end)); } catch { obj = null; }
-        if (obj && obj.id === m[1] && apply(obj, patchesById.get(m[1]))) { toWrite = obj; changed.push(obj); }
+        if (obj && verify(obj, key) && apply(obj, patchesByKey.get(key))) { toWrite = obj; changed.push(obj); }
       }
       if (wroteAny) writeSync(dstFd, ",");
       if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
