@@ -343,6 +343,7 @@
       <select class="pra-select" id="addToTypeSelect">
         <option value="automation">Email Automation</option>
         <option value="workflow">SMS Sequence</option>
+        <option value="owner">Assign to user</option>
       </select>
     </div>
     <div class="field">
@@ -853,16 +854,29 @@ async function openAddToModal(target, subtitle) {
   addToTarget = target;
   document.getElementById('addToModalSubtitle').textContent = subtitle || '';
   document.getElementById('addToTypeSelect').value = 'automation';
+  // Reassigning a contact's owner is admin-only server-side (contacts_backend.js);
+  // don't offer it to staff who'd just get a 403.
+  const ownerOpt = document.querySelector('#addToTypeSelect option[value="owner"]');
+  if (ownerOpt) ownerOpt.hidden = ownerOpt.disabled = window.crmMe?.role !== 'admin';
   await renderAddToItemOptions();
   document.getElementById('addToModal').classList.add('show');
 }
 async function renderAddToItemOptions() {
   const type = document.getElementById('addToTypeSelect').value;
+  const itemSel = document.getElementById('addToItemSelect');
+  document.getElementById('confirmAddToBtn').textContent = type === 'owner' ? 'Assign' : 'Add';
+  if (type === 'owner') {
+    // Team members come from crm-nav.js (already loaded for the owner fields
+    // elsewhere on this page); the last option clears the assignment.
+    document.getElementById('addToItemLabel').textContent = 'User';
+    const users = (window.crmTeamUsers || []).filter(u => !u.archived);
+    itemSel.innerHTML = users.map(u => `<option value="${u.id}">${escapeHtml([u.first, u.last].filter(Boolean).join(' ') || u.email)}</option>`).join('') + '<option value="__none__">Unassigned</option>';
+    return;
+  }
   document.getElementById('addToItemLabel').textContent = type === 'automation' ? 'Automation' : 'Sequence';
   const r = await fetch(type === 'automation' ? '/api/automations' : '/api/workflows');
   const d = r.ok ? await r.json() : {};
   const items = type === 'automation' ? (d.automations || []) : (d.workflows || []);
-  const itemSel = document.getElementById('addToItemSelect');
   itemSel.innerHTML = items.length ? items.map(i => `<option value="${i.id}">${escapeHtml(i.name)}</option>`).join('') : '<option value="">None yet -- create one first</option>';
 }
 document.getElementById('addToTypeSelect').addEventListener('change', renderAddToItemOptions);
@@ -870,6 +884,20 @@ document.getElementById('confirmAddToBtn').onclick = async () => {
   const type = document.getElementById('addToTypeSelect').value;
   const itemId = document.getElementById('addToItemSelect').value;
   if (!itemId || !addToTarget) { showToast('Nothing to add to yet', true); return; }
+  if (type === 'owner') {
+    const btn = document.getElementById('confirmAddToBtn');
+    const ownerName = document.getElementById('addToItemSelect').selectedOptions[0]?.textContent || 'user';
+    btn.disabled = true;
+    let r, d = {};
+    try { r = await fetch('/api/contacts/bulk-assign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...addToTarget, ownerId: itemId === '__none__' ? null : itemId }) }); d = await r.json().catch(() => ({})); }
+    catch { r = null; }
+    btn.disabled = false;
+    if (!r || !r.ok) { showToast(d.error || 'Could not assign', true); return; }
+    document.getElementById('addToModal').classList.remove('show');
+    showToast(itemId === '__none__' ? `Unassigned ${d.assigned} contact${d.assigned === 1 ? '' : 's'}` : `Assigned ${d.assigned} contact${d.assigned === 1 ? '' : 's'} to ${ownerName}`);
+    if (typeof loadContacts === 'function') loadContacts();
+    return;
+  }
   const endpoint = type === 'automation' ? `/api/automations/${itemId}/enroll` : `/api/workflows/${itemId}/enroll`;
   const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(addToTarget) });
   const d = await r.json().catch(() => ({}));

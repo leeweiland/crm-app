@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, updateJsonArrayRecordsByIds, removeValuesFromArrayField, appendJsonRecordFast, isAdmin } from "./auth_backend.js";
-import { renewalForContact, syncContactFields, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
-import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, updateJsonArrayRecordsByIds, updateJsonArrayRecordsByIdSet, removeValuesFromArrayField, appendJsonRecordFast, isAdmin, USERS_FILE } from "./auth_backend.js";
+import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
+import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
@@ -85,6 +85,7 @@ export function getCachedTestContactIds() {
   return cache?.testContactIds ?? null; // null (not []) means "no cache yet" -- caller falls back to computing live
 }
 export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
+const BULK_ASSIGN_MAX = 1000;
 
 // Denormalized engagement signals so segment evaluation (segments_shared.js's
 // evalCondition) never has to scan crm_message_log.json or
@@ -273,6 +274,25 @@ export async function handleContactsRequest(req, res, url) {
   // re-stringifies the whole ~190MB file and races with in-place patches from
   // webhooks. The byte pre-check costs two indexOf per id per record, so the
   // batch is capped -- the client sends larger selections in chunks.
+  // Assign (or unassign, ownerId null) every contact in a segment / tag / an
+  // explicit selection to one team member -- the "Assign to user" choice in
+  // the Contacts page's "Add to..." modal. Same admin-only rule as changing a
+  // single contact's owner. ONE pass over the contacts file plus ONE SQLite
+  // transaction, so it costs about what a single contact edit does; refuses
+  // very large targets rather than block the server's one thread on them.
+  if (p === "/api/contacts/bulk-assign" && req.method === "POST") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
+    const body = await readJsonBody(req);
+    const ownerId = body.ownerId || null;
+    if (ownerId && !readJson(USERS_FILE, []).some(u => u.id === ownerId && !u.archived)) return sendJson(res, 400, { error: "Unknown or archived user" });
+    const ids = resolveBulkContactIds(body);
+    if (!ids.length) return sendJson(res, 200, { ok: true, assigned: 0 });
+    if (ids.length > BULK_ASSIGN_MAX) return sendJson(res, 400, { error: `That's ${ids.length} contacts -- assign at most ${BULK_ASSIGN_MAX} at a time (narrow the segment or select fewer).` });
+    const now = new Date().toISOString();
+    const updated = updateJsonArrayRecordsByIdSet(CONTACTS_FILE, new Set(ids), c => { c.ownerId = ownerId; c.updatedAt = now; return c; });
+    try { syncContactFieldsBatch(updated); } catch (e) { console.error("[sqlite_inbox] bulk assign sync failed:", e.message); }
+    return sendJson(res, 200, { ok: true, assigned: updated.length });
+  }
   if (p === "/api/contacts/bulk-delete" && req.method === "POST") {
     const { ids } = await readJsonBody(req);
     if (!Array.isArray(ids) || !ids.length) return sendJson(res, 400, { error: "ids is required" });

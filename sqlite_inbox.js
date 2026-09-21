@@ -421,6 +421,22 @@ export function syncContactFields(contactId, contact) {
   upsertContactIndex(contact);
 }
 
+// syncContactFields for many contacts in ONE transaction. Each call above is
+// two autocommitted statements, i.e. two fsyncs -- ~40ms each on the volume, so
+// 1,600 contacts froze the whole server for ~140s (2026-09-21). One
+// transaction pays that fsync once.
+export function syncContactFieldsBatch(contacts) {
+  if (!sqliteInboxAvailable() || !contacts?.length) return;
+  db.exec("BEGIN");
+  try {
+    for (const c of contacts) syncContactFields(c.id, c);
+    db.exec("COMMIT");
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch { /* nothing open */ }
+    throw e;
+  }
+}
+
 // contacts_idx mirrors the Contacts page's own filter/sort/search needs --
 // see its CREATE TABLE comment above. raw_json is the full stored record
 // (customFields, externalIds, tags, listIds, etc, everything a single

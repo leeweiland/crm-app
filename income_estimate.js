@@ -1,7 +1,7 @@
 import { readJson, writeJson, updateJsonArrayRecordsByIdSet } from "./auth_backend.js";
 import { randomUUID } from "crypto";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { syncContactFields } from "./sqlite_inbox.js";
+import { syncContactFieldsBatch } from "./sqlite_inbox.js";
 import { labelIdMap, applicationSnapshot, estimateIncomeBatch } from "./income_estimate_core.js";
 
 // Estimated income, worked out from what a lead wrote on their application
@@ -51,7 +51,7 @@ export function applyIncomeEstimates(results) {
     c.customFields[basisId] = `${r.basis || "n/a"} [${tag}]`;
     return c;
   });
-  for (const c of updated) { try { syncContactFields(c.id, c); } catch (e) { console.error("[income_estimate] sqlite sync failed:", e.message); } }
+  try { syncContactFieldsBatch(updated); } catch (e) { console.error("[income_estimate] sqlite sync failed:", e.message); }
   return { requested: results.length, updated: updated.length };
 }
 
