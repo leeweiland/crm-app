@@ -28,13 +28,24 @@ function fieldText(contact, ids) {
 // { id, text } for the estimator, or null when the contact has no application
 // text at all.
 export function applicationSnapshot(contact, labelMap) {
-  if (!CORE_LABELS.some(l => fieldText(contact, labelMap[l]))) return null;
+  let hasCore = CORE_LABELS.some(l => fieldText(contact, labelMap[l]));
   const parts = [];
   for (const l of APPLICATION_LABELS) {
     const t = fieldText(contact, labelMap[l]);
     if (t) parts.push(`${l.replace(/\?$/, "")}: ${t.slice(0, 500)}`);
   }
-  return { id: contact.id, text: parts.join("\n").slice(0, 1600) };
+  // Answers saved by the CRM's own forms/booking pages whose question wasn't
+  // mapped to a real custom field land under an auto-made key built from the
+  // question text ("career_if_you_re_retired_please_put_what_you_did") --
+  // recent online leads carry them, so read those too.
+  for (const [k, v] of Object.entries(contact.customFields || {})) {
+    if (!/^(career|current_situation|what_have_you_tried|why_is_it_important)/.test(k)) continue;
+    const t = String(v ?? "").trim();
+    if (!t) continue;
+    parts.push(`${k.replace(/_/g, " ").slice(0, 60)}: ${t.slice(0, 500)}`);
+    hasCore = true;
+  }
+  return hasCore ? { id: contact.id, text: parts.join("\n").slice(0, 1600) } : null;
 }
 
 const RUBRIC = `You estimate how much money a fitness-coaching lead earns per year, using only what they wrote on their application.
