@@ -847,6 +847,44 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
   return updated;
 }
 
+// Patches MANY records (potentially tens of thousands) of a big array file in
+// ONE in-place streaming pass -- the id-set helpers above pay two byte scans
+// per id per record, which doesn't scale past a few hundred ids. Here each
+// element's own id is read from its first few hundred bytes (every contact
+// record starts with "id"; verified against the full production snapshot) and
+// looked up in `patchesById`; only records that hit are parsed, handed to
+// apply(record, patch) -- return true if it changed anything -- and
+// re-stringified. Everything else is byte-copied untouched. Returns the
+// changed records. Synchronous, like its siblings: the file is streamed once.
+export function patchJsonArrayRecordsByIdMap(file, patchesById, apply) {
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p) || !patchesById || !patchesById.size) return [];
+  const changed = [];
+  const tmp = `${p}.tmp${process.pid}`;
+  const dstFd = openSync(tmp, "w");
+  let wroteAny = false;
+  try {
+    writeSync(dstFd, "[");
+    forEachJsonArrayElement(p, (buf, start, end) => {
+      let toWrite = null;
+      const m = /"id"\s*:\s*"([^"]+)"/.exec(buf.toString("latin1", start, Math.min(end, start + 400)));
+      if (m && patchesById.has(m[1])) {
+        let obj;
+        try { obj = JSON.parse(buf.toString("utf8", start, end)); } catch { obj = null; }
+        if (obj && obj.id === m[1] && apply(obj, patchesById.get(m[1]))) { toWrite = obj; changed.push(obj); }
+      }
+      if (wroteAny) writeSync(dstFd, ",");
+      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+      else writeSync(dstFd, buf, start, end - start);
+      wroteAny = true;
+    });
+    writeSync(dstFd, "]");
+  } finally { closeSync(dstFd); }
+  if (changed.length) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+  else { try { unlinkSync(tmp); } catch {} }
+  return changed;
+}
+
 export function readJsonBody(req) {
   return new Promise((resolve) => {
     let body = "";

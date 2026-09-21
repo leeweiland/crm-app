@@ -58,6 +58,9 @@ window.ConditionRowBuilder = (function () {
       return `<option value="eq">Is</option><option value="neq">Is not</option><option value="any_of">Is any of</option><option value="not_any_of">Is not any of</option>`;
     }
     if (field.startsWith("customFields.")) return `<option value="eq">Is</option><option value="neq">Is not</option><option value="exists">Is set</option>`;
+    // Opened/Clicked Email can also be windowed: "in the last N days" (latest
+    // event, including the imported ActiveCampaign history).
+    if (field === "emailOpened" || field === "emailClicked") return `<option value="eq">Is</option><option value="neq">Is not</option><option value="within_last_days">In the last (days)</option>`;
     return `<option value="eq">Is</option><option value="neq">Is not</option>`;
   }
 
@@ -115,6 +118,7 @@ window.ConditionRowBuilder = (function () {
     if (MULTI_VALUE_OPS.includes(op) && (ARRAY_FIELDS.includes(field) || SCALAR_MULTI_FIELDS.includes(field))) return `<span data-cond-value-multi></span>`; // filled in by refreshValue() below
     if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`; // legacy field, kept only so a pre-existing saved segment still renders correctly
     if (field === 'programType') return `<select class="pra-select" data-cond-value><option value="online">Online</option><option value="gym">Gym</option></select>`;
+    if (op === 'within_last_days') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="# of days, e.g. 30"/>`;
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
     if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
@@ -212,7 +216,7 @@ window.ConditionRowBuilder = (function () {
   const OP_LABELS = {
     eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', contains: 'contains',
     any_of: 'is any of', all_of: 'is all of', not_any_of: 'is not any of', not_all_of: 'is not all of',
-    within_last_hours: 'is within the last', after: 'is on or after', between: 'is between',
+    within_last_hours: 'is within the last', within_last_days: 'in the last', after: 'is on or after', between: 'is between',
   };
   // Can this row builder faithfully show + re-save this stored condition? A
   // saved segment can hold conditions the UI never offered (field "id" for a
@@ -250,6 +254,7 @@ window.ConditionRowBuilder = (function () {
       if (cond.field === 'listIds') valueLabel = allLists.find(l => l.id === cond.value)?.name || cond.value;
     }
     if (cond.op === 'within_last_hours') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} hours`;
+    if (cond.op === 'within_last_days') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} days`;
     if (cond.op === 'after' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     if (cond.op === 'between' && valueLabel && typeof valueLabel === 'object' && !Array.isArray(valueLabel)) {
       const fmt = v => isNaN(new Date(v)) ? String(v ?? '') : new Date(v).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });

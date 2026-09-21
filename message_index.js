@@ -17,7 +17,7 @@ import { CONTACTS_FILE } from "./segments_shared.js";
 // per-contact SUMMARY row turns the sidebar's full-log fold into a plain
 // array read+sort -- both O(this contact) or O(distinct contacts), never
 // O(total messages ever sent).
-const CONTACT_MSG_DIR = "msg_by_contact";
+export const CONTACT_MSG_DIR = "msg_by_contact";
 export const CONVERSATION_INDEX_FILE = "crm_conversation_index.json";
 
 let dirReady = false;

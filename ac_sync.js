@@ -173,10 +173,16 @@ export async function syncAcEngagementForContact(contactId, preloadedContact) {
   // reference into AC_CAMPAIGN_BODIES_FILE (see getAcCampaignHtml's own
   // comment), resolved at display time by inbox_backend.js instead of
   // duplicated onto every recipient's own record.
+  // Latest NEWLY-logged open/click time seen below, recorded on the contact
+  // once at the end (not per record -- each mark rewrites the contacts file)
+  // so segments' "opened/clicked in the last N days" stays current.
+  let latestOpen = null, latestClick = null;
+  const later = (a, b) => (!a || new Date(b) > new Date(a)) ? b : a;
   const oneToOne = await getOneToOneCampaigns();
   for (const c of oneToOne.filter(x => x.email === email)) {
     const pid = `ac_1to1:${c.id}`;
     if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
+    if (c.clicks > 0) latestClick = later(latestClick, c.sdate); else if (c.opens > 0) latestOpen = later(latestOpen, c.sdate);
     logMessage({
       channel: "email", direction: "outbound", contactId,
       sourceType: "ac_campaign", sourceId: null, providerMessageId: pid,
@@ -206,6 +212,7 @@ export async function syncAcEngagementForContact(contactId, preloadedContact) {
   for (const c of linkData) {
     const pid = `ac_click:${c.id}`;
     if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
+    latestClick = later(latestClick, c.tstamp);
     const name = await acCampaignName(c.campaign);
     logMessage({
       channel: "email", direction: "outbound", contactId,
@@ -214,6 +221,8 @@ export async function syncAcEngagementForContact(contactId, preloadedContact) {
       status: "clicked", createdAt: c.tstamp, extra: { acCampaignId: c.campaign },
     });
   }
+  if (latestOpen) markContactEmailEngagement(contactId, "opened", latestOpen);
+  if (latestClick) markContactEmailEngagement(contactId, "clicked", latestClick);
 
   // Attaches acCampaignId to older records missing it -- both this sync's
   // earliest records (briefly stored full duplicated bodies instead of a

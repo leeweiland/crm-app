@@ -130,6 +130,7 @@ export function leadDateMs(contact) {
 //   | "contains"                                                   (new -- substring match, visitedPage only)
 //   | "within_last_hours"                                          (new -- value is a number of hours, firstSeenAt/createdAt only, re-evaluated against Date.now() every read)
 //   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
+//   | "within_last_days"                                           (new -- value is a number of days, emailOpened/emailClicked only: latest such event within the last N days, incl. imported ActiveCampaign history)
 //   | "after"                                                       (new -- value is a single ISO timestamp, firstSeenAt/createdAt only; a FIXED lower bound with no upper bound, so it keeps matching every new contact from that point forward -- e.g. "leads since Sep 6, 2026, ongoing".)
 //
 // emailOpened/emailClicked and visitedPage are deliberately NOT read from
@@ -176,6 +177,22 @@ function evalCondition(contact, cond) {
     return t >= new Date(value).getTime();
   }
 
+  // "Opened / clicked an email in the last N days". Reads the LATEST event
+  // time kept on the contact (emailEngagement.openedAt/clickedAt), which the
+  // live SES webhook, the AC sync, and the one-time backfill of the imported
+  // ActiveCampaign history (engagement_backfill.js) all feed -- no message-log
+  // scan here. A click counts as an open (same as the chat panel: ActiveCampaign
+  // exposes no open pixel for bulk sends, only clicks), so "opened" takes the
+  // later of the two.
+  if ((field === "emailOpened" || field === "emailClicked") && op === "within_last_days") {
+    const eng = contact.emailEngagement || {};
+    const ms = v => { const t = v ? new Date(v).getTime() : NaN; return isNaN(t) ? 0 : t; };
+    const at = field === "emailOpened" ? Math.max(ms(eng.openedAt), ms(eng.clickedAt)) : ms(eng.clickedAt);
+    if (!at) return false;
+    const ageMs = Date.now() - at;
+    return ageMs >= 0 && ageMs <= Number(value) * 24 * 3600 * 1000;
+  }
+
   if (field === "visitedPage") {
     const paths = contact.visitedPaths || [];
     switch (op) {
@@ -190,7 +207,7 @@ function evalCondition(contact, cond) {
   if (field.startsWith("customFields.")) {
     actual = contact.customFields?.[field.slice("customFields.".length)];
   } else if (field === "emailOpened") {
-    actual = !!contact.emailEngagement?.opened;
+    actual = !!(contact.emailEngagement?.opened || contact.emailEngagement?.clicked); // a click implies an open
   } else if (field === "emailClicked") {
     actual = !!contact.emailEngagement?.clicked;
   } else {

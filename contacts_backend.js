@@ -6,6 +6,7 @@ import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
+import { startEngagementBackfill } from "./engagement_backfill.js";
 import { logMessage } from "./message_log.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
@@ -92,12 +93,18 @@ export const CUSTOM_FIELDS_FILE = "crm_custom_fields.json";
 // message_log.js). Written incrementally, one record at a time, from the
 // exact code paths that already handle these events: email_backend.js's SES
 // webhook and tracking_backend.js's pageview handler.
-export function markContactEmailEngagement(contactId, kind) { // kind: "opened" | "clicked"
+// openedAt/clickedAt hold the LATEST such event's time (segments' "opened/
+// clicked in the last N days" reads them). atISO is the event's real time when
+// the caller knows it (an ActiveCampaign import/sync record); omitted, it's
+// "now" (a live SES webhook). A known time never moves the stored one earlier.
+export function markContactEmailEngagement(contactId, kind, atISO) { // kind: "opened" | "clicked"
   if (!contactId) return;
+  const at = atISO && !isNaN(new Date(atISO)) ? new Date(atISO).toISOString() : new Date().toISOString();
   const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
     c.emailEngagement = c.emailEngagement || {};
     c.emailEngagement[kind] = true;
-    c.emailEngagement[`${kind}At`] = new Date().toISOString();
+    const prev = c.emailEngagement[`${kind}At`];
+    if (!prev || new Date(at) > new Date(prev)) c.emailEngagement[`${kind}At`] = at;
     return c;
   });
   // Without this, the SQLite mirror (contacts_idx) silently drifts from
@@ -247,6 +254,16 @@ export async function handleContactsRequest(req, res, url) {
     let synced = 0;
     for (const c of affected) { try { syncContactFields(c.id, c); synced++; } catch {} }
     return sendJson(res, 200, { ok: true, updated: affected.length, synced });
+  }
+
+  // One-time backfill of opened/clicked TIMES from the stored message history
+  // (chiefly the imported ActiveCampaign data) onto each contact -- see
+  // engagement_backfill.js. Admin-only; hit it from your own logged-in browser
+  // tab, then reload the same URL to watch progress. It runs inside this server
+  // process (never a separate script), in the background, in yielding slices.
+  if (p === "/api/contacts/admin/backfill-email-engagement" && req.method === "GET") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    return sendJson(res, 200, startEngagementBackfill({ force: url.searchParams.get("force") === "1" }));
   }
 
   // Bulk delete from the Contacts page's selection bar. One in-place pass over
