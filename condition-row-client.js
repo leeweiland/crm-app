@@ -37,8 +37,7 @@ window.ConditionRowBuilder = (function () {
       <option value="emailOpened">Opened Email</option>
       <option value="emailClicked">Clicked Email</option>
       <option value="visitedPage">Visited Webpage</option>
-      <option value="createdAt">New Lead (created, age)</option>
-      <option value="firstSeenAt">First Seen anywhere (age)</option>
+      <option value="firstSeenAt">Lead date (oldest of Hyros / Close / AC)</option>
       ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
     `;
   }
@@ -126,6 +125,14 @@ window.ConditionRowBuilder = (function () {
     return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
   }
 
+  // "createdAt" and "firstSeenAt" are one condition server-side (both mean the
+  // contact's lead date -- segments_shared.js leadDateMs), so older segments
+  // saved with createdAt show up as the single "Lead date" option and are
+  // written back as firstSeenAt. Same result either way; just one name.
+  function normalizeCond(c) {
+    return c && c.field === 'createdAt' && (c.op === 'within_last_hours' || c.op === 'after') ? { ...c, field: 'firstSeenAt' } : c;
+  }
+
   // A stored ISO timestamp <-> the <input type=datetime-local> string (which
   // is wall-clock time in the viewer's own timezone, no zone suffix).
   function isoToLocalInput(iso) {
@@ -140,6 +147,7 @@ window.ConditionRowBuilder = (function () {
   }
 
   function addRow(containerEl, initial) {
+    initial = normalizeCond(initial);
     const row = document.createElement('div');
     row.className = 'cond-row';
     row.innerHTML = `
@@ -199,7 +207,7 @@ window.ConditionRowBuilder = (function () {
   const FIELD_LABELS = {
     type: 'Type (Lead/Contact)', status: 'Status', programType: 'Type', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
     tags: 'Tag', listIds: 'List', emailOpened: 'Opened Email', emailClicked: 'Clicked Email', visitedPage: 'Visited Webpage',
-    firstSeenAt: 'First seen', createdAt: 'New lead (created)',
+    firstSeenAt: 'Lead date', createdAt: 'Lead date',
   };
   const OP_LABELS = {
     eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', contains: 'contains',
@@ -211,6 +219,7 @@ window.ConditionRowBuilder = (function () {
   // hand-picked contact list, op "between") -- editing must keep those
   // untouched rather than force them into a dropdown that can't represent them.
   function canRepresent(cond) {
+    cond = normalizeCond(cond);
     if (!cond || typeof cond.field !== 'string' || typeof cond.op !== 'string') return false;
     const fieldSel = document.createElement('select');
     fieldSel.innerHTML = fieldOptionsHtml();
@@ -242,6 +251,10 @@ window.ConditionRowBuilder = (function () {
     }
     if (cond.op === 'within_last_hours') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} hours`;
     if (cond.op === 'after' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    if (cond.op === 'between' && valueLabel && typeof valueLabel === 'object' && !Array.isArray(valueLabel)) {
+      const fmt = v => isNaN(new Date(v)) ? String(v ?? '') : new Date(v).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      valueLabel = `${fmt(valueLabel.from)} and ${fmt(valueLabel.to)}`;
+    }
     return `${fieldLabel} ${opLabel}${cond.op === 'exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
   }
   function describeFilter(filter) {

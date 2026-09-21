@@ -93,6 +93,35 @@ export function markFirstSeen(contact, candidateISO) {
   if (!contact.firstSeenAt || new Date(candidateISO) < new Date(contact.firstSeenAt)) contact.firstSeenAt = candidateISO;
 }
 
+// The date a contact actually BECAME a lead, as epoch ms (null if unknown): the
+// oldest of their firstSeenAt (AC contact created / Close lead created / Hyros
+// lead created -- see markFirstSeen) and their createdAt. createdAt alone is
+// wrong for anyone imported: 145K Hyros/AC contacts were bulk-imported on
+// Aug 21-23 2026, so their createdAt is the import day, years after they
+// really became leads -- a "new leads since Sep 6" filter on createdAt matched
+// all of them. Taking the earlier of the two also keeps brand-new native
+// contacts (form/booking, no firstSeenAt until a sync fills it in) correct,
+// and drops a "new" contact who turns out to have been in AC/Close for years.
+// Hyros stamped its lead times with a wrong -09:00 offset on what are really
+// UTC clock digits (same correction as reporting_backend.js's hyrosLeadMs);
+// only the -09:00 case is touched, so an AC date that later moved firstSeenAt
+// earlier (real -05:00/-06:00 offsets) is read as-is.
+export function leadDateMs(contact) {
+  const times = [];
+  const fs = contact.firstSeenAt;
+  if (fs) {
+    const t = contact.source === "hyros_import" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?-09:00$/.test(fs)
+      ? Date.parse(fs.slice(0, 19) + "Z")
+      : new Date(fs).getTime();
+    if (!isNaN(t)) times.push(t);
+  }
+  if (contact.createdAt) {
+    const t = new Date(contact.createdAt).getTime();
+    if (!isNaN(t)) times.push(t);
+  }
+  return times.length ? Math.min(...times) : null;
+}
+
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
 // field: "status" | "smsOptOut" | "emailOptOut" | "tags" | "listIds" | "customFields.<fieldId>"
 //      | "emailOpened" | "emailClicked" | "visitedPage" | "firstSeenAt" | "createdAt"
@@ -123,30 +152,28 @@ function evalCondition(contact, cond) {
   // segment preview, bulk-enroll), not "whoever matched on the day I
   // created this segment".
   //
-  // Two different fields on purpose: firstSeenAt (markFirstSeen, above) is
-  // meant to be "when this person first appeared in ANY connected system",
-  // but in practice is only refreshed by periodic AC/Close/Hyros sync jobs
-  // -- confirmed live (2026-09-14) it can lag reality by weeks. createdAt is
-  // set the moment this CRM's own record is created, which is what "new
-  // leads in the last N hours" actually means for anyone watching fresh
-  // intake -- use createdAt for that; firstSeenAt is still useful for
-  // "genuinely never seen before any system", just not "just now".
+  // firstSeenAt and createdAt are the SAME condition here: both mean the
+  // contact's lead date (leadDateMs, above -- the oldest of their Hyros/Close/
+  // AC dates and createdAt), never the raw createdAt, which for an imported
+  // contact is just the day they were bulk-loaded into this CRM. Using the
+  // earlier of the two also covers what the old split was for: a brand-new
+  // native contact has no firstSeenAt until a sync fills it in (confirmed
+  // 2026-09-14 it can lag by weeks), so its createdAt stands in immediately.
   if ((field === "firstSeenAt" || field === "createdAt") && op === "within_last_hours") {
-    const at = contact[field];
-    if (!at) return false;
-    const ageMs = Date.now() - new Date(at).getTime();
+    const at = leadDateMs(contact);
+    if (at == null) return false;
+    const ageMs = Date.now() - at;
     return ageMs >= 0 && ageMs <= Number(value) * 3600 * 1000;
   }
   if ((field === "firstSeenAt" || field === "createdAt") && op === "between") {
-    const at = contact[field];
-    if (!at) return false;
-    const t = new Date(at).getTime();
+    const t = leadDateMs(contact);
+    if (t == null) return false;
     return t >= new Date(value.from).getTime() && t < new Date(value.to).getTime();
   }
   if ((field === "firstSeenAt" || field === "createdAt") && op === "after") {
-    const at = contact[field];
-    if (!at) return false;
-    return new Date(at).getTime() >= new Date(value).getTime();
+    const t = leadDateMs(contact);
+    if (t == null) return false;
+    return t >= new Date(value).getTime();
   }
 
   if (field === "visitedPage") {
