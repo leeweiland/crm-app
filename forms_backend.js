@@ -12,7 +12,6 @@ import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_back
 import { normalizePhoneForRequest } from "./phone_util.js";
 import { EVENT_TYPES_FILE, BOOKINGS_FILE } from "./scheduling_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
-import { estimateIncomeInBackground } from "./income_estimate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -489,10 +488,6 @@ function upsertContactFromSubmission(form, answers, bookedIdentity) {
   // even though the contact record itself already had a real status from
   // form.settings.defaultStatus.
   try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
-  // A new/updated application gets its estimated-income fields filled in
-  // now (background, never blocks or fails the submission) so segments that
-  // filter on income include this lead without waiting for a backfill.
-  estimateIncomeInBackground(contact);
 
   // Same "only fire for genuinely new membership" rule contacts_backend.js
   // uses for its PATCH handler, so a repeat form submission from an already

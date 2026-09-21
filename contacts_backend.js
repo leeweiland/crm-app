@@ -8,6 +8,7 @@ import { applyStatusOptOut } from "./compliance_backend.js";
 import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
 import { logMessage } from "./message_log.js";
 import { mergeStaffActivity } from "./staff_activity.js";
+import { estimateIncomeForContact, syncIncomeToPanelCopy } from "./income_estimate.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -292,6 +293,30 @@ export async function handleContactsRequest(req, res, url) {
     const updated = updateJsonArrayRecordsByIdSet(CONTACTS_FILE, new Set(ids), c => { c.ownerId = ownerId; c.updatedAt = now; return c; });
     try { syncContactFieldsBatch(updated); } catch (e) { console.error("[sqlite_inbox] bulk assign sync failed:", e.message); }
     return sendJson(res, 200, { ok: true, assigned: updated.length });
+  }
+  // "Generate income estimate" button on the contact page: one Anthropic call
+  // for this one contact, only when someone clicks it (nothing scores leads
+  // automatically). Any logged-in staff member -- it's about a tenth of a cent.
+  const estimateMatch = p.match(/^\/api\/contacts\/([^/]+)\/estimate-income$/);
+  if (estimateMatch && req.method === "POST") {
+    const contactId = estimateMatch[1];
+    const contact = getContactByIdSqlite(contactId) || readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+    try {
+      const r = await estimateIncomeForContact(contact);
+      return sendJson(res, 200, { ok: true, income: r.income, basis: r.basis, incomeId: r.incomeId, basisId: r.basisId, estimated: r.income !== "" });
+    } catch (e) {
+      return sendJson(res, e.status || 500, { error: e.message });
+    }
+  }
+  // Brings the contact panel's SQLite copy of the two income fields up to date
+  // for contacts backchannel/income_fill.mjs filled (it leaves SQLite alone).
+  // SQLite only, one transaction -- no contacts-file pass. Admin only.
+  if (p === "/api/contacts/admin/income-panel-sync" && req.method === "POST") {
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { results } = await readJsonBody(req);
+    if (!Array.isArray(results) || results.length > 2000) return sendJson(res, 400, { error: "results must be an array of at most 2000" });
+    return sendJson(res, 200, { ok: true, ...syncIncomeToPanelCopy(results) });
   }
   if (p === "/api/contacts/bulk-delete" && req.method === "POST") {
     const { ids } = await readJsonBody(req);

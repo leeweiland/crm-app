@@ -11,7 +11,6 @@ import { claimByIdentity, getAdCaptureByIdentity } from "./tracking_backend.js";
 import { normalizePhoneForCapture } from "./phone_util.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { fetchChannelFeed, addVideoToPlaylist } from "./youtube_backend.js";
-import { estimateIncomeInBackground } from "./income_estimate.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -418,10 +417,6 @@ async function advanceFlowRun(run, flow) {
         }
       }
       saveContact(workingContact);
-      // Online leads' application answers arrive through this step -- estimate
-      // their income now (background; no-op unless the contact has application
-      // text, never blocks or fails the flow).
-      if (cfg.customFields && Object.keys(cfg.customFields).length) estimateIncomeInBackground(workingContact);
       if (workingContact.status !== prevStatus) {
         checkConversionGoal("lead_status_change", workingContact.id);
         checkAutomationGoal("lead_status_change", workingContact.id, workingContact.status);

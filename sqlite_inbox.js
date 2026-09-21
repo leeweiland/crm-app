@@ -437,6 +437,33 @@ export function syncContactFieldsBatch(contacts) {
   }
 }
 
+// Patch just the stored record (raw_json) of many contacts_idx rows in ONE
+// transaction: patches is Map<id, (contact) => void>. Flattened columns are left
+// alone -- for callers changing only fields the columns don't mirror (custom
+// fields). Returns how many rows were changed.
+export function patchContactIndexRawBatch(patches) {
+  if (!sqliteInboxAvailable() || !patches?.size) return 0;
+  const sel = db.prepare("SELECT raw_json FROM contacts_idx WHERE id = ?");
+  const upd = db.prepare("UPDATE contacts_idx SET raw_json = ? WHERE id = ?");
+  let n = 0;
+  db.exec("BEGIN");
+  try {
+    for (const [id, fn] of patches) {
+      const row = sel.get(id);
+      if (!row) continue;
+      let c; try { c = JSON.parse(row.raw_json); } catch { continue; }
+      fn(c);
+      upd.run(JSON.stringify(c), id);
+      n++;
+    }
+    db.exec("COMMIT");
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch { /* nothing open */ }
+    throw e;
+  }
+  return n;
+}
+
 // contacts_idx mirrors the Contacts page's own filter/sort/search needs --
 // see its CREATE TABLE comment above. raw_json is the full stored record
 // (customFields, externalIds, tags, listIds, etc, everything a single

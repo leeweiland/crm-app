@@ -341,9 +341,37 @@ function renderCustomFields() {
   wrap.innerHTML = allFields.map(f => `
     <div class="field"><label class="pra-label">${escapeHtml(f.label)}</label>
       <input class="pra-input custom-field-input" data-field="${f.id}" value="${escapeHtml(contact.customFields?.[f.id] || '')}"/>
+      ${f.label === 'INCOME ESTIMATE BASIS' ? `<div style="margin-top:8px"><button class="pra-btn pra-btn-sm" id="genIncomeBtn" type="button" title="Reads this contact's application answers and asks Claude to estimate their income (uses a little Anthropic credit)">Generate income estimate</button></div>` : ''}
     </div>
   `).join('');
   saver.watch(wrap.querySelectorAll('.custom-field-input'));
+  const genBtn = document.getElementById('genIncomeBtn');
+  if (genBtn) genBtn.onclick = generateIncomeEstimate;
+}
+// Manual only -- nothing scores contacts automatically, so the Anthropic balance
+// moves only when someone clicks. Flushes pending edits first, then swaps the
+// two returned values into the inputs and re-baselines the autosave so they
+// aren't sent back to the server as if the user had typed them.
+async function generateIncomeEstimate() {
+  const btn = document.getElementById('genIncomeBtn');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Estimating...';
+  try {
+    await saver.flush();
+    const r = await fetch(`/api/contacts/${contactId}/estimate-income`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { showToast(d.error || 'Could not generate an estimate', true); return; }
+    contact.customFields = contact.customFields || {};
+    if (d.income) contact.customFields[d.incomeId] = d.income; else delete contact.customFields[d.incomeId];
+    contact.customFields[d.basisId] = d.basis;
+    document.querySelectorAll('.custom-field-input').forEach(inp => {
+      if (inp.dataset.field === d.incomeId) inp.value = d.income || '';
+      if (inp.dataset.field === d.basisId) inp.value = d.basis || '';
+    });
+    saver.reset(contactId);
+    showToast(d.estimated ? `Estimated income: $${Number(d.income).toLocaleString()}` : 'Not enough information in the application to estimate');
+  } catch { showToast('Could not generate an estimate', true); }
+  finally { btn.disabled = false; btn.textContent = label; }
 }
 
 // No Save button -- edits save themselves (contact-autosave.js): on blur/change,
