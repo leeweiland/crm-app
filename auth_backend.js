@@ -847,53 +847,6 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
   return updated;
 }
 
-// Patches MANY records (potentially tens of thousands) of a big array file in
-// ONE in-place streaming pass -- the id-set helpers above pay two byte scans
-// per id per record, which doesn't scale past a few hundred ids. Here each
-// element's own id is read from its first few hundred bytes (every contact
-// record starts with "id"; verified against the full production snapshot) and
-// looked up in `patchesById`; only records that hit are parsed, handed to
-// apply(record, patch) -- return true if it changed anything -- and
-// re-stringified. Everything else is byte-copied untouched. Returns the
-// changed records. Synchronous, like its siblings: the file is streamed once.
-export function patchJsonArrayRecordsByIdMap(file, patchesById, apply) {
-  return patchJsonArrayRecordsByKeyMap(file, patchesById, apply, {
-    keyOf: (buf, start, end) => /"id"\s*:\s*"([^"]+)"/.exec(buf.toString("latin1", start, Math.min(end, start + 400)))?.[1] ?? null,
-    verify: (obj, key) => obj.id === key,
-  });
-}
-// Same pass, keyed by any field a caller can cheaply read straight off the
-// element's bytes: keyOf(buf, start, end) -> key string or null (no parse),
-// verify(parsedRecord, key) guards against a byte-level false positive.
-export function patchJsonArrayRecordsByKeyMap(file, patchesByKey, apply, { keyOf, verify }) {
-  const p = join(DATA_DIR, file);
-  if (!existsSync(p) || !patchesByKey || !patchesByKey.size) return [];
-  const changed = [];
-  const tmp = `${p}.tmp${process.pid}`;
-  const dstFd = openSync(tmp, "w");
-  let wroteAny = false;
-  try {
-    writeSync(dstFd, "[");
-    forEachJsonArrayElement(p, (buf, start, end) => {
-      let toWrite = null;
-      const key = keyOf(buf, start, end);
-      if (key != null && patchesByKey.has(key)) {
-        let obj;
-        try { obj = JSON.parse(buf.toString("utf8", start, end)); } catch { obj = null; }
-        if (obj && verify(obj, key) && apply(obj, patchesByKey.get(key))) { toWrite = obj; changed.push(obj); }
-      }
-      if (wroteAny) writeSync(dstFd, ",");
-      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
-      else writeSync(dstFd, buf, start, end - start);
-      wroteAny = true;
-    });
-    writeSync(dstFd, "]");
-  } finally { closeSync(dstFd); }
-  if (changed.length) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
-  else { try { unlinkSync(tmp); } catch {} }
-  return changed;
-}
-
 export function readJsonBody(req) {
   return new Promise((resolve) => {
     let body = "";

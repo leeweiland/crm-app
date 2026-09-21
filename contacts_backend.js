@@ -6,8 +6,6 @@ import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
-import { startEngagementBackfill } from "./engagement_backfill.js";
-import { startAcEngagementSync } from "./ac_engagement_sync.js";
 import { logMessage } from "./message_log.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
@@ -255,25 +253,6 @@ export async function handleContactsRequest(req, res, url) {
     let synced = 0;
     for (const c of affected) { try { syncContactFields(c.id, c); synced++; } catch {} }
     return sendJson(res, 200, { ok: true, updated: affected.length, synced });
-  }
-
-  // One-time backfill of opened/clicked TIMES from the stored message history
-  // (chiefly the imported ActiveCampaign data) onto each contact -- see
-  // engagement_backfill.js. Admin-only; hit it from your own logged-in browser
-  // tab, then reload the same URL to watch progress. It runs inside this server
-  // process (never a separate script), in the background, in yielding slices.
-  if (p === "/api/contacts/admin/backfill-email-engagement" && req.method === "GET") {
-    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
-    return sendJson(res, 200, startEngagementBackfill({ force: url.searchParams.get("force") === "1" }));
-  }
-
-  // Copies ActiveCampaign's own per-contact last-opened / last-clicked dates onto
-  // our contacts (see ac_engagement_sync.js) -- what makes "Opened Email in the
-  // last N days" match AC's own count. Admin-only, read-only against AC, runs in
-  // the background inside this server; reload the URL to watch progress.
-  if (p === "/api/contacts/admin/sync-ac-engagement" && req.method === "GET") {
-    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
-    return sendJson(res, 200, startAcEngagementSync({ force: url.searchParams.get("force") === "1" }));
   }
 
   // Bulk delete from the Contacts page's selection bar. One in-place pass over

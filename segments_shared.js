@@ -179,8 +179,8 @@ function evalCondition(contact, cond) {
 
   // "Opened / clicked an email in the last N days". Reads the LATEST event
   // time kept on the contact (emailEngagement.openedAt/clickedAt), which the
-  // live SES webhook, the AC sync, and the one-time backfill of the imported
-  // ActiveCampaign history (engagement_backfill.js) all feed -- no message-log
+  // live SES webhook, the AC sync on conversation open, and the back-channel copy of
+  // AC's own last-open/last-click dates (backchannel/ac_engagement.mjs) all feed -- no message-log
   // scan here. A click counts as an open (same as the chat panel: ActiveCampaign
   // exposes no open pixel for bulk sends, only clicks), so "opened" takes the
   // later of the two.
