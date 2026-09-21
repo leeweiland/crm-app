@@ -48,7 +48,9 @@ window.ConditionRowBuilder = (function () {
   // it's just not offered as a choice for a brand-new row.
   function opOptionsHtml(field, legacyOp) {
     if (field === "visitedPage") return `<option value="eq">Is</option><option value="neq">Is not</option><option value="contains">Contains</option>`;
-    if (field === "firstSeenAt" || field === "createdAt") return `<option value="within_last_hours">Within the last (hours)</option>`;
+    // "after" = a FIXED lower bound (segments_shared.js) -- e.g. "leads since
+    // Sep 6, ongoing" -- as opposed to within_last_hours' rolling window.
+    if (field === "firstSeenAt" || field === "createdAt") return `<option value="within_last_hours">Within the last (hours)</option><option value="after">Is on or after (date &amp; time)</option>`;
     if (ARRAY_FIELDS.includes(field)) {
       const legacy = (legacyOp === "includes") ? `<option value="includes">Includes (legacy)</option>` : (legacyOp === "excludes") ? `<option value="excludes">Excludes (legacy)</option>` : "";
       return `<option value="any_of">Is any of</option><option value="all_of">Is all of</option><option value="not_any_of">Is not any of</option><option value="not_all_of">Is not all of</option>${legacy}`;
@@ -117,10 +119,24 @@ window.ConditionRowBuilder = (function () {
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
     if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
+    if ((field === 'firstSeenAt' || field === 'createdAt') && op === 'after') return `<input class="pra-input" type="datetime-local" data-cond-value title="Your local time"/>`;
     if (field === 'firstSeenAt' || field === 'createdAt') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="e.g. 72"/>`;
     if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
     if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
     return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
+  }
+
+  // A stored ISO timestamp <-> the <input type=datetime-local> string (which
+  // is wall-clock time in the viewer's own timezone, no zone suffix).
+  function isoToLocalInput(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d)) return '';
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function localInputToIso(v) {
+    const d = new Date(v);
+    return !v || isNaN(d) ? '' : d.toISOString();
   }
 
   function addRow(containerEl, initial) {
@@ -158,7 +174,7 @@ window.ConditionRowBuilder = (function () {
       opSel.value = initial.op; refreshValue();
       if (!MULTI_VALUE_OPS.includes(initial.op)) {
         const valEl = row.querySelector('[data-cond-value]');
-        if (valEl) valEl.value = initial.value ?? '';
+        if (valEl) valEl.value = initial.op === 'after' ? isoToLocalInput(initial.value) : (initial.value ?? '');
       }
     }
     row.querySelector('[data-remove-cond]').onclick = () => row.remove();
@@ -173,6 +189,7 @@ window.ConditionRowBuilder = (function () {
       if (op === 'exists') value = undefined;
       else if (MULTI_VALUE_OPS.includes(op)) value = row._msSelected || [];
       else value = row.querySelector('[data-cond-value]')?.value;
+      if (op === 'after') value = localInputToIso(value);
       return { field, op, value };
     }).filter(c => c.op === 'exists' || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
     if (!conds.length) return null;
@@ -187,8 +204,31 @@ window.ConditionRowBuilder = (function () {
   const OP_LABELS = {
     eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', contains: 'contains',
     any_of: 'is any of', all_of: 'is all of', not_any_of: 'is not any of', not_all_of: 'is not all of',
-    within_last_hours: 'is within the last',
+    within_last_hours: 'is within the last', after: 'is on or after', between: 'is between',
   };
+  // Can this row builder faithfully show + re-save this stored condition? A
+  // saved segment can hold conditions the UI never offered (field "id" for a
+  // hand-picked contact list, op "between") -- editing must keep those
+  // untouched rather than force them into a dropdown that can't represent them.
+  function canRepresent(cond) {
+    if (!cond || typeof cond.field !== 'string' || typeof cond.op !== 'string') return false;
+    const fieldSel = document.createElement('select');
+    fieldSel.innerHTML = fieldOptionsHtml();
+    if (![...fieldSel.options].some(o => o.value === cond.field)) return false;
+    const opSel = document.createElement('select');
+    opSel.innerHTML = opOptionsHtml(cond.field, cond.op);
+    if (![...opSel.options].some(o => o.value === cond.op)) return false;
+    if (MULTI_VALUE_OPS.includes(cond.op)) return Array.isArray(cond.value);
+    if (cond.op === 'exists') return true;
+    if (Array.isArray(cond.value)) return false;
+    // A single-value <select> (status/type/tag/list/yes-no) can only show a
+    // value it has an option for -- e.g. a tag or list since deleted would
+    // render blank and then be dropped as "empty" on save.
+    const probe = document.createElement('div');
+    probe.innerHTML = valueInputHtml(cond.field, cond.op);
+    const sel = probe.querySelector('select[data-cond-value]');
+    return !sel || [...sel.options].some(o => o.value === String(cond.value));
+  }
   function describeCondition(cond) {
     const fieldLabel = FIELD_LABELS[cond.field] || (cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field);
     const opLabel = OP_LABELS[cond.op] || cond.op;
@@ -201,6 +241,7 @@ window.ConditionRowBuilder = (function () {
       if (cond.field === 'listIds') valueLabel = allLists.find(l => l.id === cond.value)?.name || cond.value;
     }
     if (cond.op === 'within_last_hours') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} hours`;
+    if (cond.op === 'after' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     return `${fieldLabel} ${opLabel}${cond.op === 'exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
   }
   function describeFilter(filter) {
@@ -210,5 +251,5 @@ window.ConditionRowBuilder = (function () {
     return conds.map(describeCondition).join(joiner);
   }
 
-  return { init, addRow, buildFilter, describeCondition, describeFilter };
+  return { init, addRow, buildFilter, describeCondition, describeFilter, canRepresent };
 })();

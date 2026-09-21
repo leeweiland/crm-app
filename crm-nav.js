@@ -222,6 +222,11 @@ document.addEventListener("click", (e) => {
 // option list later via .innerHTML (caught via a MutationObserver).
 function escapeHtmlForMobileSelect(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
 function enhanceSelectForMobile(sel) {
+  // A select already removed again by the time this runs (the MutationObserver
+  // delivers records after the fact -- e.g. a condition row that replaces its
+  // value <select> twice while loading) has nothing to wrap; if it's ever
+  // re-attached the observer sees it as a fresh addition.
+  if (!sel.parentNode) return;
   if (sel.dataset.mobileEnhanced || sel.multiple) return;
   sel.dataset.mobileEnhanced = "1";
 

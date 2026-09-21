@@ -701,6 +701,36 @@ export async function handleContactsRequest(req, res, url) {
     writeJson(SEGMENTS_FILE, segments.filter(s => s.id !== segmentMatch[1]));
     return sendJson(res, 200, { ok: true });
   }
+  // Edit a saved segment: any of name / filter / channel. Counts aren't
+  // recomputed here (a full contacts scan) -- the Contacts page fetches the
+  // edited segment's fresh count itself, and the periodic counts cache
+  // catches up within a few minutes.
+  if (segmentMatch && req.method === "PATCH") {
+    const body = await readJsonBody(req);
+    const segments = readJson(SEGMENTS_FILE, []);
+    const segment = segments.find(s => s.id === segmentMatch[1]);
+    if (!segment) return sendJson(res, 404, { error: "Segment not found" });
+    if ("name" in body) {
+      const name = String(body.name || "").trim();
+      if (!name) return sendJson(res, 400, { error: "name can't be empty" });
+      segment.name = name;
+    }
+    if ("filter" in body) {
+      const f = body.filter;
+      const conds = f && (Array.isArray(f.all) ? f.all : Array.isArray(f.any) ? f.any : null);
+      if (!conds || !conds.length || conds.some(c => !c || typeof c.field !== "string" || typeof c.op !== "string")) {
+        return sendJson(res, 400, { error: "filter must be { all: [...] } or { any: [...] } with at least one { field, op, value } condition" });
+      }
+      segment.filter = Array.isArray(f.all) ? { all: f.all } : { any: f.any };
+    }
+    if ("channel" in body) {
+      if (!["email", "sms"].includes(body.channel)) return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
+      segment.channel = body.channel;
+    }
+    segment.updatedAt = new Date().toISOString();
+    writeJson(SEGMENTS_FILE, segments);
+    return sendJson(res, 200, { ok: true, segment });
+  }
   const segmentContactsMatch = p.match(/^\/api\/segments\/([^/]+)\/contacts$/);
   if (segmentContactsMatch && req.method === "GET") {
     const segments = readJson(SEGMENTS_FILE, []);

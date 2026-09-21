@@ -296,6 +296,29 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="editSegmentModal">
+  <div class="pra-panel modal-box" style="max-width:760px">
+    <div class="pra-h2" style="margin-bottom:16px">Edit Segment</div>
+    <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="editSegmentName"/></div>
+    <div class="match-toggle" style="margin:14px 0 12px">
+      Match
+      <select class="pra-select" id="editSegmentMatch" style="width:auto"><option value="all">ALL</option><option value="any">ANY</option></select>
+      of the following conditions:
+    </div>
+    <div id="editSegmentRows"></div>
+    <div id="editSegmentKept" style="display:none;margin:4px 0 8px">
+      <div class="pra-muted" style="font-size:.74rem;margin-bottom:6px">Also applied (can't be edited here — remove to drop it):</div>
+      <div id="editSegmentKeptList"></div>
+    </div>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" id="editSegmentAddCond" type="button">+ Add Condition</button>
+    <div id="editSegmentError" style="color:var(--pra-red);font-size:.82rem;margin-top:10px;display:none"></div>
+    <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
+      <button class="pra-btn" id="editSegmentSaveBtn" style="flex:1">Save Changes</button>
+      <button class="pra-btn pra-btn-ghost" id="editSegmentCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="saveSegmentModal">
   <div class="pra-panel modal-box">
     <div class="pra-h2" style="margin-bottom:16px">Save as Segment</div>
@@ -435,7 +458,7 @@ const lastCheckedIndex = { list: null, tag: null, segment: null };
 const KIND_CONFIG = {
   list: { deleteUrl: id => `/api/lists/${id}`, bulkDeleteUrl: '/api/lists/bulk-delete', reorderUrl: '/api/lists/reorder', contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
   tag: { deleteUrl: id => `/api/tags/${id}`, bulkDeleteUrl: '/api/tags/bulk-delete', reorderUrl: null, contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
-  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', reorderUrl: '/api/segments/reorder', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false },
+  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', reorderUrl: '/api/segments/reorder', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false, hasEdit: true },
 };
 // Sort mode persists per-tab across reloads. Tags never gets "manual" (no
 // reorderUrl, no real fixed order to speak of) -- everything else defaults
@@ -553,6 +576,7 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       <input type="checkbox" data-bulk="${item.id}"/>
       <div style="flex:1">${nameHtmlFn(item)}</div>
       <a class="pra-link count-link" data-count="${item.id}">${prefetchedCounts ? '' : '…'}</a>
+      ${cfg.hasEdit ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${item.id}">Edit</button>` : ''}
       ${cfg.hasAddTo ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto="${item.id}">Add to...</button>` : ''}
       <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
     </div>
@@ -625,6 +649,9 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       lastCheckedIndex[kind] = idx;
     });
   });
+  if (cfg.hasEdit) {
+    container.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => openEditSegment(items.find(i => i.id === btn.dataset.edit)));
+  }
   if (cfg.hasAddTo) {
     container.querySelectorAll('[data-addto]').forEach(btn => btn.onclick = () => {
       const item = items.find(i => i.id === btn.dataset.addto);
@@ -743,6 +770,69 @@ async function loadSegments() {
   await loadAndRenderKind('segment', allSegments, 'segmentsList', 'segmentsBulkBar', 'segmentsSortMode', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
 }
 document.getElementById('segmentsSortMode').onchange = (e) => { setSortMode('segment', e.target.value); loadSegments(); };
+
+// ── Edit Segment ─────────────────────────────────────────────────────────
+// Conditions the row builder can't represent (e.g. `id is any of [...]` from
+// a hand-picked contact list, or a "between" date range) are held in
+// `preserved` and written back untouched on save -- they're shown read-only
+// with a remove button, never forced through a dropdown that would mangle them.
+let editingSegment = null; // { id, preserved: [cond, ...] }
+function renderPreservedConditions() {
+  const wrap = document.getElementById('editSegmentKept');
+  const list = document.getElementById('editSegmentKeptList');
+  wrap.style.display = editingSegment.preserved.length ? 'block' : 'none';
+  list.innerHTML = editingSegment.preserved.map((c, i) => {
+    const text = window.ConditionRowBuilder.describeCondition(c);
+    return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><div class="pra-muted" style="flex:1;min-width:0;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(text.replace(/<[^>]*>/g, ''))}">${text}</div><button class="pra-btn pra-btn-sm pra-btn-danger" type="button" data-drop-kept="${i}">&times;</button></div>`;
+  }).join('');
+  list.querySelectorAll('[data-drop-kept]').forEach(btn => btn.onclick = () => { editingSegment.preserved.splice(+btn.dataset.dropKept, 1); renderPreservedConditions(); });
+}
+function openEditSegment(seg) {
+  if (!seg) return;
+  const filter = seg.filter || {};
+  const conds = filter.all || filter.any || [];
+  editingSegment = { id: seg.id, preserved: [] };
+  document.getElementById('editSegmentName').value = seg.name || '';
+  document.getElementById('editSegmentMatch').value = filter.any ? 'any' : 'all';
+  const rows = document.getElementById('editSegmentRows');
+  rows.innerHTML = '';
+  conds.forEach(c => { if (window.ConditionRowBuilder.canRepresent(c)) window.ConditionRowBuilder.addRow(rows, c); else editingSegment.preserved.push(c); });
+  if (!rows.children.length && !editingSegment.preserved.length) window.ConditionRowBuilder.addRow(rows);
+  renderPreservedConditions();
+  document.getElementById('editSegmentError').style.display = 'none';
+  document.getElementById('editSegmentModal').classList.add('show');
+}
+document.getElementById('editSegmentAddCond').onclick = () => window.ConditionRowBuilder.addRow(document.getElementById('editSegmentRows'));
+document.getElementById('editSegmentCancelBtn').onclick = () => document.getElementById('editSegmentModal').classList.remove('show');
+document.getElementById('editSegmentSaveBtn').onclick = async () => {
+  const errEl = document.getElementById('editSegmentError');
+  const fail = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
+  const name = document.getElementById('editSegmentName').value.trim();
+  if (!name) return fail('Name is required.');
+  const built = window.ConditionRowBuilder.buildFilter(document.getElementById('editSegmentRows'), 'all'); // conds only; match mode applied below
+  const conds = [...(built?.all || []), ...editingSegment.preserved];
+  if (!conds.length) return fail('Add at least one condition (rows with no value are ignored).');
+  const filter = document.getElementById('editSegmentMatch').value === 'any' ? { any: conds } : { all: conds };
+  const btn = document.getElementById('editSegmentSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  let r;
+  try { r = await fetch(`/api/segments/${editingSegment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter }) }); }
+  catch { r = null; }
+  btn.disabled = false; btn.textContent = 'Save Changes';
+  if (!r || !r.ok) { const d = r ? await r.json().catch(() => ({})) : {}; return fail(d.error || 'Could not save.'); }
+  const { segment } = await r.json();
+  document.getElementById('editSegmentModal').classList.remove('show');
+  showToast('Segment updated');
+  await loadSegments();
+  // The counts cache lags a few minutes behind an edit -- fetch this one's
+  // real count now (a live filter query) instead of showing the stale one.
+  const countEl = document.querySelector(`#segmentsList [data-count="${segment.id}"]`);
+  if (countEl) {
+    countEl.textContent = '…';
+    const n = await fetchCount('segment', segment);
+    countEl.textContent = typeof n === 'number' ? `${n} contact${n === 1 ? '' : 's'}` : '— contacts';
+  }
+};
 
 // ── "Add to Automation/Sequence" -- shared by the Contacts table's bulk-
 // select bar and the Segments/Tags row buttons above/below. addToTarget
