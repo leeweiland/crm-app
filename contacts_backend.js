@@ -409,13 +409,29 @@ export async function handleContactsRequest(req, res, url) {
       const body = await readJsonBody(req);
       // Assigning who owns a contact is admin-only -- everything else on
       // this shared PATCH endpoint (status changes, tags, etc.) stays open
-      // to any staff member who can already reach it.
-      if ("ownerId" in body && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
+      // to any staff member who can already reach it. Only an actual CHANGE of
+      // owner is refused: the contact panels used to PATCH the whole contact
+      // object, which always carries the CURRENT ownerId, so this rejected
+      // every save a non-admin made from them (403 "Only admins..."). If the
+      // current owner can't be looked up, stay strict.
+      if ("ownerId" in body && !isAdmin(me)) {
+        const cur = getContactByIdSqlite(contactMatch[1]);
+        if (!cur || (body.ownerId ?? null) !== (cur.ownerId ?? null)) return sendJson(res, 403, { error: "Only admins can change contact assignment" });
+      }
       const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut", "testContact"];
       let prevListIds, prevTags, prevStatus;
       const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactMatch[1], (contact) => {
         prevListIds = [...contact.listIds]; prevTags = [...contact.tags]; prevStatus = contact.status;
-        for (const k of allowed) if (k in body) contact[k] = body[k];
+        for (const k of allowed) if (k in body && !(k === "ownerId" && !isAdmin(me))) contact[k] = body[k]; // (guard above already refuses a real reassignment; this makes it hold even against a stale owner lookup)
+        // customFieldsPatch: merge just these fields into what is stored NOW, so a
+        // panel that only edited END DATE can't overwrite a different custom field
+        // that changed elsewhere since the panel loaded (plain customFields above
+        // replaces the whole object).
+        if (body.customFieldsPatch && typeof body.customFieldsPatch === "object" && !Array.isArray(body.customFieldsPatch)) {
+          const patch = {};
+          for (const [fid, v] of Object.entries(body.customFieldsPatch)) if (fid !== "__proto__" && (v == null || typeof v === "string" || typeof v === "number" || typeof v === "boolean")) patch[fid] = v;
+          contact.customFields = { ...(contact.customFields || {}), ...patch };
+        }
         if (contact.status !== prevStatus) applyStatusOptOut(contact);
         contact.updatedAt = new Date().toISOString();
         return contact;

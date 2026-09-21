@@ -43,6 +43,8 @@
   .convo-panel { display: flex; flex-direction: column; height: calc(100vh - 195px); height: calc(100dvh - 195px); min-height: 460px; overflow: hidden; }
   .convo-panel-title { padding: 16px 18px 0; }
   .contact-header { display: flex; align-items: center; gap: 12px; margin: 10px 0 20px; }
+  .save-state { font-size: .74rem; color: var(--pra-dim); white-space: nowrap; max-width: 9.5rem; overflow: hidden; text-overflow: ellipsis; }
+  .save-state[data-state="error"] { color: var(--pra-red); }
   .sub-section-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
 </style>
 </head>
@@ -66,6 +68,7 @@
               <select class="status-pill-select" id="fStatus"></select>
               <span id="optOutBadges" style="display:flex;gap:6px"></span>
               <button class="pra-btn pra-btn-outline pra-btn-sm" id="genSummaryImageBtn">Generate Summary Image</button>
+              <span class="save-state" id="saveState"></span>
             </div>
           </div>
         </div>
@@ -131,6 +134,7 @@
 <script src="/crm-nav.js"></script>
 <script src="/contact-time.js"></script>
 <script src="/conversation-panel.js"></script>
+<script src="/contact-autosave.js"></script>
 <script>
 const contactId = new URLSearchParams(location.search).get('id');
 document.getElementById('backToChatLink').href = '/inbox.html?tab=primary&contact=' + encodeURIComponent(contactId || '');
@@ -208,7 +212,7 @@ function renderTags() {
   document.getElementById('tagsToggleSlot').innerHTML = toggleSlotHtml(pills.length, tagsExpanded, 'tagsToggle');
   document.querySelectorAll('#tagsWrap .removeTag').forEach(btn => btn.onclick = async () => {
     contact.tags = contact.tags.filter(id => id !== btn.dataset.tag);
-    await saveContact();
+    saver.flush();
     renderTags();
   });
   const toggle = document.getElementById('tagsToggle');
@@ -220,7 +224,7 @@ function renderTags() {
 document.getElementById('addTagSelect').onchange = async (e) => {
   if (!e.target.value) return;
   contact.tags.push(e.target.value);
-  await saveContact();
+  saver.flush();
   renderTags();
   e.target.value = '';
 };
@@ -236,7 +240,7 @@ function renderLists() {
   document.getElementById('listsToggleSlot').innerHTML = toggleSlotHtml(pills.length, listsExpanded, 'listsToggle');
   document.querySelectorAll('#listsWrap .removeList').forEach(btn => btn.onclick = async () => {
     contact.listIds = contact.listIds.filter(id => id !== btn.dataset.list);
-    await saveContact();
+    saver.flush();
     renderLists();
   });
   const toggle = document.getElementById('listsToggle');
@@ -247,7 +251,7 @@ function renderLists() {
 document.getElementById('addListSelect').onchange = async (e) => {
   if (!e.target.value) return;
   contact.listIds.push(e.target.value);
-  await saveContact();
+  saver.flush();
   renderLists();
   e.target.value = '';
 };
@@ -339,19 +343,17 @@ function renderCustomFields() {
       <input class="pra-input custom-field-input" data-field="${f.id}" value="${escapeHtml(contact.customFields?.[f.id] || '')}"/>
     </div>
   `).join('');
-  wrap.querySelectorAll('.custom-field-input').forEach(inp => inp.addEventListener('change', autoSaveDetails));
+  saver.watch(wrap.querySelectorAll('.custom-field-input'));
 }
 
-async function saveContact() {
-  const r = await fetch('/api/contacts/' + contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(contact) });
-  if (!r.ok) { showToast('Could not save', true); return; }
-  contact = (await r.json()).contact;
-}
-
-// No Save button -- every field change PATCHes immediately (same pattern
-// tags/lists already used), fired on 'change' so text inputs save on blur
-// or Enter rather than on every keystroke.
-async function autoSaveDetails() {
+// No Save button -- edits save themselves (contact-autosave.js): on blur/change,
+// ~1.5s after typing stops, and when the page is being left -- so browser Back,
+// closing the tab or a refresh with the cursor still in a field no longer loses
+// the edit (that never fires "change"). Only fields that actually changed are
+// sent, which also keeps ownerId out of it (the server rejects ownerId from
+// non-admins). read() mirrors the form into `contact`, which the rest of the
+// page reads.
+function readDetailsForm() {
   contact.first = document.getElementById('fFirst').value.trim();
   contact.last = document.getElementById('fLast').value.trim();
   contact.accountName = document.getElementById('fAccount').value.trim();
@@ -363,18 +365,38 @@ async function autoSaveDetails() {
   contact.testContact = document.getElementById('fTestContact').checked;
   contact.customFields = contact.customFields || {};
   document.querySelectorAll('.custom-field-input').forEach(inp => { contact.customFields[inp.dataset.field] = inp.value; });
-  await saveContact();
-  document.getElementById('contactName').textContent = contact.first + ' ' + contact.last;
-  renderPhoneDialLink();
-  panelInstance?.render();
-  showToast('Saved');
+  const name = (contact.first + ' ' + contact.last).trim();
+  if (name) document.getElementById('contactName').textContent = name;
+  return {
+    first: contact.first, last: contact.last, accountName: contact.accountName, email: contact.email, phone: contact.phone,
+    status: contact.status, emailOptOut: contact.emailOptOut, smsOptOut: contact.smsOptOut, testContact: contact.testContact,
+    tags: contact.tags || [], listIds: contact.listIds || [],
+    customFields: Object.fromEntries([...document.querySelectorAll('.custom-field-input')].map(inp => [inp.dataset.field, inp.value])),
+  };
 }
-['fFirst', 'fLast', 'fAccount', 'fEmail', 'fPhone', 'fEmailOptOut', 'fSmsOptOut', 'fTestContact'].forEach(id => document.getElementById(id).addEventListener('change', autoSaveDetails));
+// "Renew by <end date>" right of the assigned user (server attaches contact.renewal for an ENROLLED student near their END DATE)
+function renderRenewPill(rn) {
+  document.getElementById('contactRenewPill').innerHTML = rn ? `<span class="renew-pill renew-${rn.level}" title="Enrolled student -- end date ${rn.endDate}">Renew by ${new Date(...rn.endDate.split('-').map((x, i) => i === 1 ? x - 1 : +x)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>` : '';
+}
+const saver = PRAContactAutosave.create({
+  read: readDetailsForm,
+  statusEl: document.getElementById('saveState'),
+  onSaved: (c) => {
+    renderRenewPill(c && c.renewal);
+    renderPhoneDialLink();
+    panelInstance?.render();
+    showToast('Saved');
+  },
+  onError: (msg) => showToast('Could not save: ' + msg, true),
+});
+function saveContact() { return saver.flush(); }
+saver.watch(['fFirst', 'fLast', 'fAccount', 'fEmail', 'fPhone', 'fEmailOptOut', 'fSmsOptOut', 'fTestContact'].map(id => document.getElementById(id)));
 
 document.getElementById('deleteBtn').onclick = async () => {
   if (!confirm('Delete this contact? This cannot be undone.')) return;
   const r = await fetch('/api/contacts/' + contactId, { method: 'DELETE' });
   if (!r.ok) { showToast('Could not delete', true); return; }
+  saver.reset(null); // gone -- don't let the page-leave flush PATCH a deleted contact
   location.href = '/contacts.html';
 };
 
@@ -394,9 +416,7 @@ document.getElementById('deleteBtn').onclick = async () => {
   const ownerFieldEl = document.getElementById('contactOwnerField');
   ownerFieldEl.innerHTML = ownerFieldHtml(contact);
   wireOwnerFields(ownerFieldEl, (_, ownerId) => { contact.ownerId = ownerId; });
-  // "Renew by <end date>" right of the assigned user (server attaches contact.renewal for an ENROLLED student near their END DATE)
-  const rn = contact.renewal;
-  document.getElementById('contactRenewPill').innerHTML = rn ? `<span class="renew-pill renew-${rn.level}" title="Enrolled student -- end date ${rn.endDate}">Renew by ${new Date(...rn.endDate.split('-').map((x, i) => i === 1 ? x - 1 : +x)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>` : '';
+  renderRenewPill(contact.renewal);
   document.getElementById('fFirst').value = contact.first || '';
   document.getElementById('fLast').value = contact.last || '';
   document.getElementById('fAccount').value = contact.accountName || '';
@@ -404,7 +424,8 @@ document.getElementById('deleteBtn').onclick = async () => {
   document.getElementById('fPhone').value = contact.phone || '';
   statusSel.value = contact.status || '';
   applyStatusGlow(contact.status);
-  statusSel.addEventListener('change', () => { applyStatusGlow(statusSel.value); autoSaveDetails(); });
+  statusSel.addEventListener('change', () => applyStatusGlow(statusSel.value));
+  saver.watch([statusSel]);
   document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
   document.getElementById('fSmsOptOut').checked = !!contact.smsOptOut;
   document.getElementById('fTestContact').checked = !!contact.testContact;
@@ -416,6 +437,7 @@ document.getElementById('deleteBtn').onclick = async () => {
   renderCustomFields();
   renderTags();
   renderLists();
+  saver.reset(contactId); // baseline = what the server holds; edits diff against this
   loadThread();
 })();
 

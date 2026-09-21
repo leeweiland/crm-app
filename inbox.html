@@ -258,6 +258,8 @@
   .tag-pill { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; padding: 4px 10px; border-radius: 14px; background: var(--pra-blue-dim); color: var(--pra-blue); margin: 0 6px 6px 0; }
   .tag-pill button { background: none; border: none; color: inherit; cursor: pointer; font-size: .8rem; padding: 0; }
   .ov-sub-label { font-family: var(--font-secondary); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pra-dim); margin: 16px 0 8px; }
+  .save-state { font-size: .74rem; color: var(--pra-dim); white-space: nowrap; flex-shrink: 0; max-width: 9.5rem; overflow: hidden; text-overflow: ellipsis; }
+  .save-state[data-state="error"] { color: var(--pra-red); }
   /* Searchable "add a tag/list" dropdown -- same pattern as campaign-builder's
      recipient pickers, so you search a couple characters instead of scrolling
      a giant alphabetical <select> of every tag/list in the account. */
@@ -427,8 +429,9 @@
           <button class="pra-btn pra-btn-outline pra-btn-sm" id="ovGenSummaryImageBtn" type="button">Generate Summary Image</button>
         </div>
       </div>
+      <span class="save-state" id="ovSaveState"></span>
       <a class="pra-btn pra-btn-ghost pra-btn-sm" id="ovFullPageLink" href="#">Open Full Page</a>
-      <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" onclick="closeModal('contactOverlayModal')">Close</button>
+      <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" onclick="closeContactOverlay()">Close</button>
     </div>
     <div class="field-row">
       <div class="field"><label class="pra-label">First name</label><input class="pra-input" id="ovFirst"/></div>
@@ -461,6 +464,7 @@
 <script src="/contact-time.js"></script>
 <script src="/conversation-panel.js"></script>
 <script src="/inline-edit.js"></script>
+<script src="/contact-autosave.js"></script>
 <script>
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
@@ -1455,6 +1459,7 @@ function backToConvoList() { document.getElementById('chatView').classList.remov
 let overlayContact = null, overlayTags = [], overlayLists = [], overlayFields = [];
 let overlayThreadItems = [];
 async function openContactOverlay(contactId) {
+  overlaySaver.flush(); // any unsaved edit on the contact shown last goes out before the form is repopulated
   const [tagsRes, listsRes, fieldsRes, contactRes, threadRes] = await Promise.all([
     fetch('/api/tags'), fetch('/api/lists'), fetch('/api/custom-fields?entityType=contact'), fetch('/api/contacts/' + contactId), fetch('/api/inbox/contact/' + contactId)
   ]);
@@ -1478,10 +1483,9 @@ async function openContactOverlay(contactId) {
   const statusSel = document.getElementById('ovStatus');
   statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${overlayContact.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
   statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(overlayContact.status)};${statusSelectWidthRule(overlayContact.status)}`);
-  statusSel.onchange = async () => {
-    overlayContact.status = statusSel.value;
+  statusSel.onchange = () => {
     statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(statusSel.value)};${statusSelectWidthRule(statusSel.value)}`);
-    await autoSaveOverlay();
+    overlaySaver.flush();
   };
   document.getElementById('ovFirst').value = overlayContact.first || '';
   document.getElementById('ovLast').value = overlayContact.last || '';
@@ -1497,18 +1501,62 @@ async function openContactOverlay(contactId) {
   renderOverlayLists();
   renderOverlayHyrosUrls();
   renderOverlayCustomFields();
+  overlaySaver.reset(overlayContact.id); // baseline = what the server holds; edits diff against this
   openModal('contactOverlayModal');
 }
-// No Save button -- every field PATCHes immediately on change, same
-// pattern as contact-detail.html's Details panel.
-async function autoSaveOverlay() {
-  const r = await fetch('/api/contacts/' + overlayContact.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overlayContact) });
-  if (!r.ok) { showToast('Could not save', true); return; }
-  overlayContact = (await r.json()).contact;
-  showToast('Saved');
-  await loadRefs();
-  await loadConversations(); // re-selects the open conversation if it's still selectedConvo/initialContactId, refreshing the header
+// No Save button -- edits save themselves (contact-autosave.js), same as
+// contact-detail.html: on blur/change, ~1.5s after typing stops, when the
+// overlay is closed (Close / backdrop / Esc) and when the page is left, so
+// browser Back, closing the tab or a refresh with the cursor still in a field
+// no longer loses the edit (that never fires "change"). Only fields that
+// actually changed are sent -- notably NOT ownerId, which the server rejects
+// from non-admins, and not a stale status/tags copy over a newer one.
+// read() also mirrors the form into overlayContact, which the rest of the
+// overlay reads.
+function readOverlayForm() {
+  const v = id => document.getElementById(id);
+  overlayContact.first = v('ovFirst').value.trim();
+  overlayContact.last = v('ovLast').value.trim();
+  overlayContact.accountName = v('ovAccount').value.trim();
+  overlayContact.email = v('ovEmail').value.trim();
+  overlayContact.phone = v('ovPhone').value.trim();
+  overlayContact.status = v('ovStatus').value;
+  overlayContact.emailOptOut = v('ovEmailOptOut').checked;
+  overlayContact.smsOptOut = v('ovSmsOptOut').checked;
+  overlayContact.customFields = overlayContact.customFields || {};
+  document.querySelectorAll('.ov-custom-field-input').forEach(inp => { overlayContact.customFields[inp.dataset.field] = inp.value; });
+  v('contactOverlayName').textContent = `${overlayContact.first} ${overlayContact.last}`.trim() || 'Contact';
+  return {
+    first: overlayContact.first, last: overlayContact.last, accountName: overlayContact.accountName, email: overlayContact.email, phone: overlayContact.phone,
+    status: overlayContact.status, emailOptOut: overlayContact.emailOptOut, smsOptOut: overlayContact.smsOptOut,
+    tags: overlayContact.tags || [], listIds: overlayContact.listIds || [],
+    customFields: Object.fromEntries([...document.querySelectorAll('.ov-custom-field-input')].map(inp => [inp.dataset.field, inp.value])),
+  };
 }
+const overlaySaver = PRAContactAutosave.create({
+  read: readOverlayForm,
+  statusEl: document.getElementById('ovSaveState'),
+  onSaved: (c) => {
+    // The overlay may already be showing a different contact by the time a slow save lands.
+    if (overlayContact && c && c.id === overlayContact.id) {
+      overlayContact.renewal = c.renewal; overlayContact.updatedAt = c.updatedAt;
+      document.getElementById('ovRenewPill').innerHTML = c.renewal ? `<span class="renew-pill renew-${c.renewal.level}">Renew by ${fmtRenewDate(c.renewal.endDate)}</span>` : '';
+    }
+    showToast('Saved');
+    // re-selects the open conversation if it's still selectedConvo/initialContactId, refreshing the header
+    loadRefs().then(() => loadConversations()).catch(() => {});
+  },
+  onError: (msg) => showToast('Could not save: ' + msg, true),
+});
+function autoSaveOverlay() { return overlaySaver.flush(); }
+// Every way of dismissing the overlay saves first (in the background -- never blocks closing).
+function closeContactOverlay() {
+  overlaySaver.flush();
+  closeModal('contactOverlayModal');
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('contactOverlayModal').classList.contains('show')) closeContactOverlay();
+});
 // Selected tags/lists show only the first couple, same collapse pattern as
 // contact-detail.html's Details panel -- a contact with a dozen imported
 // segment tags shouldn't push the whole overlay's form fields off-screen.
@@ -1597,14 +1645,14 @@ function renderOverlayTags() {
   document.getElementById('ovTagsToggleSlot').innerHTML = ovToggleSlotHtml(pills.length, ovTagsExpanded, 'ovTagsToggle');
   wrap.querySelectorAll('.ovRemoveTag').forEach(btn => btn.onclick = async () => {
     overlayContact.tags = overlayContact.tags.filter(id => id !== btn.dataset.tag);
-    await autoSaveOverlay();
+    overlaySaver.flush();
     renderOverlayTags();
   });
   const toggle = document.getElementById('ovTagsToggle');
   if (toggle) toggle.onclick = () => { ovTagsExpanded = !ovTagsExpanded; renderOverlayTags(); };
   renderSearchAddDropdown('ovAddTagBox', overlayTags, overlayContact.tags || [], async (tagId) => {
     overlayContact.tags.push(tagId);
-    await autoSaveOverlay();
+    overlaySaver.flush();
     renderOverlayTags();
   });
   renderOverlayHyrosTags();
@@ -1620,14 +1668,14 @@ function renderOverlayLists() {
   document.getElementById('ovListsToggleSlot').innerHTML = ovToggleSlotHtml(pills.length, ovListsExpanded, 'ovListsToggle');
   wrap.querySelectorAll('.ovRemoveList').forEach(btn => btn.onclick = async () => {
     overlayContact.listIds = overlayContact.listIds.filter(id => id !== btn.dataset.list);
-    await autoSaveOverlay();
+    overlaySaver.flush();
     renderOverlayLists();
   });
   const toggle = document.getElementById('ovListsToggle');
   if (toggle) toggle.onclick = () => { ovListsExpanded = !ovListsExpanded; renderOverlayLists(); };
   renderSearchAddDropdown('ovAddListBox', overlayLists, overlayContact.listIds || [], async (listId) => {
     overlayContact.listIds.push(listId);
-    await autoSaveOverlay();
+    overlaySaver.flush();
     renderOverlayLists();
   });
 }
@@ -1639,20 +1687,7 @@ function renderOverlayCustomFields() {
       <input class="pra-input ov-custom-field-input" data-field="${f.id}" value="${escapeHtml(overlayContact.customFields?.[f.id] || '')}"/>
     </div>
   `).join('');
-  wrap.querySelectorAll('.ov-custom-field-input').forEach(inp => inp.addEventListener('change', collectAndAutoSaveOverlay));
-}
-async function collectAndAutoSaveOverlay() {
-  overlayContact.first = document.getElementById('ovFirst').value.trim();
-  overlayContact.last = document.getElementById('ovLast').value.trim();
-  overlayContact.accountName = document.getElementById('ovAccount').value.trim();
-  overlayContact.email = document.getElementById('ovEmail').value.trim();
-  overlayContact.phone = document.getElementById('ovPhone').value.trim();
-  overlayContact.emailOptOut = document.getElementById('ovEmailOptOut').checked;
-  overlayContact.smsOptOut = document.getElementById('ovSmsOptOut').checked;
-  overlayContact.customFields = overlayContact.customFields || {};
-  document.querySelectorAll('.ov-custom-field-input').forEach(inp => { overlayContact.customFields[inp.dataset.field] = inp.value; });
-  await autoSaveOverlay();
-  document.getElementById('contactOverlayName').textContent = `${overlayContact.first} ${overlayContact.last}`.trim() || 'Contact';
+  overlaySaver.watch(wrap.querySelectorAll('.ov-custom-field-input'));
 }
 function renderOverlayOptOutBadges() {
   const emailOptOut = document.getElementById('ovEmailOptOut').checked;
@@ -1668,13 +1703,13 @@ function renderOverlayPhoneTime() {
   PRAContactTime.mount(document.getElementById('ovPhoneTime'), document.getElementById('ovPhone').value, { className: 'ct-trail' });
 }
 document.getElementById('ovPhone').addEventListener('input', renderOverlayPhoneTime);
-['ovFirst', 'ovLast', 'ovAccount', 'ovEmail', 'ovPhone', 'ovEmailOptOut', 'ovSmsOptOut'].forEach(id => document.getElementById(id).addEventListener('change', collectAndAutoSaveOverlay));
+overlaySaver.watch(['ovFirst', 'ovLast', 'ovAccount', 'ovEmail', 'ovPhone', 'ovEmailOptOut', 'ovSmsOptOut'].map(id => document.getElementById(id)));
 document.getElementById('ovEmailOptOut').addEventListener('change', renderOverlayOptOutBadges);
 document.getElementById('ovSmsOptOut').addEventListener('change', renderOverlayOptOutBadges);
 // Click the dimmed backdrop itself (not the box) to dismiss -- e.target is
 // only the backdrop element when the click didn't land on a descendant.
 document.getElementById('contactOverlayModal').addEventListener('click', (e) => {
-  if (e.target.id === 'contactOverlayModal') closeModal('contactOverlayModal');
+  if (e.target.id === 'contactOverlayModal') closeContactOverlay();
 });
 
 // ── Flat list (Tasks / Reminders) ───────────────────────────────────────
