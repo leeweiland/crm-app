@@ -87,6 +87,7 @@ async function openInlineEditMenu({ x, y, field, contactId, onSaved, owner }) {
         });
         if (!r.ok) throw new Error('save failed');
         onSaved && onSaved(opt.value);
+        if (field === 'status') window.EnrollPopup?.maybeOpen(contactId, opt.value);
       } catch (err) {
         if (window.showToast) showToast('Could not save change', 'error');
         else alert('Could not save change');

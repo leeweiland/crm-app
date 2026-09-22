@@ -1038,6 +1038,7 @@
           showToast('Status updated');
           e.target.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle(status) : '');
           config.onStatusChanged?.(contactId, status);
+          window.EnrollPopup?.maybeOpen(contactId, status);
         });
       }
       const genSummaryBtn = container.querySelector('#chatGenSummaryImageBtn');

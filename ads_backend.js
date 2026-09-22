@@ -327,7 +327,7 @@ function callsPayments(rows) {
   }
   return out;
 }
-async function googleAccessToken() {
+export async function googleAccessToken() {
   const { clientId, clientSecret, refreshToken } = googleCreds();
   if (!clientId || !clientSecret || !refreshToken) throw new Error("Google Sheets isn't configured");
   const tr = await fetch("https://oauth2.googleapis.com/token", {
@@ -476,7 +476,12 @@ export function startCallsSyncTimer(everyMs = 30 * 60 * 1000) {
 function readSettings() {
   return readJson(INTEGRATIONS_FILE, { ads: {} });
 }
-function getAdsSettings() {
+// Exported: calls_sheet_backend.js's enrollment popup reads/writes the SAME
+// CALLS TRACKING spreadsheet this file already syncs sales from, and must
+// resolve the sheet id/credentials the exact same way (Settings > Ads'
+// overrides, not just the env fallback) so the two features never disagree
+// about which spreadsheet or which Google account they're touching.
+export function getAdsSettings() {
   const a = readSettings().ads || {};
   return {
     sheetId: a.sheetId || DEFAULT_SHEET_ID,
@@ -516,7 +521,7 @@ async function triggerCouplerRefresh() {
 // field, stored here) -- GOOGLE_CLIENT_ID/SECRET are already in this app's
 // own .env (added for the Scheduling feature); the Sheets refresh token
 // gets added via Settings -> Ads.
-function googleCreds() {
+export function googleCreds() {
   const a = readSettings().ads || {};
   return {
     clientId: a.googleClientId || process.env.GOOGLE_CLIENT_ID || "",

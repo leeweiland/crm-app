@@ -465,6 +465,7 @@
 <script src="/contact-time.js"></script>
 <script src="/conversation-panel.js"></script>
 <script src="/call-popup.js"></script>
+<script src="/enroll-popup.js"></script>
 <script src="/inline-edit.js"></script>
 <script src="/contact-autosave.js"></script>
 <script>
@@ -1539,13 +1540,14 @@ function readOverlayForm() {
 const overlaySaver = PRAContactAutosave.create({
   read: readOverlayForm,
   statusEl: document.getElementById('ovSaveState'),
-  onSaved: (c) => {
+  onSaved: (c, body) => {
     // The overlay may already be showing a different contact by the time a slow save lands.
     if (overlayContact && c && c.id === overlayContact.id) {
       overlayContact.renewal = c.renewal; overlayContact.updatedAt = c.updatedAt;
       document.getElementById('ovRenewPill').innerHTML = c.renewal ? `<span class="renew-pill renew-${c.renewal.level}">Renew by ${fmtRenewDate(c.renewal.endDate)}</span>` : '';
     }
     showToast('Saved');
+    if (body?.status && overlayContact) window.EnrollPopup?.maybeOpen(overlayContact.id, body.status);
     // re-selects the open conversation if it's still selectedConvo/initialContactId, refreshing the header
     loadRefs().then(() => loadConversations()).catch(() => {});
   },

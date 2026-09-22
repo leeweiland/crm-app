@@ -12,6 +12,7 @@ import { handleCampaignsRequest } from "./campaigns_backend.js";
 import { handleAutomationsRequest } from "./automations_backend.js";
 import { handleSmsRequest } from "./sms_backend.js";
 import { handleCallsRequest } from "./calls_backend.js";
+import { handleCallsSheetRequest } from "./calls_sheet_backend.js";
 import { handleWorkflowsRequest } from "./workflows_backend.js";
 import { handleInboxRequest } from "./inbox_backend.js";
 import { handleReportingRequest } from "./reporting_backend.js";
@@ -176,6 +177,7 @@ createServer(async (req, res) => {
   if (await handleAutomationsRequest(req, res, url)) return;
   if (await handleSmsRequest(req, res, url)) return;
   if (await handleCallsRequest(req, res, url)) return;
+  if (await handleCallsSheetRequest(req, res, url)) return;
   if (await handleWorkflowsRequest(req, res, url)) return;
   if (await handleInboxRequest(req, res, url)) return;
   if (await handleReportingRequest(req, res, url)) return;
