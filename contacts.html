@@ -387,6 +387,7 @@
 <script src="/condition-row-client.js"></script>
 <script src="/column-resize.js"></script>
 <script src="/contact-time.js"></script>
+<script src="/call-popup.js"></script>
 <script>
 let allStatuses = [], allTags = [], allLists = [], allCustomFields = [], allSegments = [];
 let activeFilter = null; // {all:[...]}|{any:[...]}|null -- last applied filter, used by loadContacts() and Save as Segment
@@ -993,7 +994,16 @@ const BASE_COLUMNS = [
   { key: 'first', label: 'First', sortable: true, frozen: 1, always: true, render: c => escapeHtml(c.first) },
   { key: 'last', label: 'Last', sortable: true, frozen: 2, always: true, render: c => escapeHtml(c.last) },
   { key: 'email', label: 'Email', sortable: true, render: c => escapeHtml(c.email || '') },
-  { key: 'phone', label: 'Phone', sortable: true, render: c => c.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(c.phone.replace(/[^\d+]/g, ''))}" onclick="event.stopPropagation()">${escapeHtml(c.phone)}</a>` : '' },
+  {
+    key: 'phone', label: 'Phone', sortable: true, render: c => {
+      if (!c.phone) return '';
+      const digits = c.phone.replace(/[^\d+]/g, '');
+      // Opens the Call From Personal Phone / Call From CRM popup instead of
+      // the browser's own tel: handler -- kept as a real tel: link (never
+      // reached with JS on) so it still degrades sensibly without it.
+      return `<a class="pra-tel-link" href="tel:${escapeHtml(digits)}" onclick="event.preventDefault();event.stopPropagation();window.CallPopup.open({contactId:'${c.id}',phone:'${escapeHtml(digits)}',anchorEl:this})">${escapeHtml(c.phone)}</a>`;
+    },
+  },
   // Estimated from the phone number (contact-time.js) -- shows the contact's
   // current local time + zone, e.g. "3:42 PM EDT". Not sortable: it's derived
   // client-side, so the server has nothing to order by. Off by default.

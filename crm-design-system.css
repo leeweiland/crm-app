@@ -409,6 +409,11 @@ body { margin: 0; }
 .be-toolbar button:hover { border-color: var(--pra-blue); }
 .be-toolbar select, .be-toolbar input[type="color"] { background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 3px 6px; font-size: .78rem; }
 .be-toolbar select option { background: var(--pra-panel); color: var(--pra-white); }
+/* Compact dropdowns so Font, Size, Spacing and Personalize all fit on the first toolbar row (selects otherwise size to their widest option, e.g. "Century Gothic Bold"). */
+.be-toolbar #beFontFamily { width: 130px; }
+.be-toolbar #beFontSize { width: 62px; }
+.be-toolbar #beSpacing { width: 92px; }
+.be-toolbar #bePersonalize { width: 120px; }
 /* Hex-first color field -- a text input for typing/pasting a hex value
    directly (a native <input type="color">'s own picker UI can't be
    reordered to put hex first), with a small swatch alongside for picking
@@ -738,3 +743,19 @@ body { margin: 0; }
 .task-panel-add-row input[type="time"] { flex: 1 1 96px; min-width: 0; }
 .task-panel-add-row select { flex: 1 1 100%; width: auto; }
 .task-panel-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+/* call-popup.js -- the "Call From Personal Phone" / "Call From CRM" popup
+   that opens on a phone-number click, plus the persistent bar shown while a
+   browser (Voice SDK) call is connecting/active. Same visual language as
+   .context-menu (inbox.html), just global since call-popup.js is shared by
+   contacts.html/contact-detail.html/inbox.html. */
+.call-popup { position: fixed; z-index: 650; min-width: 210px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 5px; box-shadow: 0 8px 28px rgba(0,0,0,0.5); }
+.call-popup button { display: flex; align-items: center; width: 100%; padding: 8px 10px; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .83rem; text-align: left; border-radius: 5px; cursor: pointer; }
+.call-popup button:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
+.call-popup button:disabled { color: var(--pra-dim); cursor: default; }
+.call-bar { position: fixed; bottom: 20px; right: 20px; z-index: 810; background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 12px 16px; box-shadow: 0 8px 28px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 12px; font-family: var(--font-primary); color: var(--pra-white); font-size: .85rem; }
+.call-bar-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: call-bar-pulse 1.4s infinite; }
+.call-bar.ended .call-bar-dot { background: var(--pra-dim); animation: none; }
+@keyframes call-bar-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.call-bar-hangup { background: var(--pra-red); color: #fff; border: none; border-radius: 6px; padding: 6px 12px; font-size: .8rem; font-weight: 700; cursor: pointer; font-family: inherit; }
+.call-bar-hangup:hover { background: #ff5252; }

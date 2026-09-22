@@ -1,3 +1,4 @@
+import twilio from "twilio";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
 import { DEFAULT_THEME } from "./block_editor_shared.js";
 import { parseSheetUrl, checkBlacklistSheet } from "./blacklist_sheet.js";
@@ -65,6 +66,17 @@ export function getTwilioSettings() {
     accountSid: t.accountSid || process.env.TWILIO_ACCOUNT_SID || "",
     authToken: t.authToken || process.env.TWILIO_AUTH_TOKEN || "",
     fromNumber: t.fromNumber || process.env.TWILIO_FROM_NUMBER || "",
+    // Voice calling (calls_backend.js) -- apiKeySid/apiKeySecret + twimlAppSid
+    // are what an Access Token needs to let the browser (Twilio Voice SDK)
+    // place a call; accountSid/authToken alone (above) can't mint one. Both
+    // are provisioned together by the "Set Up Voice Calling" button in
+    // Settings > Twilio (provisionVoiceCalling below), not typed in by hand.
+    apiKeySid: t.apiKeySid || "",
+    apiKeySecret: t.apiKeySecret || "",
+    twimlAppSid: t.twimlAppSid || "",
+    // Google Drive folder ("Call From CRM"'s recordings land here) -- just the
+    // folder id from its drive.google.com/drive/folders/<id> URL.
+    recordingsFolderId: t.recordingsFolderId || "",
   };
 }
 
@@ -244,17 +256,47 @@ export async function handleIntegrationsRequest(req, res, url) {
     return sendJson(res, 200, {
       configured: !!(t.accountSid && t.authToken && t.fromNumber),
       accountSid: mask(t.accountSid), authToken: mask(t.authToken), fromNumber: t.fromNumber,
+      voiceConfigured: !!(t.apiKeySid && t.apiKeySecret && t.twimlAppSid),
+      apiKeySid: t.apiKeySid, apiKeySecret: mask(t.apiKeySecret),
+      recordingsFolderId: t.recordingsFolderId,
     });
   }
   if (p === "/api/integrations/twilio" && req.method === "POST") {
     const body = await readJsonBody(req);
     const all = readSettings();
     all.twilio = all.twilio || {};
-    for (const k of ["accountSid", "authToken", "fromNumber"]) {
+    for (const k of ["accountSid", "authToken", "fromNumber", "apiKeySid", "apiKeySecret", "twimlAppSid", "recordingsFolderId"]) {
       if (k in body && !String(body[k]).startsWith("****")) all.twilio[k] = body[k];
     }
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
+  }
+  // One-click provisioning for "Call From CRM": creates the Twilio API Key
+  // (needed for a browser Voice SDK Access Token -- accountSid/authToken
+  // alone can't mint one) and the TwiML Application (tells Twilio which
+  // webhook to ask for instructions when the browser places a call) on this
+  // Twilio account, then saves both straight into settings. Safe to click
+  // more than once -- a no-op once voiceConfigured is already true.
+  if (p === "/api/integrations/twilio/provision-voice" && req.method === "POST") {
+    if (!isAdmin(getSessionUser(req))) return sendJson(res, 403, { error: "Admins only" });
+    const t = getTwilioSettings();
+    if (!t.accountSid || !t.authToken) return sendJson(res, 400, { error: "Save the Account SID and Auth Token first." });
+    if (t.apiKeySid && t.apiKeySecret && t.twimlAppSid) return sendJson(res, 200, { ok: true, alreadyConfigured: true });
+    const base = getPublicBaseUrl();
+    if (!base) return sendJson(res, 400, { error: "Set a Public Base URL (General tab) first -- Twilio needs a real URL to call back." });
+    try {
+      const twilioClient = twilio(t.accountSid, t.authToken);
+      const key = await twilioClient.newKeys.create({ friendlyName: "crm-voice-calling" });
+      const app = await twilioClient.applications.create({
+        friendlyName: "CRM Voice Calling", voiceUrl: `${base}/api/webhooks/twilio/voice-outbound`, voiceMethod: "POST",
+      });
+      const all = readSettings();
+      all.twilio = { ...(all.twilio || {}), apiKeySid: key.sid, apiKeySecret: key.secret, twimlAppSid: app.sid };
+      writeJson(INTEGRATIONS_FILE, all);
+      return sendJson(res, 200, { ok: true });
+    } catch (e) {
+      return sendJson(res, 502, { error: e.message });
+    }
   }
 
   if (p === "/api/integrations/compliance" && req.method === "GET") {

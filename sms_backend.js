@@ -72,7 +72,10 @@ export function normalizePhoneToE164(phone) {
 // misclassification bug did before it was fixed. US territories (Puerto
 // Rico 787/939, Guam 671, USVI 340, etc.) are deliberately NOT listed here
 // -- those are still domestic US destinations this account can reach.
-const FOREIGN_NANP_AREA_CODES = new Set([
+// Exported: calls_backend.js applies this exact same geo restriction to
+// Voice (the account's Twilio calling permissions are the same as its SMS
+// ones), rather than risking the two lists drifting apart.
+export const FOREIGN_NANP_AREA_CODES = new Set([
   "242", "246", "264", "268", "284", "345", "441", "473", "649", "658",
   "664", "721", "758", "767", "784", "809", "829", "849", "868", "869", "876",
 ]);

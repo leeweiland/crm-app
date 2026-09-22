@@ -1218,6 +1218,22 @@ export async function handleAuthRequest(req, res, url) {
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
+  // personalPhone: the number "Call From Personal Phone" (calls_backend.js's
+  // click-to-call) rings first, before bridging to the lead -- same
+  // admin-edits-everyone's-own-field convention as zoomLink/calendarEmail
+  // above, not a self-service field, for consistency with those.
+  const personalPhoneMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/personal-phone$/);
+  if (personalPhoneMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { personalPhone } = await readJsonBody(req);
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === personalPhoneMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    target.personalPhone = String(personalPhone || "").trim();
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
 
   // Per-user UI preferences (e.g. which contacts-table columns are visible
   // and what order they're in) -- merge-patch semantics, only the keys

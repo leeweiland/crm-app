@@ -29,7 +29,11 @@ function userEmails(u) { return [u.email, u.gmailEmail].filter(Boolean).map(e =>
 // The user ids a logged message is a conversation with (usually 0 or 1).
 export function staffUserIdsForMessage(row, users) {
   const ids = new Set();
-  if (row.direction === "outbound" && row.sourceType === "inbox" && row.sourceId && users.some(u => u.id === row.sourceId)) ids.add(row.sourceId);
+  // "inbox" = a 1:1 email/SMS sent from the chat panel; "crm_call" = either
+  // call mode (calls_backend.js) -- both log the acting staff member as
+  // sourceId the same way, so a phone call counts as "already talking to
+  // this contact" the same as a text/email does.
+  if (row.direction === "outbound" && ["inbox", "crm_call"].includes(row.sourceType) && row.sourceId && users.some(u => u.id === row.sourceId)) ids.add(row.sourceId);
   if (row.channel === "email") {
     const addrs = new Set(addressesIn(row.direction === "outbound" ? row.from : row.to));
     if (addrs.size) for (const u of users) if (userEmails(u).some(e => addrs.has(e))) ids.add(u.id);

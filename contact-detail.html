@@ -135,6 +135,7 @@
 <script src="/crm-nav.js"></script>
 <script src="/contact-time.js"></script>
 <script src="/conversation-panel.js"></script>
+<script src="/call-popup.js"></script>
 <script src="/contact-autosave.js"></script>
 <script>
 const contactId = new URLSearchParams(location.search).get('id');
@@ -273,8 +274,11 @@ function renderOptOutBadges() {
 function renderPhoneDialLink() {
   const link = document.getElementById('fPhoneDial');
   const digits = (contact.phone || '').replace(/[^\d+]/g, '');
-  if (digits) { link.href = 'tel:' + digits; link.style.display = ''; }
-  else { link.removeAttribute('href'); link.style.display = 'none'; }
+  if (digits) {
+    link.href = 'tel:' + digits;
+    link.style.display = '';
+    link.onclick = (e) => { e.preventDefault(); window.CallPopup.open({ contactId, phone: digits, anchorEl: link }); };
+  } else { link.removeAttribute('href'); link.style.display = 'none'; link.onclick = null; }
   renderPhoneLocalTime(contact.phone);
 }
 // The contact's local time, right of the "Phone" label (contact-time.js).

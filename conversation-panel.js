@@ -142,11 +142,17 @@
     ).join('');
   }
   function noteBubbleHtml(item) {
-    const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : '📝';
+    const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : item.channel === 'call' ? '📞' : '📝';
+    // calls_backend.js's own body is either empty, "Recording is
+    // processing...", or "Recording: <drive link>" -- the only one of those
+    // worth a real link.
+    const recordingMatch = item.channel === 'call' && item.body ? /^Recording:\s*(https?:\/\/\S+)/.exec(item.body) : null;
     const bodyHtml = item.body
       ? (item.channel === 'form'
           ? `<div class="note-bubble-body note-bubble-qa">${formAnswersHtml(item.body)}</div>`
-          : `<div class="note-bubble-body">${escapeHtml(item.body)}</div>`)
+          : recordingMatch
+            ? `<div class="note-bubble-body"><a href="${escapeHtml(recordingMatch[1])}" target="_blank" rel="noopener noreferrer">🎙️ Play recording</a></div>`
+            : `<div class="note-bubble-body">${escapeHtml(item.body)}</div>`)
       : '';
     return `
       <div class="bubble-row ${item.direction}">
@@ -720,7 +726,7 @@
             </span>
             <div class="chat-panel-sub">${[
               contact?.email ? escapeHtml(contact.email) : '',
-              contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}">${escapeHtml(contact.phone)}</a>` : '',
+              contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}" onclick="event.preventDefault();event.stopPropagation();window.CallPopup.open({contactId:'${contactId}',phone:'${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}',anchorEl:this})">${escapeHtml(contact.phone)}</a>` : '',
               // The contact's own local time, right after their number (see
               // contact-time.js) -- '' (dropped by the filter) when the
               // number doesn't reveal a timezone or that script isn't loaded.

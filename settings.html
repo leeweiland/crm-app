@@ -148,6 +148,16 @@
         <div class="field"><label class="pra-label">From number</label><input class="pra-input" id="twilioFromNumber" placeholder="+18087513803"/></div>
         <button class="pra-btn" id="saveTwilioBtn">Save</button>
         <div class="pra-muted" id="twilioSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+
+        <div class="pra-h2" style="margin:28px 0 6px">Voice Calling</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Powers the "Call From Personal Phone" / "Call From CRM" popup on a contact's phone number. Personal phones are set per person in Team Users above.</div>
+        <div class="pra-muted" id="voiceStatusMsg" style="font-size:.82rem;margin-bottom:12px">Loading...</div>
+        <button class="pra-btn" id="provisionVoiceBtn">Set Up Voice Calling</button>
+        <div class="pra-muted" id="voiceProvisionMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+        <div class="field" style="margin-top:16px"><label class="pra-label">Recordings Google Drive folder ID</label><input class="pra-input" id="recordingsFolderId" placeholder="the id from drive.google.com/drive/folders/&lt;id&gt;"/></div>
+        <div class="pra-muted" style="font-size:.78rem;margin:-4px 0 12px">"Call From CRM" recordings upload here automatically. Only recorded calls get a Drive link -- "Call From Personal Phone" is never recorded.</div>
+        <button class="pra-btn" id="saveRecordingsFolderBtn">Save</button>
+        <div class="pra-muted" id="recordingsFolderMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
       <div class="tab-panel" id="tab-emailsettings" style="max-width:600px">
@@ -319,7 +329,7 @@
         <div class="pra-muted" style="font-size:.8rem;margin-bottom:14px">Drag the <span style="cursor:grab">⠿</span> handle to reorder -- this order is also what the Inbox "send as" dropdown and Connect Email use.</div>
         <div style="overflow-x:auto">
           <table class="data-table" id="usersTable">
-            <thead><tr><th style="width:28px"></th><th>Name</th><th>Email</th><th>Role</th><th>Zoom Link</th><th>Calendar Email</th><th>AI Active Access</th><th></th></tr></thead>
+            <thead><tr><th style="width:28px"></th><th>Name</th><th>Email</th><th>Role</th><th>Zoom Link</th><th>Calendar Email</th><th title="Rings this number first for &quot;Call From Personal Phone&quot; in the Inbox/Contacts">Personal Phone</th><th>AI Active Access</th><th></th></tr></thead>
             <tbody id="usersBody"></tbody>
           </table>
         </div>
@@ -605,7 +615,7 @@ document.getElementById('addFieldBtn').onclick = async () => {
 async function loadUsers() {
   const r = await fetch('/api/auth/users');
   const body = document.getElementById('usersBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">Admins only.</td></tr>'; return; }
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="9" class="pra-muted">Admins only.</td></tr>'; return; }
   const { users } = await r.json();
   body.innerHTML = users.map(u => `
     <tr draggable="true" data-user-row="${u.id}">
@@ -620,6 +630,7 @@ async function loadUsers() {
            panel is also what actually enforces one footer per person. -->
       <td><input class="pra-input" data-user-zoom="${u.id}" value="${escapeHtml(u.zoomLink || '')}" placeholder="https://zoom.us/j/..." style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
       <td><input class="pra-input" data-user-cal="${u.id}" value="${escapeHtml(u.calendarEmail || '')}" placeholder="${escapeHtml(u.email)}" style="font-size:.8rem;padding:4px 8px;min-width:160px"/></td>
+      <td><input class="pra-input" data-user-phone="${u.id}" value="${escapeHtml(u.personalPhone || '')}" placeholder="+1 808 555 1234" style="font-size:.8rem;padding:4px 8px;min-width:140px"/></td>
       <td style="text-align:center"><input type="checkbox" data-user-ai-active="${u.id}" ${u.canUseAiActive ? 'checked' : ''} title="Lets this user flip themselves to Away in the Inbox, which hands their leads to AI Active"/></td>
       <td>
         ${u.archived
@@ -706,6 +717,16 @@ async function loadUsers() {
       const r = await fetch(`/api/auth/users/${inp.dataset.userCal}/calendar-email`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ calendarEmail: inp.value }),
+      });
+      if (!r.ok) { showToast('Could not save', true); return; }
+      showToast('Saved');
+    });
+  });
+  body.querySelectorAll('[data-user-phone]').forEach(inp => {
+    inp.addEventListener('blur', async () => {
+      const r = await fetch(`/api/auth/users/${inp.dataset.userPhone}/personal-phone`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personalPhone: inp.value }),
       });
       if (!r.ok) { showToast('Could not save', true); return; }
       showToast('Saved');
@@ -844,7 +865,27 @@ async function loadTwilioSettings() {
   document.getElementById('twilioAccountSid').value = t.accountSid || '';
   document.getElementById('twilioAuthToken').value = t.authToken || '';
   document.getElementById('twilioFromNumber').value = t.fromNumber || '';
+  document.getElementById('voiceStatusMsg').textContent = t.voiceConfigured
+    ? '"Call From CRM" is set up and ready.'
+    : 'Not set up yet -- "Call From CRM" will be unavailable in the popup until this is done ("Call From Personal Phone" doesn\'t need this).';
+  document.getElementById('provisionVoiceBtn').textContent = t.voiceConfigured ? 'Re-run Setup' : 'Set Up Voice Calling';
+  document.getElementById('recordingsFolderId').value = t.recordingsFolderId || '';
 }
+document.getElementById('provisionVoiceBtn').onclick = async () => {
+  const btn = document.getElementById('provisionVoiceBtn'), msg = document.getElementById('voiceProvisionMsg');
+  btn.disabled = true; msg.textContent = 'Setting up (creates a Twilio API key + TwiML app on this account)...';
+  const r = await fetch('/api/integrations/twilio/provision-voice', { method: 'POST' });
+  const d = await r.json().catch(() => ({}));
+  btn.disabled = false;
+  msg.textContent = r.ok ? (d.alreadyConfigured ? 'Already set up.' : 'Done -- "Call From CRM" is ready.') : (d.error || 'Could not set it up.');
+  if (r.ok) { loadTwilioSettings(); showToast('Voice calling set up'); }
+};
+document.getElementById('saveRecordingsFolderBtn').onclick = async () => {
+  const msg = document.getElementById('recordingsFolderMsg');
+  const r = await fetch('/api/integrations/twilio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recordingsFolderId: document.getElementById('recordingsFolderId').value.trim() }) });
+  msg.textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) showToast('Saved');
+};
 document.getElementById('saveTwilioBtn').onclick = async () => {
   const body = {
     accountSid: document.getElementById('twilioAccountSid').value.trim(),
