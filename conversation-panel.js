@@ -141,17 +141,21 @@
       : `<div class="note-qa"><div class="note-qa-answer">${escapeHtml(p.answer)}</div></div>`
     ).join('');
   }
+  // calls_backend.js's own body is either empty, "Recording is processing...",
+  // or "Recording: <drive link>" -- the only one of those worth a real link.
+  // Shared by the thread bubble and the Calls dropdown panel below.
+  function callRecordingLink(item) {
+    const m = item.channel === 'call' && item.body ? /^Recording:\s*(https?:\/\/\S+)/.exec(item.body) : null;
+    return m ? m[1] : null;
+  }
   function noteBubbleHtml(item) {
     const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : item.channel === 'call' ? '📞' : '📝';
-    // calls_backend.js's own body is either empty, "Recording is
-    // processing...", or "Recording: <drive link>" -- the only one of those
-    // worth a real link.
-    const recordingMatch = item.channel === 'call' && item.body ? /^Recording:\s*(https?:\/\/\S+)/.exec(item.body) : null;
+    const recordingLink = callRecordingLink(item);
     const bodyHtml = item.body
       ? (item.channel === 'form'
           ? `<div class="note-bubble-body note-bubble-qa">${formAnswersHtml(item.body)}</div>`
-          : recordingMatch
-            ? `<div class="note-bubble-body"><a href="${escapeHtml(recordingMatch[1])}" target="_blank" rel="noopener noreferrer">🎙️ Play recording</a></div>`
+          : recordingLink
+            ? `<div class="note-bubble-body"><a href="${escapeHtml(recordingLink)}" target="_blank" rel="noopener noreferrer">🎙️ Play recording</a></div>`
             : `<div class="note-bubble-body">${escapeHtml(item.body)}</div>`)
       : '';
     return `
@@ -237,6 +241,8 @@
       if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') inst._toggleTaskPanel(false);
       const notePanel = root.querySelector('#notePanel');
       if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') inst._toggleNotePanel(false);
+      const callsPanel = root.querySelector('#callsPanel');
+      if (callsPanel?.classList.contains('open') && !callsPanel.contains(e.target) && e.target.id !== 'chatViewCallsBtn') inst._toggleCallsPanel(false);
       const schedulePanel = root.querySelector('#schedulePanel');
       if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) inst._toggleSchedulePanel(false);
       const composeSchedulePanel = root.querySelector('#composeSchedulePanel');
@@ -361,6 +367,34 @@
         state.threadItems = state.threadItems.filter(i => i.id !== id);
         renderNotePanel();
       });
+    }
+    // Read-only list of every call logged for this contact (calls_backend.js
+    // -- both "Call From Personal Phone" and "Call From CRM") -- no add/
+    // delete, so unlike the task/note panels this only ever renders
+    // state.threadItems, already loaded for the thread itself, never its own
+    // fetch. Newest first, same as notes.
+    function callPanelRowHtml(c) {
+      const recordingLink = callRecordingLink(c);
+      return `
+        <div class="task-panel-row">
+          <span class="task-panel-due">${fmtDueCompact(c.at)}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.subject || '')}${c.bodyPreview ? ` · ${escapeHtml(c.bodyPreview)}` : ''}</span>
+          ${recordingLink ? `<a href="${escapeHtml(recordingLink)}" target="_blank" rel="noopener noreferrer" title="Play recording">\u{1F3A7}</a>` : ''}
+        </div>
+      `;
+    }
+    function renderCallsPanel() {
+      const list = container.querySelector('#callsPanelList');
+      if (!list) return;
+      const calls = state.threadItems.filter(i => i.itemType === 'call').sort((a, b) => new Date(b.at) - new Date(a.at));
+      list.innerHTML = calls.length ? calls.map(callPanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No calls yet.</div>';
+    }
+    function _toggleCallsPanel(forceOpen) {
+      const panel = container.querySelector('#callsPanel');
+      if (!panel) return;
+      const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      panel.classList.toggle('open', opening);
+      if (opening) renderCallsPanel();
     }
     function _toggleNotePanel(forceOpen) {
       const panel = container.querySelector('#notePanel');
@@ -771,6 +805,12 @@
             </div>
           </div>
           <div class="chat-panel-task-btn">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatViewCallsBtn" type="button">Calls</button>
+            <div class="task-panel" id="callsPanel">
+              <div class="task-panel-list" id="callsPanelList"></div>
+            </div>
+          </div>
+          <div class="chat-panel-task-btn">
             <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatScheduleBtn" type="button" title="Schedule a meeting">${CALENDAR_ICON}</button>
             <div class="task-panel" id="schedulePanel">
               <div class="task-panel-list" id="schedulePanelList"></div>
@@ -794,7 +834,7 @@
             </div>
           </div>
           ${isFull ? `<select class="pra-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Change status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>` : ''}
-          ${isFull && contactId ? `<button class="pra-btn pra-btn-outline pra-btn-sm" id="chatGenSummaryImageBtn" type="button">Generate Summary Image</button>` : ''}
+          ${isFull && contactId ? `<button class="pra-btn pra-btn-outline pra-btn-sm" id="chatGenSummaryImageBtn" type="button" title="Generate a summary image">Image</button>` : ''}
           ${isFull ? optOutBadgesHtml(contact) : ''}
           ${!isFull && contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
@@ -934,6 +974,7 @@
       container.querySelector('#chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); _toggleTaskPanel(); };
       container.querySelector('#chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); _toggleNotePanel(); };
       container.querySelector('#chatScheduleBtn').onclick = (e) => { e.stopPropagation(); _toggleSchedulePanel(); };
+      container.querySelector('#chatViewCallsBtn').onclick = (e) => { e.stopPropagation(); _toggleCallsPanel(); };
       const nameLink = container.querySelector('#chatPanelNameLink');
       if (nameLink && contactId) nameLink.onclick = () => config.onOpenContactOverlay?.(contactId);
       if (isFull) {
@@ -1085,6 +1126,7 @@
       // new compose-schedule popover, which uses the identical pattern.
       _toggleTaskPanel, _submitNewTask,
       _toggleNotePanel, _submitNewNote,
+      _toggleCallsPanel,
       _toggleSchedulePanel, _submitNewMeeting,
       _toggleComposeSchedulePanel, _submitScheduledSend,
     };
