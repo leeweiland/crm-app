@@ -748,6 +748,31 @@ async function syncBookingToCalendar(booking, et, calendar) {
   booking.calendarError = String(lastError?.message || lastError || "Unknown error").slice(0, 500);
 }
 
+// Runs syncBookingToCalendar AFTER the booking is already saved and the
+// visitor already has their response, instead of making them wait through
+// it (a real Google Calendar round trip, occasionally two of them with the
+// 1.2s retry gap above -- confirmed live, this was most of a booking
+// request's ~10s). The booking record's own calendarEventId already exists
+// as null; this just fills it in once we have it, the same way the admin
+// "sync-calendar" retry button (below) already does for an older booking
+// whose sync failed outright. Guards against a booking cancelled in the
+// few seconds this takes: never resurrects a cancelled row with calendar
+// data, and deletes the event if one got created anyway before the
+// cancellation landed.
+function syncBookingToCalendarInBackground(booking, et, calendar) {
+  syncBookingToCalendar(booking, et, calendar).then(() => {
+    const [persisted] = updateJsonArrayRecordsByIds(BOOKINGS_FILE, [booking.id], (b) => {
+      if (b.status !== "confirmed") return b;
+      b.calendarEventId = booking.calendarEventId; b.calendarId = booking.calendarId; b.calendarError = booking.calendarError;
+      b.updatedAt = new Date().toISOString();
+      return b;
+    });
+    if (persisted && persisted.status !== "confirmed" && booking.calendarEventId) {
+      deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
+    }
+  }).catch(e => console.error(`[scheduling] background calendar sync failed for booking ${booking.id}:`, e.message));
+}
+
 // Cancellations used to leave no trace beyond status flipping to
 // "cancelled" -- no record of WHO cancelled, and nothing in the contact's
 // Inbox thread -- so "why isn't this booking on the calendar?" had no
@@ -1073,7 +1098,10 @@ export async function handleSchedulingRequest(req, res, url) {
       remindersSent: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
     };
-    await syncBookingToCalendar(booking, et, calendar);
+    // Calendar sync moved below the response (see
+    // syncBookingToCalendarInBackground's comment) -- the booking is already
+    // fully valid and recorded with calendarEventId: null, same shape a
+    // sync that later fails outright already leaves behind.
     const bookings = readJson(BOOKINGS_FILE, []);
     bookings.push(booking);
     writeJson(BOOKINGS_FILE, bookings);
@@ -1124,6 +1152,11 @@ export async function handleSchedulingRequest(req, res, url) {
     // editable send_email step (booking_created trigger), not a hardcoded
     // backend email nobody could customize -- see e.g. "2 ONLINE BOOKING"'s
     // own send_email step, which fireFlowTrigger below already reaches.
+
+    // Also not awaited, same reasoning: the visitor's own confirmation
+    // never depended on the STAFF calendar event existing yet, so there's
+    // no reason to make them sit through it.
+    syncBookingToCalendarInBackground(booking, et, calendar);
 
     const startDate = new Date(booking.startAt), endDate = new Date(booking.endAt);
     return sendJson(res, 200, {
