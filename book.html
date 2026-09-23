@@ -479,22 +479,51 @@ async function submitBooking() {
   // fails -- the visitor would land on the thank-you page without actually
   // being booked, with nothing telling them so -- for cutting a real ~10s
   // wait (the calendar availability check plus the write) down to instant.
+  const fireBookingRequest = () => fetch('/api/scheduling/bookings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
+    keepalive: true,
+  }).catch(() => {}); // nothing left to show for a failure once whoever's waiting has already moved on
+
+  if (formEmbed) {
+    // Same reasoning as the non-embedded branch below, applied here too --
+    // confirmed live: the outer form's own pfNext handler was awaiting this
+    // exact postMessage before it could even start ITS OWN submit, so this
+    // embedded case was paying the full booking save AND then the form's
+    // own submit sequentially, back to back. Nothing we return here is
+    // actually used to render anything -- the parent (public-form.html)
+    // only reads booking.name/email/phone/timezone back off it to carry
+    // into its own submit payload, all of which it already has from the
+    // answers it just collected.
+    fireBookingRequest();
+    const phoneQ = (eventType.questions || []).find(q => q.type === 'phone');
+    parent.postMessage({ type: 'pf-booked', success: true, booking: { startAt: selectedSlot, timezone: selectedTz, name, email, phone: phoneQ ? (answers[phoneQ.id] || '') : '' } }, location.origin);
+    return;
+  }
   const redirectUrlEarly = eventType.branding?.redirectUrl;
-  if (redirectUrlEarly && !formEmbed) {
-    fetch('/api/scheduling/bookings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
-      keepalive: true,
-    }).catch(() => {}); // nothing left to show for a failure once we've already redirected
+  if (redirectUrlEarly) {
+    // A redirect target is known synchronously (it's part of the event type
+    // this page already loaded) -- so when one's configured, fire the save
+    // and leave immediately instead of waiting through it (the availability
+    // recheck, contact match, and write server-side, all real work, all still
+    // happening -- just no longer felt by the visitor). keepalive:true is
+    // load-bearing, not optional: without it, navigating away cancels this
+    // fetch outright, so a plain fire-and-forget right before redirecting
+    // would drop the booking every time, not occasionally. Deliberately
+    // trades away the (rare) case where the slot was just taken or the save
+    // fails -- the visitor would land on the thank-you page without actually
+    // being booked, with nothing telling them so -- for cutting a real ~10s
+    // wait (the calendar availability check plus the write) down to instant.
+    fireBookingRequest();
     const u = new URL(redirectUrlEarly, location.origin);
     u.searchParams.set('name', name); u.searchParams.set('email', email); u.searchParams.set('event_start', selectedSlot);
     top.location.href = u.toString();
     return;
   }
 
-  // Below: the embedded-form and no-redirect-configured cases, which still
-  // need the real server response (a manage/cancel link's real token, or
-  // the outer form's own next step) -- same awaited path as before.
+  // Below: only the no-redirect-configured, non-embedded case is left --
+  // it has nowhere faster to send the visitor, so it still needs the real
+  // server response (a manage/cancel link's real token) to render anything.
   // Previously a bare fetch with no timeout and nothing catching a rejection --
   // confirmed live 2026-09-21/22: when the server went unresponsive (a
   // single-threaded freeze from an unrelated bulk job), this request just hung

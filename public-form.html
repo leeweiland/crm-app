@@ -848,13 +848,32 @@ function renderStep() {
 async function submit() {
   const btn = document.getElementById('pfNext');
   btn.disabled = true; btn.textContent = 'Submitting…';
+  const body = JSON.stringify({ answers, vid: visitorId, bookedIdentity, timezone: bookedIdentity?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone });
+
+  // form.settings.redirectUrl is a static setting, already known from when
+  // this form first loaded -- not something the submit response computes.
+  // So when it's set, fire the submit and leave immediately instead of
+  // waiting through it: confirmed live, a form ending in a calendar step
+  // was paying this AND the booking save sequentially, back to back, for a
+  // ~10s+ wait before the visitor ever left this page. keepalive:true is
+  // load-bearing (see book.html's own submitBooking for why). Best-effort
+  // .then() still tries the pf-identify handoff below if the response
+  // happens to land before the page is gone; it usually won't, which only
+  // costs this ONE attribution-cookie path (claimByIdentity/track.js still
+  // link the visit some other way) -- not the submission itself.
+  if (form.settings.redirectUrl) {
+    fetch(`/api/public/forms/${formId}/submit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true,
+    }).then(r => r.json()).then(d => {
+      if (d.contactId) window.parent.postMessage({ type: 'pf-identify', contactId: d.contactId }, '*');
+    }).catch(() => {});
+    top.location.href = form.settings.redirectUrl;
+    return;
+  }
+
   try {
     const r = await fetch(`/api/public/forms/${formId}/submit`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // The timezone the visitor picked on an embedded calendar step if
-      // there was one, else their browser's -- becomes {{payload.Timezone}}
-      // in a form_submitted flow (e.g. to fill a Sheet column).
-      body: JSON.stringify({ answers, vid: visitorId, bookedIdentity, timezone: bookedIdentity?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
     });
     const d = await r.json();
     if (!r.ok) { btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit'; alert(d.error || 'Something went wrong — please try again.'); return; }
@@ -864,9 +883,6 @@ async function submit() {
     // the contact id to the parent instead; track.js (running on the
     // Framer page) listens for this and sets the identity cookie itself.
     if (d.contactId) window.parent.postMessage({ type: 'pf-identify', contactId: d.contactId }, '*');
-    // top, not location -- same reasoning as above: this redirect needs to
-    // navigate the actual browser tab, not just this iframe.
-    if (d.redirectUrl) { top.location.href = d.redirectUrl; return; }
     document.getElementById('pfCard').innerHTML = `<div class="pf-confirm"><div class="big">${CHECK_ICON}</div><div>${escapeHtml(d.confirmationMessage || 'Thanks!')}</div></div>`;
   } catch {
     btn.disabled = false; btn.textContent = form.settings.submitButtonText || 'Submit';
