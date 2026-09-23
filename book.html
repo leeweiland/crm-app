@@ -466,6 +466,35 @@ async function submitBooking() {
   }
   const btn = document.getElementById('bkSubmit');
   btn.disabled = true; btn.textContent = 'Booking…';
+
+  // A redirect target is known synchronously (it's part of the event type
+  // this page already loaded) -- so when one's configured, fire the save
+  // and leave immediately instead of waiting through it (the availability
+  // recheck, contact match, and write server-side, all real work, all still
+  // happening -- just no longer felt by the visitor). keepalive:true is
+  // load-bearing, not optional: without it, navigating away cancels this
+  // fetch outright, so a plain fire-and-forget right before redirecting
+  // would drop the booking every time, not occasionally. Deliberately
+  // trades away the (rare) case where the slot was just taken or the save
+  // fails -- the visitor would land on the thank-you page without actually
+  // being booked, with nothing telling them so -- for cutting a real ~10s
+  // wait (the calendar availability check plus the write) down to instant.
+  const redirectUrlEarly = eventType.branding?.redirectUrl;
+  if (redirectUrlEarly && !formEmbed) {
+    fetch('/api/scheduling/bookings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
+      keepalive: true,
+    }).catch(() => {}); // nothing left to show for a failure once we've already redirected
+    const u = new URL(redirectUrlEarly, location.origin);
+    u.searchParams.set('name', name); u.searchParams.set('email', email); u.searchParams.set('event_start', selectedSlot);
+    top.location.href = u.toString();
+    return;
+  }
+
+  // Below: the embedded-form and no-redirect-configured cases, which still
+  // need the real server response (a manage/cancel link's real token, or
+  // the outer form's own next step) -- same awaited path as before.
   // Previously a bare fetch with no timeout and nothing catching a rejection --
   // confirmed live 2026-09-21/22: when the server went unresponsive (a
   // single-threaded freeze from an unrelated bulk job), this request just hung
