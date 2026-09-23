@@ -170,11 +170,23 @@
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="bulkAddToBtn" type="button">Add to...</button>
         </div>
 
-        <div class="pra-panel" id="contactsTablePanel" style="overflow:auto">
-          <table class="data-table contacts-table">
-            <thead><tr id="contactsHeadRow"></tr></thead>
-            <tbody id="contactsBody"><tr><td class="pra-muted">Loading…</td></tr></tbody>
-          </table>
+        <div class="pra-panel" id="contactsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <!-- position:sticky columns need horizontal and vertical scroll on
+               SEPARATE containers -- a single element scrolling both axes at
+               once is a well-documented way to break sticky positioning
+               inside a <table> (confirmed live: First/Last stopped sticking
+               entirely, not just rendering behind other content, the moment
+               this panel gained overflow-y on top of its existing
+               overflow-x). This inner div owns the horizontal scroll (where
+               the frozen columns actually need to stick); the outer panel
+               above owns the vertical scroll of the whole block including
+               its own horizontal scrollbar. -->
+          <div style="overflow-x:auto">
+            <table class="data-table contacts-table">
+              <thead><tr id="contactsHeadRow"></tr></thead>
+              <tbody id="contactsBody"><tr><td class="pra-muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
         </div>
         <div class="pagination-bar" id="paginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="paginationSummary"></span>
