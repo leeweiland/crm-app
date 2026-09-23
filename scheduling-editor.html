@@ -214,6 +214,14 @@
               <div class="field"><label class="pra-label" id="calRollingLabel">Days ahead</label><input class="pra-input" type="number" min="1" id="calRollingAmount"/></div>
             </div>
             <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-bottom:6px">If a stretch has no openings, the booking page always skips ahead to the next one that does — this just controls how far it's allowed to look. These settings apply to every event type on this calendar.</div>
+            <div class="field" style="margin-bottom:8px">
+              <label class="pra-label">If someone's exact time gets taken first</label>
+              <select class="pra-select" id="calConflictResolution">
+                <option value="doubleBook">Book them anyway (double-book)</option>
+                <option value="nextAvailable">Move them to the next open slot instead</option>
+              </select>
+            </div>
+            <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-bottom:6px">Only matters for the rare case where two people grab the same minute at once. "Double-book" never delays or loses the lead, at the cost of occasionally putting two people on the calendar back to back. "Next open slot" avoids that but the visitor won't see the corrected time on the page (it redirects immediately) — only in their confirmation email/text. Default is double-book; switch a calendar to the other option if it turns out to be a problem.</div>
             <div class="pra-muted" style="font-size:.74rem" id="calSaveMsg"></div>
           </div>
 
@@ -943,6 +951,7 @@ function renderCalendarSettings() {
   document.getElementById('calRollingMode').value = cal.availability.rollingMode;
   document.getElementById('calRollingAmount').value = cal.availability.rollingAmount;
   document.getElementById('calRollingLabel').textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+  document.getElementById('calConflictResolution').value = cal.availability.conflictResolution || 'doubleBook';
   document.getElementById('calSaveMsg').textContent = '';
   renderCalWeekEditor();
 }
@@ -993,6 +1002,11 @@ document.getElementById('calRollingMode').addEventListener('change', () => {
   const cal = calendarsState[draft.calendarId];
   cal.availability.rollingMode = document.getElementById('calRollingMode').value;
   document.getElementById('calRollingLabel').textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+  saveCalendarDebounced();
+});
+document.getElementById('calConflictResolution').addEventListener('change', () => {
+  const cal = calendarsState[draft.calendarId];
+  cal.availability.conflictResolution = document.getElementById('calConflictResolution').value;
   saveCalendarDebounced();
 });
 function saveCalendarDebounced() {

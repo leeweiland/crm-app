@@ -199,6 +199,15 @@ function calendarCardHtml(cal) {
       </div>
       <div class="pra-muted" style="font-size:.74rem;margin:2px 0 4px">If a month or week has no openings, the booking page always skips ahead to the next one that does — this just controls how far it's allowed to look.</div>
 
+      <div class="field" style="margin-top:10px">
+        <label class="pra-label">If someone's exact time gets taken first</label>
+        <select class="pra-select" data-conflict-resolution="${cal.id}">
+          <option value="doubleBook" ${(a.conflictResolution || 'doubleBook') === 'doubleBook' ? 'selected' : ''}>Book them anyway (double-book)</option>
+          <option value="nextAvailable" ${a.conflictResolution === 'nextAvailable' ? 'selected' : ''}>Move them to the next open slot instead</option>
+        </select>
+      </div>
+      <div class="pra-muted" style="font-size:.74rem;margin:2px 0 4px">Only matters for the rare case where two people grab the same minute at once. "Double-book" never delays or loses the lead, at the cost of occasionally putting two people on the calendar back to back. "Next open slot" avoids that but the visitor won't see the corrected time on the page (it redirects immediately) — only in their confirmation email/text.</div>
+
       <button class="pra-btn pra-btn-sm" data-save-cal="${cal.id}" style="margin-top:10px">Save Calendar</button>
       <span class="pra-muted" style="font-size:.78rem;margin-left:8px" data-save-msg="${cal.id}"></span>
     </div>
@@ -263,6 +272,7 @@ function wireCalendarCard(calId) {
         bufferAfterMinutes: Number(document.querySelector(`[data-buffer-after="${calId}"]`).value) || 0,
         rollingMode: rollingModeSel.value,
         rollingAmount: Number(document.querySelector(`[data-rolling-amount="${calId}"]`).value) || 1,
+        conflictResolution: document.querySelector(`[data-conflict-resolution="${calId}"]`).value,
       },
     };
     const r = await fetch('/api/scheduling/admin/calendars/' + calId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

@@ -56,6 +56,20 @@ const DEFAULT_CALENDAR_AVAILABILITY = {
   // booked-solid person still always has *something* bookable to show.
   rollingMode: "days",
   rollingAmount: 21,
+  // What to do when the exact slot someone picked gets taken by someone
+  // else in the gap between them seeing it as open and this calendar's
+  // booking request actually being processed -- real now that a
+  // redirect-configured event type leaves the page before the server's
+  // even heard back (see book.html's submitBooking), so there's no one
+  // left to show a "pick another time" error to. "doubleBook": book the
+  // exact time anyway, same as if there'd been no conflict -- simplest,
+  // never loses or delays a lead, at the cost of occasionally overlapping
+  // two people on one calendar (rare: it only fires on a genuine same-
+  // second race, not routine volume). "nextAvailable": silently move them
+  // to the next open slot instead. Default is doubleBook; switch a
+  // calendar to nextAvailable if double-bookings turn out to be a real
+  // problem for it.
+  conflictResolution: "doubleBook",
 };
 const SLOT_GRID_MINUTES = 15;
 const SEARCH_CAP_DAYS = 180;
@@ -606,6 +620,22 @@ async function computeAvailableSlots(eventType, opts = {}) {
   return { byDate, timezone: avail.timezone, calendar };
 }
 
+// The "nextAvailable" conflictResolution strategy: earliest slot at or after
+// the one that just got taken, out of the SAME byDate map computeAvailableSlots
+// already returned for this request (no second calendar round trip). Day
+// keys are inserted in chronological cursor order above, and .sort() costs
+// nothing at this size -- cheap insurance against relying on object key
+// order rather than a reason to expect it's ever actually out of order.
+function findNextAvailableSlot(byDate, requestedISO) {
+  const requestedMs = new Date(requestedISO).getTime();
+  for (const day of Object.keys(byDate).sort()) {
+    for (const iso of byDate[day]) {
+      if (new Date(iso).getTime() >= requestedMs) return iso;
+    }
+  }
+  return null;
+}
+
 function upsertContactFromBooking({ name, email, phone, statusId, questions, answers }) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
@@ -1060,13 +1090,34 @@ export async function handleSchedulingRequest(req, res, url) {
     const notes = formatExtraAnswers(et.questions, answers);
     if (!name || !email) return sendJson(res, 400, { error: "Name and email are required" });
 
-    // Race-safe recheck: confirm this exact slot is still open before booking it.
+    // Race-safe recheck: confirm this exact slot is still open before booking
+    // it. A conflict here used to always 409 -- fine when the visitor's own
+    // page was still waiting on this response and could show "pick another
+    // time", not fine now that a redirect-configured event type has already
+    // sent them on their way (see book.html's submitBooking) with no one
+    // left to show that error to. What happens instead is this calendar's
+    // own choice (Calendars admin -> conflictResolution), not hardcoded:
+    // "doubleBook" (default) books the exact requested time regardless --
+    // simplest, never loses or delays a lead, at the cost of occasionally
+    // overlapping two people on a genuine same-second race (rare; this
+    // isn't routine double-booking, only what happens when two people
+    // wanted the identical minute). "nextAvailable" moves them to the
+    // earliest open slot instead, silently -- the visitor won't see the
+    // corrected time on a page that already redirected, only in their
+    // confirmation email/SMS (built from the real, corrected booking).
     const dateStr = ymd(new Date(startAt));
     let freshSlots, calendar;
     try { ({ byDate: freshSlots, calendar } = await computeAvailableSlots(et)); }
     catch (e) { return sendJson(res, 500, { error: e.message }); }
+    let bookedStartAt = startAt;
     if (!(freshSlots[dateStr] || []).includes(new Date(startAt).toISOString())) {
-      return sendJson(res, 409, { error: "That time was just booked — please pick another slot." });
+      const conflictResolution = calendar.availability?.conflictResolution || "doubleBook";
+      if (conflictResolution === "nextAvailable") {
+        // A miss (nothing at all open in the whole rolling window) falls
+        // through to double-booking the originally requested time --
+        // keeping the lead beats dropping them over an edge case this rare.
+        bookedStartAt = findNextAvailableSlot(freshSlots, startAt) || startAt;
+      }
     }
 
     const contact = upsertContactFromBooking({ name, email, phone, statusId: et.statusId, questions: et.questions, answers });
@@ -1074,7 +1125,7 @@ export async function handleSchedulingRequest(req, res, url) {
     // (the ad click that brought them here, etc.) to the contact just
     // created/matched -- see claimVisitorHistory's own comment.
     if (contact?.id && vid) claimVisitorHistory(vid, contact.id);
-    const start = new Date(startAt);
+    const start = new Date(bookedStartAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
     // Generated up front (not inline in the booking object below) so the
     // same id/token can also go into the staff calendar event's description
