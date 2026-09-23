@@ -4,7 +4,7 @@ import { CONTACTS_FILE, matchesSegment, findContactMatch } from "./segments_shar
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
-import { syncContactFields } from "./sqlite_inbox.js";
+import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { acConfigured, fetchAcListsForPicker, fetchAcAutomationsForPicker, fetchAcCustomFieldsForPicker, pushContactToAc, syncContactToAc } from "./import_backend.js";
 import { claimByIdentity, getAdCaptureByIdentity } from "./tracking_backend.js";
@@ -55,7 +55,14 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
+// Was readJson(CONTACTS_FILE, []).find(...) -- a full parse of this file's
+// real size (~3.7s, confirmed live) EVERY step of EVERY flow run touches a
+// contact, including the synchronous portion of kicking a flow off (this
+// runs before advanceFlowRun's first await, so the caller -- e.g. a
+// booking's own request handler firing "booking_created" -- sits through
+// it too, even though that call itself is never awaited). getContactByIdFast
+// is the same indexed lookup already used elsewhere for exactly this.
+function getContact(id) { return getContactByIdFast(id); }
 function saveContact(contact) {
   const contacts = readJson(CONTACTS_FILE, []);
   const idx = contacts.findIndex(c => c.id === contact.id);
