@@ -466,11 +466,38 @@ async function submitBooking() {
   }
   const btn = document.getElementById('bkSubmit');
   btn.disabled = true; btn.textContent = 'Booking…';
-  const r = await fetch('/api/scheduling/bookings', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
-  });
-  const d = await r.json();
+  // Previously a bare fetch with no timeout and nothing catching a rejection --
+  // confirmed live 2026-09-21/22: when the server went unresponsive (a
+  // single-threaded freeze from an unrelated bulk job), this request just hung
+  // forever. The button stayed on "Booking…" with no error and no way to
+  // retry, and nothing was ever saved -- ~30 hours of visitors who reached
+  // this exact point left with no idea whether they'd booked. A timeout plus
+  // a catch can't prevent that kind of freeze, but it turns "stuck forever,
+  // no feedback" into "clear error, button re-enabled, try again" -- and
+  // logs it wherever the rest of this widget's errors are visible.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 40000);
+  let r, d;
+  try {
+    r = await fetch('/api/scheduling/bookings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
+      signal: controller.signal,
+    });
+    d = await r.json();
+  } catch (e) {
+    // AbortError (our own 40s timeout) and a network-level failure (the
+    // request never got a response at all, or Railway's own proxy returned
+    // something that isn't JSON -- e.g. a 502 page) land here the same way.
+    errEl.textContent = e.name === 'AbortError'
+      ? "This is taking longer than expected. It may not have gone through -- please try again, or reach out if you're not sure."
+      : 'Could not reach the server. Please check your connection and try again.';
+    btn.disabled = false; btn.textContent = 'Confirm Booking';
+    if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
+    return;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!r.ok) {
     errEl.textContent = d.error || 'Something went wrong.';
     btn.disabled = false; btn.textContent = 'Confirm Booking';

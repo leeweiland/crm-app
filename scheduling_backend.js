@@ -2,7 +2,7 @@ import { randomUUID, randomBytes } from "crypto";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordsByIds, appendJsonRecordFast } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
 import { STATUSES_FILE } from "./statuses_backend.js";
 import { logMessage } from "./message_log.js";
@@ -592,10 +592,21 @@ async function computeAvailableSlots(eventType, opts = {}) {
 }
 
 function upsertContactFromBooking({ name, email, phone, statusId, questions, answers }) {
+  // Matching still needs the full array (findContactMatch checks email, phone,
+  // altEmails, altPhones, and Hyros-imported fields) -- but readJson is
+  // mtime-cached, so this costs nothing extra when nothing else has written
+  // the file since the last read. What used to also happen here -- pushing
+  // onto that same in-memory array and writeJson-ing the WHOLE thing back --
+  // is the part that's gone: on this file's real size that's a full
+  // JSON.stringify of ~190MB, single-threaded, blocking every other request
+  // (including a concurrent booking) until it finishes. Confirmed live
+  // 2026-09-21/22: a bulk write elsewhere froze the CRM for ~140s, and no
+  // booking saved for the ~30 hours after. appendJsonRecordFast/
+  // updateJsonArrayRecordsByIds below touch only the one record involved.
   const contacts = readJson(CONTACTS_FILE, []);
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
-  let contact = findContactMatch(contacts, normalizedEmail, normalizedPhone);
+  const existing = findContactMatch(contacts, normalizedEmail, normalizedPhone);
   const [first, ...rest] = String(name || "").trim().split(/\s+/);
   const last = rest.join(" ");
 
@@ -611,18 +622,27 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
     customFields[q.mapToCustomFieldId || slugQuestion(q)] = val;
   }
 
-  if (contact) {
-    if (first) contact.first = first;
-    if (last) contact.last = last;
-    if (normalizedEmail) contact.email = normalizedEmail;
-    if (normalizedPhone) contact.phone = normalizedPhone;
-    // Never downgrades -- see applyAdvancingStatus's own comment. An
-    // already-ENROLLED contact who mistakenly books a second call must
-    // stay ENROLLED, not get knocked back down to this event type's
-    // BOOKED status.
-    if (statusId) applyAdvancingStatus(contact, statusId);
-    contact.customFields = { ...contact.customFields, ...customFields };
-    contact.updatedAt = new Date().toISOString();
+  let contact;
+  if (existing) {
+    // Re-applied against whatever updateJsonArrayRecordsByIds re-reads off
+    // disk for this id -- not the `existing` object above -- so a change
+    // made to this same contact between the read and here (another
+    // request, a flow step) is patched onto, not clobbered by, a stale copy.
+    [contact] = updateJsonArrayRecordsByIds(CONTACTS_FILE, [existing.id], (c) => {
+      if (first) c.first = first;
+      if (last) c.last = last;
+      if (normalizedEmail) c.email = normalizedEmail;
+      if (normalizedPhone) c.phone = normalizedPhone;
+      // Never downgrades -- see applyAdvancingStatus's own comment. An
+      // already-ENROLLED contact who mistakenly books a second call must
+      // stay ENROLLED, not get knocked back down to this event type's
+      // BOOKED status.
+      if (statusId) applyAdvancingStatus(c, statusId);
+      c.customFields = { ...c.customFields, ...customFields };
+      c.updatedAt = new Date().toISOString();
+      return c;
+    });
+    contact = contact || existing; // record vanished between the read and the patch (deleted) -- fall back rather than crash
   } else {
     contact = {
       id: randomUUID(), type: "lead", accountName: "",
@@ -632,9 +652,8 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
       externalIds: { acContactId: null, closeLeadId: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
-    contacts.push(contact);
+    appendJsonRecordFast(CONTACTS_FILE, contact);
   }
-  writeJson(CONTACTS_FILE, contacts);
   // Without this, a booking's real status/name/email change (new contact
   // or existing one advanced via applyAdvancingStatus) never reaches the
   // Inbox sidebar's SQLite snapshot until something else happens to touch
