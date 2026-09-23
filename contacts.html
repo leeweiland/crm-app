@@ -87,9 +87,16 @@
        slides through on horizontal scroll. */
     width: 110px; min-width: 110px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .contacts-table .frozen-col-0 { left: 0; width: 40px; min-width: 40px; max-width: 40px; text-align: center; }
-  .contacts-table .frozen-col-1 { left: 40px; }
-  .contacts-table .frozen-col-2 { left: 150px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
+  /* Explicit background-color (not just the shorthand above) and a higher
+     z-index specifically for the checkbox column -- confirmed live this is
+     the one that was still showing scrolled-away content bleeding through,
+     a native <input type="checkbox">'s own rendering layer apparently not
+     respecting the shared z-index:1 as reliably as plain text/badge cells
+     do. */
+  .contacts-table .frozen-col-0 { left: 0; width: 28px; min-width: 28px; max-width: 28px; text-align: center; background-color: var(--pra-panel); z-index: 2; }
+  .contacts-table .frozen-col-0 input[type="checkbox"] { margin: 0; vertical-align: middle; }
+  .contacts-table .frozen-col-1 { left: 28px; }
+  .contacts-table .frozen-col-2 { left: 138px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
   .contacts-table tr.clickable:hover .frozen-col-0, .contacts-table tr.clickable:hover .frozen-col-1, .contacts-table tr.clickable:hover .frozen-col-2 { background: var(--pra-panel-2); }
   .bulk-actions-row { display: none; align-items: center; gap: 10px; padding: 10px 16px; margin-bottom: 10px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; }
   .bulk-actions-row.show { display: flex; }
