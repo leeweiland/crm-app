@@ -9,6 +9,7 @@ import { removeConversationSummary, deleteContactMessageFile } from "./message_i
 import { logMessage } from "./message_log.js";
 import { mergeStaffActivity } from "./staff_activity.js";
 import { estimateIncomeForContact, syncIncomeToPanelCopy } from "./income_estimate.js";
+import { getBackgroundWorker } from "./background_worker_handle.js";
 
 export { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment }; // re-exported: campaigns_backend.js already imports these from here
 export const LISTS_FILE = "crm_lists.json";
@@ -84,11 +85,27 @@ export function refreshCountsCacheIfDue() {
 // refresh right after saving would read the stale pre-edit count back out
 // of it (reverting what the save-handler's own live re-query had just
 // shown correctly) for up to COUNTS_CACHE_TTL_MS, until the next scheduler
-// tick happened to land past that window. setImmediate (not awaited, not
-// synchronous in the request handler) so create/edit/delete's own response
-// isn't held up by this same multi-second full-contacts scan.
+// tick happened to land past that window.
+//
+// Routed through the background worker thread (same pattern as SES/Twilio
+// webhooks in email_backend.js/sms_backend.js) when it's running --
+// confirmed live (2026-09-23) that the earlier setImmediate version, while
+// non-blocking in the sense of not delaying THIS response, still ran the
+// actual multi-hundred-ms full contacts/tags/lists scan synchronously on
+// the MAIN thread moments later, so a run of several segment edits in a
+// row (exactly what real usage looks like) stacked up real main-thread
+// blocking time on top of everything else competing for it. The worker
+// has its own thread and heap; however long the recompute takes there, the
+// main thread serving actual page requests never blocks for it. Falls
+// back to the old inline behavior when BACKGROUND_WORKER isn't enabled, so
+// this still works correctly either way.
+export function computeAndCacheAllCounts() {
+  writeJson(COUNTS_CACHE_FILE, computeAllCounts());
+}
 function scheduleCountsCacheRefresh() {
-  setImmediate(() => { try { writeJson(COUNTS_CACHE_FILE, computeAllCounts()); } catch { /* next scheduler tick will retry */ } });
+  const worker = getBackgroundWorker();
+  if (worker) { worker.postMessage({ type: "recompute_counts" }); return; }
+  setImmediate(() => { try { computeAndCacheAllCounts(); } catch { /* next scheduler tick will retry */ } });
 }
 // Used by reporting_backend.js's excludeTestContacts -- see its own comment.
 export function getCachedTestContactIds() {

@@ -32,6 +32,7 @@ import { parentPort } from "worker_threads";
 import { guardedTick } from "./scheduler.js";
 import { processTwilioStatusUpdate } from "./sms_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
+import { computeAndCacheAllCounts } from "./contacts_backend.js";
 
 const TICK_MS = 30 * 1000;
 setInterval(guardedTick, TICK_MS);
@@ -41,6 +42,7 @@ parentPort.on("message", (msg) => {
   try {
     if (msg?.type === "twilio_status") processTwilioStatusUpdate(msg.sid, msg.status);
     else if (msg?.type === "ses_notification") processSesNotificationMessage(msg.raw);
+    else if (msg?.type === "recompute_counts") computeAndCacheAllCounts();
     else console.error("[background-worker] unknown message type", msg?.type);
   } catch (e) {
     // One bad webhook payload should never take this thread down -- it's
