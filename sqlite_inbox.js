@@ -765,6 +765,23 @@ export function getContactByIdSqlite(id) {
   if (!row) return null;
   try { return JSON.parse(row.raw_json); } catch { return null; }
 }
+// Same idea, keyed by the already-lowercased primary email (idx_ci_email) --
+// for scheduling_backend.js's booking save, where the ~3.7s
+// readJson(CONTACTS_FILE) + findContactMatch just to find who "the same
+// email as an opt-in minutes ago" is turned out to be most of a booking
+// request's remaining latency. Only ever a FAST PATH: a miss here doesn't
+// mean no match exists (this index has no altEmails/altPhones/Hyros-import
+// fields, only the primary email/phone columns) -- the caller still falls
+// back to the real findContactMatch before deciding someone is a new
+// contact. undefined (SQLite unavailable) vs null (genuinely no row) is
+// preserved the same way getContactByIdSqlite does, so a caller can tell
+// "couldn't check" from "checked, no match" if that distinction ever matters.
+export function getContactRawByEmail(email) {
+  if (!sqliteInboxAvailable() || !email) return undefined;
+  const row = db.prepare(`SELECT raw_json FROM contacts_idx WHERE email = ? LIMIT 1`).get(String(email).toLowerCase());
+  if (!row) return null;
+  try { return JSON.parse(row.raw_json); } catch { return null; }
+}
 // For scheduler jobs that only ever need to resolve a handful of specific
 // contact ids (a due meeting/booking/AI-outreach-batch's own contactId) --
 // meetings_backend.js's checkMeetingReminders, scheduling_backend.js's

@@ -8,7 +8,7 @@ import { STATUSES_FILE } from "./statuses_backend.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
-import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
+import { syncContactFields, getContactByIdFast, getContactRawByEmail } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { applyMergeTags } from "./block_editor_shared.js";
@@ -607,21 +607,36 @@ async function computeAvailableSlots(eventType, opts = {}) {
 }
 
 function upsertContactFromBooking({ name, email, phone, statusId, questions, answers }) {
-  // Matching still needs the full array (findContactMatch checks email, phone,
-  // altEmails, altPhones, and Hyros-imported fields) -- but readJson is
-  // mtime-cached, so this costs nothing extra when nothing else has written
-  // the file since the last read. What used to also happen here -- pushing
-  // onto that same in-memory array and writeJson-ing the WHOLE thing back --
-  // is the part that's gone: on this file's real size that's a full
-  // JSON.stringify of ~190MB, single-threaded, blocking every other request
-  // (including a concurrent booking) until it finishes. Confirmed live
-  // 2026-09-21/22: a bulk write elsewhere froze the CRM for ~140s, and no
-  // booking saved for the ~30 hours after. appendJsonRecordFast/
-  // updateJsonArrayRecordsByIds below touch only the one record involved.
-  const contacts = readJson(CONTACTS_FILE, []);
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedPhone = String(phone || "").trim();
-  const existing = findContactMatch(contacts, normalizedEmail, normalizedPhone);
+  // Fast path first: the overwhelming common case here is someone who just
+  // opted in minutes ago (same email) and is now booking a call -- confirmed
+  // live, readJson(CONTACTS_FILE) alone (needed below for the exhaustive
+  // match) costs ~3.7s on this file's real size, which turned out to be
+  // MOST of what was left of a booking request's latency after the calendar
+  // sync was moved off this path. getContactRawByEmail is an indexed lookup
+  // (contacts_idx.email), effectively instant, and covers exactly that case.
+  // A miss here only means "not found by primary email" (that index has no
+  // altEmails/altPhones/Hyros-import fields) -- NOT "no match exists" -- so
+  // it never skips the real, exhaustive findContactMatch below; it only
+  // sometimes lets a booking skip straight past needing it.
+  let existing = getContactRawByEmail(normalizedEmail);
+  let contacts = null; // only loaded if the fast path misses
+  if (existing === undefined || existing === null) {
+    // Matching still needs the full array (findContactMatch checks email,
+    // phone, altEmails, altPhones, and Hyros-imported fields) -- but readJson
+    // is mtime-cached, so this costs nothing extra when nothing else has
+    // written the file since the last read. What used to also happen here --
+    // pushing onto that same in-memory array and writeJson-ing the WHOLE
+    // thing back -- is the part that's gone: on this file's real size that's
+    // a full JSON.stringify of ~190MB, single-threaded, blocking every other
+    // request (including a concurrent booking) until it finishes. Confirmed
+    // live 2026-09-21/22: a bulk write elsewhere froze the CRM for ~140s, and
+    // no booking saved for the ~30 hours after. appendJsonRecordFast/
+    // updateJsonArrayRecordsByIds below touch only the one record involved.
+    contacts = readJson(CONTACTS_FILE, []);
+    existing = findContactMatch(contacts, normalizedEmail, normalizedPhone);
+  }
   const [first, ...rest] = String(name || "").trim().split(/\s+/);
   const last = rest.join(" ");
 
