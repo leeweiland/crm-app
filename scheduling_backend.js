@@ -44,6 +44,12 @@ const DEFAULT_CALENDAR_AVAILABILITY = {
   dateOverrides: {}, // "YYYY-MM-DD": { closed: true }
   bufferBeforeMinutes: 0,
   bufferAfterMinutes: 0,
+  // How far apart candidate start times are offered, independent of the
+  // event type's own duration -- a 30-min meeting on a 15-min interval
+  // still shows a new start every 15 minutes (9:00, 9:15, 9:30...); booking
+  // one just uses up however many of those 15-min slots its duration +
+  // buffers actually span (real conflict-checking below, not this number).
+  slotIntervalMinutes: 15,
   // "days": show every open slot in the next rollingAmount days, even if
   // that's zero on a slow month. "slots": keep searching forward (capped at
   // SEARCH_CAP_DAYS) until rollingAmount actual slots have been found, so a
@@ -573,17 +579,15 @@ async function computeAvailableSlots(eventType, opts = {}) {
       const dayStart = localTimeToUTC(cursor, rule.start, avail.timezone).getTime();
       const dayEnd = localTimeToUTC(cursor, rule.end, avail.timezone).getTime();
       const durationMs = eventType.durationMinutes * 60000;
-      // Candidate start times must be spaced at least a full booking apart
-      // (plus whichever buffer is bigger) -- stepping at the flat 15-minute
-      // grid regardless of duration/buffer meant a 30-min meeting with
-      // 15-min buffers still offered a new start every 15 minutes, so two
-      // people could each see and pick slots that actually overlap (e.g.
-      // 9:00-9:30 and 9:15-9:45) before either confirmed. The real-time
-      // busy/buffer conflict check below still applies once something IS
-      // booked; this just keeps the empty-calendar grid from ever proposing
-      // two candidates that would overlap each other by construction.
-      const stepMinutes = Math.max(SLOT_GRID_MINUTES, eventType.durationMinutes + Math.max(avail.bufferBeforeMinutes ?? 0, avail.bufferAfterMinutes ?? 0));
-      const stepMs = stepMinutes * 60000;
+      // Candidate start times step by the calendar's own interval, not the
+      // event's duration -- a 30-min meeting on a 15-min interval still
+      // offers a new start every 15 minutes (9:00, 9:15, 9:30...). Booking
+      // one doesn't need the grid itself to skip ahead: the busy/buffer
+      // conflict check just below naturally excludes however many of those
+      // 15-min candidates its duration + buffers actually span (30 min +
+      // 15 before + 15 after = a 60-min padded block = the 3 candidates
+      // inside it all correctly disappear once it's booked).
+      const stepMs = (avail.slotIntervalMinutes || SLOT_GRID_MINUTES) * 60000;
       for (let t = dayStart; t + durationMs <= dayEnd; t += stepMs) {
         if (t < now + minNoticeMs) continue;
         const slotEnd = t + durationMs;

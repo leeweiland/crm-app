@@ -197,7 +197,10 @@
               <div id="calWeekEditor"></div>
             </div>
             <div class="cal-inline-row">
+              <div class="field"><label class="pra-label">Interval (min)</label><input class="pra-input" type="number" min="5" step="5" id="calSlotInterval"/></div>
               <div class="field"><label class="pra-label">Min notice (hrs)</label><input class="pra-input" type="number" min="0" step="0.5" id="calMinNotice"/></div>
+            </div>
+            <div class="cal-inline-row">
               <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" id="calBufferBefore"/></div>
               <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" id="calBufferAfter"/></div>
             </div>
@@ -933,6 +936,7 @@ function renderCalendarSettings() {
   const cal = calendarsState[draft.calendarId];
   if (!cal) return;
   document.getElementById('calTimezone').value = cal.availability.timezone;
+  document.getElementById('calSlotInterval').value = cal.availability.slotIntervalMinutes ?? 15;
   document.getElementById('calMinNotice').value = (cal.availability.minNoticeMinutes ?? 0) / 60;
   document.getElementById('calBufferBefore').value = cal.availability.bufferBeforeMinutes ?? 0;
   document.getElementById('calBufferAfter').value = cal.availability.bufferAfterMinutes ?? 0;
@@ -975,9 +979,10 @@ document.getElementById('calMinNotice').addEventListener('input', () => {
   cal.availability.minNoticeMinutes = Math.round((Number(document.getElementById('calMinNotice').value) || 0) * 60);
   saveCalendarDebounced();
 });
-['calBufferBefore', 'calBufferAfter', 'calRollingAmount'].forEach(id => {
+['calSlotInterval', 'calBufferBefore', 'calBufferAfter', 'calRollingAmount'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     const cal = calendarsState[draft.calendarId];
+    cal.availability.slotIntervalMinutes = Number(document.getElementById('calSlotInterval').value) || 15;
     cal.availability.bufferBeforeMinutes = Number(document.getElementById('calBufferBefore').value) || 0;
     cal.availability.bufferAfterMinutes = Number(document.getElementById('calBufferAfter').value) || 0;
     cal.availability.rollingAmount = Number(document.getElementById('calRollingAmount').value) || 1;

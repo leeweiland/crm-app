@@ -1017,7 +1017,10 @@ function renderCalendarPanel(f, i) {
       <div data-cal-week="${i}">${[0, 1, 2, 3, 4, 5, 6].map(d => calWeekRowHtml(cal, d, i)).join('')}</div>
     </div>
     <div class="cal-inline-row">
+      <div class="field"><label class="pra-label">Interval (min)</label><input class="pra-input" type="number" min="5" step="5" data-cal-interval="${i}" value="${cal.availability.slotIntervalMinutes ?? 15}"/></div>
       <div class="field"><label class="pra-label">Min notice (hrs)</label><input class="pra-input" type="number" min="0" step="0.5" data-cal-minnotice="${i}" value="${(cal.availability.minNoticeMinutes ?? 0) / 60}"/></div>
+    </div>
+    <div class="cal-inline-row">
       <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" data-cal-bufbefore="${i}" value="${cal.availability.bufferBeforeMinutes ?? 0}"/></div>
       <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" data-cal-bufafter="${i}" value="${cal.availability.bufferAfterMinutes ?? 0}"/></div>
     </div>
@@ -1491,6 +1494,11 @@ function bindCanvas(canvas) {
     });
   }
   canvas.querySelectorAll('[data-cal-week]').forEach(el => wireCalWeekRows(+el.dataset.calWeek));
+  canvas.querySelectorAll('[data-cal-interval]').forEach(el => el.addEventListener('input', e => {
+    const idx = +el.dataset.calInterval;
+    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.slotIntervalMinutes = Number(e.target.value) || 15;
+    saveCalendarDebounced(idx);
+  }));
   canvas.querySelectorAll('[data-cal-minnotice]').forEach(el => el.addEventListener('input', e => {
     const idx = +el.dataset.calMinnotice;
     calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.minNoticeMinutes = Math.round((Number(e.target.value) || 0) * 60);
