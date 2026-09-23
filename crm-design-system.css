@@ -340,7 +340,11 @@ body { margin: 0; }
   letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim);
   padding: 10px 12px; border-bottom: 1px solid var(--pra-border);
 }
-.data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
+/* white-space:nowrap is required for text-overflow:ellipsis to do anything
+   at all -- without it, overflowing text wraps onto extra lines instead of
+   truncating, which is what every row (and any badges inside a cell,
+   themselves inline) was silently doing. */
+.data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
 .data-table tr.clickable { cursor: pointer; }
 
@@ -353,7 +357,12 @@ body { margin: 0; }
    from the header cell's own right edge. Kept separate from the existing
    col-drag-handle (contacts.html's drag-to-REORDER icon) -- this one
    changes width, not position. */
-.col-resize-handle { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; touch-action: none; user-select: none; z-index: 2; }
+/* top/height set per-handle in JS (repositionHandles) to match the header
+   row's own rendered height -- was top:0;bottom:0 (full table height), which
+   ran a grab-strip down the entire body and sat in the way of every click on
+   the actual data underneath. Resizing is a header-row action; the strip
+   should only cover the header. */
+.col-resize-handle { position: absolute; width: 6px; cursor: col-resize; touch-action: none; user-select: none; z-index: 2; }
 .col-resize-handle:hover, .col-resize-handle.resizing { background: var(--pra-blue); opacity: .5; }
 
 /* ── Modal ──

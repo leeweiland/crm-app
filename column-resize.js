@@ -71,14 +71,19 @@ window.wireColumnResize = function (headRowSelector, prefKey) {
   // column's width after the handles were placed), and made the sticky
   // First/Last lines drift by exactly the scroll distance.
   function repositionHandles() {
-    const tableLeft = table.getBoundingClientRect().left;
+    const tableRect = table.getBoundingClientRect();
+    const headRect = headRow.getBoundingClientRect();
+    const top = Math.round(headRect.top - tableRect.top);
+    const height = Math.round(headRect.height);
     let frozenEdge = -Infinity;
     [...headRow.children].forEach(th => { if (isFrozen(th)) frozenEdge = Math.max(frozenEdge, th.getBoundingClientRect().right); });
     table.querySelectorAll(':scope > .col-resize-handle').forEach(handle => {
       const th = handle._th;
       if (!th.isConnected) return;
       const r = th.getBoundingClientRect();
-      handle.style.left = Math.round(r.right - tableLeft - 3) + 'px';
+      handle.style.left = Math.round(r.right - tableRect.left - 3) + 'px';
+      handle.style.top = top + 'px';
+      handle.style.height = height + 'px';
       // A column scrolled underneath the pinned First/Last columns is hidden
       // there, so its line must not float over them.
       handle.style.visibility = !isFrozen(th) && r.right - 3 < frozenEdge ? 'hidden' : '';

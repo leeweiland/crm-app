@@ -69,6 +69,15 @@
      horizontally (mobile especially) -- widths are fixed so the second
      column's sticky offset is a known constant, not something that shifts
      with content. */
+  /* border-collapse:collapse (the .data-table default) plus position:sticky
+     on a <td> is an unreliable combination across browsers -- collapsed
+     borders change how cells composite/repaint, and it's what was actually
+     causing scrolled-away columns' content to visibly show through behind
+     the frozen ones during horizontal scroll. border-spacing:0 keeps the
+     borders looking the same (this table's cells only use border-bottom, no
+     side borders to double up) while giving sticky cells reliable, isolated
+     paint layers. */
+  .contacts-table { border-collapse: separate; border-spacing: 0; }
   .contacts-table .frozen-col-0, .contacts-table .frozen-col-1, .contacts-table .frozen-col-2 {
     position: sticky; background: var(--pra-panel); z-index: 1;
     /* width (not just max-width) -- frozen-col-1/2's sticky offsets below
@@ -148,13 +157,13 @@
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="bulkAddToBtn" type="button">Add to...</button>
         </div>
 
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel" id="contactsTablePanel" style="overflow:auto">
           <table class="data-table contacts-table">
             <thead><tr id="contactsHeadRow"></tr></thead>
             <tbody id="contactsBody"><tr><td class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
-        <div class="pagination-bar" id="paginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem">
+        <div class="pagination-bar" id="paginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="paginationSummary"></span>
           <span style="flex:1"></span>
           <label class="pra-muted" style="display:flex;align-items:center;gap:6px">
@@ -432,6 +441,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // means its visibility has to be toggled by hand instead of coming
     // free from the tab-panel's own show/hide.
     document.getElementById('contactsToolbar').style.display = btn.dataset.tab === 'contacts' ? 'flex' : 'none';
+    if (btn.dataset.tab === 'contacts') resizeContactsTablePanel();
   };
 });
 
@@ -918,6 +928,7 @@ document.getElementById('filterToggle').onclick = () => {
   const panel = document.getElementById('filterPanel');
   panel.classList.toggle('show');
   if (panel.classList.contains('show') && !document.getElementById('condRows').children.length) addConditionRow();
+  resizeContactsTablePanel();
 };
 function buildFilterFromRows() {
   return window.ConditionRowBuilder.buildFilter(document.getElementById('condRows'), document.getElementById('matchMode').value);
@@ -951,6 +962,7 @@ function updateBulkActionsBar() {
   const n = selectedContactIds.size;
   bar.classList.toggle('show', n > 0);
   if (n > 0) document.getElementById('bulkSelectedCount').textContent = `${n} contact${n === 1 ? '' : 's'} selected`;
+  resizeContactsTablePanel();
 }
 document.getElementById('bulkDeleteBtn').onclick = async () => {
   const ids = [...selectedContactIds];
@@ -1483,6 +1495,24 @@ wireInlineEditTable(document.getElementById('contactsBody'), {
   },
 });
 
+// Keeps the table panel's own scrollbar (already the nice one on the
+// horizontal axis) doing the same job vertically, so the pagination bar
+// below it -- and "Showing X-Y of Z" + per-page picker -- are always
+// visible in the viewport instead of requiring a page-level scroll past
+// however many rows are on the current page to reach them. Recomputed
+// (not a fixed vh value) since the panel's own top position shifts
+// whenever the filter panel opens/closes, bulk-actions bar shows/hides, or
+// the window itself is resized.
+function resizeContactsTablePanel() {
+  const panel = document.getElementById('contactsTablePanel');
+  if (!panel || panel.getBoundingClientRect().width === 0) return; // tab not visible right now
+  const top = panel.getBoundingClientRect().top;
+  const paginationBarHeight = document.getElementById('paginationBar').offsetHeight;
+  const available = window.innerHeight - top - paginationBarHeight - 24;
+  panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
+}
+window.addEventListener('resize', resizeContactsTablePanel);
+
 (async function init() {
   // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
   // crmTeamUsers -- those are only guaranteed populated after this resolves.
@@ -1500,6 +1530,7 @@ wireInlineEditTable(document.getElementById('contactsBody'), {
   await Promise.all([loadSegments(), loadContacts()]);
   loadImportStatus();
   loadDuplicates();
+  resizeContactsTablePanel();
 })();
 </script>
 </body>
