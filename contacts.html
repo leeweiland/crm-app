@@ -86,6 +86,17 @@
        narrower than that, leaving a gap the (unfrozen) column behind it
        slides through on horizontal scroll. */
     width: 110px; min-width: 110px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    /* Confirmed empirically (isolated repro, measured getBoundingClientRect
+       before/after a scroll): without this, width:28px + this cell's own
+       padding rendered as width-PLUS-padding (36px, not 28px) under the
+       browser's content-box default, silently desyncing the real width
+       from every hardcoded sticky left-offset that assumes exactly 28/110px
+       -- that mismatch is what was letting other columns' content show
+       through. The app has a global .pra-root * { box-sizing:border-box }
+       reset that should already cover this and evidently isn't reaching
+       these cells reliably, so setting it explicitly here rather than
+       chasing why. */
+    box-sizing: border-box;
   }
   /* The real cause of the persisting bleed-through: this table has no
      table-layout:fixed, so an explicit width/max-width is only a HINT --
