@@ -697,8 +697,11 @@ body { margin: 0; }
 
 /* Native date/time pickers render a black-on-black calendar icon on a
    dark background otherwise -- color-scheme flips both to the light
-   variant so the icon and popover are visible (same fix as chat-app). */
-#taskPanelDate, #taskPanelTime { color-scheme: dark; color: #fff; }
+   variant so the icon and popover are visible (same fix as chat-app).
+   Covers every native date/time field styled with .pra-input across the
+   app (segment editor's condition rows, task/schedule/compose panels,
+   enrollment popup, ...), not just the two IDs this started as. */
+.pra-input[type="date"], .pra-input[type="datetime-local"], .pra-input[type="time"] { color-scheme: dark; color: #fff; }
 
 /* ── Chat panel header: Tasks/Notes/Schedule + status control ── */
 .chat-panel-task-btn { flex-shrink: 0; position: relative; }
