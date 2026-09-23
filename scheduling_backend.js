@@ -573,7 +573,18 @@ async function computeAvailableSlots(eventType, opts = {}) {
       const dayStart = localTimeToUTC(cursor, rule.start, avail.timezone).getTime();
       const dayEnd = localTimeToUTC(cursor, rule.end, avail.timezone).getTime();
       const durationMs = eventType.durationMinutes * 60000;
-      for (let t = dayStart; t + durationMs <= dayEnd; t += SLOT_GRID_MINUTES * 60000) {
+      // Candidate start times must be spaced at least a full booking apart
+      // (plus whichever buffer is bigger) -- stepping at the flat 15-minute
+      // grid regardless of duration/buffer meant a 30-min meeting with
+      // 15-min buffers still offered a new start every 15 minutes, so two
+      // people could each see and pick slots that actually overlap (e.g.
+      // 9:00-9:30 and 9:15-9:45) before either confirmed. The real-time
+      // busy/buffer conflict check below still applies once something IS
+      // booked; this just keeps the empty-calendar grid from ever proposing
+      // two candidates that would overlap each other by construction.
+      const stepMinutes = Math.max(SLOT_GRID_MINUTES, eventType.durationMinutes + Math.max(avail.bufferBeforeMinutes ?? 0, avail.bufferAfterMinutes ?? 0));
+      const stepMs = stepMinutes * 60000;
+      for (let t = dayStart; t + durationMs <= dayEnd; t += stepMs) {
         if (t < now + minNoticeMs) continue;
         const slotEnd = t + durationMs;
         const conflict = busy.some(b => t < b.end && slotEnd > b.start);
