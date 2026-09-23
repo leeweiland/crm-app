@@ -87,13 +87,19 @@
        slides through on horizontal scroll. */
     width: 110px; min-width: 110px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  /* Explicit background-color (not just the shorthand above) and a higher
-     z-index specifically for the checkbox column -- confirmed live this is
-     the one that was still showing scrolled-away content bleeding through,
-     a native <input type="checkbox">'s own rendering layer apparently not
-     respecting the shared z-index:1 as reliably as plain text/badge cells
-     do. */
-  .contacts-table .frozen-col-0 { left: 0; width: 28px; min-width: 28px; max-width: 28px; text-align: center; background-color: var(--pra-panel); z-index: 2; }
+  /* The real cause of the persisting bleed-through: this table has no
+     table-layout:fixed, so an explicit width/max-width is only a HINT --
+     shrinking this column to 28px while .data-table td's 12px-per-side
+     padding still applied left just 4px of content area, which a checkbox
+     doesn't fit in. The browser then silently rendered the column WIDER
+     than 28px to fit it anyway, desyncing the real width from the
+     hardcoded 28px left-offset the next frozen column (below) assumed --
+     that gap is exactly what let scrolled-away content show through.
+     Trimming the padding instead of changing the table's layout algorithm
+     (a much larger, riskier change) keeps the checkbox comfortably within
+     28px so the width is actually honored. Explicit background-color and a
+     higher z-index kept as extra insurance, not the root fix. */
+  .contacts-table .frozen-col-0 { left: 0; width: 28px; min-width: 28px; max-width: 28px; text-align: center; background-color: var(--pra-panel); z-index: 2; padding: 12px 4px; }
   .contacts-table .frozen-col-0 input[type="checkbox"] { margin: 0; vertical-align: middle; }
   .contacts-table .frozen-col-1 { left: 28px; }
   .contacts-table .frozen-col-2 { left: 138px; box-shadow: 2px 0 4px rgba(0,0,0,0.25); }
