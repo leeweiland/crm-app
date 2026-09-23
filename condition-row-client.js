@@ -243,7 +243,11 @@ window.ConditionRowBuilder = (function () {
       else value = row.querySelector('[data-cond-value]')?.value;
       if (op === 'after') value = localInputToIso(value);
       return { field, op, value };
-    }).filter(c => c.op === 'exists' || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
+    // A blank value is meaningful for visitedPage's "contains" op --
+    // matchesSegment (segments_shared.js) matches it against ANY visited
+    // path (every string contains ""), i.e. "visited any page at all" --
+    // so it can't be dropped here the way every other blank condition is.
+    }).filter(c => c.op === 'exists' || (c.field === 'visitedPage' && c.op === 'contains') || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
     if (!conds.length) return null;
     return matchMode === 'any' ? { any: conds } : { all: conds };
   }

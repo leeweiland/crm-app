@@ -80,6 +80,16 @@ export function refreshCountsCacheIfDue() {
   if (cache?.computedAt && Date.now() - new Date(cache.computedAt).getTime() < COUNTS_CACHE_TTL_MS) return;
   writeJson(COUNTS_CACHE_FILE, computeAllCounts());
 }
+// Segment create/edit/delete used to leave the cache untouched -- a page
+// refresh right after saving would read the stale pre-edit count back out
+// of it (reverting what the save-handler's own live re-query had just
+// shown correctly) for up to COUNTS_CACHE_TTL_MS, until the next scheduler
+// tick happened to land past that window. setImmediate (not awaited, not
+// synchronous in the request handler) so create/edit/delete's own response
+// isn't held up by this same multi-second full-contacts scan.
+function scheduleCountsCacheRefresh() {
+  setImmediate(() => { try { writeJson(COUNTS_CACHE_FILE, computeAllCounts()); } catch { /* next scheduler tick will retry */ } });
+}
 // Used by reporting_backend.js's excludeTestContacts -- see its own comment.
 export function getCachedTestContactIds() {
   const cache = readJson(COUNTS_CACHE_FILE, null);
@@ -733,6 +743,7 @@ export async function handleContactsRequest(req, res, url) {
     const segment = { id: randomUUID(), name, filter, channel: channel || "email", order: segments.length, createdAt: new Date().toISOString() };
     segments.push(segment);
     writeJson(SEGMENTS_FILE, segments);
+    scheduleCountsCacheRefresh();
     return sendJson(res, 200, { ok: true, segment });
   }
   // Same manual-reorder pattern as /api/lists/reorder above.
@@ -753,6 +764,7 @@ export async function handleContactsRequest(req, res, url) {
     const idSet = new Set(ids);
     const segments = readJson(SEGMENTS_FILE, []);
     writeJson(SEGMENTS_FILE, segments.filter(s => !idSet.has(s.id)));
+    scheduleCountsCacheRefresh();
     return sendJson(res, 200, { ok: true });
   }
   // Same one-pass bulk-count fix as /api/lists/counts above -- each segment
@@ -778,12 +790,14 @@ export async function handleContactsRequest(req, res, url) {
   if (segmentMatch && req.method === "DELETE") {
     const segments = readJson(SEGMENTS_FILE, []);
     writeJson(SEGMENTS_FILE, segments.filter(s => s.id !== segmentMatch[1]));
+    scheduleCountsCacheRefresh();
     return sendJson(res, 200, { ok: true });
   }
-  // Edit a saved segment: any of name / filter / channel. Counts aren't
-  // recomputed here (a full contacts scan) -- the Contacts page fetches the
-  // edited segment's fresh count itself, and the periodic counts cache
-  // catches up within a few minutes.
+  // Edit a saved segment: any of name / filter / channel. The Contacts page
+  // fetches the edited segment's fresh count itself for immediate display;
+  // scheduleCountsCacheRefresh below keeps the SHARED cache (what a page
+  // refresh reads) from serving that stale pre-edit count back in the
+  // meantime.
   if (segmentMatch && req.method === "PATCH") {
     const body = await readJsonBody(req);
     const segments = readJson(SEGMENTS_FILE, []);
@@ -808,6 +822,7 @@ export async function handleContactsRequest(req, res, url) {
     }
     segment.updatedAt = new Date().toISOString();
     writeJson(SEGMENTS_FILE, segments);
+    scheduleCountsCacheRefresh();
     return sendJson(res, 200, { ok: true, segment });
   }
   const segmentContactsMatch = p.match(/^\/api\/segments\/([^/]+)\/contacts$/);
