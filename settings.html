@@ -196,6 +196,13 @@
           <div class="pra-muted optout-desc">If a reply CONTAINS any of these words anywhere in it (not just as the entire message), the contact's status is set to <b>Blacklist</b> — with everything that brings (see Blacklist Suppression and the Blacklist Google Sheet above). Permanent: no reverse trigger.</div>
           <div class="field"><label class="pra-label">Trigger keywords (comma-separated)</label><input class="pra-input" id="triggerKeywordsList" placeholder="e.g. fuck you, scam, leave me alone"/></div>
         </div>
+
+        <div class="pra-panel optout-card" id="optoutFailedSends">
+          <div class="optout-card-head"><div class="optout-card-title">Failed Sends</div><div class="pra-muted optout-msg"></div></div>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="autoOptOutFailedEmail"/> Auto-unsubscribe on failed email send</label>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="autoOptOutFailedSms"/> Auto opt-out on failed SMS send</label>
+          <div class="pra-muted optout-desc">Off by default — a single failed send is often transient (a full inbox, a carrier hiccup), not proof the address/number is genuinely dead. Turn either of these on and this CRM stops sending that channel to anyone whose send fails, going forward. Only ever adds the suppression, same as the rules above — reversible only by hand, on the contact's own record. These two switches are the same setting shown next to the Failed number on Reporting's Email and SMS tabs; flipping one updates the other.</div>
+        </div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-tracking" style="padding:22px;max-width:600px">
@@ -908,6 +915,8 @@ async function loadComplianceSettings() {
   document.getElementById('triggerKeywordsList').value = (c.triggerKeywords || []).join(', ');
   document.getElementById('blacklistSheetUrl').value = c.blacklistSheetUrl || '';
   if (c.blacklistSheetUrl) runBlacklistSheetCheck();
+  document.getElementById('autoOptOutFailedEmail').checked = !!c.autoOptOutFailedEmail;
+  document.getElementById('autoOptOutFailedSms').checked = !!c.autoOptOutFailedSms;
 }
 // Each Opt Out card saves ONLY its own fields (the endpoint takes partial
 // bodies), so e.g. a half-typed sheet link can't block a keyword edit in
@@ -918,6 +927,7 @@ const OPTOUT_CARDS = {
   optoutBlacklist: () => ({ blacklistAutoOptOut: document.getElementById('blacklistAutoOptOut').checked }),
   optoutSheet: () => ({ blacklistSheetUrl: document.getElementById('blacklistSheetUrl').value.trim() }),
   optoutTriggers: () => ({ triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked, triggerKeywords: splitKeywords('triggerKeywordsList') }),
+  optoutFailedSends: () => ({ autoOptOutFailedEmail: document.getElementById('autoOptOutFailedEmail').checked, autoOptOutFailedSms: document.getElementById('autoOptOutFailedSms').checked }),
 };
 async function saveOptoutCard(cardId) {
   const body = OPTOUT_CARDS[cardId]();

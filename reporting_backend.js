@@ -452,7 +452,20 @@ function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
   if (key.startsWith("email-") || key.startsWith("sms-")) {
     const isEmail = key.startsWith("email-");
     const slug = key.slice(isEmail ? 6 : 4);
-    return { title: niceTitle(slug), adGroup: "—", campaign: slugIndex.get(slug) || "—", spend: 0, platform: isEmail ? "Email" : "SMS" };
+    // slugIndex.get(slug) is the REAL, current campaign/automation/workflow
+    // name (source_names.js's resolveSendSourceSlug slugifies that same
+    // name at send time, so a match here is exact, not a guess) -- prefer
+    // it over niceTitle(slug), which just prettifies whatever's actually
+    // stored. Confirmed live: some stored el= slugs are corrupted (garbled
+    // to something like "fzbvy-bayvaf-fgbc-ebvat-..." for what should read
+    // "email-online-stop-doing-...") by a bug elsewhere never tracked down
+    // -- niceTitle can only prettify that garbage, not fix it, while
+    // matching against the live campaign list sidesteps it entirely for any
+    // send whose source wasn't itself renamed since. Falls back to
+    // niceTitle(slug) only when nothing matches (a genuinely corrupted slug,
+    // or a real rename) -- same as before, not a regression for those.
+    const realName = slugIndex.get(slug);
+    return { title: realName || niceTitle(slug), adGroup: "—", campaign: realName || "—", spend: 0, platform: isEmail ? "Email" : "SMS" };
   }
   const socialMatch = key.match(/^(email|sms|youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
   if (socialMatch) {

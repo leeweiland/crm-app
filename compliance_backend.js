@@ -82,6 +82,33 @@ export function recheckStopStatus(contactId) {
   return true;
 }
 
+// Opt-in automation (Settings -> Opt Out, or the matching toggle inline on
+// Reporting's Email/SMS Failed cards -- same setting, either place flips
+// it): when a send genuinely fails, stop sending that channel to this
+// contact going forward. Off by default -- a failure is often transient
+// (a full inbox, a carrier hiccup), not proof the address/number is dead,
+// so this is opt-in rather than automatic. Only ever ADDS the
+// suppression, same "never auto-un-suppress" rule as recheckStopStatus
+// above -- a human decides to undo it, this never will.
+// Called from message_log.js's two places a message's status becomes
+// "failed" (logMessage for an immediate send failure, and
+// updateMessageStatusByProviderId for a later delivery-webhook failure) --
+// the one channel-agnostic choke point both paths already go through.
+export function maybeAutoOptOutOnFailedSend(contactId, channel) {
+  if (!contactId || (channel !== "email" && channel !== "sms")) return;
+  const settings = getComplianceSettings();
+  const field = channel === "email" ? "emailOptOut" : "smsOptOut";
+  if (channel === "email" && !settings.autoOptOutFailedEmail) return;
+  if (channel === "sms" && !settings.autoOptOutFailedSms) return;
+  const contacts = readJson(CONTACTS_FILE, []);
+  const contact = contacts.find(c => c.id === contactId);
+  if (!contact || contact[field]) return;
+  contact[field] = true;
+  contact.updatedAt = new Date().toISOString();
+  writeJson(CONTACTS_FILE, contacts);
+  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[compliance] sqlite sync failed:", e.message); }
+}
+
 // The exact status label used across the app for the permanent-opt-out
 // pipeline stage. Status labels are freely editable text, not stable ids,
 // so anything that checks a status BY STRING has to track a rename by

@@ -172,6 +172,12 @@ export function getComplianceSettings() {
     // Link to the team's Blacklist Google Sheet -- every contact marked
     // Blacklist gets appended to it (see blacklist_sheet.js). "" = off.
     blacklistSheetUrl: typeof c.blacklistSheetUrl === "string" ? c.blacklistSheetUrl : "",
+    // Off by default -- a failed send is often transient (a full inbox, a
+    // temporary carrier issue), not proof the address/number is genuinely
+    // bad, so this is an opt-in automation rather than always-on. See
+    // compliance_backend.js's maybeAutoOptOutOnFailedSend.
+    autoOptOutFailedEmail: !!c.autoOptOutFailedEmail,
+    autoOptOutFailedSms: !!c.autoOptOutFailedSms,
   };
 }
 
@@ -311,6 +317,11 @@ export async function handleIntegrationsRequest(req, res, url) {
     if (Array.isArray(body.stopKeywords)) all.compliance.stopKeywords = body.stopKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
     if ("triggerKeywordsEnabled" in body) all.compliance.triggerKeywordsEnabled = !!body.triggerKeywordsEnabled;
     if (Array.isArray(body.triggerKeywords)) all.compliance.triggerKeywords = body.triggerKeywords.map(k => String(k).trim().toLowerCase()).filter(Boolean);
+    // Same flag read from both Settings -> Opt Out and the Reporting page's
+    // Failed-card toggle -- one POST from either place updates the other on
+    // its next load, with no separate sync mechanism needed.
+    if ("autoOptOutFailedEmail" in body) all.compliance.autoOptOutFailedEmail = !!body.autoOptOutFailedEmail;
+    if ("autoOptOutFailedSms" in body) all.compliance.autoOptOutFailedSms = !!body.autoOptOutFailedSms;
     if ("blacklistSheetUrl" in body) {
       const url = String(body.blacklistSheetUrl || "").trim();
       if (url && !parseSheetUrl(url)) return sendJson(res, 400, { error: "That doesn't look like a Google Sheets link." });

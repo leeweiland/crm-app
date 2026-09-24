@@ -34,7 +34,7 @@
   .legend-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
   .journey-layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; align-items: start; }
   @media (max-width: 900px) { .journey-layout { grid-template-columns: 1fr; } }
-  .journey-contact-row { padding: 10px 12px; border-bottom: 1px solid var(--pra-border); cursor: pointer; font-size: .86rem; }
+  .journey-contact-row { padding: 10px 12px; border-bottom: 1px solid var(--pra-border); cursor: pointer; font-size: 1rem; }
   .journey-contact-row:hover { background: rgba(255,255,255,0.03); }
   .journey-contact-row.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
   .journey-timeline-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
@@ -67,6 +67,11 @@
   .stat-card-automations { background: rgba(0,60,110,0.5); border: 1px solid rgba(0,155,255,0.2); }
   .stat-card-workflows { background: rgba(110,15,65,0.5); border: 1px solid rgba(255,79,163,0.2); }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  /* This page's tables (Attribution/Ads Report) want the full window width,
+     not crm-design-system.css's shared 1400px app-main cap every other page
+     still wants -- scoped to this page's own <style>, loaded after that
+     stylesheet, so it doesn't affect the cap anywhere else in the app. */
+  .app-main { max-width: none; }
   th.sortable:hover { color: var(--pra-white); }
   th.sortable .sort-arrow { font-size: .7rem; margin-left: 3px; opacity: .5; }
   th.sortable.sorted .sort-arrow { opacity: 1; }
@@ -197,28 +202,28 @@
 
       <div class="tab-panel" id="tab-attribution">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Click-to-conversion attribution by source -- every tracked email/SMS/campaign link (via its <code>el=</code> tag) plus real Meta/Google ad clicks (via that platform's own tracking template) -- distinct from the Online/Gym/Combined cards at the top of Overview, which show ad spend and conversion totals. This is conversion data from this app's own tracking: how many visits each source drove, and of the contacts who opted in, how many went on to book and enroll. Each contact is credited to their EARLIEST tracked touch, even if they clicked something else later. Click any count to see the actual contacts behind it.</div>
-        <!-- Single scroll container, both axes -- unlike contacts.html's
-             LEFT-sticky frozen columns (which genuinely need separate
-             horizontal/vertical scroll containers, see that file's own
-             comment), a TOP-sticky header only cares about this element's
-             own vertical scroll offset; a shared horizontal scrollbar on
-             the same element doesn't affect it. Splitting it into an inner
-             wrapper div here instead made THAT div the sticky positioning
-             container (any non-visible overflow value qualifies, not just
-             auto), which never itself scrolls -- confirmed live: the
-             header just scrolled away with the rows instead of sticking. -->
-        <div class="pra-panel" id="attributionTablePanel" style="padding:0;overflow:auto">
-          <table class="pra-table" style="width:100%;min-width:640px">
-            <thead><tr>
-              <th class="sortable" data-sort="el" style="text-align:left;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Source</th>
-              <th class="sortable" data-sort="visits" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Visits</th>
-              <th class="sortable" data-sort="uniqueVisitors" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Unique Visitors</th>
-              <th class="sortable" data-sort="optIns" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Opt-Ins</th>
-              <th class="sortable" data-sort="bookings" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Bookings</th>
-              <th class="sortable" data-sort="enrolled" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Enrolled</th>
-            </tr></thead>
-            <tbody id="attributionBody"></tbody>
-          </table>
+        <!-- No fixed/computed height here (that's what made this "too tall,
+             not on the page properly" -- a JS-measured max-height drifted
+             from the real available space on the live page's actual layout).
+             This just lives in normal page flow now; the PAGE's own
+             scrollbar handles a long table, full width, responsive to
+             whatever the window actually is. The inner div's overflow-x is
+             ONLY for a narrow viewport where the table itself is wider than
+             the screen -- it never clips vertically. -->
+        <div class="pra-panel" id="attributionTablePanel" style="padding:0">
+          <div style="overflow-x:auto">
+            <table class="pra-table" style="width:100%">
+              <thead><tr>
+                <th class="sortable" data-sort="el" data-col-key="el" style="text-align:left;padding:12px 16px">Source</th>
+                <th class="sortable" data-sort="visits" data-col-key="visits" style="text-align:right;padding:12px 16px">Visits</th>
+                <th class="sortable" data-sort="uniqueVisitors" data-col-key="uniqueVisitors" style="text-align:right;padding:12px 16px">Unique Visitors</th>
+                <th class="sortable" data-sort="optIns" data-col-key="optIns" style="text-align:right;padding:12px 16px">Opt-Ins</th>
+                <th class="sortable" data-sort="bookings" data-col-key="bookings" style="text-align:right;padding:12px 16px">Bookings</th>
+                <th class="sortable" data-sort="enrolled" data-col-key="enrolled" style="text-align:right;padding:12px 16px">Enrolled</th>
+              </tr></thead>
+              <tbody id="attributionBody"></tbody>
+            </table>
+          </div>
         </div>
         <div class="pagination-bar" id="attributionPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="attributionPaginationSummary"></span>
@@ -241,14 +246,13 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">One row per source -- a specific Meta/Google ad, or an email/SMS/social tag -- with its ad group/campaign hierarchy where that applies, and emails/bookings/sales it drove. "Emails" are the ONLINE EMAIL and GYM EMAIL events (a new contact entering the system -- the ad platforms' Registrations completed), and "Bookings/Apps" are ONLINE BOOKING and GYM APPLICATION events (the platforms' Leads). Each event is credited to the first ad/source click in that person's own click journey. Revenue/Sales/$-per-Sale come from Hyros purchase tags only (an estimate, for contacts carrying the source tag) and read $0 for live sources until a real sales data source is connected (see Settings). Click any Emails or Bookings count to see the contacts behind it.</div>
         <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
         <div id="adsCoverage" style="display:none;font-size:.8rem;margin-bottom:12px;padding:10px 14px;border:1px solid var(--pra-border);border-radius:8px;background:rgba(255,255,255,0.03)"></div>
-        <!-- Single scroll container -- see attributionTablePanel's own
-             comment on why splitting this into an inner wrapper div breaks
-             the sticky header instead of fixing anything. -->
-        <div class="pra-panel" id="adsReportTablePanel" style="padding:0;overflow:auto">
-          <table class="pra-table" style="width:100%;min-width:900px">
-            <thead><tr id="adsReportHeaderRow"></tr></thead>
-            <tbody id="adsReportBody"></tbody>
-          </table>
+        <div class="pra-panel" id="adsReportTablePanel" style="padding:0">
+          <div style="overflow-x:auto">
+            <table class="pra-table" style="width:100%">
+              <thead><tr id="adsReportHeaderRow"></tr></thead>
+              <tbody id="adsReportBody"></tbody>
+            </table>
+          </div>
         </div>
         <div class="pagination-bar" id="adsReportPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="adsReportPaginationSummary"></span>
@@ -314,11 +318,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-  // The two paginated tables' panels report width:0 while their tab is
-  // display:none (see resizeReportTablePanel's own guard), so switching TO
-  // Attribution/Ads Report is the one moment a resize event alone won't
-  // catch -- nothing fires a window resize just because a tab changed.
-  resizeAllReportTablePanels();
 });
 
 // ── Shared date-range selector -- same preset list/math as ads_backend.js
@@ -471,13 +470,48 @@ document.getElementById('manualUpdateBtn').onclick = async () => {
 // itself and the raw delivery-problem counts (Bounced/Complained/Failed)
 // stay actual counts, same "rate off Sent, except Sent itself" split
 // renderRateCard already uses for the Overview cards below.
-const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Open %', clicked: 'Click %', bounced: 'Bounced', complained: 'Complained', failed: 'Failed', reply: 'Reply %' };
+const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Open %', clicked: 'Click %', reply: 'Reply %', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
 const EMAIL_OVERVIEW_LABELS = { sent: 'Sent', opened: 'Opened', clicked: 'Clicked' };
-const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed', reply: 'Reply %' };
-function grid(el, labels, data, cardCls) {
+const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', reply: 'Reply %', failed: 'Failed' };
+// extras: optional {key: htmlString} -- extra markup dropped into that one
+// card only (the Failed cards' auto-opt-out toggle, see wireFailedCardToggles
+// below), without changing every other card's shape.
+function grid(el, labels, data, cardCls, extras) {
   document.getElementById(el).innerHTML = Object.entries(labels).map(([key, label]) => `
-    <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
+    <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div>${extras?.[key] || ''}</div>
   `).join('');
+}
+// Small print-only toggle inline in the Failed card (Settings -> Opt Out has
+// the full explanation) -- admin-only, since saving it needs an admin
+// session anyway (see /api/integrations/compliance). Reads/writes the exact
+// same compliance.autoOptOutFailedEmail/autoOptOutFailedSms fields Settings'
+// own Opt Out tab does, so there's no separate state to keep in sync -- both
+// pages are just two views of the one saved value.
+let complianceCache = null;
+async function loadComplianceForToggles() {
+  if (window.crmMe?.role !== 'admin') return null;
+  const r = await fetch('/api/integrations/compliance');
+  complianceCache = r.ok ? await r.json() : null;
+  return complianceCache;
+}
+function failedToggleHtml(field, checked) {
+  return `
+    <label style="display:flex;align-items:center;gap:5px;margin-top:8px;font-size:.66rem;color:var(--pra-dim);cursor:pointer;line-height:1.3">
+      <input type="checkbox" data-failed-toggle="${field}" ${checked ? 'checked' : ''} style="width:12px;height:12px;margin:0;flex-shrink:0"/>
+      Auto opt-out on failed send
+    </label>`;
+}
+function wireFailedCardToggles(gridEl) {
+  gridEl.querySelectorAll('[data-failed-toggle]').forEach(cb => cb.onchange = async () => {
+    const field = cb.dataset.failedToggle;
+    cb.disabled = true;
+    const r = await fetch('/api/integrations/compliance', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: cb.checked }),
+    });
+    if (r.ok) { complianceCache = { ...(complianceCache || {}), [field]: cb.checked }; }
+    else { cb.checked = !cb.checked; if (window.showToast) showToast('Could not save.'); }
+    cb.disabled = false;
+  });
 }
 function fmtPct(n, total) { return total ? Math.round(n / total * 100) + '%' : '0%'; }
 // Sent stays a raw count (rate-of-what would be meaningless); Opened/
@@ -577,7 +611,8 @@ async function loadEmailReport() {
   grid('emailTotalsGrid', EMAIL_LABELS, {
     sent: t.sent, delivered: t.delivered, opened: fmtPct(t.opened, t.sent), clicked: fmtPct(t.clicked, t.sent),
     bounced: t.bounced, complained: t.complained, failed: t.failed, reply: fmtPct(t.received, t.sent),
-  });
+  }, '', window.crmMe?.role === 'admin' ? { failed: failedToggleHtml('autoOptOutFailedEmail', !!complianceCache?.autoOptOutFailedEmail) } : null);
+  wireFailedCardToggles(document.getElementById('emailTotalsGrid'));
   renderChart('emailChart', d.days, ['sent', 'opened', 'clicked']);
 }
 async function loadSmsReport() {
@@ -586,7 +621,9 @@ async function loadSmsReport() {
   const d = await r.json();
   const t = d.totals;
   // Same raw inbound-count basis as Email's Reply % above, see that comment.
-  grid('smsTotalsGrid', SMS_LABELS, { sent: t.sent, delivered: t.delivered, received: t.received, failed: t.failed, reply: fmtPct(t.received, t.sent) });
+  grid('smsTotalsGrid', SMS_LABELS, { sent: t.sent, delivered: t.delivered, received: t.received, failed: t.failed, reply: fmtPct(t.received, t.sent) },
+    '', window.crmMe?.role === 'admin' ? { failed: failedToggleHtml('autoOptOutFailedSms', !!complianceCache?.autoOptOutFailedSms) } : null);
+  wireFailedCardToggles(document.getElementById('smsTotalsGrid'));
   renderChart('smsChart', d.days, ['sent', 'received', 'failed']);
 }
 
@@ -614,23 +651,6 @@ function adsSegmentCardHtml(title, data) {
 let allAttributionSources = [];
 let attributionSort = { field: 'visits', dir: -1 };
 let attributionPage = 1, attributionPageSize = 20;
-// Same "recompute on resize / panel becoming visible" approach as
-// contacts.html's resizeContactsTablePanel -- these panels aren't the only
-// thing on the page (date range picker, tab strip, the descriptive text
-// above each table all vary in height), so a fixed vh value would either
-// clip the table or leave dead space depending on which tab/viewport.
-function resizeReportTablePanel(panel, bar) {
-  if (!panel || panel.getBoundingClientRect().width === 0) return; // its tab isn't active right now
-  const top = panel.getBoundingClientRect().top;
-  const barHeight = bar ? bar.offsetHeight : 0;
-  const available = window.innerHeight - top - barHeight - 24;
-  panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
-}
-function resizeAllReportTablePanels() {
-  resizeReportTablePanel(document.getElementById('attributionTablePanel'), document.getElementById('attributionPaginationBar'));
-  resizeReportTablePanel(document.getElementById('adsReportTablePanel'), document.getElementById('adsReportPaginationBar'));
-}
-window.addEventListener('resize', resizeAllReportTablePanels);
 // One-line note about Hyros source tags (server text; null hides it), created on first use next to `anchor`.
 function showHyrosNote(id, text, anchor, where) {
   let note = document.getElementById(id);
@@ -702,7 +722,6 @@ function renderAttributionTable() {
   document.getElementById('attributionPageIndicator').textContent = `Page ${attributionPage} of ${pageCount}`;
   document.getElementById('attributionPrevPageBtn').disabled = attributionPage <= 1;
   document.getElementById('attributionNextPageBtn').disabled = attributionPage >= pageCount;
-  resizeReportTablePanel(document.getElementById('attributionTablePanel'), document.getElementById('attributionPaginationBar'));
 }
 document.querySelectorAll('#tab-attribution th.sortable').forEach(th => th.addEventListener('click', () => {
   if (attributionSort.field === th.dataset.sort) attributionSort.dir *= -1;
@@ -819,7 +838,10 @@ function renderAdsReportHeader() {
     if (!col) return '';
     const isSorted = adsReportSort.field === key;
     const arrow = isSorted ? `<span class="sort-arrow">${adsReportSort.dir === 1 ? '▲' : '▼'}</span>` : '';
-    return `<th class="sortable${isSorted ? ' sorted' : ''}" draggable="true" data-col="${key}" style="text-align:${col.align};padding:12px 16px;cursor:grab;user-select:none;position:sticky;top:0;background:var(--pra-panel);z-index:1">${col.label}${arrow}</th>`;
+    // cursor:pointer (not the drag-affordance cursor:grab this used to
+    // carry) -- click-to-sort is the primary interaction here; dragging to
+    // reorder still works, it just doesn't have its own cursor hint anymore.
+    return `<th class="sortable${isSorted ? ' sorted' : ''}" draggable="true" data-col="${key}" data-col-key="${key}" style="text-align:${col.align};padding:12px 16px;cursor:pointer;user-select:none">${col.label}${arrow}</th>`;
   }).join('');
   tr.querySelectorAll('th[data-col]').forEach(th => {
     th.addEventListener('click', () => {
@@ -935,7 +957,6 @@ function renderAdsReportTable() {
   document.getElementById('adsReportPageIndicator').textContent = `Page ${adsReportPage} of ${pageCount}`;
   document.getElementById('adsReportPrevPageBtn').disabled = adsReportPage <= 1;
   document.getElementById('adsReportNextPageBtn').disabled = adsReportPage >= pageCount;
-  resizeReportTablePanel(document.getElementById('adsReportTablePanel'), document.getElementById('adsReportPaginationBar'));
 }
 document.getElementById('adsReportPageSizeSelect').addEventListener('change', (e) => {
   adsReportPageSize = parseInt(e.target.value, 10) || 20;
@@ -1022,17 +1043,17 @@ function renderJourneyTimeline() {
   timeline.innerHTML = filtered.length ? filtered.map(item => {
     const isClick = item.itemType === 'click';
     let preview;
-    if (isClick) preview = `<span class="journey-click-label">Clicked: ${escapeHtml(item.title)}</span>${item.path ? ` <span class="pra-muted" style="font-size:.78rem">(${escapeHtml(item.path)})</span>` : ''}`;
+    if (isClick) preview = `<span class="journey-click-label">Clicked: ${escapeHtml(item.title)}</span>${item.path ? ` <span class="pra-muted" style="font-size:.9rem">(${escapeHtml(item.path)})</span>` : ''}`;
     else if (item.itemType === 'email' || item.itemType === 'sms') preview = `${item.direction === 'inbound' ? 'Received' : 'Sent'}: ${escapeHtml(item.subject || item.bodyPreview || '')}`;
     else if (item.itemType === 'call') preview = `${escapeHtml(item.direction || '')} call${item.duration ? ', ' + item.duration + 'min' : ''}`;
-    else if (hyrosKind(item)) preview = `<span class="journey-click-label">${escapeHtml(item.subject)}</span>${item.body ? ` <span class="pra-muted" style="font-size:.78rem">(${escapeHtml(item.body)}${item.bodyPreview ? ' · ' + escapeHtml(item.bodyPreview) : ''})</span>` : ''} <span class="pra-muted" style="font-size:.7rem">Hyros history</span>`;
+    else if (hyrosKind(item)) preview = `<span class="journey-click-label">${escapeHtml(item.subject)}</span>${item.body ? ` <span class="pra-muted" style="font-size:.9rem">(${escapeHtml(item.body)}${item.bodyPreview ? ' · ' + escapeHtml(item.bodyPreview) : ''})</span>` : ''} <span class="pra-muted" style="font-size:.82rem">Hyros history</span>`;
     else preview = escapeHtml(item.title || '');
     return `
       <div class="journey-timeline-item${isClick ? ' click-item' : ''}">
         <div class="journey-icon ${item.itemType}">${{ click: JOURNEY_ICONS.click, sale: '💵', call: JOURNEY_ICONS.call }[hyrosKind(item)] || JOURNEY_ICONS[item.itemType] || '•'}</div>
         <div style="flex:1">
-          <div style="font-size:.86rem">${preview}</div>
-          <div class="pra-muted" style="font-size:.74rem">${fmtDate(item.at)}${item.status ? ' · ' + escapeHtml(item.status) : ''}</div>
+          <div style="font-size:1rem">${preview}</div>
+          <div class="pra-muted" style="font-size:.84rem">${fmtDate(item.at)}${item.status ? ' · ' + escapeHtml(item.status) : ''}</div>
         </div>
       </div>
     `;
@@ -1042,7 +1063,12 @@ function renderJourneyTimeline() {
 (async function init() {
   await loadSortPreference();
   await window.crmNavReady;
+  await loadComplianceForToggles();
   renderAdsReportHeader();
+  // Attribution's header is static HTML (never rebuilt), so this only
+  // needs wiring once -- unlike Ads Report's own header, which re-wires
+  // itself inside renderAdsReportHeader() every time it's rebuilt.
+  wireColumnResize('#tab-attribution thead tr', 'attributionColumnWidths');
   await initPeriodSelector();
   applyPeriod();
 })();

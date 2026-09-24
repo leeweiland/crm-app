@@ -104,7 +104,19 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
   }
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
+  if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
   return row;
+}
+// compliance_backend.js already imports logMessage (for its own
+// blacklist-sheet activity-log entry) -- a static top-level import back
+// here would close a circular import, same reason source_names.js reads
+// crm_flows.json directly instead of importing flows_backend.js. Resolved
+// dynamically instead, at call time, well after both modules have finished
+// loading. Never allowed to throw into a send/webhook path over this.
+function notifyFailedSend(contactId, channel) {
+  import("./compliance_backend.js")
+    .then(m => m.maybeAutoOptOutOnFailedSend(contactId, channel))
+    .catch(e => console.error("[message_log] auto-opt-out-on-failure check failed:", e.message));
 }
 // Was a full scan+rewrite of the entire main log to find one row by
 // providerMessageId -- confirmed live (2026-08-29) that this filled the
@@ -134,6 +146,7 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
     recomputeConversationSummary(entry.contactId);
     if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
     recordDailyStatsTransition(found, oldStatus, status);
+    if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
   }
   return found;
 }
