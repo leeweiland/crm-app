@@ -746,7 +746,7 @@ function tcShowCountdown(label, untilMs) {
   tick();
   tcCountdownInterval = setInterval(tick, 1000);
 }
-const FOLLOWUP_SIMULATION_PROMPT = "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)";
+const FOLLOWUP_SIMULATION_PROMPT = "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")";
 // Word for word the same instruction processAiActiveBatches sends on the
 // real scheduler tick when nothing new has come in -- see that file's
 // "waiting_reply" no-new-inbound branch. Never pushed into tcHistory

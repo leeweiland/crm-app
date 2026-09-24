@@ -335,7 +335,7 @@ export async function processAiActiveBatches() {
             if ((st.followUpCount || 0) >= maxFollowUps) { st.state = "done"; }
             else {
               const channel = contact.email ? "email" : "sms";
-              const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)", { autoSend: true, senderName: agent.name });
+              const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name });
               if (!result.skip && !result.escalate && result.text) {
                 await sendViaChannel(contact, channel, result.text, agent.id);
                 st.followUpCount = (st.followUpCount || 0) + 1;
