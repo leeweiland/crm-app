@@ -60,6 +60,17 @@ function buildCandidateList(segment, batchSize, targeting) {
 // before per-field units existed (those only ever stored minHours/maxHours,
 // always meaning hours).
 export const WAIT_UNIT_MS = { seconds: 1000, minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+// Fixed (not randomized) settle window -- how long to wait after the
+// LATEST inbound message before treating it as settled and worth replying
+// to. Exists so two texts sent back to back get answered once, together,
+// instead of each independently triggering its own reply (confirmed live
+// this was happening). 90s default if an agent's never set its own.
+const DEFAULT_MESSAGE_BUFFER_MS = 90 * 1000;
+function messageBufferMs(cfg) {
+  const b = cfg.messageBuffer;
+  if (!b || b.value == null || b.value === "") return DEFAULT_MESSAGE_BUFFER_MS;
+  return (Number(b.value) || 0) * (WAIT_UNIT_MS[b.unit] || WAIT_UNIT_MS.seconds);
+}
 function randomDelayMs(waitTimeRange) {
   const range = waitTimeRange || {};
   const minMult = WAIT_UNIT_MS[range.minUnit || range.unit] || WAIT_UNIT_MS.hours;
@@ -322,7 +333,19 @@ export async function processAiActiveBatches() {
           }
         } else if (st.state === "waiting_reply") {
           const hasNewInbound = lastMsg && lastMsg.direction === "inbound" && (!st.lastSeenInboundAt || new Date(lastMsg.createdAt).getTime() > new Date(st.lastSeenInboundAt).getTime());
-          if (hasNewInbound) {
+          if (hasNewInbound && (now - new Date(lastMsg.createdAt).getTime()) < messageBufferMs(cfg)) {
+            // Still inside the settle buffer -- catches a second rapid-fire
+            // text before generating anything (confirmed live: two texts
+            // sent back to back could otherwise each trigger their own
+            // independent reply instead of one that addresses both).
+            // Deliberately does NOT touch lastSeenInboundAt -- this inbound
+            // is still "pending a reply", not "no reply yet", so the
+            // no-new-inbound follow-up branch below can't misfire while
+            // we're just waiting out the buffer. A newer inbound arriving
+            // before this fires naturally re-anchors the buffer, since
+            // lastMsg/its createdAt will have moved by the next check.
+            st.nextActionAt = new Date(new Date(lastMsg.createdAt).getTime() + messageBufferMs(cfg)).toISOString();
+          } else if (hasNewInbound) {
             st.lastSeenInboundAt = lastMsg.createdAt;
             const result = await generateAgentReply(agent, contact.id, lastMsg.body || lastMsg.bodyPreview || "", { autoSend: true, senderName: agent.name });
             const channel = lastMsg.channel === "sms" ? "sms" : "email";

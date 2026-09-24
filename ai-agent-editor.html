@@ -181,6 +181,19 @@
                   <label>Batch size (max leads contacted per Start)</label>
                   <input type="number" id="fBatchSize" min="1" max="1000" step="1" value="25"/>
                 </div>
+                <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;align-items:flex-end">
+                  <div style="flex:1">
+                    <label>Message buffer (settle window before replying)</label>
+                    <div style="display:flex;gap:6px">
+                      <input type="number" id="fMessageBuffer" min="0" step="1" value="90" style="flex:1"/>
+                      <select id="fMessageBufferUnit" style="flex:1">
+                        <option value="seconds" selected>Seconds</option>
+                        <option value="minutes">Minutes</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="pra-muted" style="font-size:.72rem;flex:2;padding-bottom:10px">Catches a second rapid-fire text before replying, so two texts sent back to back get one combined reply instead of two separate ones. Doesn't affect the reply-delay fields below.</div>
+                </div>
                 <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
                   <div style="flex:1">
                     <label>Min wait before replying to an inbound message</label>
@@ -513,6 +526,9 @@ async function loadEditor() {
   document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
   document.getElementById('segmentCountLabel').textContent = '';
   updateSegmentSizeDisplay(false);
+  const msgBuffer = cfg.messageBuffer || {};
+  document.getElementById('fMessageBuffer').value = msgBuffer.value ?? 90;
+  document.getElementById('fMessageBufferUnit').value = msgBuffer.unit || 'seconds';
   const wait = cfg.waitTimeRange || {};
   document.getElementById('fWaitMin').value = wait.min ?? wait.minHours ?? 4;
   document.getElementById('fWaitMax').value = wait.max ?? wait.maxHours ?? 24;
@@ -597,6 +613,7 @@ function tcThread() { return document.getElementById('tcThread'); }
 function resetTestChat() {
   tcClearTimers();
   tcFollowUpCount = 0;
+  tcPendingAfterGen = false; // tcGenerating itself is left alone -- an in-flight fetch can't be canceled, this just stops it from re-arming after
   tcHistory = [];
   tcThread().innerHTML = `<div class="tc-empty" id="tcEmpty">${escapeHtml(TC_EMPTY_TEXT)}</div>`;
 }
@@ -746,8 +763,23 @@ function tcFollowUpWaitRange() {
   if (min === '' || max === '') return tcReplyWaitRange();
   return { min, max, minUnit: document.getElementById('fFollowUpWaitMinUnit').value, maxUnit: document.getElementById('fFollowUpWaitMaxUnit').value };
 }
-let tcReplyTimer = null, tcFollowUpTimer = null, tcCountdownInterval = null, tcFollowUpCount = 0;
+// Reads the same messageBuffer field ai_active_backend.js's
+// messageBufferMs(cfg) falls back to -- a fixed (not randomized) settle
+// window, separate from the reply-delay range, so a second rapid-fire
+// text resets the wait instead of racing an already-in-flight reply.
+function tcMessageBufferMs() {
+  const val = Number(document.getElementById('fMessageBuffer').value);
+  const unit = document.getElementById('fMessageBufferUnit').value || 'seconds';
+  return (Number.isFinite(val) ? val : 90) * (TC_WAIT_UNIT_MS[unit] || TC_WAIT_UNIT_MS.seconds);
+}
+let tcReplyTimer = null, tcFollowUpTimer = null, tcSettleTimer = null, tcCountdownInterval = null, tcFollowUpCount = 0;
+// True while a reply/follow-up is actually being generated (the fetch is
+// in flight) -- a setTimeout can be canceled, but an in-progress request
+// can't, so a message arriving during that window sets tcPendingAfterGen
+// instead of starting a second, independent generation that would race it.
+let tcGenerating = false, tcPendingAfterGen = false;
 function tcClearTimers() {
+  if (tcSettleTimer) { clearTimeout(tcSettleTimer); tcSettleTimer = null; }
   if (tcReplyTimer) { clearTimeout(tcReplyTimer); tcReplyTimer = null; }
   if (tcFollowUpTimer) { clearTimeout(tcFollowUpTimer); tcFollowUpTimer = null; }
   if (tcCountdownInterval) { clearInterval(tcCountdownInterval); tcCountdownInterval = null; }
@@ -780,10 +812,13 @@ async function tcSendFollowUp() {
   const el = document.getElementById('tcTypingIndicator'); if (el) el.remove();
   if (tcCountdownInterval) { clearInterval(tcCountdownInterval); tcCountdownInterval = null; }
   tcFollowUpCount++;
+  tcGenerating = true;
   setTcTyping(true);
   const full = await streamAgentReplyIntoBubbles([...tcHistory, { role: 'user', content: FOLLOWUP_SIMULATION_PROMPT }]);
   if (full) tcHistory.push({ role: 'assistant', content: full });
-  tcScheduleFollowUp();
+  tcGenerating = false;
+  if (tcPendingAfterGen) { tcPendingAfterGen = false; tcArmSettleThenReply(); }
+  else tcScheduleFollowUp();
 }
 function tcScheduleFollowUp() {
   if (tcFollowUpTimer) clearTimeout(tcFollowUpTimer);
@@ -797,11 +832,31 @@ async function tcSendDelayedReply() {
   tcReplyTimer = null;
   const el = document.getElementById('tcTypingIndicator'); if (el) el.remove();
   if (tcCountdownInterval) { clearInterval(tcCountdownInterval); tcCountdownInterval = null; }
+  tcGenerating = true;
   setTcTyping(true);
   const full = await streamAgentReplyIntoBubbles(tcHistory);
   if (full) tcHistory.push({ role: 'assistant', content: full });
+  tcGenerating = false;
   tcFollowUpCount = 0;
-  tcScheduleFollowUp();
+  if (tcPendingAfterGen) { tcPendingAfterGen = false; tcArmSettleThenReply(); }
+  else tcScheduleFollowUp();
+}
+// Fixed settle buffer (tcMessageBufferMs, agent-configurable) runs FIRST,
+// separate from the randomized reply-delay range -- catches a second
+// rapid-fire message before committing to the "real" reply wait at all,
+// same reasoning as ai_active_backend.js's own messageBufferMs check.
+function tcArmSettleThenReply() {
+  tcClearTimers();
+  const bufferMs = tcMessageBufferMs();
+  const settle = () => {
+    tcSettleTimer = null;
+    const delayMs = tcRandomDelayMs(tcReplyWaitRange());
+    tcShowCountdown((document.getElementById('fName').value.trim() || 'Agent') + ' replies', Date.now() + delayMs);
+    tcReplyTimer = setTimeout(tcSendDelayedReply, delayMs);
+  };
+  if (bufferMs <= 0) { settle(); return; }
+  tcShowCountdown('settling', Date.now() + bufferMs);
+  tcSettleTimer = setTimeout(settle, bufferMs);
 }
 async function sendTestChatMessage() {
   const input = document.getElementById('tcInput');
@@ -811,11 +866,15 @@ async function sendTestChatMessage() {
   input.style.height = 'auto';
   addTcBubble('user', text);
   tcHistory.push({ role: 'user', content: text });
-  tcClearTimers(); // they replied -- same as hasNewInbound cancelling the no-reply path
-  const delayMs = tcRandomDelayMs(tcReplyWaitRange());
-  tcShowCountdown((document.getElementById('fName').value.trim() || 'Agent') + ' replies', Date.now() + delayMs);
-  tcReplyTimer = setTimeout(tcSendDelayedReply, delayMs);
   input.focus();
+  if (tcGenerating) {
+    // A reply/follow-up is already streaming and can't be canceled --
+    // flag it so the moment it finishes, this settles and replies fresh
+    // (covering everything new) instead of a second generation racing it.
+    tcPendingAfterGen = true;
+    return;
+  }
+  tcArmSettleThenReply(); // they replied -- same as hasNewInbound cancelling the no-reply path
 }
 document.getElementById('tcSendBtn').addEventListener('click', sendTestChatMessage);
 document.getElementById('tcResetBtn').addEventListener('click', resetTestChat);
@@ -843,6 +902,10 @@ function buildAgentPayload() {
     activeConfig: {
       segmentId: document.getElementById('fSegment').value || null,
       batchSize: Number(document.getElementById('fBatchSize').value) || 25,
+      messageBuffer: {
+        value: Number(document.getElementById('fMessageBuffer').value) || 0,
+        unit: document.getElementById('fMessageBufferUnit').value || 'seconds',
+      },
       waitTimeRange: {
         min: Number(document.getElementById('fWaitMin').value) || 4,
         max: Number(document.getElementById('fWaitMax').value) || 24,
@@ -913,7 +976,7 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
     'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
     'fReengageSmsPrompt', 'fReengageEmailPrompt',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
