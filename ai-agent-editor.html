@@ -680,8 +680,18 @@ async function sendTestChatMessage() {
       }
     }
     setTcTyping(false);
-    if (full) tcHistory.push({ role: 'assistant', content: full });
-    else if (!bubble) addTcBubble('assistant', '[no reply received]');
+    if (full) {
+      // [[SPLIT]] (see ai_active_backend.js's sendViaChannel) sends as two
+      // separate texts for real -- streamed into one bubble above since we
+      // don't know it's coming until it's already in the stream, then torn
+      // back into separate bubbles here so the preview actually matches
+      // what a lead would receive, instead of showing the literal marker.
+      if (full.includes('[[SPLIT]]')) {
+        if (bubble) bubble.closest('.tc-bubble-row')?.remove();
+        full.split('[[SPLIT]]').map((p) => p.trim()).filter(Boolean).forEach((p) => addTcBubble('assistant', p));
+      }
+      tcHistory.push({ role: 'assistant', content: full });
+    } else if (!bubble) addTcBubble('assistant', '[no reply received]');
   } catch (err) {
     setTcTyping(false);
     addTcBubble('assistant', '[network error: ' + err.message + ']');
