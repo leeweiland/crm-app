@@ -92,7 +92,7 @@ function findContactByPhone(phone) {
 // Shared send primitive, same shape/convention as email_backend.js's
 // sendEmail() -- imported directly by workflows_backend.js and (later)
 // automations_backend.js's future SMS step, not called over HTTP.
-export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
+export async function sendSms({ to, body, contactId, sourceType, sourceId, mediaUrl }) {
   const contact = contactId ? getContact(contactId) : null;
   if (contact?.smsOptOut) return { ok: false, reason: "opted_out" };
 
@@ -135,6 +135,10 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId }) {
     const msg = await client.messages.create({
       to: toFormatted, from: twilioSettings.fromNumber, body,
       statusCallback: `${getPublicBaseUrl()}/api/webhooks/twilio/status`,
+      // Optional MMS attachment (e.g. an AI agent's [[GIF: <url>]] marker --
+      // see ai_active_backend.js's sendViaChannel). Twilio's SDK wants an
+      // array even for a single media item.
+      ...(mediaUrl ? { mediaUrl: [mediaUrl] } : {}),
     });
     // Logged once with the final status/sid already known, same reasoning
     // as email_backend.js's sendEmail -- see message_log.js's comment.

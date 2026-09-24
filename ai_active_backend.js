@@ -73,12 +73,26 @@ function randomDelayMs(waitTimeRange) {
 // overridable so behavioral_triggers_backend.js can reuse the exact same
 // send path while tagging its messages distinctly (its own frequency-cap
 // and revisit logic key off sourceType === "behavioral_trigger").
+// A GIF (or any image) an agent's OWN prompt catalog points it at -- see
+// the per-agent "GIFS AVAILABLE" prompt section -- signaled the same way
+// [[SPLIT]] is, via [[GIF: <url>]] on its own line. Nothing about which
+// gif/when is hardcoded here; that's entirely the prompt's own editable
+// catalog and usage rule. Extracts the url and returns the text with the
+// marker removed.
+function extractGifMarker(text) {
+  const m = text.match(/\[\[GIF:\s*(\S+?)\s*\]\]/i);
+  if (!m) return { text, gifUrl: null };
+  return { text: text.replace(m[0], "").trim(), gifUrl: m[1] };
+}
+
 export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active") {
   if (channel === "email" && contact.email) {
     const { sendEmail } = await import("./email_backend.js");
+    const { text: cleaned, gifUrl } = extractGifMarker(text);
+    const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
     return sendEmail({
       to: contact.email, subject: subject || "PacificRimAthletics.com",
-      blocks: [{ id: "b1", type: "text", html: text.replace(/\n/g, "<br/>") }], theme: {}, footerTemplateId: null,
+      blocks: [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml }], theme: {}, footerTemplateId: null,
       contactId: contact.id, sourceType, sourceId: agentId,
     });
   }
@@ -94,7 +108,8 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
     let result = null;
     for (let i = 0; i < parts.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 2500));
-      result = await sendSms({ to: contact.phone, body: parts[i], contactId: contact.id, sourceType, sourceId: agentId });
+      const { text: cleaned, gifUrl } = extractGifMarker(parts[i]);
+      result = await sendSms({ to: contact.phone, body: cleaned, contactId: contact.id, sourceType, sourceId: agentId, mediaUrl: gifUrl || undefined });
     }
     return result;
   }

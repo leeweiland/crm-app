@@ -601,6 +601,15 @@ function resetTestChat() {
   tcThread().innerHTML = `<div class="tc-empty" id="tcEmpty">${escapeHtml(TC_EMPTY_TEXT)}</div>`;
 }
 function tcScrollToBottom() { const t = tcThread(); t.scrollTop = t.scrollHeight; }
+// [[GIF: <url>]] (see ai_active_backend.js's extractGifMarker) sends as a
+// real MMS/inline image for real -- rendered here as an actual <img>
+// instead of showing the literal marker text, same reasoning as the
+// [[SPLIT]] handling below.
+function stripGifMarker(text) {
+  const m = text.match(/\[\[GIF:\s*(\S+?)\s*\]\]/i);
+  if (!m) return { text, gifUrl: null };
+  return { text: text.replace(m[0], '').trim(), gifUrl: m[1] };
+}
 function addTcBubble(role, text) {
   const empty = document.getElementById('tcEmpty');
   if (empty) empty.remove();
@@ -608,7 +617,13 @@ function addTcBubble(role, text) {
   row.className = 'tc-bubble-row ' + (role === 'user' ? 'user' : 'assistant');
   const bubble = document.createElement('div');
   bubble.className = 'tc-bubble';
-  bubble.textContent = text;
+  const { text: cleaned, gifUrl } = stripGifMarker(text);
+  bubble.textContent = cleaned;
+  if (gifUrl) {
+    const img = document.createElement('img');
+    img.src = gifUrl; img.alt = ''; img.style.cssText = 'max-width:220px;display:block;margin-top:6px;border-radius:8px';
+    bubble.appendChild(img);
+  }
   row.appendChild(bubble);
   tcThread().appendChild(row);
   tcScrollToBottom();
@@ -686,6 +701,13 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
       if (full.includes('[[SPLIT]]')) {
         if (bubble) bubble.closest('.tc-bubble-row')?.remove();
         full.split('[[SPLIT]]').map((p) => p.trim()).filter(Boolean).forEach((p) => addTcBubble('assistant', p));
+      } else if (full.includes('[[GIF:')) {
+        // No split, but a gif marker still streamed in as raw text above
+        // (bubble.textContent was set directly, not through addTcBubble) --
+        // re-render this one bubble properly instead of leaving the literal
+        // marker on screen.
+        if (bubble) bubble.closest('.tc-bubble-row')?.remove();
+        addTcBubble('assistant', full);
       }
       return full;
     }
