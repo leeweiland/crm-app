@@ -197,18 +197,43 @@
 
       <div class="tab-panel" id="tab-attribution">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Click-to-conversion attribution by source -- every tracked email/SMS/campaign link (via its <code>el=</code> tag) plus real Meta/Google ad clicks (via that platform's own tracking template) -- distinct from the Online/Gym/Combined cards at the top of Overview, which show ad spend and conversion totals. This is conversion data from this app's own tracking: how many visits each source drove, and of the contacts who opted in, how many went on to book and enroll. Each contact is credited to their EARLIEST tracked touch, even if they clicked something else later. Click any count to see the actual contacts behind it.</div>
-        <div class="pra-panel" style="padding:0;overflow-x:auto">
+        <!-- Single scroll container, both axes -- unlike contacts.html's
+             LEFT-sticky frozen columns (which genuinely need separate
+             horizontal/vertical scroll containers, see that file's own
+             comment), a TOP-sticky header only cares about this element's
+             own vertical scroll offset; a shared horizontal scrollbar on
+             the same element doesn't affect it. Splitting it into an inner
+             wrapper div here instead made THAT div the sticky positioning
+             container (any non-visible overflow value qualifies, not just
+             auto), which never itself scrolls -- confirmed live: the
+             header just scrolled away with the rows instead of sticking. -->
+        <div class="pra-panel" id="attributionTablePanel" style="padding:0;overflow:auto">
           <table class="pra-table" style="width:100%;min-width:640px">
             <thead><tr>
-              <th class="sortable" data-sort="el" style="text-align:left;padding:12px 16px">Source</th>
-              <th class="sortable" data-sort="visits" style="text-align:right;padding:12px 16px">Visits</th>
-              <th class="sortable" data-sort="uniqueVisitors" style="text-align:right;padding:12px 16px">Unique Visitors</th>
-              <th class="sortable" data-sort="optIns" style="text-align:right;padding:12px 16px">Opt-Ins</th>
-              <th class="sortable" data-sort="bookings" style="text-align:right;padding:12px 16px">Bookings</th>
-              <th class="sortable" data-sort="enrolled" style="text-align:right;padding:12px 16px">Enrolled</th>
+              <th class="sortable" data-sort="el" style="text-align:left;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Source</th>
+              <th class="sortable" data-sort="visits" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Visits</th>
+              <th class="sortable" data-sort="uniqueVisitors" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Unique Visitors</th>
+              <th class="sortable" data-sort="optIns" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Opt-Ins</th>
+              <th class="sortable" data-sort="bookings" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Bookings</th>
+              <th class="sortable" data-sort="enrolled" style="text-align:right;padding:12px 16px;position:sticky;top:0;background:var(--pra-panel);z-index:1">Enrolled</th>
             </tr></thead>
             <tbody id="attributionBody"></tbody>
           </table>
+        </div>
+        <div class="pagination-bar" id="attributionPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="attributionPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">
+            Per page
+            <select class="pra-select" id="attributionPageSizeSelect" style="width:auto">
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="attributionPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="attributionPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="attributionNextPageBtn" type="button">Next ›</button>
         </div>
       </div>
 
@@ -216,11 +241,29 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">One row per source -- a specific Meta/Google ad, or an email/SMS/social tag -- with its ad group/campaign hierarchy where that applies, and emails/bookings/sales it drove. "Emails" are the ONLINE EMAIL and GYM EMAIL events (a new contact entering the system -- the ad platforms' Registrations completed), and "Bookings/Apps" are ONLINE BOOKING and GYM APPLICATION events (the platforms' Leads). Each event is credited to the first ad/source click in that person's own click journey. Revenue/Sales/$-per-Sale come from Hyros purchase tags only (an estimate, for contacts carrying the source tag) and read $0 for live sources until a real sales data source is connected (see Settings). Click any Emails or Bookings count to see the contacts behind it.</div>
         <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
         <div id="adsCoverage" style="display:none;font-size:.8rem;margin-bottom:12px;padding:10px 14px;border:1px solid var(--pra-border);border-radius:8px;background:rgba(255,255,255,0.03)"></div>
-        <div class="pra-panel" style="padding:0;overflow-x:auto">
+        <!-- Single scroll container -- see attributionTablePanel's own
+             comment on why splitting this into an inner wrapper div breaks
+             the sticky header instead of fixing anything. -->
+        <div class="pra-panel" id="adsReportTablePanel" style="padding:0;overflow:auto">
           <table class="pra-table" style="width:100%;min-width:900px">
             <thead><tr id="adsReportHeaderRow"></tr></thead>
             <tbody id="adsReportBody"></tbody>
           </table>
+        </div>
+        <div class="pagination-bar" id="adsReportPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="adsReportPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">
+            Per page
+            <select class="pra-select" id="adsReportPageSizeSelect" style="width:auto">
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="adsReportPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="adsReportPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="adsReportNextPageBtn" type="button">Next ›</button>
         </div>
       </div>
 
@@ -271,6 +314,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  // The two paginated tables' panels report width:0 while their tab is
+  // display:none (see resizeReportTablePanel's own guard), so switching TO
+  // Attribution/Ads Report is the one moment a resize event alone won't
+  // catch -- nothing fires a window resize just because a tab changed.
+  resizeAllReportTablePanels();
 });
 
 // ── Shared date-range selector -- same preset list/math as ads_backend.js
@@ -544,6 +592,24 @@ function adsSegmentCardHtml(title, data) {
 // ── Ad Attribution (click-to-conversion, from this app's own tracking) ──
 let allAttributionSources = [];
 let attributionSort = { field: 'visits', dir: -1 };
+let attributionPage = 1, attributionPageSize = 20;
+// Same "recompute on resize / panel becoming visible" approach as
+// contacts.html's resizeContactsTablePanel -- these panels aren't the only
+// thing on the page (date range picker, tab strip, the descriptive text
+// above each table all vary in height), so a fixed vh value would either
+// clip the table or leave dead space depending on which tab/viewport.
+function resizeReportTablePanel(panel, bar) {
+  if (!panel || panel.getBoundingClientRect().width === 0) return; // its tab isn't active right now
+  const top = panel.getBoundingClientRect().top;
+  const barHeight = bar ? bar.offsetHeight : 0;
+  const available = window.innerHeight - top - barHeight - 24;
+  panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
+}
+function resizeAllReportTablePanels() {
+  resizeReportTablePanel(document.getElementById('attributionTablePanel'), document.getElementById('attributionPaginationBar'));
+  resizeReportTablePanel(document.getElementById('adsReportTablePanel'), document.getElementById('adsReportPaginationBar'));
+}
+window.addEventListener('resize', resizeAllReportTablePanels);
 // One-line note about Hyros source tags (server text; null hides it), created on first use next to `anchor`.
 function showHyrosNote(id, text, anchor, where) {
   let note = document.getElementById(id);
@@ -563,12 +629,20 @@ async function loadAttributionReport() {
   if (!r.ok) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
   const d = await r.json();
   allAttributionSources = d.sources;
+  attributionPage = 1;
   showHyrosNote('attributionHyrosNote', d.hyrosNote, body.closest('.pra-panel'), 'before');
   renderAttributionTable();
 }
 function renderAttributionTable() {
   const body = document.getElementById('attributionBody');
-  if (!allAttributionSources.length) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">No tracked visits in this range.</td></tr>`; return; }
+  if (!allAttributionSources.length) {
+    body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">No tracked visits in this range.</td></tr>`;
+    document.getElementById('attributionPaginationSummary').textContent = 'No sources';
+    document.getElementById('attributionPageIndicator').textContent = '';
+    document.getElementById('attributionPrevPageBtn').disabled = true;
+    document.getElementById('attributionNextPageBtn').disabled = true;
+    return;
+  }
   const { field, dir } = attributionSort;
   const rows = [...allAttributionSources].sort((a, b) => {
     const av = field === 'el' ? (a.label || a.el).toLowerCase() : a[field];
@@ -583,7 +657,10 @@ function renderAttributionTable() {
   const cell = (n, stage, el) => n > 0
     ? `<td style="text-align:right;padding:10px 16px"><button class="pra-link" style="background:none;border:none;cursor:pointer;font:inherit" data-drill-el="${escapeHtml(el)}" data-drill-stage="${stage}">${n}</button></td>`
     : `<td style="text-align:right;padding:10px 16px;color:var(--pra-dim)">0</td>`;
-  body.innerHTML = rows.map(s => `
+  const pageCount = Math.max(1, Math.ceil(rows.length / attributionPageSize));
+  attributionPage = Math.min(attributionPage, pageCount);
+  const pageRows = rows.slice((attributionPage - 1) * attributionPageSize, attributionPage * attributionPageSize);
+  body.innerHTML = pageRows.map(s => `
     <tr style="border-top:1px solid var(--pra-border)">
       <td style="padding:10px 16px">
         <div style="font-weight:600">${escapeHtml(s.label || s.el)}</div>
@@ -598,13 +675,28 @@ function renderAttributionTable() {
     </tr>
   `).join('');
   body.querySelectorAll('[data-drill-el]').forEach(btn => btn.onclick = () => openAttributionDrilldown(btn.dataset.drillEl, btn.dataset.drillStage));
+  const start = (attributionPage - 1) * attributionPageSize + 1;
+  const end = Math.min(attributionPage * attributionPageSize, rows.length);
+  document.getElementById('attributionPaginationSummary').textContent = `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${rows.length.toLocaleString()}`;
+  document.getElementById('attributionPageIndicator').textContent = `Page ${attributionPage} of ${pageCount}`;
+  document.getElementById('attributionPrevPageBtn').disabled = attributionPage <= 1;
+  document.getElementById('attributionNextPageBtn').disabled = attributionPage >= pageCount;
+  resizeReportTablePanel(document.getElementById('attributionTablePanel'), document.getElementById('attributionPaginationBar'));
 }
 document.querySelectorAll('#tab-attribution th.sortable').forEach(th => th.addEventListener('click', () => {
   if (attributionSort.field === th.dataset.sort) attributionSort.dir *= -1;
   else attributionSort = { field: th.dataset.sort, dir: th.dataset.sort === 'el' ? 1 : -1 };
+  attributionPage = 1;
   renderAttributionTable();
   saveSortPreference();
 }));
+document.getElementById('attributionPageSizeSelect').addEventListener('change', (e) => {
+  attributionPageSize = parseInt(e.target.value, 10) || 20;
+  attributionPage = 1;
+  renderAttributionTable();
+});
+document.getElementById('attributionPrevPageBtn').onclick = () => { if (attributionPage > 1) { attributionPage--; renderAttributionTable(); } };
+document.getElementById('attributionNextPageBtn').onclick = () => { attributionPage++; renderAttributionTable(); };
 // Persisted server-side (not localStorage) so it follows the user across
 // devices, same pattern as workflows.html/automations.html/campaigns.html.
 async function loadSortPreference() {
@@ -674,6 +766,7 @@ let allAdsReportTotals = null; // server's one-per-contact totals when Hyros sou
 let adsReportSort = { field: 'leads', dir: -1 };
 let adsReportColumnOrder = [...ADS_REPORT_DEFAULT_ORDER];
 let adsReportDragKey = null;
+let adsReportPage = 1, adsReportPageSize = 20;
 async function loadAdsReportTable() {
   const body = document.getElementById('adsReportBody');
   const msg = document.getElementById('adsReportMsg');
@@ -684,6 +777,7 @@ async function loadAdsReportTable() {
   const d = await r.json();
   allAdsReportRows = d.rows;
   allAdsReportTotals = d.totals || null;
+  adsReportPage = 1;
   if (d.spendError) msg.textContent = `Note: some ad spend may be missing (${d.spendError}).`;
   showHyrosNote('adsHyrosNote', d.hyrosNote, document.getElementById('adsCoverage'), 'after');
   // How much of the period's conversion events (ONLINE/GYM EMAIL, ONLINE BOOKING, GYM APPLICATION)
@@ -704,13 +798,14 @@ function renderAdsReportHeader() {
     if (!col) return '';
     const isSorted = adsReportSort.field === key;
     const arrow = isSorted ? `<span class="sort-arrow">${adsReportSort.dir === 1 ? '▲' : '▼'}</span>` : '';
-    return `<th class="sortable${isSorted ? ' sorted' : ''}" draggable="true" data-col="${key}" style="text-align:${col.align};padding:12px 16px;cursor:grab;user-select:none">${col.label}${arrow}</th>`;
+    return `<th class="sortable${isSorted ? ' sorted' : ''}" draggable="true" data-col="${key}" style="text-align:${col.align};padding:12px 16px;cursor:grab;user-select:none;position:sticky;top:0;background:var(--pra-panel);z-index:1">${col.label}${arrow}</th>`;
   }).join('');
   tr.querySelectorAll('th[data-col]').forEach(th => {
     th.addEventListener('click', () => {
       const key = th.dataset.col;
       if (adsReportSort.field === key) adsReportSort.dir *= -1;
       else adsReportSort = { field: key, dir: ['source', 'adGroup', 'campaign'].includes(key) ? 1 : -1 };
+      adsReportPage = 1;
       renderAdsReportHeader();
       renderAdsReportTable();
       fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adsReportSort }) });
@@ -735,7 +830,14 @@ function renderAdsReportHeader() {
 }
 function renderAdsReportTable() {
   const body = document.getElementById('adsReportBody');
-  if (!allAdsReportRows.length) { body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">No tracked sources in this range.</td></tr>`; return; }
+  if (!allAdsReportRows.length) {
+    body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">No tracked sources in this range.</td></tr>`;
+    document.getElementById('adsReportPaginationSummary').textContent = 'No sources';
+    document.getElementById('adsReportPageIndicator').textContent = '';
+    document.getElementById('adsReportPrevPageBtn').disabled = true;
+    document.getElementById('adsReportNextPageBtn').disabled = true;
+    return;
+  }
   const { field, dir } = adsReportSort;
   const textFields = ['source', 'adGroup', 'campaign'];
   const rows = [...allAdsReportRows].sort((a, b) => {
@@ -795,13 +897,32 @@ function renderAdsReportTable() {
       ${adsReportColumnOrder.map(key => totalsCellFor(key)).join('')}
     </tr>
   `;
-  body.innerHTML = totalsHtml + rows.map(row => `
+  // Totals sits outside pagination -- always the first row, computed off the
+  // FULL row set above, not just whatever page is currently showing.
+  const pageCount = Math.max(1, Math.ceil(rows.length / adsReportPageSize));
+  adsReportPage = Math.min(adsReportPage, pageCount);
+  const pageRows = rows.slice((adsReportPage - 1) * adsReportPageSize, adsReportPage * adsReportPageSize);
+  body.innerHTML = totalsHtml + pageRows.map(row => `
     <tr style="border-top:1px solid var(--pra-border)">
       ${adsReportColumnOrder.map(key => cellFor(key, row)).join('')}
     </tr>
   `).join('');
   body.querySelectorAll('[data-drill-el]').forEach(btn => btn.onclick = () => openAttributionDrilldown(btn.dataset.drillEl, btn.dataset.drillStage, 'events'));
+  const start = (adsReportPage - 1) * adsReportPageSize + 1;
+  const end = Math.min(adsReportPage * adsReportPageSize, rows.length);
+  document.getElementById('adsReportPaginationSummary').textContent = `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${rows.length.toLocaleString()} sources`;
+  document.getElementById('adsReportPageIndicator').textContent = `Page ${adsReportPage} of ${pageCount}`;
+  document.getElementById('adsReportPrevPageBtn').disabled = adsReportPage <= 1;
+  document.getElementById('adsReportNextPageBtn').disabled = adsReportPage >= pageCount;
+  resizeReportTablePanel(document.getElementById('adsReportTablePanel'), document.getElementById('adsReportPaginationBar'));
 }
+document.getElementById('adsReportPageSizeSelect').addEventListener('change', (e) => {
+  adsReportPageSize = parseInt(e.target.value, 10) || 20;
+  adsReportPage = 1;
+  renderAdsReportTable();
+});
+document.getElementById('adsReportPrevPageBtn').onclick = () => { if (adsReportPage > 1) { adsReportPage--; renderAdsReportTable(); } };
+document.getElementById('adsReportNextPageBtn').onclick = () => { adsReportPage++; renderAdsReportTable(); };
 
 // ── Customer Journeys ────────────────────────────────────────────────────
 let activeJourneyContactId = null, journeySubtab = 'all', currentJourneyItems = [];
