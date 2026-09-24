@@ -32,7 +32,7 @@ import {
 export const AI_ACTIVE_BATCHES_FILE = "crm_ai_active_batches.json";
 export const AI_ACTIVE_STATES_FILE = "crm_ai_active_states.json";
 
-const MAX_FOLLOWUPS = 3;
+const MAX_FOLLOWUPS = 3; // fallback default when an agent has no cfg.maxFollowUps set
 
 // Applies a segment's filter AND the agent's own lead-type/status targeting
 // (the same targeting AI Assist uses to decide which contacts get icons --
@@ -84,7 +84,19 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
   }
   if (channel === "sms" && contact.phone) {
     const { sendSms } = await import("./sms_backend.js");
-    return sendSms({ to: contact.phone, body: text, contactId: contact.id, sourceType, sourceId: agentId });
+    // A reply can be split into two short back-to-back texts instead of
+    // one long one (see the per-agent MESSAGE FORMAT prompt rule) --
+    // [[SPLIT]] is the model's own signal for that boundary. Sent as two
+    // separate Twilio messages a couple seconds apart, so it reads as
+    // someone texting twice in a row rather than one message with a line
+    // break in it.
+    const parts = text.split("[[SPLIT]]").map((p) => p.trim()).filter(Boolean);
+    let result = null;
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 2500));
+      result = await sendSms({ to: contact.phone, body: parts[i], contactId: contact.id, sourceType, sourceId: agentId });
+    }
+    return result;
   }
   return null;
 }
@@ -311,8 +323,16 @@ export async function processAiActiveBatches() {
             }
           } else {
             // No reply yet -- a varied-timing follow-up, capped so this
-            // never turns into indefinite nagging.
-            if ((st.followUpCount || 0) >= MAX_FOLLOWUPS) { st.state = "done"; }
+            // never turns into indefinite nagging. Both the cap and the
+            // wait are agent-configurable (maxFollowUps/followUpWaitTimeRange)
+            // and deliberately separate from waitTimeRange above -- a
+            // fast-paced qualification agent wants a short, consistent
+            // follow-up gap (e.g. a flat 4 minutes) that's nothing like its
+            // own reply-to-inbound delay (e.g. a randomized 4-8 minutes).
+            // Falls back to the shared waitTimeRange/MAX_FOLLOWUPS for any
+            // agent that's never set the follow-up-specific fields.
+            const maxFollowUps = Number.isFinite(cfg.maxFollowUps) ? cfg.maxFollowUps : MAX_FOLLOWUPS;
+            if ((st.followUpCount || 0) >= maxFollowUps) { st.state = "done"; }
             else {
               const channel = contact.email ? "email" : "sms";
               const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)", { autoSend: true, senderName: agent.name });
@@ -320,7 +340,7 @@ export async function processAiActiveBatches() {
                 await sendViaChannel(contact, channel, result.text, agent.id);
                 st.followUpCount = (st.followUpCount || 0) + 1;
                 st.lastActionAt = new Date().toISOString();
-                st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
+                st.nextActionAt = new Date(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange)).toISOString();
               } else {
                 st.state = "done";
               }

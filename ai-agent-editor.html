@@ -150,7 +150,7 @@
             </div>
           </div>
 
-          <div id="activeSection" style="display:none">
+          <div id="activeSection">
             <div class="accordion-item open" data-acc="batches">
               <button type="button" class="accordion-header"><span>Batches &amp; Targeting</span><span class="accordion-chev">▾</span></button>
               <div class="accordion-body">
@@ -183,7 +183,7 @@
                 </div>
                 <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
                   <div style="flex:1">
-                    <label>Min wait between messages</label>
+                    <label>Min wait before replying to an inbound message</label>
                     <div style="display:flex;gap:6px">
                       <input type="number" id="fWaitMin" min="0" step="1" value="4" style="flex:1"/>
                       <select id="fWaitMinUnit" style="flex:1">
@@ -195,7 +195,7 @@
                     </div>
                   </div>
                   <div style="flex:1">
-                    <label>Max wait between messages</label>
+                    <label>Max wait before replying to an inbound message</label>
                     <div style="display:flex;gap:6px">
                       <input type="number" id="fWaitMax" min="0" step="1" value="24" style="flex:1"/>
                       <select id="fWaitMaxUnit" style="flex:1">
@@ -206,6 +206,43 @@
                       </select>
                     </div>
                   </div>
+                </div>
+                <!-- Deliberately separate from the reply-delay fields above --
+                     e.g. a fast-paced qualification agent wants a short
+                     randomized reply delay (4-8 min) but a flat, consistent
+                     follow-up gap (4 min) when the lead's gone quiet, which
+                     is a different number, not a coincidence of the same
+                     range. Falls back to the reply-delay range above if left
+                     blank (see ai_active_backend.js's own fallback). -->
+                <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+                  <div style="flex:1">
+                    <label>Min wait before a follow-up (no reply yet)</label>
+                    <div style="display:flex;gap:6px">
+                      <input type="number" id="fFollowUpWaitMin" min="0" step="1" placeholder="same as reply delay" style="flex:1"/>
+                      <select id="fFollowUpWaitMinUnit" style="flex:1">
+                        <option value="seconds">Seconds</option>
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style="flex:1">
+                    <label>Max wait before a follow-up (no reply yet)</label>
+                    <div style="display:flex;gap:6px">
+                      <input type="number" id="fFollowUpWaitMax" min="0" step="1" placeholder="same as reply delay" style="flex:1"/>
+                      <select id="fFollowUpWaitMaxUnit" style="flex:1">
+                        <option value="seconds">Seconds</option>
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div class="editor-row">
+                  <label>Max follow-ups if the lead never replies</label>
+                  <input type="number" id="fMaxFollowUps" min="0" max="20" step="1" value="3" style="max-width:120px"/>
                 </div>
                 <button class="pra-btn" id="previewBatchBtn" type="button">Preview Batch</button>
                 <div class="preview-result" id="previewResult" style="display:none"></div>
@@ -406,7 +443,11 @@ function renderUserCheckboxes(selected) {
 // ── Toggle switches (Active, AI Assist) ──────────────────────────────────
 function setToggle(btnId, on) { document.getElementById(btnId).classList.toggle('on', !!on); }
 function getToggle(btnId) { return document.getElementById(btnId).classList.contains('on'); }
-function updateActiveSectionVisibility() { document.getElementById('activeSection').style.display = getToggle('fActiveToggle') ? 'block' : 'none'; }
+// Always visible now -- the AI Active toggle only controls whether it
+// actually runs live, not whether its settings (batch size, wait times,
+// follow-up cadence) can be seen/edited. No-op kept so the click handler
+// below (and any other caller) doesn't need its own special-casing.
+function updateActiveSectionVisibility() {}
 function updateBtSectionVisibility() { document.getElementById('btSection').style.display = getToggle('fBtToggle') ? 'block' : 'none'; }
 document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); scheduleAutosave(); });
 document.getElementById('fAiAssistToggle').addEventListener('click', () => { setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')); scheduleAutosave(); });
@@ -476,6 +517,15 @@ async function loadEditor() {
   document.getElementById('fWaitMax').value = wait.max ?? wait.maxHours ?? 24;
   document.getElementById('fWaitMinUnit').value = wait.minUnit || wait.unit || 'hours';
   document.getElementById('fWaitMaxUnit').value = wait.maxUnit || wait.unit || 'hours';
+  // Blank fields here mean "fall back to the reply-delay range above" --
+  // see ai_active_backend.js's own fallback -- so an unset follow-up range
+  // shows as empty, not a copy of the reply-delay values.
+  const fuWait = cfg.followUpWaitTimeRange || {};
+  document.getElementById('fFollowUpWaitMin').value = fuWait.min ?? '';
+  document.getElementById('fFollowUpWaitMax').value = fuWait.max ?? '';
+  document.getElementById('fFollowUpWaitMinUnit').value = fuWait.minUnit || 'minutes';
+  document.getElementById('fFollowUpWaitMaxUnit').value = fuWait.maxUnit || 'minutes';
+  document.getElementById('fMaxFollowUps').value = Number.isFinite(cfg.maxFollowUps) ? cfg.maxFollowUps : 3;
   const reengage = cfg.reengagement || {};
   setToggle('fReengageSmsToggle', reengage.sms?.enabled);
   document.getElementById('fReengageSmsPrompt').value = reengage.sms?.prompt || '';
@@ -672,6 +722,17 @@ function buildAgentPayload() {
         minUnit: document.getElementById('fWaitMinUnit').value || 'hours',
         maxUnit: document.getElementById('fWaitMaxUnit').value || 'hours',
       },
+      // Blank min/max here means "no override" -- omitted entirely rather
+      // than saved as 0, so ai_active_backend.js's `cfg.followUpWaitTimeRange
+      // || cfg.waitTimeRange` fallback actually falls back instead of using
+      // a bogus zero-length wait.
+      followUpWaitTimeRange: (document.getElementById('fFollowUpWaitMin').value !== '' && document.getElementById('fFollowUpWaitMax').value !== '') ? {
+        min: Number(document.getElementById('fFollowUpWaitMin').value),
+        max: Number(document.getElementById('fFollowUpWaitMax').value),
+        minUnit: document.getElementById('fFollowUpWaitMinUnit').value || 'minutes',
+        maxUnit: document.getElementById('fFollowUpWaitMaxUnit').value || 'minutes',
+      } : null,
+      maxFollowUps: Number(document.getElementById('fMaxFollowUps').value) || 0,
       reengagement: {
         sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value },
         email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value },
@@ -725,7 +786,9 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit', 'fReengageSmsPrompt', 'fReengageEmailPrompt',
+    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
+    'fReengageSmsPrompt', 'fReengageEmailPrompt',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
     'btWaitMin', 'btWaitMinUnit', 'btWaitMax', 'btWaitMaxUnit', 'btCapCount', 'btCapWindowValue', 'btCapWindowUnit', 'btRevisitDelayValue', 'btRevisitDelayUnit',
   ].forEach((id) => {
