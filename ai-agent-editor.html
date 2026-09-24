@@ -410,6 +410,14 @@
             <button class="tc-send-btn" id="tcSendBtn" type="button">Send</button>
           </div>
           <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Replies and follow-ups happen automatically on the real configured wait times from the Batches &amp; Targeting tab below -- stay quiet to see a follow-up fire.</div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--pra-border)">
+            <label class="pra-label" style="display:block;margin-bottom:6px">Test as a real contact (optional)</label>
+            <div style="display:flex;gap:6px">
+              <input class="pra-input" id="tcContactEmail" placeholder="e.g. lee@pacificrimathletics.com" style="flex:1;font-size:.82rem;padding:8px 10px"/>
+              <button class="pra-btn pra-btn-sm" id="tcLoadContactBtn" type="button">Load</button>
+            </div>
+            <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:6px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -608,6 +616,7 @@ window.addEventListener('beforeunload', (e) => {
 // with whatever's currently in the form (see agentDraft below), not just
 // what's already saved.
 let tcHistory = [];
+let tcContactId = null;
 const TC_EMPTY_TEXT = document.getElementById('tcEmpty').textContent;
 function tcThread() { return document.getElementById('tcThread'); }
 function resetTestChat() {
@@ -676,7 +685,7 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
   try {
     const res = await fetch(`/api/ai-agents/${editingAgentId}/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: requestMessages, agentDraft: currentAgentDraft() }),
+      body: JSON.stringify({ messages: requestMessages, agentDraft: currentAgentDraft(), contactId: tcContactId || null }),
     });
     if (!res.ok || !res.body) {
       let detail = res.status;
@@ -878,6 +887,37 @@ async function sendTestChatMessage() {
 }
 document.getElementById('tcSendBtn').addEventListener('click', sendTestChatMessage);
 document.getElementById('tcResetBtn').addEventListener('click', resetTestChat);
+// Looks the contact up by email (reuses GET /api/contacts?q=, the same
+// search the Contacts page itself uses) and, once found, passes its id on
+// every /chat call below -- the endpoint already builds real journey
+// grounding (formatCustomerJourney) from a contactId, this just exposes
+// that existing capability in the editor instead of always testing with
+// zero real history. Starts the conversation over, since replies grounded
+// in a real person's journey don't make sense mixed with earlier replies
+// that had none.
+async function loadTcContact() {
+  const emailInput = document.getElementById('tcContactEmail');
+  const statusEl = document.getElementById('tcContactStatus');
+  const email = emailInput.value.trim().toLowerCase();
+  if (!email) { tcContactId = null; statusEl.textContent = 'Not set -- replies use no real contact history. Load one to have replies grounded in that person\'s real application/journey.'; return; }
+  statusEl.textContent = 'Looking up…';
+  try {
+    const r = await fetch(`/api/contacts?q=${encodeURIComponent(email)}&limit=5`);
+    if (!r.ok) { statusEl.textContent = 'Could not search contacts.'; return; }
+    const { contacts } = await r.json();
+    const match = (contacts || []).find((c) => (c.email || '').toLowerCase() === email);
+    if (!match) { tcContactId = null; statusEl.textContent = `No contact found with that email.`; return; }
+    tcContactId = match.id;
+    statusEl.textContent = `Testing as: ${match.first || ''} ${match.last || ''}`.trim() + ` (${match.email}) -- replies grounded in their real journey.`;
+    resetTestChat();
+  } catch (err) {
+    statusEl.textContent = 'Lookup failed: ' + err.message;
+  }
+}
+document.getElementById('tcLoadContactBtn').addEventListener('click', loadTcContact);
+document.getElementById('tcContactEmail').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); loadTcContact(); }
+});
 document.getElementById('tcInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTestChatMessage(); }
 });
