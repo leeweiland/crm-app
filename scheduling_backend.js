@@ -939,12 +939,19 @@ async function sendBookingSms(booking, eventType, contact, isReminder) {
 }
 
 async function sendBookingConfirmation(booking, eventType, contact) {
+  const cfg = eventType.confirmation || {};
+  // Instant send is opt-out (defaults true) so an event type saved before
+  // this toggle existed keeps behaving exactly as it always did. Flat
+  // siblings of email/sms (not nested under either) since confirmation.sms
+  // is itself just the template string, not an object.
+  const emailInstant = cfg.emailSendInstant !== false;
+  const smsInstant = cfg.smsSendInstant !== false;
   // Independent sends -- no reason the SMS should wait on the email
   // finishing first (or vice versa) now that this whole function already
   // runs unawaited by its caller.
   await Promise.all([
-    sendBookingEmail(booking, eventType, contact, false).catch(() => {}),
-    contact.phone ? sendBookingSms(booking, eventType, contact, false).catch(() => {}) : Promise.resolve(),
+    emailInstant ? sendBookingEmail(booking, eventType, contact, false).catch(() => {}) : Promise.resolve(),
+    (smsInstant && contact.phone) ? sendBookingSms(booking, eventType, contact, false).catch(() => {}) : Promise.resolve(),
   ]);
 }
 

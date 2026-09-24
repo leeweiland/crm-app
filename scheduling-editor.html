@@ -73,6 +73,9 @@
   .q-card-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .q-card-row .toggle-switch { flex-shrink: 0; }
   .q-card-row label { font-size: .74rem; color: var(--pra-dim); flex: 1; }
+  .ed-instant-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .ed-instant-row .toggle-switch { flex-shrink: 0; }
+  .ed-instant-row label { font-size: .8rem; color: var(--pra-white); cursor: pointer; }
   .q-card-del { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
   .q-card-del:hover { color: var(--pra-red); }
 
@@ -317,12 +320,20 @@
             <div class="ed-notif-card">
               <div class="ed-notif-title">Email Reminders</div>
               <div class="ed-notif-hint">Sends the Confirmation Email above again, timed ahead of the appointment.</div>
+              <div class="ed-instant-row">
+                <div class="toggle-switch" id="confEmailInstantToggle"></div>
+                <label for="confEmailInstantToggle">Send the confirmation email instantly when booked</label>
+              </div>
               <div id="remindersEmailList"></div>
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderEmailBtn">+ Add Email Reminder</button>
             </div>
             <div class="ed-notif-card">
               <div class="ed-notif-title">SMS Reminders</div>
               <div class="ed-notif-hint">Sends the Confirmation SMS above again, timed ahead of the appointment. Only sent if the contact has a phone number.</div>
+              <div class="ed-instant-row">
+                <div class="toggle-switch" id="confSmsInstantToggle"></div>
+                <label for="confSmsInstantToggle">Send the confirmation SMS instantly when booked</label>
+              </div>
               <div id="remindersSmsList"></div>
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderSmsBtn">+ Add SMS Reminder</button>
             </div>
@@ -748,6 +759,14 @@ document.getElementById('confSmsBody').addEventListener('input', (e) => {
   draft.confirmation.sms = e.target.value;
   saveDebounced();
 });
+document.getElementById('confEmailInstantToggle').addEventListener('click', (e) => {
+  draft.confirmation.emailSendInstant = e.target.classList.toggle('on');
+  saveDebounced();
+});
+document.getElementById('confSmsInstantToggle').addEventListener('click', (e) => {
+  draft.confirmation.smsSendInstant = e.target.classList.toggle('on');
+  saveDebounced();
+});
 document.getElementById('confEmailSubject').addEventListener('input', (e) => {
   draft.confirmation.email.subject = e.target.value;
   saveDebounced();
@@ -824,6 +843,8 @@ function renderNotifications() {
   document.getElementById('confSmsBody').value = draft.confirmation.sms || '';
   document.getElementById('confEmailSubject').value = draft.confirmation.email.subject || '';
   document.getElementById('confEmailPreviewText').value = draft.confirmation.email.previewText || '';
+  document.getElementById('confEmailInstantToggle').classList.toggle('on', draft.confirmation.emailSendInstant !== false);
+  document.getElementById('confSmsInstantToggle').classList.toggle('on', draft.confirmation.smsSendInstant !== false);
   renderReminders();
 
   const footerSel = document.getElementById('confEmailFooter');
