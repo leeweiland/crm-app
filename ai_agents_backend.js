@@ -720,7 +720,7 @@ async function handleAiAgentsCrud(req, res, url) {
     const { generateColdOpen, sendViaChannel } = await import("./ai_active_backend.js");
     const opener = await generateColdOpen(agent, contact, agent.activeConfig || {});
     if (!opener.sendable) return sendJson(res, 200, { ok: false, reason: opener.reason });
-    await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active_test");
+    await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active_test", agent.activeConfig?.emailSenderId);
     return sendJson(res, 200, { ok: true, channel: opener.channel, subject: opener.subject, body: opener.body });
   }
 

@@ -205,7 +205,7 @@ Write a short, specific, contextual outbound message referencing what they just 
           const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
           if (m) { subject = m[1].trim(); body = m[2].trim(); }
         }
-        await sendViaChannel(contact, channel, body, agent.id, subject, SOURCE_TYPE);
+        await sendViaChannel(contact, channel, body, agent.id, subject, SOURCE_TYPE, agent.activeConfig?.emailSenderId);
         trigger.status = "sent";
       } else {
         trigger.status = "skipped";

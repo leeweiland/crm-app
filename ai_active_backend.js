@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE } from "./auth_backend.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
 import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
@@ -123,14 +123,31 @@ export async function generateColdOpen(agent, contact, cfg) {
   return { sendable: true, channel, subject, body };
 }
 
-export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active") {
+// cfg.emailSenderId (Batches & Targeting's "Send emails as" field) picks a
+// real connected team-user identity for this agent's OWN emails -- reuses
+// the exact same sendViaGmail path a human's Inbox reply goes through, so
+// the From header/signature is genuinely that person's Gmail, not a
+// generic shared address. Falls back to the org default sender (the old
+// behavior, unchanged) when unset or when that user hasn't connected
+// Gmail -- an agent with no sender picked isn't broken, it just sends the
+// way it always has.
+export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active", senderId = null) {
   if (channel === "email" && contact.email) {
-    const { sendEmail } = await import("./email_backend.js");
     const { text: cleaned, gifUrl } = extractGifMarker(text);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
+    const blocks = [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml }];
+    const sender = senderId ? readJson(USERS_FILE, []).find((u) => u.id === senderId && u.gmailRefreshToken) : null;
+    if (sender) {
+      const { sendViaGmail } = await import("./gmail_backend.js");
+      return sendViaGmail({
+        user: sender, to: contact.email, subject: subject || "PacificRimAthletics.com", blocks, theme: {},
+        contactId: contact.id, sourceType, sourceId: agentId, footerTemplateId: sender.footerTemplateId || null,
+      });
+    }
+    const { sendEmail } = await import("./email_backend.js");
     return sendEmail({
       to: contact.email, subject: subject || "PacificRimAthletics.com",
-      blocks: [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml }], theme: {}, footerTemplateId: null,
+      blocks, theme: {}, footerTemplateId: null,
       contactId: contact.id, sourceType, sourceId: agentId,
     });
   }
@@ -325,7 +342,7 @@ export async function processAiActiveBatches() {
         if (st.state === "queued") {
           const opener = await generateColdOpen(agent, contact, cfg);
           if (opener.sendable) {
-            await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject);
+            await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active", cfg.emailSenderId);
             st.state = "waiting_reply";
             st.lastActionAt = new Date().toISOString();
             st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
@@ -355,7 +372,7 @@ export async function processAiActiveBatches() {
             } else if (result.escalate) {
               st.state = "escalated";
             } else if (result.text) {
-              await sendViaChannel(contact, channel, result.text, agent.id);
+              await sendViaChannel(contact, channel, result.text, agent.id, undefined, "ai_active", cfg.emailSenderId);
               st.lastActionAt = new Date().toISOString();
               if (result.buyingSignal) st.state = "hot_handoff";
               else st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
@@ -376,7 +393,7 @@ export async function processAiActiveBatches() {
               const channel = contact.email ? "email" : "sms";
               const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name });
               if (!result.skip && !result.escalate && result.text) {
-                await sendViaChannel(contact, channel, result.text, agent.id);
+                await sendViaChannel(contact, channel, result.text, agent.id, undefined, "ai_active", cfg.emailSenderId);
                 st.followUpCount = (st.followUpCount || 0) + 1;
                 st.lastActionAt = new Date().toISOString();
                 st.nextActionAt = new Date(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange)).toISOString();

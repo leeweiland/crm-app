@@ -181,6 +181,11 @@
                   <label>Batch size (max leads contacted per Start)</label>
                   <input type="number" id="fBatchSize" min="1" max="1000" step="1" value="25"/>
                 </div>
+                <div class="editor-row">
+                  <label>Send emails as</label>
+                  <select class="pra-select" id="fEmailSender"><option value="">Org default (not a specific person's Gmail)</option></select>
+                  <div class="pra-muted" id="fEmailSenderHint" style="font-size:.72rem;margin-top:4px"></div>
+                </div>
                 <div class="editor-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;align-items:flex-end">
                   <div style="flex:1">
                     <label>Message buffer (settle window before replying)</label>
@@ -463,6 +468,23 @@ function renderUserCheckboxes(selected) {
   ).join('');
   updateMsSummary('msCoverUsers', 'Select user(s)…');
 }
+// Only lets you pick a team member whose Gmail is actually connected --
+// ai_active_backend.js's sendViaChannel falls back to the org default
+// anyway if it isn't, but showing that here avoids picking someone and
+// having sends silently NOT come from them.
+function renderEmailSenderOptions(selectedId) {
+  const sel = document.getElementById('fEmailSender');
+  const connected = allUsers.filter((u) => u.gmailRefreshToken && !u.archived);
+  sel.innerHTML = '<option value="">Org default (not a specific person\'s Gmail)</option>' +
+    connected.map((u) => `<option value="${u.id}" ${selectedId === u.id ? 'selected' : ''}>${escapeHtml(`${u.first || ''} ${u.last || ''}`.trim() || u.email)} (${escapeHtml(u.gmailEmail || u.email)})</option>`).join('');
+  if (selectedId && !connected.some((u) => u.id === selectedId)) {
+    // Previously picked but no longer connected (or archived) -- keep it
+    // selectable/visible instead of silently reverting to org default.
+    const stale = allUsers.find((u) => u.id === selectedId);
+    sel.insertAdjacentHTML('beforeend', `<option value="${selectedId}" selected>${escapeHtml(`${stale?.first || ''} ${stale?.last || ''}`.trim() || 'Unknown user')} (Gmail not connected)</option>`);
+  }
+  document.getElementById('fEmailSenderHint').textContent = connected.length ? '' : 'No team member has Gmail connected yet -- Settings > Team Users, or Connect Email.';
+}
 
 // ── Toggle switches (Active, AI Assist) ──────────────────────────────────
 function setToggle(btnId, on) { document.getElementById(btnId).classList.toggle('on', !!on); }
@@ -587,6 +609,7 @@ async function loadEditor() {
   updateMsSummary('msProgramTypes', 'Select lead type(s)…');
   renderStatusCheckboxes(agent.targeting?.statuses || []);
   renderUserCheckboxes(agent.targeting?.coverForUserIds || []);
+  renderEmailSenderOptions(cfg.emailSenderId || null);
   document.querySelectorAll('.multiselect.invalid').forEach(m => m.classList.remove('invalid'));
   closeAllMultiselects();
   resetTestChat();
@@ -980,6 +1003,7 @@ function buildAgentPayload() {
     activeConfig: {
       segmentId: document.getElementById('fSegment').value || null,
       batchSize: Number(document.getElementById('fBatchSize').value) || 25,
+      emailSenderId: document.getElementById('fEmailSender').value || null,
       messageBuffer: {
         value: Number(document.getElementById('fMessageBuffer').value) || 0,
         unit: document.getElementById('fMessageBufferUnit').value || 'seconds',
@@ -1054,7 +1078,7 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
     'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
     'fReengageSmsPrompt', 'fReengageEmailPrompt',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
