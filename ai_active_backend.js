@@ -96,6 +96,33 @@ function extractGifMarker(text) {
   return { text: text.replace(m[0], "").trim(), gifUrl: m[1] };
 }
 
+// Shared by processAiActiveBatches' own "queued" branch and the
+// agent-editor's one-off real test-send (POST /api/ai-agents/:id/test-send
+// below) -- same cold-open generation either way, so a real test-send
+// proves exactly what the real batch engine would actually say/do,
+// instead of a second, potentially-drifting copy of this logic.
+export async function generateColdOpen(agent, contact, cfg) {
+  const reengage = cfg.reengagement || {};
+  const smsOk = reengage.sms?.enabled && !!contact.phone;
+  const emailOk = reengage.email?.enabled && !!contact.email;
+  if (!smsOk && !emailOk) return { sendable: false, reason: "Neither Re-engagement SMS nor Email is enabled (or the contact has no phone/email for the enabled channel)." };
+  const channel = emailOk ? "email" : "sms"; // prefer email when both are enabled and available
+  const customPrompt = reengage[channel]?.prompt?.trim();
+  const defaultPrompt = channel === "email"
+    ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
+    : "This is a cold re-engagement opener to a lead via SMS -- keep it very short and text-native, reference something specific from their real info/application if available, and ask one specific question to get them talking.";
+  let promptText = `(${customPrompt || defaultPrompt} Write this fully in the voice/tone already defined above for this agent -- don't fall back to a generic marketing-copywriting structure or tone that isn't consistent with it.)`;
+  if (channel === "email") promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
+  const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true, senderName: agent.name });
+  if (result.skip || result.escalate || !result.text) return { sendable: false, reason: result.skip ? "Model judged no-go (skip)." : result.escalate ? "Model escalated instead of drafting a cold-open." : "No text produced." };
+  let subject = null, body = result.text;
+  if (channel === "email") {
+    const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
+    if (m) { subject = m[1].trim(); body = m[2].trim(); }
+  }
+  return { sendable: true, channel, subject, body };
+}
+
 export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active") {
   if (channel === "email" && contact.email) {
     const { sendEmail } = await import("./email_backend.js");
@@ -296,40 +323,14 @@ export async function processAiActiveBatches() {
 
       try {
         if (st.state === "queued") {
-          // Cold-open channel is opt-in per channel (the "Re-engagement
-          // SMS"/"Re-engagement Email" toggles) -- a batch with neither
-          // enabled has nothing to open with and just sits done, rather
-          // than silently defaulting to whichever contact method exists.
-          const reengage = cfg.reengagement || {};
-          const smsOk = reengage.sms?.enabled && !!contact.phone;
-          const emailOk = reengage.email?.enabled && !!contact.email;
-          if (!smsOk && !emailOk) {
-            st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue;
-          }
-          const channel = emailOk ? "email" : "sms"; // prefer email when both are enabled and available
-          const customPrompt = reengage[channel]?.prompt?.trim();
-          const defaultPrompt = channel === "email"
-            ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
-            : "This is a cold re-engagement opener to a lead via SMS -- keep it very short and text-native, reference something specific from their real info/application if available, and ask one specific question to get them talking.";
-          // The channel instruction is the last word on structure/mechanics
-          // only -- appended so a directive custom prompt (e.g. "use a
-          // problem-agitate-solve structure") can't override the agent's
-          // own voice/tone rules earlier in the system prompt.
-          let promptText = `(${customPrompt || defaultPrompt} Write this fully in the voice/tone already defined above for this agent -- don't fall back to a generic marketing-copywriting structure or tone that isn't consistent with it.)`;
-          if (channel === "email") promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
-          const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true, senderName: agent.name });
-          if (!result.skip && !result.escalate && result.text) {
-            let subject = null, body = result.text;
-            if (channel === "email") {
-              const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
-              if (m) { subject = m[1].trim(); body = m[2].trim(); }
-            }
-            await sendViaChannel(contact, channel, body, agent.id, subject);
+          const opener = await generateColdOpen(agent, contact, cfg);
+          if (opener.sendable) {
+            await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject);
             st.state = "waiting_reply";
             st.lastActionAt = new Date().toISOString();
             st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
           } else {
-            st.state = "done"; // nothing sendable (e.g. model judged no-go)
+            st.state = "done"; // nothing sendable (e.g. neither channel enabled, or model judged no-go)
           }
         } else if (st.state === "waiting_reply") {
           const hasNewInbound = lastMsg && lastMsg.direction === "inbound" && (!st.lastSeenInboundAt || new Date(lastMsg.createdAt).getTime() > new Date(st.lastSeenInboundAt).getTime());

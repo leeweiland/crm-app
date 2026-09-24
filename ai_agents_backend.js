@@ -695,6 +695,35 @@ async function handleAiAgentsCrud(req, res, url) {
     return sendJson(res, 200, { ok: true, agent });
   }
 
+  // Real one-off cold-open send to a real contact, no batch/state created --
+  // the agent editor's "Test as a real contact" section, for confirming an
+  // agent's intro actually reaches a real phone/inbox instead of only ever
+  // being previewed in the Test Conversation panel (which never sends
+  // anything real). Reuses processAiActiveBatches' own generateColdOpen so
+  // this proves exactly what the real batch engine would say/do -- not a
+  // separate copy of that logic. sourceType "ai_active_test" keeps it out
+  // of real Activity/reporting counts (falls into the "other" bucket, not
+  // "human" or "ai_agent") since nothing here represents real lead activity.
+  const testSendMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-send$/);
+  if (testSendMatch && req.method === "POST") {
+    const agents = readJson(AI_AGENTS_FILE, []);
+    const savedAgent = agents.find((a) => a.id === testSendMatch[1]);
+    if (!savedAgent) return sendJson(res, 404, { error: "Agent not found" });
+    const { agentDraft, contactId } = await readJsonBody(req);
+    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contact = contacts.find((c) => c.id === contactId);
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+    // Reflects whatever's currently in the form, same as /chat -- lets you
+    // real-send-test an unsaved prompt tweak without saving first.
+    const agent = agentDraft && typeof agentDraft === "object" ? { ...savedAgent, ...agentDraft } : savedAgent;
+    const { generateColdOpen, sendViaChannel } = await import("./ai_active_backend.js");
+    const opener = await generateColdOpen(agent, contact, agent.activeConfig || {});
+    if (!opener.sendable) return sendJson(res, 200, { ok: false, reason: opener.reason });
+    await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active_test");
+    return sendJson(res, 200, { ok: true, channel: opener.channel, subject: opener.subject, body: opener.body });
+  }
+
   const agentMatch = p.match(/^\/api\/ai-agents\/([^/]+)$/);
   if (agentMatch) {
     const agents = readJson(AI_AGENTS_FILE, []);

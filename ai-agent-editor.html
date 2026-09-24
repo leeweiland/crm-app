@@ -417,6 +417,8 @@
               <button class="pra-btn pra-btn-sm" id="tcLoadContactBtn" type="button">Load</button>
             </div>
             <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:6px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcRealSendBtn" type="button" style="margin-top:10px" disabled title="Load a contact first">Send real cold-open to this contact</button>
+            <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:6px;display:none"></div>
           </div>
         </div>
       </div>
@@ -898,22 +900,58 @@ document.getElementById('tcResetBtn').addEventListener('click', resetTestChat);
 async function loadTcContact() {
   const emailInput = document.getElementById('tcContactEmail');
   const statusEl = document.getElementById('tcContactStatus');
+  const realSendBtn = document.getElementById('tcRealSendBtn');
   const email = emailInput.value.trim().toLowerCase();
-  if (!email) { tcContactId = null; statusEl.textContent = 'Not set -- replies use no real contact history. Load one to have replies grounded in that person\'s real application/journey.'; return; }
+  if (!email) {
+    tcContactId = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first';
+    statusEl.textContent = 'Not set -- replies use no real contact history. Load one to have replies grounded in that person\'s real application/journey.';
+    return;
+  }
   statusEl.textContent = 'Looking up…';
   try {
     const r = await fetch(`/api/contacts?q=${encodeURIComponent(email)}&limit=5`);
     if (!r.ok) { statusEl.textContent = 'Could not search contacts.'; return; }
     const { contacts } = await r.json();
     const match = (contacts || []).find((c) => (c.email || '').toLowerCase() === email);
-    if (!match) { tcContactId = null; statusEl.textContent = `No contact found with that email.`; return; }
+    if (!match) { tcContactId = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first'; statusEl.textContent = `No contact found with that email.`; return; }
     tcContactId = match.id;
     statusEl.textContent = `Testing as: ${match.first || ''} ${match.last || ''}`.trim() + ` (${match.email}) -- replies grounded in their real journey.`;
+    realSendBtn.disabled = false; realSendBtn.title = `Sends a real SMS/email to ${match.email}`;
     resetTestChat();
   } catch (err) {
     statusEl.textContent = 'Lookup failed: ' + err.message;
   }
 }
+// A REAL send (Twilio SMS or real email) using generateColdOpen, the exact
+// same cold-open logic processAiActiveBatches' own "queued" branch uses --
+// no batch/state created (see ai_agents_backend.js's test-send endpoint),
+// so it's a one-off "what would this actually say/do" check, not something
+// that enrolls the contact in a tracked conversation.
+async function sendRealColdOpen() {
+  if (!tcContactId || !editingAgentId) return;
+  const email = document.getElementById('tcContactEmail').value.trim();
+  if (!confirm(`This sends a REAL SMS/email to ${email} right now -- not a preview. Continue?`)) return;
+  const btn = document.getElementById('tcRealSendBtn');
+  const statusEl = document.getElementById('tcRealSendStatus');
+  btn.disabled = true;
+  statusEl.style.display = 'block';
+  statusEl.textContent = 'Sending…';
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/test-send`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId: tcContactId, agentDraft: currentAgentDraft() }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { statusEl.textContent = 'Error: ' + (d.error || r.status); }
+    else if (!d.ok) { statusEl.textContent = 'Not sent -- ' + (d.reason || 'unknown reason'); }
+    else { statusEl.textContent = `Sent via ${d.channel}${d.subject ? ` ("${d.subject}")` : ''}: ${d.body}`; }
+  } catch (err) {
+    statusEl.textContent = 'Network error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('tcRealSendBtn').addEventListener('click', sendRealColdOpen);
 document.getElementById('tcLoadContactBtn').addEventListener('click', loadTcContact);
 document.getElementById('tcContactEmail').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); loadTcContact(); }
