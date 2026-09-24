@@ -1,6 +1,7 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
 import { getConversionSettings, getGoogleAdsAccessToken } from "./conversions_backend.js";
 import { FLOWS_FILE, RUNS_FILE } from "./flows_backend.js";
+import { BOOKINGS_FILE } from "./scheduling_backend.js";
 
 export const INTEGRATIONS_FILE = "crm_integrations.json";
 
@@ -253,16 +254,50 @@ export const CRM_EVENTS = [
   { needle: "ONLINE BOOKING", event: "ONLINE BOOKING", program: "online", kind: "bookM" },
   { needle: "GYM APPLICATION", event: "GYM APPLICATION", program: "gym", kind: "bookM" },
 ];
+// The ONLINE BOOKING flow fires once per booking_created trigger, with no
+// way to tell a real booking from a cancelled one apart from joining back
+// to crm_bookings.json -- confirmed live 2026-09-24: a single afternoon of
+// double-booking/redirect-speed test runs (QA test contacts + repeated
+// Lee Weiland test bookings, all later cancelled) inflated one day's count
+// from 1 real booking to 13 counted events, because the flow run itself is
+// never deleted or updated when the booking it came from gets cancelled.
+// Each run's booking is found by contactId + closest createdAt (the flow
+// triggers within ~1s of the booking write, and a contact can have several
+// bookings/runs close together during testing, so nearest-by-time is the
+// only reliable pairing -- there's no bookingId stored on the run itself).
+function matchedBookingCancelled(run, bookingsByContact) {
+  const candidates = bookingsByContact.get(run.contactId);
+  if (!candidates || !candidates.length) return false;
+  const runMs = new Date(run.enteredAt).getTime();
+  let best = null, bestDiff = Infinity;
+  for (const b of candidates) {
+    const diff = Math.abs(new Date(b.createdAt).getTime() - runMs);
+    if (diff < bestDiff) { bestDiff = diff; best = b; }
+  }
+  return !!best && best.status === "cancelled";
+}
 export function crmEventRuns(startMs, endMs) {
   const flows = readJson(FLOWS_FILE, []);
   const runs = readJson(RUNS_FILE, []);
   const findFlowId = (needle) => flows.find(f => (f.name || "").toUpperCase().includes(needle))?.id || null;
   const defs = CRM_EVENTS.map(d => ({ ...d, flowId: findFlowId(d.needle) })).filter(d => d.flowId);
+  const onlineBookingFlowId = defs.find(d => d.needle === "ONLINE BOOKING")?.flowId;
+  const bookingsByContact = new Map();
+  if (onlineBookingFlowId) {
+    for (const b of readJson(BOOKINGS_FILE, [])) {
+      if (!bookingsByContact.has(b.contactId)) bookingsByContact.set(b.contactId, []);
+      bookingsByContact.get(b.contactId).push(b);
+    }
+  }
   const out = [];
   for (const run of runs) {
     const enteredMs = new Date(run.enteredAt).getTime();
     if (enteredMs < startMs || enteredMs > endMs) continue;
-    for (const d of defs) if (run.flowId === d.flowId) out.push({ contactId: run.contactId || null, event: d.event, program: d.program, kind: d.kind, atMs: enteredMs });
+    for (const d of defs) {
+      if (run.flowId !== d.flowId) continue;
+      if (run.flowId === onlineBookingFlowId && matchedBookingCancelled(run, bookingsByContact)) continue;
+      out.push({ contactId: run.contactId || null, event: d.event, program: d.program, kind: d.kind, atMs: enteredMs });
+    }
   }
   return out;
 }
