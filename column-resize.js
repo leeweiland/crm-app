@@ -33,25 +33,41 @@ window.wireColumnResize = function (headRowSelector, prefKey) {
 
   function colKeyOf(th) { return th.dataset.colKey || th.dataset.col; }
 
-  function applyColumnWidths(widths) {
-    const ths = [...headRow.children];
-    const rules = ths.map((th, i) => {
-      const w = widths[colKeyOf(th)];
-      if (!w) return '';
-      return `#${table.id} > thead > tr > th:nth-child(${i + 1}), #${table.id} > tbody > tr > td:nth-child(${i + 1}) { width:${w}px; min-width:${w}px; max-width:${w}px; }`;
-    }).filter(Boolean).join('\n');
+  function getOrCreateStyleTag() {
     let styleTag = document.getElementById('col-resize-style-' + prefKey);
     if (!styleTag) {
       styleTag = document.createElement('style');
       styleTag.id = 'col-resize-style-' + prefKey;
       document.head.appendChild(styleTag);
     }
-    styleTag.textContent = rules;
-    // Sticky ("frozen-col-N", contacts.html) columns carry hard-coded `left`
-    // offsets in the page CSS, worked out for their DEFAULT widths. Once one
-    // is resized the next would sit at the wrong offset and, on horizontal
-    // scroll, cover part of it -- so recompute each offset from the real
-    // widths (measured after the width rules above are in place).
+    return styleTag;
+  }
+
+  // Width-override rules only change when a width is actually saved/dragged
+  // -- kept separately from the left-offset rules (recomputed far more
+  // often, see updateFrozenLeftOffsets below) so recomputing one never
+  // clobbers the other.
+  let currentWidthRules = '';
+
+  // Sticky ("frozen-col-N", contacts.html) columns carry hard-coded `left`
+  // offsets in the page CSS, worked out for their DEFAULT widths. Once one
+  // is resized the next would sit at the wrong offset and, on horizontal
+  // scroll, cover part of it -- so recompute each offset from the real
+  // widths.
+  //
+  // This used to run ONCE, inline in applyColumnWidths, right after the
+  // width-override rules were (re)applied. Confirmed live (2026-09-24) that
+  // a single measurement taken at that moment can be wrong -- caught a case
+  // where the checkbox column's OWN width hadn't settled to its final
+  // rendered size yet when this ran, baking a stale, too-large offset into
+  // the next frozen column's `left` that never got corrected afterward,
+  // opening a real gap between the frozen columns that scrolled content
+  // showed through. repositionHandles() below already re-measures the
+  // drag-handle positions on every scroll/resize/font-load for exactly this
+  // "don't trust one early measurement" reason -- this now runs on that
+  // same schedule instead of once.
+  function updateFrozenLeftOffsets() {
+    const styleTag = getOrCreateStyleTag();
     let left = 0;
     const leftRules = [];
     [...headRow.children].forEach((th, i) => {
@@ -59,7 +75,18 @@ window.wireColumnResize = function (headRowSelector, prefKey) {
       leftRules.push(`#${table.id} > thead > tr > th:nth-child(${i + 1}), #${table.id} > tbody > tr > td:nth-child(${i + 1}) { left:${left}px; }`);
       left += th.getBoundingClientRect().width;
     });
-    if (leftRules.length) styleTag.textContent = rules + '\n' + leftRules.join('\n');
+    styleTag.textContent = currentWidthRules + (leftRules.length ? '\n' + leftRules.join('\n') : '');
+  }
+
+  function applyColumnWidths(widths) {
+    const ths = [...headRow.children];
+    currentWidthRules = ths.map((th, i) => {
+      const w = widths[colKeyOf(th)];
+      if (!w) return '';
+      return `#${table.id} > thead > tr > th:nth-child(${i + 1}), #${table.id} > tbody > tr > td:nth-child(${i + 1}) { width:${w}px; min-width:${w}px; max-width:${w}px; }`;
+    }).filter(Boolean).join('\n');
+    getOrCreateStyleTag().textContent = currentWidthRules;
+    updateFrozenLeftOffsets();
   }
 
   const isFrozen = th => /\bfrozen-col-\d\b/.test(th.className);
@@ -71,6 +98,7 @@ window.wireColumnResize = function (headRowSelector, prefKey) {
   // column's width after the handles were placed), and made the sticky
   // First/Last lines drift by exactly the scroll distance.
   function repositionHandles() {
+    updateFrozenLeftOffsets();
     const tableRect = table.getBoundingClientRect();
     const headRect = headRow.getBoundingClientRect();
     const top = Math.round(headRect.top - tableRect.top);
