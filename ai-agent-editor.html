@@ -396,9 +396,7 @@
             <textarea id="tcInput" rows="1" placeholder="Type a message to test…"></textarea>
             <button class="tc-send-btn" id="tcSendBtn" type="button">Send</button>
           </div>
-          <div style="margin-top:8px">
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcFollowUpBtn" type="button" title="Same instruction the real scheduler tick sends when a lead's gone quiet -- lets you check follow-up wording without waiting on a real batch">Simulate no-reply follow-up</button>
-          </div>
+          <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Replies and follow-ups happen automatically on the real configured wait times from the Batches &amp; Targeting tab below -- stay quiet to see a follow-up fire.</div>
         </div>
       </div>
     </div>
@@ -597,6 +595,8 @@ let tcHistory = [];
 const TC_EMPTY_TEXT = document.getElementById('tcEmpty').textContent;
 function tcThread() { return document.getElementById('tcThread'); }
 function resetTestChat() {
+  tcClearTimers();
+  tcFollowUpCount = 0;
   tcHistory = [];
   tcThread().innerHTML = `<div class="tc-empty" id="tcEmpty">${escapeHtml(TC_EMPTY_TEXT)}</div>`;
 }
@@ -634,11 +634,11 @@ function currentAgentDraft() {
     systemPrompt: document.getElementById('fSystemPrompt').value,
   };
 }
-// Shared by a real send and the no-reply follow-up simulator below --
+// Shared by the delayed reply and the automatic no-reply follow-up below --
 // streams a reply for the given request history (NOT necessarily the same
-// as tcHistory, see simulateFollowUp), renders it as one or more bubbles
-// (splitting on [[SPLIT]] same as sendTestChatMessage always did), and
-// returns the full raw text (including the marker) or null on failure.
+// as tcHistory, see tcSendFollowUp), renders it as one or more bubbles
+// (splitting on [[SPLIT]] same as before), and returns the full raw text
+// (including the marker) or null on failure.
 async function streamAgentReplyIntoBubbles(requestMessages) {
   let bubble = null, full = '';
   try {
@@ -697,47 +697,105 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
     return null;
   }
 }
+// Full simulation of the real timing, not just the reply content -- reads
+// the SAME wait-range/follow-up fields the AI Active tab saves, and
+// replicates ai_active_backend.js's randomDelayMs + follow-up-cap logic
+// client-side with real timers, so this panel behaves like a live batch
+// (reply after a randomized delay, then wait-and-follow-up if you go
+// quiet, up to Max follow-ups) instead of needing a button pressed by
+// hand for the no-reply case.
+const TC_WAIT_UNIT_MS = { seconds: 1000, minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+function tcRandomDelayMs(range) {
+  const loMs = (Number(range.min) || 4) * (TC_WAIT_UNIT_MS[range.minUnit] || TC_WAIT_UNIT_MS.hours);
+  const hiMs = Math.max(loMs, (Number(range.max) || 24) * (TC_WAIT_UNIT_MS[range.maxUnit] || TC_WAIT_UNIT_MS.hours));
+  return loMs + Math.random() * (hiMs - loMs);
+}
+function tcReplyWaitRange() {
+  return {
+    min: document.getElementById('fWaitMin').value, max: document.getElementById('fWaitMax').value,
+    minUnit: document.getElementById('fWaitMinUnit').value, maxUnit: document.getElementById('fWaitMaxUnit').value,
+  };
+}
+// Same "blank means fall back to the reply range" rule as the saved
+// activeConfig -- see buildAgentPayload/loadEditor and
+// ai_active_backend.js's `cfg.followUpWaitTimeRange || cfg.waitTimeRange`.
+function tcFollowUpWaitRange() {
+  const min = document.getElementById('fFollowUpWaitMin').value, max = document.getElementById('fFollowUpWaitMax').value;
+  if (min === '' || max === '') return tcReplyWaitRange();
+  return { min, max, minUnit: document.getElementById('fFollowUpWaitMinUnit').value, maxUnit: document.getElementById('fFollowUpWaitMaxUnit').value };
+}
+let tcReplyTimer = null, tcFollowUpTimer = null, tcCountdownInterval = null, tcFollowUpCount = 0;
+function tcClearTimers() {
+  if (tcReplyTimer) { clearTimeout(tcReplyTimer); tcReplyTimer = null; }
+  if (tcFollowUpTimer) { clearTimeout(tcFollowUpTimer); tcFollowUpTimer = null; }
+  if (tcCountdownInterval) { clearInterval(tcCountdownInterval); tcCountdownInterval = null; }
+  const el = document.getElementById('tcTypingIndicator'); if (el) el.remove();
+}
+function tcShowCountdown(label, untilMs) {
+  const el = document.getElementById('tcTypingIndicator') || (() => {
+    const e = document.createElement('div');
+    e.id = 'tcTypingIndicator'; e.className = 'tc-typing';
+    tcThread().appendChild(e); return e;
+  })();
+  if (tcCountdownInterval) clearInterval(tcCountdownInterval);
+  const tick = () => {
+    const remaining = Math.max(0, Math.round((untilMs - Date.now()) / 1000));
+    el.textContent = `${label} in ${remaining}s…`;
+    tcScrollToBottom();
+  };
+  tick();
+  tcCountdownInterval = setInterval(tick, 1000);
+}
+const FOLLOWUP_SIMULATION_PROMPT = "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)";
+// Word for word the same instruction processAiActiveBatches sends on the
+// real scheduler tick when nothing new has come in -- see that file's
+// "waiting_reply" no-new-inbound branch. Never pushed into tcHistory
+// itself, same as production: generateAgentReply's contact-journey lookup
+// never sees this text either, only the follow-up reply it produces gets
+// remembered.
+async function tcSendFollowUp() {
+  tcFollowUpTimer = null;
+  const el = document.getElementById('tcTypingIndicator'); if (el) el.remove();
+  if (tcCountdownInterval) { clearInterval(tcCountdownInterval); tcCountdownInterval = null; }
+  tcFollowUpCount++;
+  setTcTyping(true);
+  const full = await streamAgentReplyIntoBubbles([...tcHistory, { role: 'user', content: FOLLOWUP_SIMULATION_PROMPT }]);
+  if (full) tcHistory.push({ role: 'assistant', content: full });
+  tcScheduleFollowUp();
+}
+function tcScheduleFollowUp() {
+  if (tcFollowUpTimer) clearTimeout(tcFollowUpTimer);
+  const maxFollowUps = Number(document.getElementById('fMaxFollowUps').value) || 0;
+  if (tcFollowUpCount >= maxFollowUps) return; // matches st.state = "done"
+  const delayMs = tcRandomDelayMs(tcFollowUpWaitRange());
+  tcShowCountdown('follow-up if you stay quiet', Date.now() + delayMs);
+  tcFollowUpTimer = setTimeout(tcSendFollowUp, delayMs);
+}
+async function tcSendDelayedReply() {
+  tcReplyTimer = null;
+  const el = document.getElementById('tcTypingIndicator'); if (el) el.remove();
+  if (tcCountdownInterval) { clearInterval(tcCountdownInterval); tcCountdownInterval = null; }
+  setTcTyping(true);
+  const full = await streamAgentReplyIntoBubbles(tcHistory);
+  if (full) tcHistory.push({ role: 'assistant', content: full });
+  tcFollowUpCount = 0;
+  tcScheduleFollowUp();
+}
 async function sendTestChatMessage() {
   const input = document.getElementById('tcInput');
-  const sendBtn = document.getElementById('tcSendBtn');
   const text = input.value.trim();
   if (!text || !editingAgentId) return;
   input.value = '';
   input.style.height = 'auto';
   addTcBubble('user', text);
   tcHistory.push({ role: 'user', content: text });
-  sendBtn.disabled = true;
-  document.getElementById('tcFollowUpBtn').disabled = true;
-  setTcTyping(true);
-  const full = await streamAgentReplyIntoBubbles(tcHistory);
-  if (full) tcHistory.push({ role: 'assistant', content: full });
-  sendBtn.disabled = false;
-  document.getElementById('tcFollowUpBtn').disabled = false;
+  tcClearTimers(); // they replied -- same as hasNewInbound cancelling the no-reply path
+  const delayMs = tcRandomDelayMs(tcReplyWaitRange());
+  tcShowCountdown((document.getElementById('fName').value.trim() || 'Agent') + ' replies', Date.now() + delayMs);
+  tcReplyTimer = setTimeout(tcSendDelayedReply, delayMs);
   input.focus();
 }
-// Simulates the exact "lead hasn't replied yet" branch processAiActiveBatches
-// takes on the real scheduler tick (same instruction text, word for word) --
-// lets you check follow-up wording/cadence-appropriateness without waiting
-// on the real 30s tick or spending a real send on a real contact. The
-// instruction itself is a one-off addition to THIS request only, never
-// pushed into tcHistory -- production never logs it as a real message
-// either (generateAgentReply's contact-journey lookup never sees it), only
-// the follow-up reply that comes back actually gets remembered.
-const FOLLOWUP_SIMULATION_PROMPT = "(The lead hasn't replied yet. Send a brief, genuinely different follow-up -- don't repeat earlier wording.)";
-async function simulateFollowUp() {
-  if (!editingAgentId || !tcHistory.length) return;
-  const sendBtn = document.getElementById('tcSendBtn');
-  const followUpBtn = document.getElementById('tcFollowUpBtn');
-  sendBtn.disabled = true;
-  followUpBtn.disabled = true;
-  setTcTyping(true);
-  const full = await streamAgentReplyIntoBubbles([...tcHistory, { role: 'user', content: FOLLOWUP_SIMULATION_PROMPT }]);
-  if (full) tcHistory.push({ role: 'assistant', content: full });
-  sendBtn.disabled = false;
-  followUpBtn.disabled = false;
-}
 document.getElementById('tcSendBtn').addEventListener('click', sendTestChatMessage);
-document.getElementById('tcFollowUpBtn').addEventListener('click', simulateFollowUp);
 document.getElementById('tcResetBtn').addEventListener('click', resetTestChat);
 document.getElementById('tcInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTestChatMessage(); }
