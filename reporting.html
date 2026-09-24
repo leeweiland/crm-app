@@ -466,9 +466,14 @@ document.getElementById('manualUpdateBtn').onclick = async () => {
   await applyPeriod();
 };
 
-const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Opened', clicked: 'Clicked', bounced: 'Bounced', complained: 'Complained', failed: 'Failed' };
+// opened/clicked/reply hold pre-formatted "NN%" strings by the time they
+// reach grid() (built in loadEmailReport/loadSmsReport below) -- Sent
+// itself and the raw delivery-problem counts (Bounced/Complained/Failed)
+// stay actual counts, same "rate off Sent, except Sent itself" split
+// renderRateCard already uses for the Overview cards below.
+const EMAIL_LABELS = { sent: 'Sent', delivered: 'Delivered', opened: 'Open %', clicked: 'Click %', bounced: 'Bounced', complained: 'Complained', failed: 'Failed', reply: 'Reply %' };
 const EMAIL_OVERVIEW_LABELS = { sent: 'Sent', opened: 'Opened', clicked: 'Clicked' };
-const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed' };
+const SMS_LABELS = { sent: 'Sent', delivered: 'Delivered', received: 'Received', failed: 'Failed', reply: 'Reply %' };
 function grid(el, labels, data, cardCls) {
   document.getElementById(el).innerHTML = Object.entries(labels).map(([key, label]) => `
     <div class="pra-card ${cardCls || ''}" style="padding:16px"><div class="pra-label">${label}</div><div class="pra-h1">${data[key] ?? 0}</div></div>
@@ -518,8 +523,8 @@ async function loadOverview() {
   const r = await fetch(`/api/reporting/overview?start=${currentStart}&end=${currentEnd}`);
   if (r.ok) {
     const { campaigns, automations, workflows } = await r.json();
-    renderRateCard('campaignsGrid', 'stat-card-email', campaigns.sent, [['Open %', campaigns.opened], ['Click %', campaigns.clicked]], 'Replies', campaigns.replies);
-    renderRateCard('automationsGrid', 'stat-card-automations', automations.sent, [['Open %', automations.opened], ['Click %', automations.clicked]], 'Replies', automations.replies);
+    renderRateCard('campaignsGrid', 'stat-card-email', campaigns.sent, [['Open %', campaigns.opened], ['Click %', campaigns.clicked]], 'Reply %', fmtPct(campaigns.replies, campaigns.sent));
+    renderRateCard('automationsGrid', 'stat-card-automations', automations.sent, [['Open %', automations.opened], ['Click %', automations.clicked]], 'Reply %', fmtPct(automations.replies, automations.sent));
     renderRateCard('workflowsGrid', 'stat-card-workflows', workflows.sent, [['Delivered %', workflows.delivered], ['Click %', 0]], 'Inbound', workflows.replies);
   }
   const userR = await fetch(`/api/reporting/sent-by-user?start=${currentStart}&end=${currentEnd}`);
@@ -558,14 +563,30 @@ async function loadEmailReport() {
   const r = await fetch(`/api/reporting/email-daily?start=${currentStart}&end=${currentEnd}`);
   if (!r.ok) return;
   const d = await r.json();
-  grid('emailTotalsGrid', EMAIL_LABELS, d.totals);
+  const t = d.totals;
+  // Reply % here is inbound-email-count ÷ sent -- t.received is a raw count
+  // of any inbound email that period (same basis this app used everywhere
+  // before the precise thread/timing-matched countReplies() existed), NOT
+  // the "at most one per contact, only after that contact's own send"
+  // matching the Overview cards below use. Cheapest correct-enough number
+  // for a whole-tab total spanning every send source (1:1 + campaigns +
+  // automations + AI agent) -- real reply-matching needs each contact's own
+  // message history, which doesn't scale to "everyone who sent/received
+  // anything this period" the way it does for Overview's handful of
+  // campaign/automation/workflow sources.
+  grid('emailTotalsGrid', EMAIL_LABELS, {
+    sent: t.sent, delivered: t.delivered, opened: fmtPct(t.opened, t.sent), clicked: fmtPct(t.clicked, t.sent),
+    bounced: t.bounced, complained: t.complained, failed: t.failed, reply: fmtPct(t.received, t.sent),
+  });
   renderChart('emailChart', d.days, ['sent', 'opened', 'clicked']);
 }
 async function loadSmsReport() {
   const r = await fetch(`/api/reporting/sms-daily?start=${currentStart}&end=${currentEnd}`);
   if (!r.ok) return;
   const d = await r.json();
-  grid('smsTotalsGrid', SMS_LABELS, d.totals);
+  const t = d.totals;
+  // Same raw inbound-count basis as Email's Reply % above, see that comment.
+  grid('smsTotalsGrid', SMS_LABELS, { sent: t.sent, delivered: t.delivered, received: t.received, failed: t.failed, reply: fmtPct(t.received, t.sent) });
   renderChart('smsChart', d.days, ['sent', 'received', 'failed']);
 }
 

@@ -679,7 +679,13 @@ export async function handleReportingRequest(req, res, url) {
       const c = (statuses) => statuses.reduce((sum, s) => sum + (d.emailOut[s] || 0), 0);
       return { date: d.date, sent: c(["sent", "delivered", "opened", "clicked"]), opened: c(["opened", "clicked"]), clicked: c(["clicked"]), bounced: c(["bounced"]), failed: c(["failed"]) };
     });
-    return sendJson(res, 200, { days: dayRows, totals: statsFromByStatus(sumByStatus(days, "emailOut")) });
+    // statsFromByStatus's receivedCount param was never wired up here (only
+    // sms-daily passed one) -- emailInCount has been tracked in the daily
+    // index the whole time, just never summed and handed through, so
+    // totals.received silently read 0 no matter how much inbound email
+    // actually came in.
+    const totalEmailIn = days.reduce((sum, d) => sum + (d.emailInCount || 0), 0);
+    return sendJson(res, 200, { days: dayRows, totals: statsFromByStatus(sumByStatus(days, "emailOut"), totalEmailIn) });
   }
   if (p === "/api/reporting/sms-daily" && req.method === "GET") {
     const { startMs, endMs } = parseRangeParams(url);
