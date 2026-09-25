@@ -41,7 +41,15 @@
      reverted 2026-09-25). A plain min-width on the actions column is enough
      to stop the default crush without touching table-layout at all, so
      resize still works exactly like it did before any of this. */
-  #tab-campaigns .data-table td:last-child, #tab-campaigns .data-table th:last-child { min-width: 300px; }
+  /* min-width alone wasn't enough -- the global .data-table td rule also
+     sets overflow:hidden, so when the browser's shrink-to-fit auto layout
+     compressed this column back down toward the floor anyway, the buttons
+     inside (wider than that floor once padding/gaps are counted) got
+     silently clipped mid-button instead of the column just growing to fit
+     them. overflow:visible here means it can never clip, regardless of
+     how close the min-width guess is. */
+  #tab-campaigns .data-table td:last-child { min-width: 360px; overflow: visible; }
+  #tab-campaigns .data-table th:last-child { min-width: 360px; }
 </style>
 </head>
 <body>
@@ -61,21 +69,23 @@
         <button class="tab-btn" data-tab="external">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-campaigns">
-        <div class="pra-panel" id="campaignsTablePanel" style="overflow:auto">
-          <table class="data-table">
-            <thead><tr id="campaignsHeadRow">
-              <th class="sortable" data-sort="name" data-col-key="name">Name</th>
-              <th class="sortable" data-sort="status" data-col-key="status">Status</th>
-              <th data-col-key="list">List</th>
-              <th data-col-key="segment">Segment</th>
-              <th class="sortable" data-sort="sent" data-col-key="sent">Sent</th>
-              <th class="sortable" data-sort="opened" data-col-key="opened">Open %</th>
-              <th class="sortable" data-sort="clicked" data-col-key="clicked">Click %</th>
-              <th class="sortable" data-sort="updatedAt" data-col-key="updatedAt">Last Updated</th>
-              <th data-col-key="actions"></th>
-            </tr></thead>
-            <tbody id="campaignsBody"><tr><td colspan="9" class="pra-muted">Loading…</td></tr></tbody>
-          </table>
+        <div class="pra-panel" id="campaignsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr id="campaignsHeadRow">
+                <th class="sortable" data-sort="name" data-col-key="name">Name</th>
+                <th class="sortable" data-sort="status" data-col-key="status">Status</th>
+                <th data-col-key="list">List</th>
+                <th data-col-key="segment">Segment</th>
+                <th class="sortable" data-sort="sent" data-col-key="sent">Sent</th>
+                <th class="sortable" data-sort="opened" data-col-key="opened">Open %</th>
+                <th class="sortable" data-sort="clicked" data-col-key="clicked">Click %</th>
+                <th class="sortable" data-sort="updatedAt" data-col-key="updatedAt">Last Updated</th>
+                <th data-col-key="actions"></th>
+              </tr></thead>
+              <tbody id="campaignsBody"><tr><td colspan="9" class="pra-muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
         </div>
         <div id="campaignsPagination"></div>
       </div>

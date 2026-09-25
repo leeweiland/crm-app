@@ -40,7 +40,8 @@
   .tpl-preview-row td { padding: 0; }
   .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
   .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
-  #tab-automations .data-table td:last-child, #tab-automations .data-table th:last-child { min-width: 220px; }
+  #tab-automations .data-table td:last-child { min-width: 280px; overflow: visible; }
+  #tab-automations .data-table th:last-child { min-width: 280px; }
 </style>
 </head>
 <body>
@@ -59,20 +60,22 @@
         <button class="tab-btn" data-tab="templates">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-automations">
-        <div class="pra-panel" id="automationsTablePanel" style="overflow:auto">
-          <table class="data-table">
-            <thead><tr id="automationsHeadRow">
-              <th class="sortable" data-sort="name" data-col-key="name">Name</th>
-              <th class="sortable" data-sort="trigger" data-col-key="trigger">Trigger</th>
-              <th class="sortable" data-sort="active" data-col-key="active">Active</th>
-              <th class="sortable" data-sort="totalEmails" data-col-key="totalEmails">Total Emails</th>
-              <th class="sortable" data-sort="enrolledCount" data-col-key="enrolledCount">Currently Enrolled</th>
-              <th class="sortable" data-sort="totalEnrolled" data-col-key="totalEnrolled">Total Enrolled</th>
-              <th class="sortable" data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th>
-              <th data-col-key="actions"></th>
-            </tr></thead>
-            <tbody id="automationsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
-          </table>
+        <div class="pra-panel" id="automationsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr id="automationsHeadRow">
+                <th class="sortable" data-sort="name" data-col-key="name">Name</th>
+                <th class="sortable" data-sort="trigger" data-col-key="trigger">Trigger</th>
+                <th class="sortable" data-sort="active" data-col-key="active">Active</th>
+                <th class="sortable" data-sort="totalEmails" data-col-key="totalEmails">Total Emails</th>
+                <th class="sortable" data-sort="enrolledCount" data-col-key="enrolledCount">Currently Enrolled</th>
+                <th class="sortable" data-sort="totalEnrolled" data-col-key="totalEnrolled">Total Enrolled</th>
+                <th class="sortable" data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th>
+                <th data-col-key="actions"></th>
+              </tr></thead>
+              <tbody id="automationsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
         </div>
         <div id="automationsPagination"></div>
       </div>

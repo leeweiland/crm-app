@@ -15,7 +15,8 @@
   .data-table th[data-sort]:hover { color: var(--pra-white); }
   .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
   .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
-  .data-table td:last-child, .data-table th:last-child { min-width: 140px; }
+  .data-table td:last-child { min-width: 140px; overflow: visible; }
+  .data-table th:last-child { min-width: 140px; }
 </style>
 </head>
 <body>
@@ -30,13 +31,15 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">Your Zapier alternative — trigger a flow from a webhook (Framer, or anything else), a form submission, or a booking, then filter, delay, branch, write to Google Sheets, enroll in an Email Automation or SMS Sequence, or change a contact's status.</div>
       </div>
-      <div class="pra-panel" id="flowsTablePanel" style="overflow:auto">
-        <table class="data-table">
-          <thead><tr id="flowsHeadRow">
-            <th data-sort="name" data-col-key="name">Name</th><th data-sort="trigger" data-col-key="trigger">Trigger</th><th data-sort="active" data-col-key="active">Active</th><th data-sort="runs" data-col-key="runs">Runs</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th><th data-col-key="actions"></th>
-          </tr></thead>
-          <tbody id="flowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
-        </table>
+      <div class="pra-panel" id="flowsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+        <div style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr id="flowsHeadRow">
+              <th data-sort="name" data-col-key="name">Name</th><th data-sort="trigger" data-col-key="trigger">Trigger</th><th data-sort="active" data-col-key="active">Active</th><th data-sort="runs" data-col-key="runs">Runs</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th><th data-col-key="actions"></th>
+            </tr></thead>
+            <tbody id="flowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
       <div id="flowsPagination"></div>
     </div>

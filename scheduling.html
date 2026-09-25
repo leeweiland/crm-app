@@ -16,7 +16,9 @@
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
-  #tab-eventTypes .data-table td:last-child, #tab-eventTypes .data-table th:last-child { min-width: 280px; }
+  #tab-eventTypes .data-table td:last-child { min-width: 340px; overflow: visible; }
+  #tab-eventTypes .data-table th:last-child { min-width: 340px; }
+  #tab-bookings .data-table td:last-child { min-width: 220px; overflow: visible; }
   .status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .status-confirmed { background: rgba(57,255,20,0.15); color: var(--pra-green); }
   .status-cancelled { background: rgba(255,59,59,0.15); color: var(--pra-red); }
@@ -92,22 +94,26 @@
           <div class="pra-muted" style="font-size:.82rem;flex:1">Each event type gets its own public booking page at <code>/book/&lt;slug&gt;</code>.</div>
           <button class="pra-btn" id="newEventTypeBtn">+ New Event Type</button>
         </div>
-        <div class="pra-panel" id="eventTypesTablePanel" style="overflow:auto">
-          <table class="data-table">
-            <thead><tr id="eventTypesHeadRow"><th data-sort="name" data-col-key="name">Name</th><th data-sort="duration" data-col-key="duration">Duration</th><th data-sort="calendar" data-col-key="calendar">Calendar</th><th data-sort="location" data-col-key="location">Location</th><th data-sort="active" data-col-key="active">Active</th><th data-col-key="bookingLink">Booking Link</th><th data-col-key="actions"></th></tr></thead>
-            <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
-          </table>
+        <div class="pra-panel" id="eventTypesTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr id="eventTypesHeadRow"><th data-sort="name" data-col-key="name">Name</th><th data-sort="duration" data-col-key="duration">Duration</th><th data-sort="calendar" data-col-key="calendar">Calendar</th><th data-sort="location" data-col-key="location">Location</th><th data-sort="active" data-col-key="active">Active</th><th data-col-key="bookingLink">Booking Link</th><th data-col-key="actions"></th></tr></thead>
+              <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
         </div>
         <div id="eventTypesPagination"></div>
       </div>
 
       <!-- ── Bookings ── -->
       <div class="tab-panel" id="tab-bookings">
-        <div class="pra-panel" id="bookingsTablePanel" style="overflow:auto">
-          <table class="data-table">
-            <thead><tr><th>When</th><th>Contact</th><th>Event Type</th><th>Status</th><th></th></tr></thead>
-            <tbody id="bookingsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
-          </table>
+        <div class="pra-panel" id="bookingsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr><th>When</th><th>Contact</th><th>Event Type</th><th>Status</th><th></th></tr></thead>
+              <tbody id="bookingsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
+            </table>
+          </div>
         </div>
         <div id="bookingsPagination"></div>
       </div>

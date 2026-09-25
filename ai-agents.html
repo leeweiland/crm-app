@@ -10,7 +10,8 @@
   .agent-active-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .agent-on { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .agent-off { background: rgba(255,255,255,0.1); color: #fff; }
-  .data-table td:last-child, .data-table th:last-child { min-width: 200px; }
+  .data-table td:last-child { min-width: 220px; overflow: visible; }
+  .data-table th:last-child { min-width: 220px; }
 </style>
 </head>
 <body>
@@ -25,13 +26,15 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">AI Assist drafts replies for you to review in the Inbox. AI Active independently works a batch of leads you choose and pick to review. Both start OFF until you deliberately turn them on.</div>
       </div>
-      <div class="pra-panel" id="agentsTablePanel" style="overflow:auto">
-        <table class="data-table">
-          <thead><tr id="agentsHeadRow">
-            <th data-col-key="name">Name</th><th data-col-key="status">Status</th><th data-col-key="targeting">Targeting</th><th data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
-          </tr></thead>
-          <tbody id="agentsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
-        </table>
+      <div class="pra-panel" id="agentsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+        <div style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr id="agentsHeadRow">
+              <th data-col-key="name">Name</th><th data-col-key="status">Status</th><th data-col-key="targeting">Targeting</th><th data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
+            </tr></thead>
+            <tbody id="agentsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
       <div id="agentsPagination"></div>
     </div>

@@ -14,7 +14,8 @@
   .data-table th[data-sort]:hover { color: var(--pra-white); }
   .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
   .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
-  .data-table td:last-child, .data-table th:last-child { min-width: 300px; }
+  .data-table td:last-child { min-width: 340px; overflow: visible; }
+  .data-table th:last-child { min-width: 340px; }
 </style>
 </head>
 <body>
@@ -29,13 +30,15 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">Build lead-capture forms, publish them, and every submission lands in Contacts and can trigger automations/workflows.</div>
       </div>
-      <div class="pra-panel" id="formsTablePanel" style="overflow:auto">
-        <table class="data-table">
-          <thead><tr id="formsHeadRow">
-            <th data-sort="name" data-col-key="name">Name</th><th data-sort="status" data-col-key="status">Status</th><th data-sort="responses" data-col-key="responses">Responses</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
-          </tr></thead>
-          <tbody id="formsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
-        </table>
+      <div class="pra-panel" id="formsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+        <div style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr id="formsHeadRow">
+              <th data-sort="name" data-col-key="name">Name</th><th data-sort="status" data-col-key="status">Status</th><th data-sort="responses" data-col-key="responses">Responses</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
+            </tr></thead>
+            <tbody id="formsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
       <div id="formsPagination"></div>
     </div>
