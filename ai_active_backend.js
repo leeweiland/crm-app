@@ -3,7 +3,6 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
 import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
-import { getPublicBaseUrl } from "./integrations_backend.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
   generateAgentReply, contactMatchesTargeting, isExcludable,
@@ -177,19 +176,6 @@ function replySubject(priorSubject) {
   const s = (priorSubject || "PacificRimAthletics.com").trim();
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
-// A short plain sign-off for an in-thread reply, instead of repeating the
-// FULL footer template (photo, marketing copy, physical address, its own
-// unsubscribe line) on every single back-and-forth -- confirmed live that
-// doing so made Gmail auto-collapse the repeated block, and reads nothing
-// like how a real person actually emails back and forth. Keeps a minimal,
-// always-required unsubscribe link (not the surrounding marketing copy)
-// rather than dropping compliance entirely.
-function replySignoffHtml(senderFirstName, contactId) {
-  const name = (senderFirstName || "").trim();
-  const unsubscribeUrl = `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
-  return `<div style="margin-top:16px">Coach ${name || "Kai"}</div>
-    <div style="margin-top:10px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">Unsubscribe</a></div>`;
-}
 // The model occasionally prefaces a reply with a restated/paraphrased
 // version of its OWN instruction, translated into another language for no
 // clear reason -- confirmed live: a real email to an English-speaking lead
@@ -213,6 +199,10 @@ export async function sendViaChannel(contact, channel, rawText, agentId, subject
   if (channel === "email" && contact.email) {
     const { text: cleaned, gifUrl } = extractGifMarker(text);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
+    // Full footer (photo, name/title, address, unsubscribe) every time --
+    // cold-open AND every reply -- per explicit direction, not just the
+    // first email in a thread.
+    const blocks = [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml }];
     const sender = senderId ? readJson(USERS_FILE, []).find((u) => u.id === senderId && u.gmailRefreshToken) : null;
     if (sender) {
       const { sendViaGmail } = await import("./gmail_backend.js");
@@ -230,14 +220,11 @@ export async function sendViaChannel(contact, channel, rawText, agentId, subject
       // duplicated every id in the header (confirmed live: each Message-ID
       // showed up twice in a row in a real sent References header).
       const references = prior?.references || undefined;
-      const signoff = prior ? replySignoffHtml(sender.first, contact.id) : "";
-      const blocks = [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml + signoff }];
       return sendViaGmail({
         user: sender, to: contact.email,
         subject: prior ? replySubject(prior.subject) : (subject || "PacificRimAthletics.com"),
         blocks, theme: {},
         contactId: contact.id, sourceType, sourceId: agentId, footerTemplateId: sender.footerTemplateId || null,
-        skipFooter: !!prior,
         threadId: prior?.threadId, inReplyTo: prior?.messageIdHeader, references,
       });
     }
