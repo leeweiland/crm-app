@@ -107,13 +107,13 @@
   .activity-panel { display: flex; gap: 14px; height: 420px; }
   .activity-list-col { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--pra-border); padding-right: 12px; }
   .activity-convo-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .activity-scroll { flex: 1; overflow-y: auto; }
+  .activity-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
   .activity-contact-row { padding: 8px 6px; border-radius: 6px; cursor: pointer; font-size: .82rem; }
   .activity-contact-row:hover { background: rgba(255,255,255,0.04); }
   .activity-contact-row.selected { background: var(--pra-blue-dim); }
   .activity-contact-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .activity-contact-times { color: var(--pra-dim); font-size: .7rem; margin-top: 2px; }
-  .activity-channel-tag { font-size: .62rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-dim); margin-bottom: 3px; display: block; }
+  .activity-channel-tag { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-white); margin-bottom: 3px; display: block; }
   .tc-typing { font-size: .76rem; color: var(--pra-dim); padding: 2px 4px; }
   .tc-empty { color: var(--pra-dim); font-size: .78rem; text-align: center; padding: 30px 16px; line-height: 1.5; margin: auto; }
   .tc-input-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--pra-border); flex-shrink: 0; }

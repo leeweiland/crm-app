@@ -793,13 +793,23 @@ async function handleAiAgentsCrud(req, res, url) {
   const activityContactMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/activity-contact\/([^/]+)$/);
   if (activityContactMatch && req.method === "GET") {
     const contactId = activityContactMatch[2];
+    // Full HTML email bodies commonly run hundreds/thousands of characters
+    // once footer/signature/unsubscribe/legal boilerplate is included --
+    // stripped of its own HTML structure (line breaks, sections), that
+    // reads as one giant undifferentiated wall of text, not a "simple
+    // interaction". Capped well past a real message's actual content but
+    // well short of an appended footer/legal block.
+    const ACTIVITY_TEXT_CAP = 500;
     const journey = getContactMessages(contactId)
       .filter((m) => ["email", "sms"].includes(m.channel))
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-      .map((m) => ({
-        channel: m.channel, direction: m.direction, createdAt: m.createdAt,
-        text: (m.subject ? `${m.subject}\n\n` : "") + (m.body || m.bodyPreview || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-      }));
+      .map((m) => {
+        const plain = (m.subject ? `${m.subject}\n\n` : "") + (m.body || m.bodyPreview || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        return {
+          channel: m.channel, direction: m.direction, createdAt: m.createdAt,
+          text: plain.length > ACTIVITY_TEXT_CAP ? plain.slice(0, ACTIVITY_TEXT_CAP).trim() + "…" : plain,
+        };
+      });
     return sendJson(res, 200, { items: journey });
   }
 
