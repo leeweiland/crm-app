@@ -177,13 +177,20 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
   }
   if (channel === "sms" && contact.phone) {
     const { sendSms } = await import("./sms_backend.js");
+    // The cold-open prompt asks for a "SUBJECT: .../BODY: ..." format on
+    // email only, but the model sometimes echoes that same shape into an SMS
+    // reply anyway -- confirmed live: a real SMS send went out reading
+    // "subject: quick follow up on your application" as its own first line.
+    // Text has no subject line at all, so strip it defensively rather than
+    // texting it to the lead.
+    const smsText = text.replace(/^\s*subject:\s*.*\n+(?:body:\s*)?/i, "");
     // A reply can be split into two short back-to-back texts instead of
     // one long one (see the per-agent MESSAGE FORMAT prompt rule) --
     // [[SPLIT]] is the model's own signal for that boundary. Sent as two
     // separate Twilio messages a couple seconds apart, so it reads as
     // someone texting twice in a row rather than one message with a line
     // break in it.
-    const parts = text.split("[[SPLIT]]").map((p) => p.trim()).filter(Boolean);
+    const parts = smsText.split("[[SPLIT]]").map((p) => p.trim()).filter(Boolean);
     let result = null;
     for (let i = 0; i < parts.length; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 2500));
