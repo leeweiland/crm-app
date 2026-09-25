@@ -60,6 +60,14 @@
       </div>
       <div class="cb-sidebar">
         <div class="pra-panel">
+          <div class="field">
+            <label class="pra-label">Import from another footer</label>
+            <div style="display:flex;gap:6px">
+              <select class="pra-select" id="footerImportSource" style="flex:1"></select>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="footerImportBtn" type="button">Import</button>
+            </div>
+            <div class="pra-muted" style="font-size:.72rem;margin-top:4px">Copies its blocks, address, and unsubscribe text in here -- swap out whatever's different, then Save. Doesn't touch the Name below.</div>
+          </div>
           <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="footerName"/></div>
           <div class="field"><label class="pra-label">Physical address (CAN-SPAM)</label><input class="pra-input" id="footerAddress"/></div>
           <div class="field"><label class="pra-label">Unsubscribe link text</label><input class="pra-input" id="footerUnsubText" value="Unsubscribe"/></div>
@@ -179,7 +187,29 @@ function openFooterEditor(id, ownerLabel) {
   const state = { blocks: f.blocks || [], theme: f.theme || {} };
   if (!footerEditor) footerEditor = BlockEditor.init(document.getElementById('footerEditorRoot'), state, () => {});
   else footerEditor.setState(state);
+  const importSel = document.getElementById('footerImportSource');
+  const others = allFooters.filter(x => x.id !== id);
+  importSel.innerHTML = others.length
+    ? others.map(x => `<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')
+    : '<option value="">No other footers yet</option>';
 }
+// Copies another footer's blocks/theme/address/unsubscribe text into the
+// one currently being edited -- e.g. Coach Lee's already-designed footer
+// as a starting point for Alexis's/Josh's blank ones, swap out the name/
+// signature block, Save. Deliberately leaves the Name field alone (that's
+// this footer's own identity, not something an import should overwrite),
+// and doesn't save by itself -- Save (or click-away) still does that.
+function importFooterFrom() {
+  const sourceId = document.getElementById('footerImportSource').value;
+  if (!sourceId || !footerEditor) return;
+  const source = allFooters.find(x => x.id === sourceId);
+  if (!source) return;
+  document.getElementById('footerAddress').value = source.physicalAddress || '';
+  document.getElementById('footerUnsubText').value = source.unsubscribeLinkText || 'Unsubscribe';
+  footerEditor.setState({ blocks: JSON.parse(JSON.stringify(source.blocks || [])), theme: JSON.parse(JSON.stringify(source.theme || {})) });
+  showToast(`Imported "${source.name}" -- swap out what's different, then Save`);
+}
+document.getElementById('footerImportBtn').addEventListener('click', importFooterFrom);
 async function saveFooter() {
   if (!editingFooterId || !footerEditor) return;
   const state = footerEditor.getState ? footerEditor.getState() : { blocks: [], theme: {} };
