@@ -1206,6 +1206,23 @@ export async function handleAuthRequest(req, res, url) {
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
+  // Admin-only, same as zoom-link/footer/role above -- lets a mistyped or
+  // outdated first/last name (e.g. Kai's original last name typo) get
+  // fixed without archiving and recreating the whole account.
+  const nameMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/name$/);
+  if (nameMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { first, last } = await readJsonBody(req);
+    if (!String(first || "").trim() || !String(last || "").trim()) return sendJson(res, 400, { error: "First and last name are both required" });
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === nameMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    target.first = String(first).trim();
+    target.last = String(last).trim();
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
   const calendarEmailMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/calendar-email$/);
   if (calendarEmailMatch && req.method === "POST") {
     const me = getSessionUser(req);
