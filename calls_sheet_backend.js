@@ -63,11 +63,24 @@ export function getEnrollSheetSettings() {
     },
     paymentOptions: Array.isArray(s.paymentOptions) && s.paymentOptions.length ? s.paymentOptions : DEFAULT_PAYMENT_OPTIONS,
     notesTemplate: typeof s.notesTemplate === "string" && s.notesTemplate.trim() ? s.notesTemplate : DEFAULT_NOTES_TEMPLATE,
+    // Shown on flows.html's "ENROLLMENT RECORDING" row (see that page) --
+    // not read by the enroll-sheet write path itself, just tracked for display.
+    enrollCount: Number(s.enrollCount) || 0,
+    updatedAt: s.updatedAt || null,
   };
 }
 function saveEnrollSheetSettings(next) {
   const all = readIntegrations();
-  all.enrollSheet = next;
+  all.enrollSheet = { ...next, enrollCount: all.enrollSheet?.enrollCount || 0, updatedAt: new Date().toISOString() };
+  writeJson(INTEGRATIONS_FILE, all);
+}
+// Called once per successful sheet write (both the matched-update and the
+// appended-new-row paths) -- deliberately does NOT touch updatedAt (that's
+// "when someone last edited the CONFIGURATION", not "when this last ran").
+function bumpEnrollCount() {
+  const all = readIntegrations();
+  all.enrollSheet = all.enrollSheet || {};
+  all.enrollSheet.enrollCount = (Number(all.enrollSheet.enrollCount) || 0) + 1;
   writeJson(INTEGRATIONS_FILE, all);
 }
 
@@ -243,6 +256,7 @@ export async function handleCallsSheetRequest(req, res, url) {
           // either). RAW keeps the human-readable string exactly as sent.
           await sheetsPost(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`, accessToken, { valueInputOption: "RAW", data: writes });
         }
+        bumpEnrollCount();
         return sendJson(res, 200, { ok: true, matched: true, row: sheetRow, sheet: tab });
       }
 
@@ -262,6 +276,7 @@ export async function handleCallsSheetRequest(req, res, url) {
       };
       const newRow = hdr.map(h => { const key = byLowerName[h]; return key ? (valueFor[key] ?? "") : ""; });
       await sheetsPost(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(`'${tab}'!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, accessToken, { values: [newRow] });
+      bumpEnrollCount();
       return sendJson(res, 200, { ok: true, matched: false, sheet: tab });
     } catch (e) {
       return sendJson(res, 502, { error: e.message });

@@ -77,11 +77,39 @@ function saveSortPreference() {
   fetch('/api/auth/me/preferences', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ flowsSort }) });
 }
 
+// Not a real Flow object (no trigger/steps/active toggle -- it fires from a
+// popup a human fills in, which this engine's step types have no way to
+// wait on), but it IS a "trigger -> does something automatically" recipe in
+// exactly the sense this page is about, and living only under Settings >
+// Ads made it invisible to anyone looking for it here, which is where a
+// flow belongs. Pinned to the top, outside the sort/delete that applies to
+// real Flow rows below it.
+let enrollFlowInfo = null;
+async function loadEnrollFlowInfo() {
+  try {
+    const r = await fetch('/api/calls-sheet/settings');
+    enrollFlowInfo = r.ok ? (await r.json()).settings : null;
+  } catch { enrollFlowInfo = null; }
+}
+function enrollFlowRowHtml() {
+  if (!enrollFlowInfo) return '';
+  return `
+    <tr style="background:rgba(0,155,255,0.05)">
+      <td class="clickable"><a href="/enroll-flow.html" style="color:var(--pra-blue);text-decoration:none">ENROLLMENT RECORDING</a> <span class="pra-badge" style="font-size:.6rem;vertical-align:1px">BUILT-IN</span></td>
+      <td class="pra-muted">Status &rarr; Enrolled</td>
+      <td class="pra-muted">Always on</td>
+      <td>${enrollFlowInfo.enrollCount}</td>
+      <td class="pra-muted">${enrollFlowInfo.updatedAt ? fmtDate(enrollFlowInfo.updatedAt) : '—'}</td>
+      <td></td>
+    </tr>
+  `;
+}
+
 async function loadFlows() {
-  const r = await fetch('/api/flows');
+  const [flowsRes] = await Promise.all([fetch('/api/flows'), loadEnrollFlowInfo()]);
   const body = document.getElementById('flowsBody');
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">Could not load flows.</td></tr>'; return; }
-  flowsCache = (await r.json()).flows;
+  if (!flowsRes.ok) { body.innerHTML = enrollFlowRowHtml() || '<tr><td colspan="6" class="pra-muted">Could not load flows.</td></tr>'; return; }
+  flowsCache = (await flowsRes.json()).flows;
   renderFlowsTable();
 }
 
@@ -91,11 +119,11 @@ function renderFlowsTable() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.dataset.sort === flowsSort.key) th.classList.add('sort-' + flowsSort.dir);
   });
-  if (!flowsCache.length) { body.innerHTML = '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>'; return; }
+  if (!flowsCache.length) { body.innerHTML = enrollFlowRowHtml() + '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>'; return; }
   const acc = FLOW_SORT_ACCESSORS[flowsSort.key];
   const factor = flowsSort.dir === 'asc' ? 1 : -1;
   const sorted = [...flowsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
-  body.innerHTML = sorted.map(f => `
+  body.innerHTML = enrollFlowRowHtml() + sorted.map(f => `
     <tr>
       <td class="clickable"><a href="/flow-builder.html?id=${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
       <td class="pra-muted">${TRIGGER_LABELS[f.trigger?.type] || ''}</td>
