@@ -497,6 +497,7 @@
               </select>
             </div>
             <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:6px;display:none"></div>
+            <div id="tcRealSendConvo" style="max-height:280px;overflow-y:auto;display:none;flex-direction:column;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--pra-border)"></div>
           </div>
         </div>
       </div>
@@ -1076,15 +1077,34 @@ async function loadTcContact() {
     statusEl.textContent = `Testing as: ${match.first || ''} ${match.last || ''}`.trim() + ` (${match.email}) -- replies grounded in their real journey.`;
     realSendBtn.disabled = false; realSendBtn.title = `Sends a real SMS/email to ${match.email}`;
     resetTestChat();
+    loadRealSendConvo();
   } catch (err) {
     statusEl.textContent = 'Lookup failed: ' + err.message;
   }
 }
+// Real conversation so far with this contact (this agent's own sends only,
+// see activity-contact's scoping), as proper chat bubbles instead of a
+// plain-text status dump -- refreshed after Load and after every real send
+// so a genuine inbound reply that already landed shows up too.
+async function loadRealSendConvo() {
+  const convoEl = document.getElementById('tcRealSendConvo');
+  if (!tcContactId || !editingAgentId) { convoEl.style.display = 'none'; return; }
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/activity-contact/${tcContactId}`);
+    const data = await r.json();
+    if (!r.ok || !data.items.length) { convoEl.style.display = 'none'; return; }
+    convoEl.style.display = 'flex';
+    renderConvoBubbles(convoEl, data.items);
+  } catch {
+    // Silent -- this is a supplementary view; tcRealSendStatus above still
+    // reports the actual send result/error.
+  }
+}
 // A REAL send (Twilio SMS or real email) using generateColdOpen, the exact
-// same cold-open logic processAiActiveBatches' own "queued" branch uses --
-// no batch/state created (see ai_agents_backend.js's test-send endpoint),
-// so it's a one-off "what would this actually say/do" check, not something
-// that enrolls the contact in a tracked conversation.
+// same cold-open logic processAiActiveBatches' own "queued" branch uses.
+// Also tracks the contact afterward (see ai_agents_backend.js's test-send
+// endpoint) so a genuine reply gets a genuine automatic reply/follow-up,
+// same as a real lead in a real batch.
 async function sendRealColdOpen() {
   if (!tcContactId || !editingAgentId) return;
   const email = document.getElementById('tcContactEmail').value.trim();
@@ -1104,9 +1124,8 @@ async function sendRealColdOpen() {
     if (!r.ok) { statusEl.textContent = 'Error: ' + (d.error || r.status); }
     else if (!d.ok) { statusEl.textContent = 'Not sent -- ' + (d.reason || 'unknown reason'); }
     else {
-      statusEl.style.whiteSpace = 'pre-wrap';
-      const sentText = (d.sent || []).map((o) => `Sent via ${o.channel}${o.subject ? ` ("${o.subject}")` : ''}: ${o.body}`).join('\n\n');
-      statusEl.textContent = sentText + (d.tracked ? '\n\n(Now tracking this contact -- a real reply will get a real automatic reply/follow-up on the Timing settings below.)' : '');
+      statusEl.textContent = d.tracked ? 'Sent -- now tracking this contact, a real reply will get a real automatic reply/follow-up on the Timing settings below.' : 'Sent.';
+      await loadRealSendConvo();
     }
   } catch (err) {
     statusEl.textContent = 'Network error: ' + err.message;
@@ -1116,6 +1135,10 @@ async function sendRealColdOpen() {
 }
 document.getElementById('tcRealSendBtn').addEventListener('click', sendRealColdOpen);
 document.getElementById('tcLoadContactBtn').addEventListener('click', loadTcContact);
+// A real reply can land at any time (a genuine SMS/email, not something
+// triggered from this page) -- poll for it instead of only refreshing on
+// Load/Send, so a live back-and-forth test shows up without re-clicking.
+setInterval(() => { if (tcContactId) loadRealSendConvo(); }, 6000);
 document.getElementById('tcContactEmail').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); loadTcContact(); }
 });
@@ -1410,6 +1433,20 @@ async function loadActivityContacts(reset) {
     actLoading = false;
   }
 }
+// Shared by the Activity panel's conversation pane and the "Test as a real
+// contact" section below -- same real per-agent journey (from
+// /activity-contact), same tc-bubble styling the Test Conversation panel
+// above already uses, so a real send looks and reads exactly like every
+// other conversation view in this editor instead of a plain text dump.
+function renderConvoBubbles(container, items) {
+  if (!items.length) { container.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">No messages found.</div>'; return; }
+  container.innerHTML = items.map((m) => `
+    <div class="tc-bubble-row ${m.direction === 'outbound' ? 'user' : 'assistant'}">
+      <div class="tc-bubble"><span class="activity-channel-tag">${escapeHtml(m.channel)} · ${escapeHtml(fmtActTime(m.createdAt))}</span>${escapeHtml(m.text || '(no content)')}</div>
+    </div>
+  `).join('');
+  container.scrollTop = container.scrollHeight;
+}
 async function selectActivityContact(contactId) {
   actSelectedId = contactId;
   saveActState({ selectedContactId: contactId });
@@ -1422,13 +1459,8 @@ async function selectActivityContact(contactId) {
   try {
     const r = await fetch(`/api/ai-agents/${editingAgentId}/activity-contact/${contactId}`);
     const data = await r.json();
-    if (!r.ok || !data.items.length) { convoEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">No messages found.</div>'; return; }
-    convoEl.innerHTML = data.items.map((m) => `
-      <div class="tc-bubble-row ${m.direction === 'outbound' ? 'user' : 'assistant'}">
-        <div class="tc-bubble"><span class="activity-channel-tag">${escapeHtml(m.channel)} · ${escapeHtml(fmtActTime(m.createdAt))}</span>${escapeHtml(m.text || '(no content)')}</div>
-      </div>
-    `).join('');
-    convoEl.scrollTop = convoEl.scrollHeight;
+    if (!r.ok) { convoEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Could not load.</div>'; return; }
+    renderConvoBubbles(convoEl, data.items);
   } catch {
     convoEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Could not load.</div>';
   }
