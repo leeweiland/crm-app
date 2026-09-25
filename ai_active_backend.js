@@ -106,22 +106,13 @@ function extractGifMarker(text) {
 // below) -- same cold-open generation either way, so a real test-send
 // proves exactly what the real batch engine would actually say/do,
 // instead of a second, potentially-drifting copy of this logic.
-// forceChannel (test-send only) lets a specific real send be checked on
-// demand without touching the agent's own default -- it still has to be an
-// actually-enabled, actually-available channel, same as the auto pick.
-export async function generateColdOpen(agent, contact, cfg, forceChannel = null) {
+// A cold-open hits every enabled, available channel for this contact
+// (SMS AND email, not one or the other) -- "reach them at every point of
+// contact we have" for the very first touch, rather than picking a single
+// winner. forceChannel (test-send only) narrows that down to exactly one
+// channel to check on demand, without touching the agent's own config.
+async function generateColdOpenForChannel(agent, contact, cfg, channel) {
   const reengage = cfg.reengagement || {};
-  const smsOk = reengage.sms?.enabled && !!contact.phone;
-  const emailOk = reengage.email?.enabled && !!contact.email;
-  if (!smsOk && !emailOk) return { sendable: false, reason: "Neither Re-engagement SMS nor Email is enabled (or the contact has no phone/email for the enabled channel)." };
-  if (forceChannel === "sms" && !smsOk) return { sendable: false, reason: "SMS re-engagement isn't enabled, or this contact has no phone number." };
-  if (forceChannel === "email" && !emailOk) return { sendable: false, reason: "Email re-engagement isn't enabled, or this contact has no email address." };
-  // This agent's own voice/format (see the system prompt's MESSAGE FORMAT
-  // rules -- 180 char limit, double-text splits, texting shorthand) is
-  // built texting-native, so SMS wins by default when both channels are
-  // enabled. Email used to win here unconditionally, which meant a lead
-  // with both channels enabled never actually got Kai's real SMS voice.
-  const channel = forceChannel || (smsOk ? "sms" : "email");
   const customPrompt = reengage[channel]?.prompt?.trim();
   const defaultPrompt = channel === "email"
     ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
@@ -129,13 +120,31 @@ export async function generateColdOpen(agent, contact, cfg, forceChannel = null)
   let promptText = `(${customPrompt || defaultPrompt} Write this fully in the voice/tone already defined above for this agent -- don't fall back to a generic marketing-copywriting structure or tone that isn't consistent with it.)`;
   if (channel === "email") promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
   const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true, senderName: agent.name });
-  if (result.skip || result.escalate || !result.text) return { sendable: false, reason: result.skip ? "Model judged no-go (skip)." : result.escalate ? "Model escalated instead of drafting a cold-open." : "No text produced." };
+  if (result.skip || result.escalate || !result.text) return { ok: false, reason: result.skip ? "Model judged no-go (skip)." : result.escalate ? "Model escalated instead of drafting a cold-open." : "No text produced." };
   let subject = null, body = result.text;
   if (channel === "email") {
     const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
     if (m) { subject = m[1].trim(); body = m[2].trim(); }
   }
-  return { sendable: true, channel, subject, body };
+  return { ok: true, channel, subject, body };
+}
+export async function generateColdOpen(agent, contact, cfg, forceChannel = null) {
+  const reengage = cfg.reengagement || {};
+  const smsOk = reengage.sms?.enabled && !!contact.phone;
+  const emailOk = reengage.email?.enabled && !!contact.email;
+  if (!smsOk && !emailOk) return { sendable: false, reason: "Neither Re-engagement SMS nor Email is enabled (or the contact has no phone/email for the enabled channel)." };
+  if (forceChannel === "sms" && !smsOk) return { sendable: false, reason: "SMS re-engagement isn't enabled, or this contact has no phone number." };
+  if (forceChannel === "email" && !emailOk) return { sendable: false, reason: "Email re-engagement isn't enabled, or this contact has no email address." };
+  const channels = forceChannel ? [forceChannel] : [smsOk && "sms", emailOk && "email"].filter(Boolean);
+  const openers = [];
+  const reasons = [];
+  for (const channel of channels) {
+    const r = await generateColdOpenForChannel(agent, contact, cfg, channel);
+    if (r.ok) openers.push({ channel: r.channel, subject: r.subject, body: r.body });
+    else reasons.push(`${channel}: ${r.reason}`);
+  }
+  if (!openers.length) return { sendable: false, reason: reasons.join("; ") || "No text produced." };
+  return { sendable: true, openers };
 }
 
 // cfg.emailSenderId (Batches & Targeting's "Send emails as" field) picks a
@@ -363,7 +372,12 @@ export async function processAiActiveBatches() {
         if (st.state === "queued") {
           const opener = await generateColdOpen(agent, contact, cfg);
           if (opener.sendable) {
-            await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active", cfg.emailSenderId);
+            // Hits every enabled/available channel for the first touch (see
+            // generateColdOpen) -- send each opener in turn rather than just
+            // the first.
+            for (const o of opener.openers) {
+              await sendViaChannel(contact, o.channel, o.body, agent.id, o.subject, "ai_active", cfg.emailSenderId);
+            }
             st.state = "waiting_reply";
             st.lastActionAt = new Date().toISOString();
             st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();

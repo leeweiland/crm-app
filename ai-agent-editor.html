@@ -1089,7 +1089,7 @@ async function sendRealColdOpen() {
   if (!tcContactId || !editingAgentId) return;
   const email = document.getElementById('tcContactEmail').value.trim();
   const channel = document.getElementById('tcRealSendChannel').value;
-  if (!confirm(`This sends a REAL ${channel ? channel.toUpperCase() : 'SMS/email'} to ${email} right now -- not a preview. Continue?`)) return;
+  if (!confirm(`This sends a REAL ${channel ? channel.toUpperCase() : 'SMS AND email (every enabled channel)'} to ${email} right now -- not a preview. Continue?`)) return;
   const btn = document.getElementById('tcRealSendBtn');
   const statusEl = document.getElementById('tcRealSendStatus');
   btn.disabled = true;
@@ -1103,7 +1103,10 @@ async function sendRealColdOpen() {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { statusEl.textContent = 'Error: ' + (d.error || r.status); }
     else if (!d.ok) { statusEl.textContent = 'Not sent -- ' + (d.reason || 'unknown reason'); }
-    else { statusEl.textContent = `Sent via ${d.channel}${d.subject ? ` ("${d.subject}")` : ''}: ${d.body}`; }
+    else {
+      statusEl.style.whiteSpace = 'pre-wrap';
+      statusEl.textContent = (d.sent || []).map((o) => `Sent via ${o.channel}${o.subject ? ` ("${o.subject}")` : ''}: ${o.body}`).join('\n\n');
+    }
   } catch (err) {
     statusEl.textContent = 'Network error: ' + err.message;
   } finally {

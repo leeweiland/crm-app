@@ -735,8 +735,10 @@ async function handleAiAgentsCrud(req, res, url) {
     const forceChannel = channel === "sms" || channel === "email" ? channel : null;
     const opener = await generateColdOpen(agent, contact, agent.activeConfig || {}, forceChannel);
     if (!opener.sendable) return sendJson(res, 200, { ok: false, reason: opener.reason });
-    await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active_test", agent.activeConfig?.emailSenderId);
-    return sendJson(res, 200, { ok: true, channel: opener.channel, subject: opener.subject, body: opener.body });
+    for (const o of opener.openers) {
+      await sendViaChannel(contact, o.channel, o.body, agent.id, o.subject, "ai_active_test", agent.activeConfig?.emailSenderId);
+    }
+    return sendJson(res, 200, { ok: true, sent: opener.openers });
   }
 
   // Every sourceType an agent's own outbound sends can carry -- see
