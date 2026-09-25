@@ -447,9 +447,14 @@ export async function processAiActiveBatches() {
     // both just read as "nothing seen on this channel yet", which is the
     // correct, safe default either way.
     const seen = (st.lastSeenInboundAt && typeof st.lastSeenInboundAt === "object") ? st.lastSeenInboundAt : {};
+    // The latest INBOUND specifically, not just the latest message overall
+    // -- same Gmail-poll-lag reasoning as the waiting_reply loop below: a
+    // genuinely new inbound can be ingested after this engine already sent
+    // something (chronologically later) while still blind to it, burying
+    // the inbound underneath if only "the last message" were checked.
     const reactivateChannel = ["sms", "email"].find((channel) => {
-      const last = latestOnChannel(journey, channel);
-      return last && last.direction === "inbound" && (!seen[channel] || new Date(last.createdAt).getTime() > new Date(seen[channel]).getTime());
+      const lastInbound = latestOnChannel(journey.filter((m) => m.direction === "inbound"), channel);
+      return lastInbound && (!seen[channel] || new Date(lastInbound.createdAt).getTime() > new Date(seen[channel]).getTime());
     });
     if (reactivateChannel) {
       st.state = "waiting_reply";
@@ -565,21 +570,34 @@ export async function processAiActiveBatches() {
             if (st.state !== "waiting_reply") break; // escalated/hot_handoff from the other channel this same tick
             const chJourney = journey.filter((m) => m.channel === channel);
             if (!chJourney.length) continue; // Kai has never touched this channel with this contact
-            const lastChMsg = chJourney.at(-1);
+            // The single most-recent message on this channel isn't reliable
+            // for "is there something to reply to" -- Gmail's own inbound
+            // poll has real lag, so a genuinely new inbound can get ingested
+            // (by real Gmail send time) AFTER a follow-up this engine
+            // already sent while it was still blind to that reply. Once
+            // that happens, the inbound sorts chronologically BEFORE the
+            // follow-up and is permanently buried under it if this only
+            // ever looks at "the last message overall". Confirmed live: an
+            // inbound reply never got answered at all because two
+            // follow-ups this engine sent (using its own later, but
+            // earlier-known timestamps) sorted after it. Finding the latest
+            // INBOUND specifically sidesteps that regardless of send-order
+            // surprises.
+            const lastInbound = [...chJourney].reverse().find((m) => m.direction === "inbound");
             const seenAt = st.lastSeenInboundAt[channel];
-            const hasNewInbound = lastChMsg.direction === "inbound" && (!seenAt || new Date(lastChMsg.createdAt).getTime() > new Date(seenAt).getTime());
-            if (hasNewInbound && (now - new Date(lastChMsg.createdAt).getTime()) < messageBufferMs(cfg)) {
+            const hasNewInbound = lastInbound && (!seenAt || new Date(lastInbound.createdAt).getTime() > new Date(seenAt).getTime());
+            if (hasNewInbound && (now - new Date(lastInbound.createdAt).getTime()) < messageBufferMs(cfg)) {
               // Still inside the settle buffer -- catches a second rapid-fire
               // message on THIS channel before generating anything.
               // Deliberately does NOT touch lastSeenInboundAt -- still
               // "pending a reply", not "no reply yet".
               anyChannelStillActive = true;
-              nextTimes.push(new Date(lastChMsg.createdAt).getTime() + messageBufferMs(cfg));
+              nextTimes.push(new Date(lastInbound.createdAt).getTime() + messageBufferMs(cfg));
               continue;
             }
             if (hasNewInbound) {
-              st.lastSeenInboundAt[channel] = lastChMsg.createdAt;
-              const result = await generateAgentReply(agent, contact.id, lastChMsg.body || lastChMsg.bodyPreview || "", { autoSend: true, senderName: agent.name });
+              st.lastSeenInboundAt[channel] = lastInbound.createdAt;
+              const result = await generateAgentReply(agent, contact.id, lastInbound.body || lastInbound.bodyPreview || "", { autoSend: true, senderName: agent.name });
               if (result.skip) {
                 anyChannelStillActive = true;
                 nextTimes.push(now + randomDelayMs(cfg.waitTimeRange));
