@@ -141,6 +141,17 @@
             </div>
           </div>
 
+          <div class="accordion-item" data-acc="sender">
+            <button type="button" class="accordion-header"><span>Sender &amp; Identity</span><span class="accordion-chev">▾</span></button>
+            <div class="accordion-body">
+              <div class="editor-row">
+                <label>Send emails as</label>
+                <select class="pra-select" id="fEmailSender"><option value="">Org default (not a specific person's Gmail)</option></select>
+                <div class="pra-muted" id="fEmailSenderHint" style="font-size:.72rem;margin-top:4px"></div>
+              </div>
+            </div>
+          </div>
+
           <div class="accordion-item open" data-acc="prompt">
             <button type="button" class="accordion-header"><span>System Prompt</span><span class="accordion-chev">▾</span></button>
             <div class="accordion-body">
@@ -186,17 +197,6 @@
                 <div style="margin-top:18px">
                   <div class="active-section-title" style="margin-bottom:10px">Running batches</div>
                   <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="accordion-item" data-acc="sender">
-              <button type="button" class="accordion-header"><span>Sender &amp; Identity</span><span class="accordion-chev">▾</span></button>
-              <div class="accordion-body">
-                <div class="editor-row">
-                  <label>Send emails as</label>
-                  <select class="pra-select" id="fEmailSender"><option value="">Org default (not a specific person's Gmail)</option></select>
-                  <div class="pra-muted" id="fEmailSenderHint" style="font-size:.72rem;margin-top:4px"></div>
                 </div>
               </div>
             </div>
