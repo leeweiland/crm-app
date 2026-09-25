@@ -190,7 +190,26 @@ function replySignoffHtml(senderFirstName, contactId) {
   return `<div style="margin-top:16px">Coach ${name || "Kai"}</div>
     <div style="margin-top:10px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">Unsubscribe</a></div>`;
 }
-export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active", senderId = null) {
+// The model occasionally prefaces a reply with a restated/paraphrased
+// version of its OWN instruction, translated into another language for no
+// clear reason -- confirmed live: a real email to an English-speaking lead
+// went out starting with a literal Chinese line paraphrasing "if no reply,
+// ask the same question from a different angle" before the actual (English)
+// reply. Strips any leading line that's mostly non-Latin script -- a real
+// reply here never legitimately starts that way.
+function stripForeignPreamble(text) {
+  const lines = String(text || "").split("\n");
+  while (lines.length) {
+    const line = lines[0].trim();
+    if (!line) { lines.shift(); continue; }
+    const nonLatin = (line.match(/[^\x00-\x7F]/g) || []).length;
+    if (nonLatin > line.length * 0.3) { lines.shift(); continue; }
+    break;
+  }
+  return lines.join("\n").trim();
+}
+export async function sendViaChannel(contact, channel, rawText, agentId, subject, sourceType = "ai_active", senderId = null) {
+  const text = stripForeignPreamble(rawText);
   if (channel === "email" && contact.email) {
     const { text: cleaned, gifUrl } = extractGifMarker(text);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
@@ -205,9 +224,12 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
       const prior = findEmailThreadContext(contact, sender.gmailEmail);
       // References should carry the WHOLE chain (RFC-correct, and more
       // robust for a recipient client's own threading than In-Reply-To
-      // alone) -- prior's own References plus prior's own real Message-ID,
-      // not just the single immediate parent.
-      const references = prior ? [prior.references, prior.messageIdHeader].filter(Boolean).join(" ") || undefined : undefined;
+      // alone) -- prior's own References plus prior's own real Message-ID.
+      // Passes just prior's OWN chain here -- sendViaGmail already appends
+      // inReplyTo (== prior.messageIdHeader) itself, so adding it here too
+      // duplicated every id in the header (confirmed live: each Message-ID
+      // showed up twice in a row in a real sent References header).
+      const references = prior?.references || undefined;
       const signoff = prior ? replySignoffHtml(sender.first, contact.id) : "";
       const blocks = [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml + signoff }];
       return sendViaGmail({
