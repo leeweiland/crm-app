@@ -99,6 +99,21 @@
   .tc-bubble { max-width: 85%; padding: 8px 12px; border-radius: 14px; font-size: .85rem; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }
   .tc-bubble-row.user .tc-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
   .tc-bubble-row.assistant .tc-bubble { background: var(--pra-panel); color: var(--pra-white); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
+
+  /* ── Activity accordion: contact list + simple conversation, side by
+       side inside one panel. Custom scrollbar comes free from
+       .pra-root's global ::-webkit-scrollbar rule (crm-design-system.css)
+       -- .activity-scroll just needs its own overflow-y. ── */
+  .activity-panel { display: flex; gap: 14px; height: 420px; }
+  .activity-list-col { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--pra-border); padding-right: 12px; }
+  .activity-convo-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .activity-scroll { flex: 1; overflow-y: auto; }
+  .activity-contact-row { padding: 8px 6px; border-radius: 6px; cursor: pointer; font-size: .82rem; }
+  .activity-contact-row:hover { background: rgba(255,255,255,0.04); }
+  .activity-contact-row.selected { background: var(--pra-blue-dim); }
+  .activity-contact-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-contact-times { color: var(--pra-dim); font-size: .7rem; margin-top: 2px; }
+  .activity-channel-tag { font-size: .62rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-dim); margin-bottom: 3px; display: block; }
   .tc-typing { font-size: .76rem; color: var(--pra-dim); padding: 2px 4px; }
   .tc-empty { color: var(--pra-dim); font-size: .78rem; text-align: center; padding: 30px 16px; line-height: 1.5; margin: auto; }
   .tc-input-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--pra-border); flex-shrink: 0; }
@@ -142,7 +157,7 @@
           </div>
 
           <div class="accordion-item" data-acc="sender">
-            <button type="button" class="accordion-header"><span>Sender &amp; Identity</span><span class="accordion-chev">▾</span></button>
+            <button type="button" class="accordion-header"><span>Identity</span><span class="accordion-chev">▾</span></button>
             <div class="accordion-body">
               <div class="editor-row">
                 <label>Send emails as</label>
@@ -163,7 +178,7 @@
 
           <div id="activeSection">
             <div class="accordion-item open" data-acc="batches">
-              <button type="button" class="accordion-header"><span>Batches &amp; Targeting</span><span class="accordion-chev">▾</span></button>
+              <button type="button" class="accordion-header"><span>Targeting</span><span class="accordion-chev">▾</span></button>
               <div class="accordion-body">
                 <div class="active-section-sub">Only leads matching BOTH the segment and the lead type/status below are ever contacted. Turning AI Active on does not start anything by itself — you still preview and start a batch explicitly.</div>
                 <div class="editor-row">
@@ -219,6 +234,23 @@
                 <div style="margin-top:18px">
                   <div class="active-section-title" style="margin-bottom:10px">Running batches</div>
                   <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="accordion-item" data-acc="activity">
+              <button type="button" class="accordion-header"><span>Activity</span><span class="accordion-chev">▾</span></button>
+              <div class="accordion-body">
+                <div class="activity-panel">
+                  <div class="activity-list-col">
+                    <input class="pra-input" id="actSearch" placeholder="Search name…" style="font-size:.82rem;padding:6px 8px;margin-bottom:6px"/>
+                    <button class="pra-btn pra-btn-ghost pra-btn-sm" id="actAllOutboundBtn" type="button" style="margin-bottom:8px">See all outbound activity</button>
+                    <div class="activity-scroll" id="actContactList"></div>
+                  </div>
+                  <div class="activity-convo-col">
+                    <div class="pra-muted" id="actConvoHeader" style="font-size:.82rem;margin-bottom:8px">Select a contact to see their conversation.</div>
+                    <div class="activity-scroll" id="actConvo"></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -306,7 +338,7 @@
             </div>
 
             <div class="accordion-item" data-acc="reengage">
-              <button type="button" class="accordion-header"><span>Re-engagement (Cold Open)</span><span class="accordion-chev">▾</span></button>
+              <button type="button" class="accordion-header"><span>Re-engagement</span><span class="accordion-chev">▾</span></button>
               <div class="accordion-body" style="display:none">
                 <div class="editor-row toggle-row" style="margin-bottom:10px">
                   <div class="toggle-item">
@@ -448,7 +480,7 @@
             <textarea id="tcInput" rows="1" placeholder="Type a message to test…"></textarea>
             <button class="tc-send-btn" id="tcSendBtn" type="button">Send</button>
           </div>
-          <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Replies and follow-ups happen automatically on the real configured wait times from the Batches &amp; Targeting tab below -- stay quiet to see a follow-up fire.</div>
+          <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Replies and follow-ups happen automatically on the real configured wait times from the Timing tab below -- stay quiet to see a follow-up fire.</div>
           <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--pra-border)">
             <label class="pra-label" style="display:block;margin-bottom:6px">Test as a real contact (optional)</label>
             <div style="display:flex;gap:6px">
@@ -693,6 +725,13 @@ async function loadEditor() {
   loadBtActivity(editingAgentId);
   updateActiveSectionVisibility();
   loadBatchList(editingAgentId);
+  {
+    const savedAct = loadActState()[editingAgentId] || {};
+    actMode = savedAct.mode === 'allOutbound' ? 'allOutbound' : 'perContact';
+    document.getElementById('actAllOutboundBtn').textContent = actMode === 'allOutbound' ? '← Back to per-contact view' : 'See all outbound activity';
+    actSelectedId = savedAct.selectedContactId || null;
+    loadActivityContacts(true).then(() => { if (actSelectedId) selectActivityContact(actSelectedId); });
+  }
   applyPersistedAccordionState();
   document.querySelectorAll('#msProgramTypes input').forEach(cb => cb.checked = (agent.targeting?.programTypes || []).includes(cb.value));
   updateMsSummary('msProgramTypes', 'Select lead type(s)…');
@@ -1301,6 +1340,101 @@ async function loadBatchList(agentId) {
     el.innerHTML = '<span class="pra-muted">Could not load batches.</span>';
   }
 }
+
+// ── Activity accordion: contact list (lazy, 5 at a time) + simple
+// conversation pane. State (mode/selected contact/search) persists per
+// agent so it's still there on nav back or a refresh, same reasoning as
+// the accordion open/closed state above.
+const ACT_STATE_KEY = 'aiAgentActivityState';
+function loadActState() {
+  try { return JSON.parse(localStorage.getItem(ACT_STATE_KEY) || '{}'); } catch { return {}; }
+}
+function saveActState(patch) {
+  try {
+    const all = loadActState();
+    all[editingAgentId] = { ...(all[editingAgentId] || {}), ...patch };
+    localStorage.setItem(ACT_STATE_KEY, JSON.stringify(all));
+  } catch {}
+}
+let actMode = 'perContact', actOffset = 0, actHasMore = false, actLoading = false, actSelectedId = null;
+let actSearchDebounce = null;
+function fmtActTime(iso) { return iso ? new Date(iso).toLocaleString() : 'never'; }
+function renderActRow(item) {
+  const row = document.createElement('div');
+  row.className = 'activity-contact-row' + (item.contactId === actSelectedId ? ' selected' : '');
+  row.dataset.contactId = item.contactId;
+  if (actMode === 'allOutbound') {
+    row.innerHTML = `<div class="activity-contact-name">${escapeHtml(item.name)}</div><div class="activity-contact-times">sent ${escapeHtml(fmtActTime(item.createdAt))}</div>`;
+  } else {
+    row.innerHTML = `<div class="activity-contact-name">${escapeHtml(item.name)}</div><div class="activity-contact-times">in: ${escapeHtml(fmtActTime(item.lastInboundAt))}<br/>out: ${escapeHtml(fmtActTime(item.lastOutboundAt))}</div>`;
+  }
+  row.addEventListener('click', () => selectActivityContact(item.contactId));
+  return row;
+}
+async function loadActivityContacts(reset) {
+  if (!editingAgentId || actLoading) return;
+  if (reset) { actOffset = 0; actHasMore = false; document.getElementById('actContactList').innerHTML = ''; }
+  actLoading = true;
+  const listEl = document.getElementById('actContactList');
+  if (reset) listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Loading…</div>';
+  try {
+    const search = document.getElementById('actSearch').value.trim();
+    const params = new URLSearchParams({ mode: actMode, offset: String(actOffset) });
+    if (search) params.set('search', search);
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/activity-contacts?${params}`);
+    const data = await r.json();
+    if (reset) listEl.innerHTML = '';
+    if (!r.ok) { listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Could not load.</div>'; return; }
+    if (reset && !data.items.length) { listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">No activity yet.</div>'; }
+    data.items.forEach((item) => listEl.appendChild(renderActRow(item)));
+    actOffset += data.items.length;
+    actHasMore = !!data.hasMore;
+  } catch {
+    if (reset) listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Could not load.</div>';
+  } finally {
+    actLoading = false;
+  }
+}
+async function selectActivityContact(contactId) {
+  actSelectedId = contactId;
+  saveActState({ selectedContactId: contactId });
+  document.querySelectorAll('.activity-contact-row').forEach((el) => el.classList.toggle('selected', el.dataset.contactId === contactId));
+  const convoEl = document.getElementById('actConvo');
+  const headerEl = document.getElementById('actConvoHeader');
+  const row = document.querySelector(`.activity-contact-row[data-contact-id="${contactId}"] .activity-contact-name`);
+  headerEl.textContent = row ? row.textContent : 'Conversation';
+  convoEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Loading…</div>';
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/activity-contact/${contactId}`);
+    const data = await r.json();
+    if (!r.ok || !data.items.length) { convoEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">No messages found.</div>'; return; }
+    convoEl.innerHTML = data.items.map((m) => `
+      <div class="tc-bubble-row ${m.direction === 'outbound' ? 'user' : 'assistant'}">
+        <div class="tc-bubble"><span class="activity-channel-tag">${escapeHtml(m.channel)} · ${escapeHtml(fmtActTime(m.createdAt))}</span>${escapeHtml(m.text || '(no content)')}</div>
+      </div>
+    `).join('');
+    convoEl.scrollTop = convoEl.scrollHeight;
+  } catch {
+    convoEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Could not load.</div>';
+  }
+}
+function initActivityPanel() {
+  document.getElementById('actSearch').addEventListener('input', () => {
+    clearTimeout(actSearchDebounce);
+    actSearchDebounce = setTimeout(() => loadActivityContacts(true), 300);
+  });
+  document.getElementById('actAllOutboundBtn').addEventListener('click', () => {
+    actMode = actMode === 'allOutbound' ? 'perContact' : 'allOutbound';
+    document.getElementById('actAllOutboundBtn').textContent = actMode === 'allOutbound' ? '← Back to per-contact view' : 'See all outbound activity';
+    saveActState({ mode: actMode });
+    loadActivityContacts(true);
+  });
+  document.getElementById('actContactList').addEventListener('scroll', (e) => {
+    const el = e.target;
+    if (actHasMore && !actLoading && el.scrollTop + el.clientHeight >= el.scrollHeight - 40) loadActivityContacts(false);
+  });
+}
+initActivityPanel();
 async function loadBtActivity(agentId) {
   const el = document.getElementById('btActivityList');
   try {

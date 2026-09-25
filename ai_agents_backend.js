@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { getContactMessages } from "./message_index.js";
+import { getContactMessages, getSourceMessages } from "./message_index.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
 import { BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
 
@@ -722,6 +722,85 @@ async function handleAiAgentsCrud(req, res, url) {
     if (!opener.sendable) return sendJson(res, 200, { ok: false, reason: opener.reason });
     await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active_test", agent.activeConfig?.emailSenderId);
     return sendJson(res, 200, { ok: true, channel: opener.channel, subject: opener.subject, body: opener.body });
+  }
+
+  // Every sourceType an agent's own outbound sends can carry -- see
+  // sentCategoryForSourceType's "ai_agent" bucket plus the real test-send
+  // path -- so "this agent's activity" means the union of all of them, not
+  // just AI Active specifically.
+  const AGENT_SOURCE_TYPES = ["ai_active", "behavioral_trigger", "ai_coverage", "ai_active_test"];
+  const ACTIVITY_PAGE_SIZE = 5;
+
+  // Powers the Activity accordion's left-hand list. Two modes, both
+  // deliberately bounded to ACTIVITY_PAGE_SIZE per request -- "lazy load 5
+  // at a time", not "load every contact/every send this agent has ever
+  // touched" (see inbox_backend.js's own Activity endpoint for the exact
+  // same "don't scan/return everything up front" reasoning):
+  //   perContact (default) -- one row per contact this agent has ever
+  //     messaged, with their real last-inbound/last-outbound timestamps
+  //     (from their own message shard, not the source index, since that's
+  //     the only place inbound lives), sorted by last inbound (most
+  //     recently replied leads first), optionally name-filtered.
+  //   allOutbound -- a flat feed of every send this agent itself has made,
+  //     across every contact, newest first -- "show me everything Kai
+  //     actually sent" instead of grouped-by-person.
+  const activityContactsMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/activity-contacts$/);
+  if (activityContactsMatch && req.method === "GET") {
+    const agentId = activityContactsMatch[1];
+    const mode = url.searchParams.get("mode") === "allOutbound" ? "allOutbound" : "perContact";
+    const search = (url.searchParams.get("search") || "").trim().toLowerCase();
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
+    const sends = AGENT_SOURCE_TYPES.flatMap((st) => getSourceMessages(st, agentId)).filter((m) => m.contactId);
+    const contacts = readJson(CONTACTS_FILE, []);
+    const contactById = new Map(contacts.map((c) => [c.id, c]));
+
+    if (mode === "allOutbound") {
+      const sorted = [...sends].sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0));
+      const page = sorted.slice(offset, offset + ACTIVITY_PAGE_SIZE);
+      const items = page.map((m) => {
+        const c = contactById.get(m.contactId);
+        return { contactId: m.contactId, name: c ? `${c.first || ""} ${c.last || ""}`.trim() || "(no name)" : "(unknown contact)", createdAt: m.sentAt };
+      });
+      return sendJson(res, 200, { items, hasMore: offset + ACTIVITY_PAGE_SIZE < sorted.length });
+    }
+
+    // perContact: need each contact's REAL last-inbound/outbound, which
+    // only their own message shard has (the source index above is
+    // outbound-only and per-sourceType, not per-conversation) -- one
+    // getContactMessages call per unique contact this agent has ever
+    // touched. Bounded by how many distinct contacts an agent realistically
+    // accumulates, same order of magnitude as a single batch, not the
+    // whole database.
+    const uniqueIds = [...new Set(sends.map((m) => m.contactId))];
+    let rows = uniqueIds.map((id) => {
+      const c = contactById.get(id);
+      const name = c ? `${c.first || ""} ${c.last || ""}`.trim() || "(no name)" : "(unknown contact)";
+      const journey = getContactMessages(id).filter((m) => ["email", "sms"].includes(m.channel));
+      const lastInbound = [...journey].reverse().find((m) => m.direction === "inbound");
+      const lastOutbound = [...journey].reverse().find((m) => m.direction === "outbound");
+      return { contactId: id, name, lastInboundAt: lastInbound?.createdAt || null, lastOutboundAt: lastOutbound?.createdAt || null };
+    });
+    if (search) rows = rows.filter((r) => r.name.toLowerCase().includes(search));
+    rows.sort((a, b) => new Date(b.lastInboundAt || 0) - new Date(a.lastInboundAt || 0));
+    const page = rows.slice(offset, offset + ACTIVITY_PAGE_SIZE);
+    return sendJson(res, 200, { items: page, hasMore: offset + ACTIVITY_PAGE_SIZE < rows.length });
+  }
+
+  // Right-hand pane once a contact's picked -- their whole real
+  // conversation, but deliberately plain: no HTML rendering, no thread
+  // quoting, just channel + who-said-it + when, the way the request asked
+  // for ("no super detailed email section... just simple interaction").
+  const activityContactMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/activity-contact\/([^/]+)$/);
+  if (activityContactMatch && req.method === "GET") {
+    const contactId = activityContactMatch[2];
+    const journey = getContactMessages(contactId)
+      .filter((m) => ["email", "sms"].includes(m.channel))
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map((m) => ({
+        channel: m.channel, direction: m.direction, createdAt: m.createdAt,
+        text: (m.subject ? `${m.subject}\n\n` : "") + (m.body || m.bodyPreview || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+      }));
+    return sendJson(res, 200, { items: journey });
   }
 
   const agentMatch = p.match(/^\/api\/ai-agents\/([^/]+)$/);
