@@ -59,7 +59,7 @@
         <button class="tab-btn" data-tab="templates">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-automations">
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel" id="automationsTablePanel" style="overflow:auto">
           <table class="data-table">
             <thead><tr id="automationsHeadRow">
               <th class="sortable" data-sort="name" data-col-key="name">Name</th>
@@ -148,6 +148,7 @@ function renderAutomationsTable() {
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="8" class="pra-muted">No automations yet.</td></tr>';
     praRenderPagination(document.getElementById('automationsPagination'), { total: 0, page: 1, pageSize: automationsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { automationsPageSize = size; localStorage.setItem('automationsPageSize', size); automationsPage = 1; renderAutomationsTable(); } });
+    praResizeTablePanel('automationsTablePanel', 'automationsPagination');
     return;
   }
   const pageCount = Math.max(1, Math.ceil(rows.length / automationsPageSize));
@@ -191,6 +192,7 @@ function renderAutomationsTable() {
     onNext() { automationsPage++; renderAutomationsTable(); },
     onPageSize(size) { automationsPageSize = size; localStorage.setItem('automationsPageSize', size); automationsPage = 1; renderAutomationsTable(); },
   });
+  praResizeTablePanel('automationsTablePanel', 'automationsPagination');
 }
 async function openEnrolledPanel(automationId, name) {
   document.getElementById('enrolledPanelTitle').textContent = 'Enrolled — ' + name;
@@ -304,7 +306,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`));
   if (btn.dataset.tab === 'templates' && !templatesLoaded) { templatesLoaded = true; loadTemplates(); }
+  if (btn.dataset.tab === 'automations') praResizeTablePanel('automationsTablePanel', 'automationsPagination');
 });
+window.addEventListener('resize', () => praResizeTablePanel('automationsTablePanel', 'automationsPagination'));
 
 (async function init() {
   await loadSortPreference();

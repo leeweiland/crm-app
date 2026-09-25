@@ -25,7 +25,7 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">AI Assist drafts replies for you to review in the Inbox. AI Active independently works a batch of leads you choose and pick to review. Both start OFF until you deliberately turn them on.</div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel" id="agentsTablePanel" style="overflow:auto">
         <table class="data-table">
           <thead><tr id="agentsHeadRow">
             <th data-col-key="name">Name</th><th data-col-key="status">Status</th><th data-col-key="targeting">Targeting</th><th data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
@@ -54,6 +54,7 @@ async function loadAgents() {
   if (!agents.length) {
     body.innerHTML = '<tr><td colspan="5" class="pra-muted">No agents yet — click "+ New Agent" to create one.</td></tr>';
     praRenderPagination(document.getElementById('agentsPagination'), { total: 0, page: 1, pageSize: agentsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { agentsPageSize = size; localStorage.setItem('agentsPageSize', size); agentsPage = 1; loadAgents(); } });
+    praResizeTablePanel('agentsTablePanel', 'agentsPagination');
     return;
   }
   const sorted = [...agents].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
@@ -90,7 +91,9 @@ async function loadAgents() {
     onNext() { agentsPage++; loadAgents(); },
     onPageSize(size) { agentsPageSize = size; localStorage.setItem('agentsPageSize', size); agentsPage = 1; loadAgents(); },
   });
+  praResizeTablePanel('agentsTablePanel', 'agentsPagination');
 }
+window.addEventListener('resize', () => praResizeTablePanel('agentsTablePanel', 'agentsPagination'));
 
 document.getElementById('newAgentBtn').addEventListener('click', async () => {
   const r = await fetch('/api/ai-agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Agent' }) });

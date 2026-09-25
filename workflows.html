@@ -35,7 +35,7 @@
           <button class="pra-btn" id="newWorkflowBtn">+ New Workflow</button>
         </div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel" id="workflowsTablePanel" style="overflow:auto">
         <table class="data-table">
           <thead><tr id="workflowsHeadRow">
             <th class="sortable" data-sort="name" data-col-key="name">Name</th>
@@ -95,6 +95,7 @@ function renderWorkflowsTable() {
   if (!rows.length) {
     body.innerHTML = '<tr><td colspan="7" class="pra-muted">No workflows yet.</td></tr>';
     praRenderPagination(document.getElementById('workflowsPagination'), { total: 0, page: 1, pageSize: workflowsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { workflowsPageSize = size; localStorage.setItem('workflowsPageSize', size); workflowsPage = 1; renderWorkflowsTable(); } });
+    praResizeTablePanel('workflowsTablePanel', 'workflowsPagination');
     return;
   }
   const pageCount = Math.max(1, Math.ceil(rows.length / workflowsPageSize));
@@ -136,7 +137,9 @@ function renderWorkflowsTable() {
     onPageSize(size) { workflowsPageSize = size; localStorage.setItem('workflowsPageSize', size); workflowsPage = 1; renderWorkflowsTable(); },
   });
   document.querySelectorAll('[data-enrolled]').forEach(td => td.onclick = () => openEnrolledPanel(td.dataset.enrolled, td.dataset.name));
+  praResizeTablePanel('workflowsTablePanel', 'workflowsPagination');
 }
+window.addEventListener('resize', () => praResizeTablePanel('workflowsTablePanel', 'workflowsPagination'));
 
 async function openEnrolledPanel(workflowId, name) {
   document.getElementById('enrolledPanelTitle').textContent = 'Enrolled — ' + name;

@@ -92,7 +92,7 @@
           <div class="pra-muted" style="font-size:.82rem;flex:1">Each event type gets its own public booking page at <code>/book/&lt;slug&gt;</code>.</div>
           <button class="pra-btn" id="newEventTypeBtn">+ New Event Type</button>
         </div>
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel" id="eventTypesTablePanel" style="overflow:auto">
           <table class="data-table">
             <thead><tr id="eventTypesHeadRow"><th data-sort="name" data-col-key="name">Name</th><th data-sort="duration" data-col-key="duration">Duration</th><th data-sort="calendar" data-col-key="calendar">Calendar</th><th data-sort="location" data-col-key="location">Location</th><th data-sort="active" data-col-key="active">Active</th><th data-col-key="bookingLink">Booking Link</th><th data-col-key="actions"></th></tr></thead>
             <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
@@ -103,7 +103,7 @@
 
       <!-- ── Bookings ── -->
       <div class="tab-panel" id="tab-bookings">
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel" id="bookingsTablePanel" style="overflow:auto">
           <table class="data-table">
             <thead><tr><th>When</th><th>Contact</th><th>Event Type</th><th>Status</th><th></th></tr></thead>
             <tbody id="bookingsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
@@ -209,6 +209,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  if (btn.dataset.tab === 'eventTypes') praResizeTablePanel('eventTypesTablePanel', 'eventTypesPagination');
+  if (btn.dataset.tab === 'bookings') praResizeTablePanel('bookingsTablePanel', 'bookingsPagination');
+});
+window.addEventListener('resize', () => {
+  praResizeTablePanel('eventTypesTablePanel', 'eventTypesPagination');
+  praResizeTablePanel('bookingsTablePanel', 'bookingsPagination');
 });
 
 let connectedCalendarEmail = null;
@@ -369,6 +375,7 @@ function renderBookingsTable() {
   if (!bookingsCache.length) {
     body.innerHTML = '<tr><td colspan="5" class="pra-muted">No bookings yet.</td></tr>';
     praRenderPagination(document.getElementById('bookingsPagination'), { total: 0, page: 1, pageSize: bookingsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { bookingsPageSize = size; localStorage.setItem('bookingsPageSize', size); bookingsPage = 1; renderBookingsTable(); } });
+    praResizeTablePanel('bookingsTablePanel', 'bookingsPagination');
     return;
   }
   const upcoming = [...bookingsCache].sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
@@ -401,6 +408,7 @@ function renderBookingsTable() {
     onNext() { bookingsPage++; renderBookingsTable(); },
     onPageSize(size) { bookingsPageSize = size; localStorage.setItem('bookingsPageSize', size); bookingsPage = 1; renderBookingsTable(); },
   });
+  praResizeTablePanel('bookingsTablePanel', 'bookingsPagination');
 }
 
 // ── Event types ───────────────────────────────────────────────────────────
@@ -452,6 +460,7 @@ function renderEventTypesTable() {
   if (!eventTypesCache.length) {
     body.innerHTML = '<tr><td colspan="7" class="pra-muted">No event types yet — click "+ New Event Type".</td></tr>';
     praRenderPagination(document.getElementById('eventTypesPagination'), { total: 0, page: 1, pageSize: eventTypesPageSize, onPrev() {}, onNext() {}, onPageSize(size) { eventTypesPageSize = size; localStorage.setItem('eventTypesPageSize', size); eventTypesPage = 1; renderEventTypesTable(); } });
+    praResizeTablePanel('eventTypesTablePanel', 'eventTypesPagination');
     return;
   }
   const acc = EVENT_TYPE_SORT_ACCESSORS[eventTypesSort.key];
@@ -487,6 +496,7 @@ function renderEventTypesTable() {
     onNext() { eventTypesPage++; renderEventTypesTable(); },
     onPageSize(size) { eventTypesPageSize = size; localStorage.setItem('eventTypesPageSize', size); eventTypesPage = 1; renderEventTypesTable(); },
   });
+  praResizeTablePanel('eventTypesTablePanel', 'eventTypesPagination');
 }
 document.getElementById('newEventTypeBtn').onclick = () => openModal('etModal');
 document.getElementById('saveEtBtn').onclick = async () => {

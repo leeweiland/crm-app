@@ -30,7 +30,7 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">Your Zapier alternative — trigger a flow from a webhook (Framer, or anything else), a form submission, or a booking, then filter, delay, branch, write to Google Sheets, enroll in an Email Automation or SMS Sequence, or change a contact's status.</div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel" id="flowsTablePanel" style="overflow:auto">
         <table class="data-table">
           <thead><tr id="flowsHeadRow">
             <th data-sort="name" data-col-key="name">Name</th><th data-sort="trigger" data-col-key="trigger">Trigger</th><th data-sort="active" data-col-key="active">Active</th><th data-sort="runs" data-col-key="runs">Runs</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th><th data-col-key="actions"></th>
@@ -126,6 +126,7 @@ function renderFlowsTable() {
   if (!flowsCache.length) {
     body.innerHTML = enrollFlowRowHtml() + '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>';
     praRenderPagination(document.getElementById('flowsPagination'), { total: 0, page: 1, pageSize: flowsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { flowsPageSize = size; localStorage.setItem('flowsPageSize', size); flowsPage = 1; renderFlowsTable(); } });
+    praResizeTablePanel('flowsTablePanel', 'flowsPagination');
     return;
   }
   const acc = FLOW_SORT_ACCESSORS[flowsSort.key];
@@ -162,7 +163,9 @@ function renderFlowsTable() {
     onNext() { flowsPage++; renderFlowsTable(); },
     onPageSize(size) { flowsPageSize = size; localStorage.setItem('flowsPageSize', size); flowsPage = 1; renderFlowsTable(); },
   });
+  praResizeTablePanel('flowsTablePanel', 'flowsPagination');
 }
+window.addEventListener('resize', () => praResizeTablePanel('flowsTablePanel', 'flowsPagination'));
 
 document.getElementById('newFlowBtn').onclick = async () => {
   const r = await fetch('/api/flows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Flow' }) });

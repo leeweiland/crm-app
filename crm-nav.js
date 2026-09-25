@@ -422,3 +422,24 @@ function praRenderPagination(container, { total, page, pageSize, onPrev, onNext,
   sizeSelect.onchange = (e) => onPageSize(parseInt(e.target.value, 10) || 20);
 }
 window.praRenderPagination = praRenderPagination;
+
+// Same mechanism as contacts.html's #contactsTablePanel and reporting.html's
+// Attribution/Reporting tabs: keeps the pagination bar always in view
+// instead of requiring a page-level scroll past however many rows are on
+// the current page to reach it. Recomputed (not a fixed vh value) since the
+// panel's own top position can shift -- call after every render, on window
+// resize, and on tab switch for a multi-tab page.
+function praResizeTablePanel(panelId, paginationContainerId) {
+  const panel = document.getElementById(panelId);
+  const bar = document.getElementById(paginationContainerId);
+  // window.innerHeight reads 0 while the tab/pane itself isn't actually
+  // being rendered (e.g. backgrounded) -- computing off that would bake in
+  // a bogus, too-short height that then never gets corrected, since nothing
+  // fires another resize event once the pane comes back. Skip entirely
+  // rather than risk that; the next real resize/render call fixes it.
+  if (!panel || !bar || panel.getBoundingClientRect().width === 0 || window.innerHeight < 200) return;
+  const top = panel.getBoundingClientRect().top;
+  const available = window.innerHeight - top - bar.offsetHeight - 24;
+  panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
+}
+window.praResizeTablePanel = praResizeTablePanel;

@@ -29,7 +29,7 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">Build lead-capture forms, publish them, and every submission lands in Contacts and can trigger automations/workflows.</div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel" id="formsTablePanel" style="overflow:auto">
         <table class="data-table">
           <thead><tr id="formsHeadRow">
             <th data-sort="name" data-col-key="name">Name</th><th data-sort="status" data-col-key="status">Status</th><th data-sort="responses" data-col-key="responses">Responses</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
@@ -95,6 +95,7 @@ function renderFormsTable() {
   if (!formsCache.length) {
     body.innerHTML = '<tr><td colspan="5" class="pra-muted">No forms yet — click "+ New Form" to build one.</td></tr>';
     praRenderPagination(document.getElementById('formsPagination'), { total: 0, page: 1, pageSize: formsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { formsPageSize = size; localStorage.setItem('formsPageSize', size); formsPage = 1; renderFormsTable(); } });
+    praResizeTablePanel('formsTablePanel', 'formsPagination');
     return;
   }
   const acc = FORM_SORT_ACCESSORS[formsSort.key];
@@ -129,7 +130,9 @@ function renderFormsTable() {
     onNext() { formsPage++; renderFormsTable(); },
     onPageSize(size) { formsPageSize = size; localStorage.setItem('formsPageSize', size); formsPage = 1; renderFormsTable(); },
   });
+  praResizeTablePanel('formsTablePanel', 'formsPagination');
 }
+window.addEventListener('resize', () => praResizeTablePanel('formsTablePanel', 'formsPagination'));
 
 document.getElementById('newFormBtn').onclick = async () => {
   const r = await fetch('/api/forms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Untitled Form' }) });
