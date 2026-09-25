@@ -1,6 +1,6 @@
 import { getSessionUser, sendJson, readJsonBody, readJson, writeJson, isAdmin } from "./auth_backend.js";
 import { getContact } from "./email_backend.js";
-import { googleAccessToken, googleCreds, getAdsSettings } from "./ads_backend.js";
+import { googleAccessToken, googleCreds, getAdsSettings, setCallsSheetId } from "./ads_backend.js";
 
 // "Mark as Enrolled" popup (call-popup.js's sibling, enroll-popup.js) --
 // fires from every place staff can change a contact's status (inline-edit.js,
@@ -23,7 +23,7 @@ import { googleAccessToken, googleCreds, getAdsSettings } from "./ads_backend.js
 // everything after it by one), confirmed live 2026-09-22.
 
 const INTEGRATIONS_FILE = "crm_integrations.json"; // same file every other Settings tab (SES/Twilio/Ads/etc) reads and writes
-const SHEET_TABS = { online: "ONLINE", gym: "GYM" };
+const DEFAULT_SHEET_TABS = { online: "ONLINE", gym: "GYM" };
 
 // Confirmed live against the sheet's own real headers and data-validation
 // dropdowns (2026-09-22). Sheets API writes aren't blocked by validation
@@ -56,6 +56,15 @@ function readIntegrations() { return readJson(INTEGRATIONS_FILE, {}); }
 export function getEnrollSheetSettings() {
   const s = readIntegrations().enrollSheet || {};
   return {
+    // The SAME spreadsheet ads_backend.js's own Settings > Ads tab points
+    // at -- not a second copy; changing it here changes it there too, and
+    // vice versa, since both read/write ads_backend.js's getAdsSettings()/
+    // setCallsSheetId().
+    sheetId: getAdsSettings().callsSheetId,
+    sheetTabs: {
+      online: typeof s.sheetTabs?.online === "string" && s.sheetTabs.online.trim() ? s.sheetTabs.online.trim() : DEFAULT_SHEET_TABS.online,
+      gym: typeof s.sheetTabs?.gym === "string" && s.sheetTabs.gym.trim() ? s.sheetTabs.gym.trim() : DEFAULT_SHEET_TABS.gym,
+    },
     columnNames: { ...DEFAULT_COLUMN_NAMES, ...(s.columnNames || {}) },
     programOptions: {
       online: Array.isArray(s.programOptions?.online) && s.programOptions.online.length ? s.programOptions.online : DEFAULT_PROGRAM_OPTIONS.online,
@@ -69,9 +78,15 @@ export function getEnrollSheetSettings() {
     updatedAt: s.updatedAt || null,
   };
 }
+// Only ever persists these 5 fields under enrollSheet -- sheetId lives under
+// ads_backend.js's own settings instead (see getEnrollSheetSettings), so a
+// caller passing the FULL getEnrollSheetSettings() object back in (the
+// reset handler below does) can't accidentally stuff a redundant, ignored
+// copy of it in here too.
 function saveEnrollSheetSettings(next) {
   const all = readIntegrations();
-  all.enrollSheet = { ...next, enrollCount: all.enrollSheet?.enrollCount || 0, updatedAt: new Date().toISOString() };
+  const { sheetTabs, columnNames, programOptions, paymentOptions, notesTemplate } = next;
+  all.enrollSheet = { sheetTabs, columnNames, programOptions, paymentOptions, notesTemplate, enrollCount: all.enrollSheet?.enrollCount || 0, updatedAt: new Date().toISOString() };
   writeJson(INTEGRATIONS_FILE, all);
 }
 // Called once per successful sheet write (both the matched-update and the
@@ -159,13 +174,23 @@ export async function handleCallsSheetRequest(req, res, url) {
   if (p === "/api/calls-sheet/settings" && req.method === "GET") {
     const me = getSessionUser(req);
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
-    return sendJson(res, 200, { settings: getEnrollSheetSettings(), defaults: { columnNames: DEFAULT_COLUMN_NAMES, programOptions: DEFAULT_PROGRAM_OPTIONS, paymentOptions: DEFAULT_PAYMENT_OPTIONS, notesTemplate: DEFAULT_NOTES_TEMPLATE }, qualifiedValue: QUALIFIED_VALUE, resultValue: RESULT_VALUE });
+    return sendJson(res, 200, { settings: getEnrollSheetSettings(), defaults: { sheetTabs: DEFAULT_SHEET_TABS, columnNames: DEFAULT_COLUMN_NAMES, programOptions: DEFAULT_PROGRAM_OPTIONS, paymentOptions: DEFAULT_PAYMENT_OPTIONS, notesTemplate: DEFAULT_NOTES_TEMPLATE }, qualifiedValue: QUALIFIED_VALUE, resultValue: RESULT_VALUE });
   }
   if (p === "/api/calls-sheet/settings" && req.method === "POST") {
     const me = getSessionUser(req);
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
     const body = await readJsonBody(req);
     const cur = getEnrollSheetSettings();
+    // sheetId lives under ads_backend.js's own settings (same spreadsheet
+    // its sales sync reads) -- saved through its own setter, not folded
+    // into enrollSheet below. Accepts a pasted URL or a bare ID, same as
+    // Settings > Ads' own field.
+    if (typeof body.sheetId === "string" && body.sheetId.trim()) setCallsSheetId(body.sheetId);
+    const sheetTabs = { online: cur.sheetTabs.online, gym: cur.sheetTabs.gym };
+    for (const sheetKey of ["online", "gym"]) {
+      const v = body.sheetTabs?.[sheetKey];
+      if (typeof v === "string" && v.trim()) sheetTabs[sheetKey] = v.trim();
+    }
     const columnNames = { ...cur.columnNames };
     if (body.columnNames && typeof body.columnNames === "object") {
       for (const key of Object.keys(DEFAULT_COLUMN_NAMES)) {
@@ -180,17 +205,20 @@ export async function handleCallsSheetRequest(req, res, url) {
     }
     const paymentOptions = Array.isArray(body.paymentOptions) && body.paymentOptions.length ? body.paymentOptions.map(String).map(s => s.trim()).filter(Boolean) : cur.paymentOptions;
     const notesTemplate = typeof body.notesTemplate === "string" && body.notesTemplate.includes("{notes}") ? body.notesTemplate : cur.notesTemplate;
-    saveEnrollSheetSettings({ columnNames, programOptions, paymentOptions, notesTemplate });
+    saveEnrollSheetSettings({ sheetTabs, columnNames, programOptions, paymentOptions, notesTemplate });
     return sendJson(res, 200, { ok: true, settings: getEnrollSheetSettings() });
   }
   // Resets one setting group back to the hardcoded defaults -- simpler than
   // asking someone to retype every field by hand if an edit goes wrong.
+  // (sheetId has no "default" to reset to -- it's the real spreadsheet,
+  // already correctly set; not offered here.)
   if (p === "/api/calls-sheet/settings/reset" && req.method === "POST") {
     const me = getSessionUser(req);
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
     const { group } = await readJsonBody(req);
     const cur = getEnrollSheetSettings();
-    if (group === "columnNames") cur.columnNames = { ...DEFAULT_COLUMN_NAMES };
+    if (group === "sheetTabs") cur.sheetTabs = { ...DEFAULT_SHEET_TABS };
+    else if (group === "columnNames") cur.columnNames = { ...DEFAULT_COLUMN_NAMES };
     else if (group === "programOptions") cur.programOptions = { online: [...DEFAULT_PROGRAM_OPTIONS.online], gym: [...DEFAULT_PROGRAM_OPTIONS.gym] };
     else if (group === "paymentOptions") cur.paymentOptions = [...DEFAULT_PAYMENT_OPTIONS];
     else if (group === "notesTemplate") cur.notesTemplate = DEFAULT_NOTES_TEMPLATE;
@@ -209,15 +237,15 @@ export async function handleCallsSheetRequest(req, res, url) {
     const body = await readJsonBody(req);
     const sheetKey = body.sheet === "gym" ? "gym" : body.sheet === "online" ? "online" : null;
     if (!sheetKey) return sendJson(res, 400, { error: "sheet must be 'online' or 'gym'" });
-    const tab = SHEET_TABS[sheetKey];
     const { program, amountPaid, payment, notes, startDate, endDate, enrollmentDate } = body;
     const settings = getEnrollSheetSettings();
+    const tab = settings.sheetTabs[sheetKey];
     if (program && !settings.programOptions[sheetKey].includes(program)) return sendJson(res, 400, { error: "Unrecognized program for that sheet" });
     if (payment && !settings.paymentOptions.includes(payment)) return sendJson(res, 400, { error: "Unrecognized payment type" });
 
     const { refreshToken } = googleCreds();
     if (!refreshToken) return sendJson(res, 400, { error: "Google Sheets isn't connected (Settings > Ads)" });
-    const sheetId = getAdsSettings().callsSheetId;
+    const sheetId = settings.sheetId;
     let accessToken;
     try { accessToken = await googleAccessToken(); } catch (e) { return sendJson(res, 502, { error: e.message }); }
 

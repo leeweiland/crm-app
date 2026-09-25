@@ -56,6 +56,26 @@
         <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
 
         <div class="step-card">
+          <div class="step-type">Spreadsheet</div>
+          <div class="step-title">Which sheet, and which tabs</div>
+          <div class="step-desc">The same spreadsheet Settings &gt; Ads reads sales from -- changing it here changes it there too.</div>
+          <div class="field">
+            <label class="pra-label">Google Sheet ID or URL</label>
+            <input class="pra-input" id="sheetIdInput" placeholder="https://docs.google.com/spreadsheets/d/.../edit"/>
+          </div>
+          <div class="ef-map-row">
+            <div class="ef-map-label">Online tab name</div>
+            <input class="pra-input" style="flex:1" id="sheetTabOnlineInput"/>
+          </div>
+          <div class="ef-map-row">
+            <div class="ef-map-label">Gym tab name</div>
+            <input class="pra-input" style="flex:1" id="sheetTabGymInput"/>
+          </div>
+          <button class="ef-reset-link" data-reset="sheetTabs">Reset tab names to defaults</button>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card">
           <div class="step-type">Step 1</div>
           <div class="step-title">Find their row</div>
           <div class="step-desc">Checks the sheet staff picked (Online or Gym) for a row matching, in this order -- whichever matches; if more than one row does, the most recently added one wins:</div>
@@ -199,9 +219,15 @@ function renderNotesPreview() {
 }
 document.getElementById('notesTemplateInput').addEventListener('input', renderNotesPreview);
 
+function renderSheetInputs() {
+  document.getElementById('sheetIdInput').value = state.sheetId || '';
+  document.getElementById('sheetTabOnlineInput').value = state.sheetTabs.online;
+  document.getElementById('sheetTabGymInput').value = state.sheetTabs.gym;
+}
 document.querySelectorAll('[data-reset]').forEach(btn => btn.onclick = () => {
   const group = btn.dataset.reset;
-  if (group === 'columnNames') state.columnNames = { ...defaults.columnNames };
+  if (group === 'sheetTabs') { state.sheetTabs = { ...defaults.sheetTabs }; renderSheetInputs(); }
+  else if (group === 'columnNames') state.columnNames = { ...defaults.columnNames };
   else if (group === 'programOptions') state.programOptions = { online: [...defaults.programOptions.online], gym: [...defaults.programOptions.gym] };
   else if (group === 'paymentOptions') state.paymentOptions = [...defaults.paymentOptions];
   else if (group === 'notesTemplate') { state.notesTemplate = defaults.notesTemplate; document.getElementById('notesTemplateInput').value = defaults.notesTemplate; }
@@ -216,6 +242,7 @@ async function load() {
   state = JSON.parse(JSON.stringify(d.settings));
   defaults = d.defaults;
   qualifiedValue = d.qualifiedValue; resultValue = d.resultValue;
+  renderSheetInputs();
   renderColumnInputs();
   renderTagLists();
   document.getElementById('notesTemplateInput').value = state.notesTemplate;
@@ -226,7 +253,15 @@ document.getElementById('efSaveBtn').onclick = async () => {
   const btn = document.getElementById('efSaveBtn'), msg = document.getElementById('efSaveMsg');
   const columnNames = {};
   for (const key of [...MATCH_KEYS, ...WRITE_KEYS]) columnNames[key] = document.querySelector(`[data-col-key="${key}"]`).value.trim() || COLUMN_LABELS[key];
-  const body = { columnNames, programOptions: state.programOptions, paymentOptions: state.paymentOptions, notesTemplate: document.getElementById('notesTemplateInput').value.trim() };
+  const body = {
+    sheetId: document.getElementById('sheetIdInput').value.trim(),
+    sheetTabs: {
+      online: document.getElementById('sheetTabOnlineInput').value.trim() || state.sheetTabs.online,
+      gym: document.getElementById('sheetTabGymInput').value.trim() || state.sheetTabs.gym,
+    },
+    columnNames, programOptions: state.programOptions, paymentOptions: state.paymentOptions,
+    notesTemplate: document.getElementById('notesTemplateInput').value.trim(),
+  };
   btn.disabled = true; msg.textContent = 'Saving...';
   const r = await fetch('/api/calls-sheet/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
@@ -235,6 +270,7 @@ document.getElementById('efSaveBtn').onclick = async () => {
   msg.textContent = 'Saved.';
   showToast('Saved');
   state = JSON.parse(JSON.stringify(d.settings));
+  renderSheetInputs();
   renderColumnInputs(); renderTagLists();
   document.getElementById('notesTemplateInput').value = state.notesTemplate;
   renderNotesPreview();
