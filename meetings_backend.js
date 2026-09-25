@@ -149,7 +149,19 @@ export async function checkMeetingReminders() {
     const contactTz = cfg.useContactTimezone ? resolveContactTimezone(contact.phone) : null;
     const tz = contactTz?.tz || meeting.timezone || cfg.timezone;
     const dateStr = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
-    const timeStr = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+    let timeStr = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+    // Only a contact's own resolved timezone is unambiguous to them without
+    // a label -- anything else (meeting's own tz, or the org-wide fallback)
+    // isn't necessarily where they actually are, so spell out which zone
+    // right next to the time instead of leaving it implicit.
+    if (!contactTz) {
+      let tzLabel = tz;
+      try {
+        tzLabel = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short", hour: "numeric" })
+          .formatToParts(start).find(p => p.type === "timeZoneName")?.value || tz;
+      } catch {}
+      timeStr += ` (${tzLabel})`;
+    }
     const vars = { coachName: `${coach.first} ${coach.last}`, firstName: contact.first || "", lastName: contact.last || "", date: dateStr, time: timeStr, duration: meeting.durationMinutes };
 
     for (const reminder of cfg.emailReminders) {

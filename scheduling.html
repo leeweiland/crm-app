@@ -47,9 +47,9 @@
   .ed-notif-hint { font-size: .74rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-sms-toolbar { margin-bottom: 8px; }
   .ed-sms-toolbar select { font-size: .78rem; padding: 5px 8px; }
-  .ed-notif-email-layout { display: grid; grid-template-columns: 1fr 220px; gap: 20px; align-items: start; margin-bottom: 14px; }
+  .ed-notif-email-layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; margin-bottom: 14px; }
   .ed-notif-email-main .field { margin-bottom: 12px; }
-  @media (max-width: 1200px) { .ed-notif-email-layout { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { .ed-notif-email-layout { grid-template-columns: 1fr; } }
   .ed-test-send-row { display: flex; gap: 8px; margin-top: 12px; }
   .ed-test-send-row input { flex: 1; }
   .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -117,8 +117,8 @@
            booking behind them at all. Reminders just fire off whatever's
            configured below -- no on/off switch, an empty list is what turns
            a channel off. ── -->
-      <div class="tab-panel" id="tab-meetings" style="max-width:700px">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Reminders for meetings scheduled from the Inbox's calendar icon (each coach's own Zoom/calendar, per contact) -- these aren't tied to any event type or calendar. Available merge tags: <code>{{firstName}}</code> <code>{{lastName}}</code> <code>{{coachName}}</code> <code>{{date}}</code> <code>{{time}}</code> <code>{{duration}}</code>.</div>
+      <div class="tab-panel" id="tab-meetings">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px;max-width:700px">Reminders for meetings scheduled from the Inbox's calendar icon (each coach's own Zoom/calendar, per contact) -- these aren't tied to any event type or calendar. Available merge tags: <code>{{firstName}}</code> <code>{{lastName}}</code> <code>{{coachName}}</code> <code>{{date}}</code> <code>{{time}}</code> <code>{{duration}}</code>.</div>
 
         <div class="ed-notif-card">
           <div class="ed-notif-title">Email Reminders</div>
@@ -141,7 +141,7 @@
           </div>
         </div>
 
-        <div class="ed-notif-card">
+        <div class="ed-notif-card" style="max-width:700px">
           <div class="ed-notif-title">SMS Reminders</div>
           <div class="pra-muted" style="font-size:.74rem;margin-bottom:14px">Only sent if the contact has a phone number.</div>
           <div class="ed-sms-toolbar"><select class="pra-select" id="meetingSmsPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
@@ -154,14 +154,16 @@
           </div>
         </div>
 
-        <div class="field" style="display:flex;align-items:center;gap:8px;cursor:pointer" id="meetingUseContactTzRow">
-          <div class="toggle-switch" id="meetingUseContactTzToggle"></div>
-          <label for="meetingUseContactTzToggle" style="font-size:.82rem">Use each contact's own timezone when we can tell it from their phone number</label>
-        </div>
-        <div class="field"><label class="pra-label">Fallback timezone (used when a contact's own can't be determined, or the option above is off)</label><input class="pra-input" id="meetingTimezone" placeholder="America/Anchorage"/></div>
+        <div style="max-width:700px">
+          <div class="field" style="display:flex;align-items:center;gap:8px;cursor:pointer" id="meetingUseContactTzRow">
+            <div class="toggle-switch" id="meetingUseContactTzToggle"></div>
+            <label for="meetingUseContactTzToggle" style="font-size:.82rem">Use each contact's own timezone when we can tell it from their phone number</label>
+          </div>
+          <div class="field"><label class="pra-label">Fallback timezone (used when a contact's own can't be determined, or the option above is off)</label><input class="pra-input" id="meetingTimezone" placeholder="America/Anchorage"/></div>
 
-        <button class="pra-btn" id="saveMeetingRemindersBtn">Save</button>
-        <div class="pra-muted" id="meetingRemindersSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+          <button class="pra-btn" id="saveMeetingRemindersBtn">Save</button>
+          <div class="pra-muted" id="meetingRemindersSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+        </div>
       </div>
     </div>
   </div>
