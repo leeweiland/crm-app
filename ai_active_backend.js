@@ -387,6 +387,25 @@ function latestOnChannel(journey, channel) {
   for (let i = journey.length - 1; i >= 0; i--) if (journey[i].channel === channel) return journey[i];
   return null;
 }
+// A full-array overwrite of a shared JSON file is risky here -- one
+// processAiActiveBatches tick can run for a while (many awaited model calls
+// across many contacts) between its own initial read and its final write,
+// during which a real HTTP request (Fresh Start deleting a batch/state, a
+// new test-send creating one) can genuinely change the file on disk.
+// Overwriting with a stale in-memory snapshot would silently resurrect a
+// row someone just deleted, or erase one someone just added -- confirmed
+// live: a Fresh Start's own delete got reverted this way, leaving an
+// orphaned "waiting_reply" state with no real batch behind it, which then
+// blocked a later real cold-open from ever getting tracked at all. Re-reads
+// fresh right before writing and merges: this tick's own tracked updates
+// win for rows it touched, everything else defers to whatever's actually
+// on disk right now.
+function mergeSafeWrite(file, ours) {
+  const fresh = readJson(file, []);
+  const oursById = new Map(ours.map((r) => [r.id, r]));
+  const merged = fresh.map((f) => oursById.get(f.id) || f);
+  writeJson(file, merged);
+}
 export async function processAiActiveBatches() {
   const allBatches = readJson(AI_ACTIVE_BATCHES_FILE, []);
   if (!allBatches.length) return;
@@ -433,16 +452,18 @@ export async function processAiActiveBatches() {
     }
   }
   if (reactivatedBatchIds.size) {
-    for (const b of allBatches) if (reactivatedBatchIds.has(b.id)) b.status = "running";
-    writeJson(AI_ACTIVE_BATCHES_FILE, allBatches);
+    const reactivated = [];
+    for (const b of allBatches) if (reactivatedBatchIds.has(b.id)) { b.status = "running"; reactivated.push(b); }
+    mergeSafeWrite(AI_ACTIVE_BATCHES_FILE, reactivated);
   }
 
   const batches = allBatches.filter((b) => b.status === "running");
   if (!batches.length) {
-    if (changed) writeJson(AI_ACTIVE_STATES_FILE, states);
+    if (changed) mergeSafeWrite(AI_ACTIVE_STATES_FILE, states);
     return;
   }
 
+  const touchedStates = []; // every state actually processed this tick -- what the final merge-safe write below persists
   for (const batch of batches) {
     const agent = agents.find((a) => a.id === batch.agentId);
     if (!agent) continue;
@@ -465,6 +486,7 @@ export async function processAiActiveBatches() {
     const sourceType = batch.isTestBatch ? "ai_active_test" : "ai_active";
 
     const due = states.filter((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state) && (!s.nextActionAt || new Date(s.nextActionAt).getTime() <= now));
+    touchedStates.push(...due);
     for (const st of due) {
       const contact = getContactByIdFast(st.contactId);
       if (!contact) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
@@ -601,5 +623,5 @@ export async function processAiActiveBatches() {
       if (b2 && b2.status === "running") { b2.status = "completed"; writeJson(AI_ACTIVE_BATCHES_FILE, batches2); }
     }
   }
-  if (changed) writeJson(AI_ACTIVE_STATES_FILE, states);
+  if (changed) mergeSafeWrite(AI_ACTIVE_STATES_FILE, touchedStates);
 }

@@ -757,10 +757,18 @@ async function handleAiAgentsCrud(req, res, url) {
     // prior test-send) -- two schedulers racing to reply to the same
     // inbound would double-send.
     const states = readJson(AI_ACTIVE_STATES_FILE, []);
-    const alreadyTracked = states.some((s) => s.agentId === agent.id && s.contactId === contact.id && ["queued", "waiting_reply"].includes(s.state));
+    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+    const liveBatchIds = new Set(batches.map((b) => b.id));
+    // A state can outlive its own batch (a race between a scheduler tick and
+    // a concurrent Fresh Start deleting the batch) -- an "active" state
+    // pointing at a batch that no longer exists isn't really tracking
+    // anything. Confirmed live: this cold-open sent for real, but treating
+    // that orphaned state as "already tracked" meant skipping the new
+    // batch that should've been watching for a reply -- nothing ever would
+    // have answered.
+    const alreadyTracked = states.some((s) => s.agentId === agent.id && s.contactId === contact.id && ["queued", "waiting_reply"].includes(s.state) && liveBatchIds.has(s.batchId));
     if (!alreadyTracked) {
       const nowIso = new Date().toISOString();
-      const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
       const batch = {
         id: randomUUID(), agentId: agent.id, segmentIds: [], segmentNames: ["Real test-send"], batchSize: 1,
         contactIds: [contact.id], excludedCount: 0, status: "running", isTestBatch: true,
