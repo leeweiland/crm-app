@@ -495,8 +495,10 @@
               <button class="pra-btn pra-btn-sm" id="tcLoadContactBtn" type="button">Load</button>
             </div>
             <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:8px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
-            <div style="margin-top:12px">
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcRealSendBtn" type="button" disabled title="Load a contact first">Send real cold-open to this contact</button>
+              <button class="pra-btn pra-btn-danger pra-btn-sm" id="tcStopBtn" type="button" disabled title="Load a contact first">Stop</button>
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcFreshStartBtn" type="button" disabled title="Load a contact first">Fresh Start</button>
             </div>
             <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:8px;display:none"></div>
             <div id="tcRealSendConvo" style="max-height:300px;overflow-y:auto;display:none;flex-direction:column;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--pra-border);border-radius:10px;background:var(--pra-panel)"></div>
@@ -1069,8 +1071,13 @@ async function loadTcContact() {
   // button also serve as "stop this test from sending" / "resume it"
   // without a separate control. A changed email still does a fresh lookup.
   if (email && email === tcLoadedEmail && tcContactId) { await toggleTestBatch(); return; }
+  const stopBtn = document.getElementById('tcStopBtn');
+  const freshStartBtn = document.getElementById('tcFreshStartBtn');
   if (!email) {
-    tcContactId = null; tcLoadedEmail = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first';
+    tcContactId = null; tcLoadedEmail = null;
+    realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first';
+    stopBtn.disabled = true; stopBtn.title = 'Load a contact first';
+    freshStartBtn.disabled = true; freshStartBtn.title = 'Load a contact first';
     document.getElementById('tcLoadContactBtn').textContent = 'Load';
     statusEl.textContent = 'Not set -- replies use no real contact history. Load one to have replies grounded in that person\'s real application/journey.';
     return;
@@ -1081,11 +1088,18 @@ async function loadTcContact() {
     if (!r.ok) { statusEl.textContent = 'Could not search contacts.'; return; }
     const { contacts } = await r.json();
     const match = (contacts || []).find((c) => (c.email || '').toLowerCase() === email);
-    if (!match) { tcContactId = null; tcLoadedEmail = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first'; statusEl.textContent = `No contact found with that email.`; return; }
+    if (!match) {
+      tcContactId = null; tcLoadedEmail = null;
+      realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first';
+      stopBtn.disabled = true; freshStartBtn.disabled = true;
+      statusEl.textContent = `No contact found with that email.`; return;
+    }
     tcContactId = match.id;
     tcLoadedEmail = (match.email || '').toLowerCase();
     statusEl.textContent = `Testing as: ${match.first || ''} ${match.last || ''}`.trim() + ` (${match.email}) -- replies grounded in their real journey.`;
     realSendBtn.disabled = false; realSendBtn.title = `Sends a real SMS/email to ${match.email}`;
+    stopBtn.disabled = false; stopBtn.title = 'Immediately stop Kai from auto-replying/following-up on this contact';
+    freshStartBtn.disabled = false; freshStartBtn.title = 'Wipe this test\'s tracked state (not their real message history) so the next cold-open starts clean';
     resetTestChat();
     loadRealSendConvo();
     refreshLoadBtnForTestBatch();
@@ -1185,7 +1199,55 @@ async function sendRealColdOpen() {
     btn.disabled = false;
   }
 }
+// Always ends up paused, unlike the Load-button toggle -- a dedicated,
+// unambiguous "make it stop right now" that doesn't depend on remembering
+// the batch's current state first.
+async function stopTest() {
+  if (!tcContactId || !editingAgentId) return;
+  const btn = document.getElementById('tcStopBtn');
+  const statusEl = document.getElementById('tcContactStatus');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/test-batch-stop`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId: tcContactId }),
+    });
+    const d = await r.json();
+    statusEl.textContent = r.ok && d.ok ? 'Stopped -- Kai will NOT auto-reply/follow-up on this contact until resumed (click Load again).' : 'Could not stop: ' + (d.error || r.status);
+    document.getElementById('tcLoadContactBtn').textContent = 'Resume Test';
+  } catch (err) {
+    statusEl.textContent = 'Network error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+// Wipes the tracked test batch/state for this contact entirely (their real
+// send/receive history is untouched) so the next real cold-open starts a
+// genuinely clean cycle instead of resuming/reactivating whatever this test
+// was in the middle of.
+async function freshStartTest() {
+  if (!tcContactId || !editingAgentId) return;
+  if (!confirm('This clears this test\'s tracked state (follow-up counts, what\'s been seen/replied to) so the next cold-open starts fresh. Their real message history is kept. Continue?')) return;
+  const btn = document.getElementById('tcFreshStartBtn');
+  const statusEl = document.getElementById('tcContactStatus');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/test-batch-reset`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId: tcContactId }),
+    });
+    const d = await r.json();
+    statusEl.textContent = r.ok && d.ok ? 'Reset -- send a new real cold-open to start a fresh test cycle.' : 'Could not reset: ' + (d.error || r.status);
+    document.getElementById('tcLoadContactBtn').textContent = 'Load';
+  } catch (err) {
+    statusEl.textContent = 'Network error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
 document.getElementById('tcRealSendBtn').addEventListener('click', sendRealColdOpen);
+document.getElementById('tcStopBtn').addEventListener('click', stopTest);
+document.getElementById('tcFreshStartBtn').addEventListener('click', freshStartTest);
 document.getElementById('tcLoadContactBtn').addEventListener('click', loadTcContact);
 // A real reply can land at any time (a genuine SMS/email, not something
 // triggered from this page) -- poll for it instead of only refreshing on

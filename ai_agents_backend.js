@@ -801,6 +801,53 @@ async function handleAiAgentsCrud(req, res, url) {
     writeJson(AI_ACTIVE_BATCHES_FILE, batches);
     return sendJson(res, 200, { ok: true, status: batch.status });
   }
+  // Idempotent, unlike toggle above -- always ends up paused regardless of
+  // current status (including "completed", which a "done" state's own
+  // reactivation logic -- see processAiActiveBatches -- would otherwise flip
+  // straight back to "running" the moment ANY new reply comes in, paused
+  // batches are explicitly the one thing that logic always leaves alone).
+  // Confirmed live: pausing only a "running" batch left a "completed" one
+  // free to auto-reactivate and keep sending real emails/texts.
+  const testBatchStopMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-batch-stop$/);
+  if (testBatchStopMatch && req.method === "POST") {
+    const agentId = testBatchStopMatch[1];
+    const { contactId } = await readJsonBody(req);
+    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
+    const { AI_ACTIVE_BATCHES_FILE } = await import("./ai_active_backend.js");
+    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+    let stopped = 0;
+    for (const b of batches) {
+      if (b.agentId === agentId && b.isTestBatch && (b.contactIds || []).includes(contactId) && b.status !== "paused") {
+        b.status = "paused"; b.pausedAt = new Date().toISOString(); stopped++;
+      }
+    }
+    if (stopped) writeJson(AI_ACTIVE_BATCHES_FILE, batches);
+    return sendJson(res, 200, { ok: true, stopped });
+  }
+  // Wipes this contact's test batch/state entirely (not their real message
+  // history -- the send/receive log stays exactly as it happened) so the
+  // next "Send real cold-open" starts a genuinely clean cycle: fresh
+  // follow-up counts, fresh lastSeenInboundAt, no leftover "done"/
+  // "completed" row for the reactivation logic to revive later.
+  const testBatchResetMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-batch-reset$/);
+  if (testBatchResetMatch && req.method === "POST") {
+    const agentId = testBatchResetMatch[1];
+    const { contactId } = await readJsonBody(req);
+    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
+    const { AI_ACTIVE_BATCHES_FILE, AI_ACTIVE_STATES_FILE } = await import("./ai_active_backend.js");
+    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+    const removedBatchIds = new Set(batches.filter((b) => b.agentId === agentId && b.isTestBatch && (b.contactIds || []).includes(contactId)).map((b) => b.id));
+    if (removedBatchIds.size) {
+      writeJson(AI_ACTIVE_BATCHES_FILE, batches.filter((b) => !removedBatchIds.has(b.id)));
+      // Only states belonging to one of THIS contact's just-removed test
+      // batches -- a real (non-test) batch tracking the same contact for
+      // the same agent, however unlikely, must not lose its own state here.
+      const states = readJson(AI_ACTIVE_STATES_FILE, []);
+      const keepStates = states.filter((s) => !removedBatchIds.has(s.batchId));
+      if (keepStates.length !== states.length) writeJson(AI_ACTIVE_STATES_FILE, keepStates);
+    }
+    return sendJson(res, 200, { ok: true, removed: removedBatchIds.size });
+  }
 
   // Every sourceType an agent's own outbound sends can carry -- see
   // sentCategoryForSourceType's "ai_agent" bucket plus the real test-send
