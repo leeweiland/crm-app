@@ -123,27 +123,18 @@ export function getNavPermissions() {
   };
 }
 
-// Reminder timing/copy for Inbox-scheduled meetings (see meetings_backend.js,
-// which polls these on the shared scheduler tick) -- one shared org-wide
-// config, not per-user, same reasoning as every other integrations setting
-// here: an admin sets the cadence/wording once for the whole team.
-const DEFAULT_MEETING_REMINDERS = {
-  timezone: "America/Anchorage",
-  emailRemindersEnabled: true,
-  emailReminderMinutesBefore: [1440, 60],
-  emailReminderSubjectTemplate: "Reminder: your meeting with {{coachName}} is coming up",
-  emailReminderBodyTemplate: "Hi {{firstName}},<br><br>Just a reminder — your meeting with {{coachName}} is <strong>{{date}} at {{time}}</strong> ({{duration}} min).",
-  smsRemindersEnabled: true,
-  smsReminderMinutesBefore: [60],
-  smsReminderTemplate: "Reminder: your meeting with {{coachName}} is {{date}} at {{time}} ({{duration}} min).",
-};
+// Reminders for Inbox-scheduled meetings (see meetings_backend.js, which
+// polls these on the shared scheduler tick) used to carry their own
+// separate timing/copy/timezone fields, duplicating what an event type's
+// Design page already has. Now this just POINTS at one real event type --
+// its confirmation.email/sms content and reminders.email/sms timing are
+// reused verbatim (via scheduling_backend.js's sendBookingEmail/sendBookingSms),
+// so there's exactly one place to edit meeting-reminder wording/cadence,
+// not two. One shared org-wide config, not per-user, same reasoning as
+// every other integrations setting here.
 export function getMeetingReminderSettings() {
   const stored = readSettings().meetingReminders || {};
-  return {
-    ...DEFAULT_MEETING_REMINDERS, ...stored,
-    emailReminderMinutesBefore: Array.isArray(stored.emailReminderMinutesBefore) ? stored.emailReminderMinutesBefore : DEFAULT_MEETING_REMINDERS.emailReminderMinutesBefore,
-    smsReminderMinutesBefore: Array.isArray(stored.smsReminderMinutesBefore) ? stored.smsReminderMinutesBefore : DEFAULT_MEETING_REMINDERS.smsReminderMinutesBefore,
-  };
+  return { linkedEventTypeId: stored.linkedEventTypeId || null };
 }
 
 // A reply CONTAINING (not being exactly) one of these words moves the
@@ -390,13 +381,7 @@ export async function handleIntegrationsRequest(req, res, url) {
     const body = await readJsonBody(req);
     const all = readSettings();
     all.meetingReminders = all.meetingReminders || {};
-    for (const k of ["timezone", "emailReminderSubjectTemplate", "emailReminderBodyTemplate", "smsReminderTemplate"]) {
-      if (k in body) all.meetingReminders[k] = String(body[k]);
-    }
-    if ("emailRemindersEnabled" in body) all.meetingReminders.emailRemindersEnabled = !!body.emailRemindersEnabled;
-    if ("smsRemindersEnabled" in body) all.meetingReminders.smsRemindersEnabled = !!body.smsRemindersEnabled;
-    if (Array.isArray(body.emailReminderMinutesBefore)) all.meetingReminders.emailReminderMinutesBefore = body.emailReminderMinutesBefore.map(Number).filter(n => Number.isFinite(n) && n >= 0);
-    if (Array.isArray(body.smsReminderMinutesBefore)) all.meetingReminders.smsReminderMinutesBefore = body.smsReminderMinutesBefore.map(Number).filter(n => Number.isFinite(n) && n >= 0);
+    if ("linkedEventTypeId" in body) all.meetingReminders.linkedEventTypeId = body.linkedEventTypeId || null;
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true, ...getMeetingReminderSettings() });
   }

@@ -194,7 +194,7 @@ function resolveCalendarForEventType(et) {
 // the pre-calendars shape -- one-time per event type, same lazy-migration
 // pattern as getCalendars() above. Every other route reads through this
 // instead of the raw file so a stale record never lingers past its first load.
-function getEventTypes() {
+export function getEventTypes() {
   const eventTypes = readJson(EVENT_TYPES_FILE, []);
   let changed = false;
   for (const et of eventTypes) {
@@ -886,7 +886,7 @@ export function getBookingTokenValues(booking, eventType) {
 // confirmation.email, or the original hardcoded template when it hasn't
 // been customized), just a different subject/lead-in so a reminder doesn't
 // read like a second, confusing "you're booked" notice repeated verbatim.
-async function sendBookingEmail(booking, eventType, contact, isReminder) {
+export async function sendBookingEmail(booking, eventType, contact, isReminder) {
   const tokens = getBookingTokenValues(booking, eventType);
   const { when } = tokens;
   const cfg = eventType.confirmation || {};
@@ -924,7 +924,7 @@ async function sendBookingEmail(booking, eventType, contact, isReminder) {
 // reminder SMS -- same event type confirmation.sms content either way (or
 // the original hardcoded template when it's blank), just a "Reminder: "
 // prefix on the fallback so an unconfigured event type still reads right.
-async function sendBookingSms(booking, eventType, contact, isReminder) {
+export async function sendBookingSms(booking, eventType, contact, isReminder) {
   const tokens = getBookingTokenValues(booking, eventType);
   const cfg = eventType.confirmation || {};
   const smsTemplate = cfg.sms || `${isReminder ? "Reminder: " : ""}You're booked for %EVENTNAME% on %WHEN%.`;
@@ -955,7 +955,7 @@ async function sendBookingConfirmation(booking, eventType, contact) {
   ]);
 }
 
-function reminderDueMs(reminder) {
+export function reminderDueMs(reminder) {
   return reminder.unit === "minutes" ? reminder.amount * 60000
     : reminder.unit === "days" ? reminder.amount * 86400000
     : reminder.amount * 3600000; // "hours", also the fallback for an old/unrecognized unit
