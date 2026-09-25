@@ -361,6 +361,14 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
   if (!anthropicRes.ok) throw new Error(`Anthropic error ${anthropicRes.status}: ${await anthropicRes.text()}`);
   const data = await anthropicRes.json();
   const textBlock = (data.content || []).find((b) => b.type === "text");
+  // Confirmed live: a real reply went out cut off mid-sentence (no closing
+  // punctuation, an unclosed parenthesis) with no error anywhere -- the API
+  // call itself succeeded, so nothing before this ever surfaced WHY. Logging
+  // stop_reason whenever it's not a clean "end_turn" is the only way to
+  // actually diagnose the next one instead of just seeing it happen again.
+  if (data.stop_reason && data.stop_reason !== "end_turn") {
+    console.error(`[ai-agent-reply] stop_reason=${data.stop_reason} agent=${agent?.id} contact=${contactId} textLen=${textBlock?.text?.length ?? 0}`);
+  }
   return parseAgentOutput(textBlock?.text || "");
 }
 
