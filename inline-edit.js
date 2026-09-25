@@ -53,12 +53,18 @@ function closeInlineEditMenu() {
 }
 function _onInlineEditEsc(e) { if (e.key === 'Escape') closeInlineEditMenu(); }
 
-async function openInlineEditMenu({ x, y, field, contactId, onSaved, owner }) {
+async function openInlineEditMenu({ x, y, field, contactId, currentValue, onSaved, owner }) {
   closeInlineEditMenu();
   const cfg = INLINE_EDIT_FIELDS[field];
   if (!cfg) return;
   const options = await cfg.getOptions();
   if (!options.length) return;
+  // currentValue arrives as a DOM dataset string ("true"/"false" for the
+  // boolean opt-out fields) -- match it back to that option's own typed
+  // .value so a rollback restores a real boolean, not the literal string
+  // "false" (which render(contact)'s own `contact.emailOptOut ? ... : ...`
+  // would read as truthy).
+  const typedCurrentValue = currentValue === undefined ? undefined : (options.find(o => String(o.value) === String(currentValue))?.value ?? currentValue);
 
   const menu = document.createElement('div');
   menu.className = 'inline-edit-menu';
@@ -75,23 +81,37 @@ async function openInlineEditMenu({ x, y, field, contactId, onSaved, owner }) {
   _inlineEditMenuEl = menu;
 
   menu.querySelectorAll('.inline-edit-opt').forEach(el => {
-    el.addEventListener('click', async (e) => {
+    el.addEventListener('click', (e) => {
       e.stopPropagation();
       const opt = options[Number(el.dataset.i)];
       closeInlineEditMenu();
-      try {
-        const r = await fetch(`/api/contacts/${contactId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [field]: opt.value }),
-        });
-        if (!r.ok) throw new Error('save failed');
-        onSaved && onSaved(opt.value);
-        if (field === 'status') window.EnrollPopup?.maybeOpen(contactId, opt.value);
-      } catch (err) {
-        if (window.showToast) showToast('Could not save change', 'error');
-        else alert('Could not save change');
+      // Status -> ENROLLED is never applied here at all -- the contact only
+      // actually becomes Enrolled once the popup's own Save succeeds (see
+      // enroll-popup.js's own top comment), so onSaved is deliberately not
+      // called yet; its value would just be the un-committed "ENROLLED"
+      // otherwise, showing on the cell/badge before it's real.
+      if (field === 'status' && String(opt.value).toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
+        window.EnrollPopup.open(contactId, { onCommitted: () => onSaved && onSaved(opt.value) });
+        return;
       }
+      // Optimistic -- a contact PATCH costs ~5s on the server (rewrites the
+      // whole contacts file; see contact-autosave.js's own comment on this
+      // same cost), which used to mean nothing here -- the cell/badge --
+      // appeared until that round trip came back. Update now, PATCH in the
+      // background, revert (using the value this menu opened with) + toast
+      // only if it actually fails.
+      onSaved && onSaved(opt.value);
+      fetch(`/api/contacts/${contactId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: opt.value }),
+      })
+        .then(r => { if (!r.ok) throw new Error('save failed'); })
+        .catch(() => {
+          if (typedCurrentValue !== undefined) onSaved && onSaved(typedCurrentValue);
+          if (window.showToast) showToast('Could not save -- try again', true);
+          else alert('Could not save change');
+        });
     });
   });
 
@@ -121,6 +141,7 @@ function wireInlineEditTable(containerEl, { onSaved } = {}) {
       y: rect.bottom + 4,
       field: cell.dataset.inlineField,
       contactId: cell.dataset.contactId,
+      currentValue: cell.dataset.currentValue,
       onSaved: (value) => onSaved && onSaved(cell, value),
       owner: cell,
     });
@@ -135,13 +156,14 @@ function wireInlineEditTable(containerEl, { onSaved } = {}) {
       y: e.clientY,
       field: cell.dataset.inlineField,
       contactId: cell.dataset.contactId,
+      currentValue: cell.dataset.currentValue,
       onSaved: (value) => onSaved && onSaved(cell, value),
     });
   });
 }
 
 // Single-element left-click handler (used by inbox.html's contact-name badge).
-function wireInlineEditClick(el, { field, contactId, onSaved }) {
+function wireInlineEditClick(el, { field, contactId, currentValue, onSaved }) {
   el.style.cursor = 'pointer';
   el.addEventListener('click', (e) => {
     e.preventDefault();
@@ -152,6 +174,6 @@ function wireInlineEditClick(el, { field, contactId, onSaved }) {
     // second click looked like nothing happened rather than closing it.
     if (_inlineEditMenuOwner === el) { closeInlineEditMenu(); return; }
     const rect = el.getBoundingClientRect();
-    openInlineEditMenu({ x: rect.left, y: rect.bottom + 4, field, contactId, onSaved, owner: el });
+    openInlineEditMenu({ x: rect.left, y: rect.bottom + 4, field, contactId, currentValue, onSaved, owner: el });
   });
 }

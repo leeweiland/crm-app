@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Enrollment Flow — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  /* Same visual language as flow-builder.html's own step chain (trigger-card/
+     step-card/chain-arrow) -- copied here rather than shared, since this page
+     is a fixed-shape recipe (no drag/reorder/branching engine needed), not
+     another instance of that general-purpose builder. */
+  .ef-wrap { max-width: 640px; margin: 0 auto; padding: 8px 0 60px; display: flex; flex-direction: column; align-items: center; }
+  .trigger-card { background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 14px 18px; min-width: 320px; width: 100%; text-align: center; box-sizing: border-box; }
+  .step-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 16px 20px; min-width: 320px; width: 100%; box-sizing: border-box; text-align: left; }
+  .step-type { font-family: var(--font-secondary); font-size: .64rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
+  .step-title { font-size: 1rem; font-weight: 700; margin: 3px 0 10px; }
+  .step-desc { font-size: .8rem; color: var(--pra-dim); margin-bottom: 12px; }
+  .chain-arrow-wrap { display: flex; align-items: center; justify-content: center; height: 30px; }
+  .chain-arrow { color: var(--pra-dim); font-size: 1.2rem; line-height: 1; }
+  .ef-map-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .ef-map-label { width: 150px; flex-shrink: 0; font-size: .8rem; color: #ddd; }
+  .ef-map-writes { width: 110px; flex-shrink: 0; font-size: .72rem; color: var(--pra-dim); text-align: right; }
+  .ef-match-badge { display: inline-block; font-size: .68rem; font-weight: 700; letter-spacing: .03em; padding: 2px 8px; border-radius: 10px; background: var(--pra-blue-dim); color: var(--pra-blue); margin-right: 8px; }
+  .ef-taglist { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; min-height: 30px; }
+  .ef-tag-add { display: flex; gap: 6px; }
+  .ef-section { margin-bottom: 18px; }
+  .ef-section:last-child { margin-bottom: 0; }
+  .ef-section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+  .ef-section-title { font-size: .82rem; font-weight: 700; color: #ddd; }
+  .ef-reset-link { font-size: .72rem; color: var(--pra-dim); background: none; border: none; cursor: pointer; padding: 0; }
+  .ef-reset-link:hover { color: var(--pra-blue); }
+  .ef-branch { border-style: dashed; }
+  .ef-preview { font-size: .78rem; color: var(--pra-dim); background: var(--pra-black-soft); border: 1px solid var(--pra-border); border-radius: 6px; padding: 8px 10px; margin-top: 4px; }
+  .ef-savebar { position: sticky; bottom: 0; background: var(--pra-black-soft); border-top: 1px solid var(--pra-border); padding: 14px 16px; display: flex; align-items: center; gap: 12px; margin-top: 24px; width: 100%; box-sizing: border-box; border-radius: 0 0 10px 10px; }
+  .ef-savemsg { font-size: .82rem; color: var(--pra-dim); flex: 1; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div class="mobile-sticky-header">
+        <a href="/settings.html" style="color:var(--pra-blue);text-decoration:none;font-size:.85rem">&larr; Back to Settings</a>
+        <div class="pra-h1" style="margin:8px 0 4px">Enrollment Flow</div>
+        <div class="pra-muted" style="font-size:.85rem;margin-bottom:20px">What the "Record Enrollment" popup actually does, step by step -- edit the column names and dropdown options it uses without touching code. The lookup logic and the fixed Qualified/Result values it writes aren't editable here (changing those could silently break the sheet's own dropdowns).</div>
+      </div>
+
+      <div class="ef-wrap">
+        <div class="trigger-card">
+          <div class="step-type">Trigger</div>
+          <div class="step-title" style="margin-bottom:0">Status changed to ENROLLED</div>
+          <div class="pra-muted" style="font-size:.78rem;margin-top:6px">From the Contacts table, the chat panel's status dropdown, or a contact's own page -- wherever staff change status.</div>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card">
+          <div class="step-type">Step 1</div>
+          <div class="step-title">Find their row</div>
+          <div class="step-desc">Checks the sheet staff picked (Online or Gym) for a row matching, in this order -- whichever matches; if more than one row does, the most recently added one wins:</div>
+          <div style="margin-bottom:6px"><span class="ef-match-badge">1</span>Email</div>
+          <div style="margin-bottom:6px"><span class="ef-match-badge">2</span>Phone (last 10 digits)</div>
+          <div style="margin-bottom:10px"><span class="ef-match-badge">3</span>First AND Last name</div>
+          <div class="step-desc" style="margin-bottom:8px">Column names it looks for (edit if the sheet's own headers ever change):</div>
+          <div id="matchCols"></div>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card">
+          <div class="step-type">Step 2</div>
+          <div class="step-title">Update these columns</div>
+          <div class="step-desc">Only these columns are touched on the matched row -- everything else on it (Date Of Call, Origin, anything else already there) is left exactly as it was.</div>
+          <div id="writeCols"></div>
+          <div class="ef-section-head" style="margin-top:6px"><span></span><button class="ef-reset-link" data-reset="columnNames">Reset to defaults</button></div>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card">
+          <div class="step-type">Step 3</div>
+          <div class="step-title">Program options</div>
+          <div class="step-desc">What the popup's Program dropdown offers -- Online and Gym can differ.</div>
+          <div class="ef-section">
+            <div class="ef-section-head"><span class="ef-section-title">Online</span></div>
+            <div class="ef-taglist" id="programOnlineTags"></div>
+            <div class="ef-tag-add"><input class="pra-input" id="programOnlineInput" placeholder="Add a program..."/><button class="pra-btn pra-btn-sm" id="programOnlineAddBtn">Add</button></div>
+          </div>
+          <div class="ef-section">
+            <div class="ef-section-head"><span class="ef-section-title">Gym</span></div>
+            <div class="ef-taglist" id="programGymTags"></div>
+            <div class="ef-tag-add"><input class="pra-input" id="programGymInput" placeholder="Add a program..."/><button class="pra-btn pra-btn-sm" id="programGymAddBtn">Add</button></div>
+          </div>
+          <button class="ef-reset-link" data-reset="programOptions">Reset to defaults</button>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card">
+          <div class="step-type">Step 4</div>
+          <div class="step-title">Payment options</div>
+          <div class="step-desc">What the popup's Payment dropdown offers -- same list for both sheets.</div>
+          <div class="ef-taglist" id="paymentTags"></div>
+          <div class="ef-tag-add"><input class="pra-input" id="paymentInput" placeholder="Add a payment type..."/><button class="pra-btn pra-btn-sm" id="paymentAddBtn">Add</button></div>
+          <button class="ef-reset-link" data-reset="paymentOptions" style="margin-top:8px">Reset to defaults</button>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card">
+          <div class="step-type">Step 5</div>
+          <div class="step-title">Notes format</div>
+          <div class="step-desc">Whatever's typed into the popup's Notes field is added BELOW anything already in that cell (never overwrites it), wrapped in this format first. Must include <code>{notes}</code>; <code>{date}</code> is optional.</div>
+          <input class="pra-input" id="notesTemplateInput" placeholder="[Enrolled {date}] {notes}"/>
+          <div class="ef-preview" id="notesPreview"></div>
+          <button class="ef-reset-link" data-reset="notesTemplate" style="margin-top:8px">Reset to default</button>
+        </div>
+        <div class="chain-arrow-wrap"><span class="chain-arrow">&#8595;</span></div>
+
+        <div class="step-card ef-branch">
+          <div class="step-type">If no row matched</div>
+          <div class="step-title">Append a new row instead</div>
+          <div class="step-desc" style="margin-bottom:0">Uses First/Last/Email/Phone from the contact, plus everything above, in whichever column order that sheet's own header row already uses. Not editable -- this is just what happens.</div>
+        </div>
+
+        <div class="ef-savebar">
+          <span class="ef-savemsg" id="efSaveMsg"></span>
+          <button class="pra-btn pra-btn-ghost" id="efCancelBtn">Reload</button>
+          <button class="pra-btn" id="efSaveBtn">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/crm-nav.js"></script>
+<script>
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+
+const COLUMN_LABELS = {
+  first: 'First', last: 'Last', email: 'Email', phone: 'Phone',
+  qualified: 'Qualified', result: 'Result', program: 'Program',
+  amountPaid: 'Amount Paid', payment: 'Payment', notes: 'Notes',
+  startDate: 'Start Date', endDate: 'End Date', enrollmentDate: 'Date Of Enrollment',
+};
+const MATCH_KEYS = ['email', 'phone', 'first', 'last'];
+const WRITE_KEYS = ['qualified', 'result', 'program', 'amountPaid', 'payment', 'notes', 'startDate', 'endDate', 'enrollmentDate'];
+
+let state = null, defaults = null, qualifiedValue = '', resultValue = '';
+
+function colRowHtml(key, writesLabel) {
+  return `
+    <div class="ef-map-row">
+      <div class="ef-map-label">${escapeHtml(COLUMN_LABELS[key])}</div>
+      <input class="pra-input" style="flex:1" data-col-key="${key}" value=""/>
+      ${writesLabel ? `<div class="ef-map-writes" title="The fixed value always written here">writes "${escapeHtml(writesLabel)}"</div>` : ''}
+    </div>
+  `;
+}
+function renderColumnInputs() {
+  document.getElementById('matchCols').innerHTML = MATCH_KEYS.map(k => colRowHtml(k)).join('');
+  document.getElementById('writeCols').innerHTML = WRITE_KEYS.map(k => colRowHtml(k, k === 'qualified' ? qualifiedValue : k === 'result' ? resultValue : null)).join('');
+  for (const key of [...MATCH_KEYS, ...WRITE_KEYS]) {
+    document.querySelector(`[data-col-key="${key}"]`).value = state.columnNames[key] || '';
+  }
+}
+function tagListHtml(id, values) {
+  const el = document.getElementById(id);
+  el.innerHTML = values.length
+    ? values.map((v, i) => `<span class="tag-pill">${escapeHtml(v)}<button type="button" data-remove-tag="${id}" data-i="${i}">&times;</button></span>`).join('')
+    : '<span class="pra-muted" style="font-size:.78rem">None yet.</span>';
+  el.querySelectorAll('[data-remove-tag]').forEach(btn => btn.onclick = () => {
+    const i = Number(btn.dataset.i);
+    if (id === 'programOnlineTags') state.programOptions.online.splice(i, 1);
+    else if (id === 'programGymTags') state.programOptions.gym.splice(i, 1);
+    else state.paymentOptions.splice(i, 1);
+    renderTagLists();
+  });
+}
+function renderTagLists() {
+  tagListHtml('programOnlineTags', state.programOptions.online);
+  tagListHtml('programGymTags', state.programOptions.gym);
+  tagListHtml('paymentTags', state.paymentOptions);
+}
+function addTag(list, inputEl) {
+  const v = inputEl.value.trim();
+  if (!v) return;
+  if (!list.includes(v)) list.push(v);
+  inputEl.value = '';
+  renderTagLists();
+}
+document.getElementById('programOnlineAddBtn').onclick = () => addTag(state.programOptions.online, document.getElementById('programOnlineInput'));
+document.getElementById('programGymAddBtn').onclick = () => addTag(state.programOptions.gym, document.getElementById('programGymInput'));
+document.getElementById('paymentAddBtn').onclick = () => addTag(state.paymentOptions, document.getElementById('paymentInput'));
+['programOnlineInput', 'programGymInput', 'paymentInput'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById(id.replace('Input', 'AddBtn')).click(); } });
+});
+
+function renderNotesPreview() {
+  const tpl = document.getElementById('notesTemplateInput').value || state.notesTemplate;
+  document.getElementById('notesPreview').textContent = 'Preview: ' + tpl.replace('{date}', 'September 25, 2026').replace('{notes}', 'Paid in full, wants the 6-month plan');
+}
+document.getElementById('notesTemplateInput').addEventListener('input', renderNotesPreview);
+
+document.querySelectorAll('[data-reset]').forEach(btn => btn.onclick = () => {
+  const group = btn.dataset.reset;
+  if (group === 'columnNames') state.columnNames = { ...defaults.columnNames };
+  else if (group === 'programOptions') state.programOptions = { online: [...defaults.programOptions.online], gym: [...defaults.programOptions.gym] };
+  else if (group === 'paymentOptions') state.paymentOptions = [...defaults.paymentOptions];
+  else if (group === 'notesTemplate') { state.notesTemplate = defaults.notesTemplate; document.getElementById('notesTemplateInput').value = defaults.notesTemplate; }
+  renderColumnInputs(); renderTagLists(); renderNotesPreview();
+  showToast('Reset -- click Save Changes to keep it');
+});
+
+async function load() {
+  const r = await fetch('/api/calls-sheet/settings');
+  if (!r.ok) { showToast('Could not load (must be logged in)', true); return; }
+  const d = await r.json();
+  state = JSON.parse(JSON.stringify(d.settings));
+  defaults = d.defaults;
+  qualifiedValue = d.qualifiedValue; resultValue = d.resultValue;
+  renderColumnInputs();
+  renderTagLists();
+  document.getElementById('notesTemplateInput').value = state.notesTemplate;
+  renderNotesPreview();
+}
+document.getElementById('efCancelBtn').onclick = load;
+document.getElementById('efSaveBtn').onclick = async () => {
+  const btn = document.getElementById('efSaveBtn'), msg = document.getElementById('efSaveMsg');
+  const columnNames = {};
+  for (const key of [...MATCH_KEYS, ...WRITE_KEYS]) columnNames[key] = document.querySelector(`[data-col-key="${key}"]`).value.trim() || COLUMN_LABELS[key];
+  const body = { columnNames, programOptions: state.programOptions, paymentOptions: state.paymentOptions, notesTemplate: document.getElementById('notesTemplateInput').value.trim() };
+  btn.disabled = true; msg.textContent = 'Saving...';
+  const r = await fetch('/api/calls-sheet/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  btn.disabled = false;
+  if (!r.ok) { msg.textContent = d.error || 'Could not save'; return; }
+  msg.textContent = 'Saved.';
+  showToast('Saved');
+  state = JSON.parse(JSON.stringify(d.settings));
+  renderColumnInputs(); renderTagLists();
+  document.getElementById('notesTemplateInput').value = state.notesTemplate;
+  renderNotesPreview();
+};
+
+(async function init() {
+  await window.crmNavReady;
+  await load();
+})();
+</script>
+</body>
+</html>

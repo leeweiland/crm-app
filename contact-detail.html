@@ -423,7 +423,9 @@ const saver = PRAContactAutosave.create({
     renderPhoneDialLink();
     panelInstance?.render();
     showToast('Saved');
-    if (body?.status) window.EnrollPopup?.maybeOpen(contactId, body.status);
+    // A status of ENROLLED never reaches this save at all -- see the
+    // statusSel 'change' listener below, which intercepts and reroutes it
+    // to the popup instead.
   },
   onError: (msg) => showToast('Could not save: ' + msg, true),
 });
@@ -463,7 +465,30 @@ document.getElementById('deleteBtn').onclick = async () => {
   document.getElementById('fPhone').value = contact.phone || '';
   statusSel.value = contact.status || '';
   applyStatusGlow(contact.status);
-  statusSel.addEventListener('change', () => applyStatusGlow(statusSel.value));
+  // ENROLLED is intercepted here and never reaches saver.watch's own PATCH
+  // below at all -- the dropdown is reverted right back to whatever it
+  // already showed, and the popup becomes the only thing that can actually
+  // set status to Enrolled (once its own Save succeeds; see
+  // enroll-popup.js's own top comment for why that's deferred this far).
+  // Every OTHER status still saves the normal way, unaffected.
+  statusSel.addEventListener('change', () => {
+    const newStatus = statusSel.value, prevStatus = contact.status;
+    if (newStatus.toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
+      statusSel.value = prevStatus || '';
+      applyStatusGlow(prevStatus);
+      window.EnrollPopup.open(contactId, {
+        onCommitted: () => {
+          contact.status = 'ENROLLED';
+          statusSel.value = 'ENROLLED';
+          applyStatusGlow('ENROLLED');
+          panelInstance?.render();
+          showToast('Saved');
+        },
+      });
+      return;
+    }
+    applyStatusGlow(newStatus);
+  });
   saver.watch([statusSel]);
   document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
   document.getElementById('fSmsOptOut').checked = !!contact.smsOptOut;

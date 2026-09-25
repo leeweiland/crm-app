@@ -42,31 +42,33 @@ window.EnrollPopup = (function () {
   let backdropEl = null;
   function close() { backdropEl?.remove(); backdropEl = null; }
 
-  // statusValue: whatever the status field was just set to -- a no-op unless
-  // it's exactly "ENROLLED", so every call site can wire this in unconditionally.
-  function maybeOpen(contactId, statusValue) {
-    if (String(statusValue).trim().toUpperCase() !== "ENROLLED") return;
-    open(contactId);
-  }
-
-  async function open(contactId) {
+  // The contact's status only actually BECOMES Enrolled once this popup's
+  // own Save succeeds (see the Save handler below, which PATCHes it there,
+  // not before) -- every caller reverts its own optimistic display back to
+  // whatever it was BEFORE calling this, so nothing anywhere shows
+  // "Enrolled" prematurely. opts.onCommitted() is how the caller finds out
+  // it's real and can now show it.
+  async function open(contactId, opts = {}) {
     close();
-    let contact, options;
+    let contact, sheetOptions;
     try {
-      const [contactRes, opts] = await Promise.all([
+      const [contactRes, loadedOptions] = await Promise.all([
         fetch(`/api/contacts/${contactId}`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
         loadOptions(),
       ]);
       contact = contactRes.contact;
-      options = opts;
+      sheetOptions = loadedOptions;
     } catch { toast("Could not load the contact to record the enrollment", true); return; }
-    const { programOptions, paymentOptions } = options;
+    const { programOptions, paymentOptions } = sheetOptions;
 
     const initialSheet = contact.programType === "gym" ? "gym" : "online"; // defaults to online when unset -- both stay one click away
     const today = todayLocalDateInput();
 
     backdropEl = document.createElement("div");
-    backdropEl.className = "modal-backdrop show";
+    // NOT .modal-backdrop -- see crm-design-system.css's own comment on
+    // .enroll-modal-backdrop for why (crm-nav.js's global click-outside
+    // handler would silently bypass requestClose's confirm gate below).
+    backdropEl.className = "enroll-modal-backdrop show";
     backdropEl.innerHTML = `
       <div class="pra-panel modal-box">
         <div class="pra-h2" style="margin-bottom:4px">Record Enrollment</div>
@@ -138,8 +140,16 @@ window.EnrollPopup = (function () {
     backdropEl.querySelector("#epStartDate").addEventListener("change", applyEndDateSuggestion);
     renderProgramOptions();
 
-    backdropEl.querySelector("#epCancelBtn").onclick = close;
-    backdropEl.addEventListener("click", (e) => { if (e.target === backdropEl) close(); });
+    // Closing WITHOUT saving means this contact does NOT get enrolled --
+    // confirm that's really the intent rather than silently dropping
+    // whatever was already filled in, same as any other "you're about to
+    // lose this" moment. Backdrop click ("click away") goes through the
+    // exact same gate as the Cancel button, not a silent close.
+    function requestClose() {
+      if (confirm("Are you sure you don't want to enroll this contact?")) close();
+    }
+    backdropEl.querySelector("#epCancelBtn").onclick = requestClose;
+    backdropEl.addEventListener("click", (e) => { if (e.target === backdropEl) requestClose(); });
     backdropEl.querySelector("#epSaveBtn").onclick = async () => {
       const btn = backdropEl.querySelector("#epSaveBtn"), msg = backdropEl.querySelector("#epMsg");
       const payload = {
@@ -157,11 +167,24 @@ window.EnrollPopup = (function () {
         const r = await fetch(`/api/contacts/${contactId}/enroll-sheet`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { btn.disabled = false; msg.textContent = d.error || "Could not save"; return; }
+        // The sheet write is what this whole popup exists for -- only
+        // NOW, once it's actually recorded, does the contact really become
+        // Enrolled (see this function's own top comment for why that's
+        // deferred this far).
+        try {
+          const statusRes = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED" }) });
+          if (!statusRes.ok) throw new Error();
+        } catch {
+          toast("Recorded in the sheet, but could not set status to Enrolled -- change status again to retry", true);
+          close();
+          return;
+        }
         toast(d.matched ? "Enrollment recorded in the sheet" : "Added as a new row in the sheet (no existing match found)");
+        opts.onCommitted && opts.onCommitted();
         close();
       } catch { btn.disabled = false; msg.textContent = "Could not reach the server"; }
     };
   }
 
-  return { maybeOpen, open };
+  return { open };
 })();

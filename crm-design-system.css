@@ -373,8 +373,15 @@ body { margin: 0; }
    This is the actual cause of the recurring "black text" reports; setting
    it once here fixes every modal in the app without touching each page's
    HTML structure. */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; box-sizing: border-box; font-family: var(--font-primary); font-weight: 700; color: var(--pra-white); }
-.modal-backdrop.show { display: flex; }
+/* .enroll-modal-backdrop is enroll-popup.js's own modal, kept a SEPARATE
+   class from .modal-backdrop (same visuals, shared rule below) deliberately
+   -- crm-nav.js's site-wide "click outside .modal-backdrop closes it"
+   listener strips the .show class off ANY element with that exact class on
+   an outside click, with no way for a caller to intercept or gate it. That
+   would silently bypass this popup's whole confirm-before-abandoning flow
+   the instant someone clicked outside it. */
+.modal-backdrop, .enroll-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; box-sizing: border-box; font-family: var(--font-primary); font-weight: 700; color: var(--pra-white); }
+.modal-backdrop.show, .enroll-modal-backdrop.show { display: flex; }
 /* max-height set twice on purpose: vh first as a fallback for browsers
    without dvh support, dvh second (wins when supported) -- mobile browsers
    report 100vh as the LARGEST possible viewport (address bar hidden), so a

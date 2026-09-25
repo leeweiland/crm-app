@@ -1512,7 +1512,28 @@ async function openContactOverlay(contactId) {
   statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${overlayContact.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
   statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(overlayContact.status)};${statusSelectWidthRule(overlayContact.status)}`);
   statusSel.onchange = () => {
-    statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(statusSel.value)};${statusSelectWidthRule(statusSel.value)}`);
+    const newStatus = statusSel.value, prevStatus = overlayContact.status;
+    // ENROLLED is intercepted here and never reaches overlaySaver.flush()'s
+    // own PATCH at all -- reverted right back to whatever it already
+    // showed, and the popup becomes the only thing that can actually set
+    // status to Enrolled (once its own Save succeeds; see enroll-popup.js's
+    // own top comment for why that's deferred this far). Every OTHER
+    // status still saves the normal way, unaffected.
+    if (newStatus.toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
+      statusSel.value = prevStatus || '';
+      statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(prevStatus)};${statusSelectWidthRule(prevStatus)}`);
+      window.EnrollPopup.open(contactId, {
+        onCommitted: () => {
+          overlayContact.status = 'ENROLLED';
+          statusSel.value = 'ENROLLED';
+          statusSel.setAttribute('style', `margin-top:6px;${avatarStyle('ENROLLED')};${statusSelectWidthRule('ENROLLED')}`);
+          showToast('Saved');
+          loadRefs().then(() => loadConversations()).catch(() => {});
+        },
+      });
+      return;
+    }
+    statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(newStatus)};${statusSelectWidthRule(newStatus)}`);
     overlaySaver.flush();
   };
   document.getElementById('ovFirst').value = overlayContact.first || '';
@@ -1571,7 +1592,9 @@ const overlaySaver = PRAContactAutosave.create({
       document.getElementById('ovRenewPill').innerHTML = c.renewal ? `<span class="renew-pill renew-${c.renewal.level}">Renew by ${fmtRenewDate(c.renewal.endDate)}</span>` : '';
     }
     showToast('Saved');
-    if (body?.status && overlayContact) window.EnrollPopup?.maybeOpen(overlayContact.id, body.status);
+    // A status of ENROLLED never reaches this save at all -- see the
+    // ovStatus onchange handler above, which intercepts and reroutes it to
+    // the popup instead.
     // re-selects the open conversation if it's still selectedConvo/initialContactId, refreshing the header
     loadRefs().then(() => loadConversations()).catch(() => {});
   },

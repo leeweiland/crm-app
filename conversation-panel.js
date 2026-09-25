@@ -1045,6 +1045,7 @@
           window.wireInlineEditClick(typeBadge, {
             field: 'programType',
             contactId,
+            currentValue: contact?.programType,
             onSaved: (value) => {
               const c2 = getContact();
               if (c2) c2.programType = value;
@@ -1057,14 +1058,45 @@
       }
       const statusSel = container.querySelector('#chatStatusSelect');
       if (statusSel) {
-        statusSel.addEventListener('change', async (e) => {
-          const status = e.target.value;
+        statusSel.addEventListener('change', (e) => {
+          const status = e.target.value, prevStatus = getContact()?.status;
           if (!contactId) return;
-          await fetch('/api/contacts/' + contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+          // ENROLLED never applies here -- reverts the select back to
+          // whatever it already showed and hands off to the popup, which is
+          // the only thing that actually sets status to Enrolled (once its
+          // own Save succeeds; see enroll-popup.js's own top comment). If
+          // that never happens (cancelled, clicked away), this select is
+          // already showing the right thing -- there's nothing to undo.
+          if (String(status).toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
+            e.target.value = prevStatus || '';
+            window.EnrollPopup.open(contactId, {
+              onCommitted: () => {
+                showToast('Status updated');
+                e.target.value = 'ENROLLED';
+                e.target.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle('ENROLLED') : '');
+                const c = getContact(); if (c) c.status = 'ENROLLED';
+                config.onStatusChanged?.(contactId, 'ENROLLED');
+              },
+            });
+            return;
+          }
+          // Optimistic, same reasoning as inline-edit.js's own status-change
+          // fix -- a contact PATCH costs ~5s on the server, which used to
+          // mean the glow style and onStatusChanged both sat waiting on that
+          // round trip before anything visibly happened.
           showToast('Status updated');
           e.target.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle(status) : '');
+          const c = getContact(); if (c) c.status = status;
           config.onStatusChanged?.(contactId, status);
-          window.EnrollPopup?.maybeOpen(contactId, status);
+          fetch('/api/contacts/' + contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+            .then(r => { if (!r.ok) throw new Error(); })
+            .catch(() => {
+              e.target.value = prevStatus || '';
+              e.target.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle(prevStatus) : '');
+              const c2 = getContact(); if (c2) c2.status = prevStatus;
+              config.onStatusChanged?.(contactId, prevStatus);
+              showToast('Could not save -- try again', true);
+            });
         });
       }
       const genSummaryBtn = container.querySelector('#chatGenSummaryImageBtn');
