@@ -131,7 +131,14 @@ function encodeHeaderValue(value) {
 // inReplyTo/references (the RFC822 In-Reply-To/References headers) are what
 // the RECIPIENT's own mail client actually keys its threading off of, so
 // they're the ones that matter for how this shows up on their end.
-export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml, threadId, inReplyTo, references }) {
+// skipFooter (an in-thread AI Active reply -- see ai_active_backend.js's
+// sendViaChannel) leaves out the full footer template (photo, marketing
+// copy, physical address) entirely instead of falling back to the org
+// default -- the caller is expected to have already put its own light
+// sign-off/unsubscribe directly in `blocks` when it sets this. Confirmed
+// live: repeating the FULL footer byte-for-byte on every reply in a thread
+// made Gmail auto-collapse it as repeated/trimmed content.
+export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml, threadId, inReplyTo, references, skipFooter }) {
   if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
   if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
   const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
@@ -140,7 +147,7 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
   // isDefault when footerTemplateId is null -- same fallback the SES path
   // already relies on, so don't shortcut around it just because this
   // particular sender never picked one explicitly.
-  let fullHtml = renderEmailBody(blocks, resolveFooterHtml(footerTemplateId, contactId), theme || {});
+  let fullHtml = renderEmailBody(blocks, skipFooter ? "" : resolveFooterHtml(footerTemplateId, contactId), theme || {});
   // absolutizeUploadUrls -- the SES path (email_backend.js's sendEmail)
   // already does this for every send; without it here too, a footer's own
   // signature photo (uploaded to this CRM, referenced by a plain /uploads/

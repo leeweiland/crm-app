@@ -762,13 +762,44 @@ async function handleAiAgentsCrud(req, res, url) {
       writeJson(AI_ACTIVE_BATCHES_FILE, batches);
       states.push({
         id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId: contact.id, state: "waiting_reply",
-        followUpCount: 0, lastActionAt: nowIso,
+        followUpCount: {}, lastSeenInboundAt: {}, lastActionAt: nowIso,
         nextActionAt: new Date(Date.now() + randomDelayMs(agent.activeConfig?.waitTimeRange)).toISOString(),
         createdAt: nowIso, updatedAt: nowIso,
       });
       writeJson(AI_ACTIVE_STATES_FILE, states);
     }
     return sendJson(res, 200, { ok: true, sent: opener.openers, tracked: true });
+  }
+
+  // Lets the agent editor's "Load" button double as an on/off switch for a
+  // real test contact's ongoing automatic sends -- reuses the exact same
+  // pause/running status a real batch already has, just scoped to this
+  // contact's own isTestBatch row instead of exposing the general
+  // /api/ai-active/:id/pause endpoint (which the editor doesn't otherwise
+  // need to know the batch id for).
+  const testBatchStatusMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-batch-status$/);
+  if (testBatchStatusMatch && req.method === "GET") {
+    const agentId = testBatchStatusMatch[1];
+    const contactId = url.searchParams.get("contactId");
+    if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
+    const { AI_ACTIVE_BATCHES_FILE } = await import("./ai_active_backend.js");
+    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+    const batch = batches.filter((b) => b.agentId === agentId && b.isTestBatch && (b.contactIds || []).includes(contactId)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+    if (!batch) return sendJson(res, 200, { exists: false });
+    return sendJson(res, 200, { exists: true, batchId: batch.id, status: batch.status });
+  }
+  const testBatchToggleMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-batch-toggle$/);
+  if (testBatchToggleMatch && req.method === "POST") {
+    const { batchId } = await readJsonBody(req);
+    if (!batchId) return sendJson(res, 400, { error: "batchId is required" });
+    const { AI_ACTIVE_BATCHES_FILE } = await import("./ai_active_backend.js");
+    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+    const batch = batches.find((b) => b.id === batchId && b.isTestBatch);
+    if (!batch) return sendJson(res, 404, { error: "Test batch not found" });
+    batch.status = batch.status === "paused" ? "running" : "paused";
+    batch.pausedAt = batch.status === "paused" ? new Date().toISOString() : null;
+    writeJson(AI_ACTIVE_BATCHES_FILE, batches);
+    return sendJson(res, 200, { ok: true, status: batch.status });
   }
 
   // Every sourceType an agent's own outbound sends can carry -- see

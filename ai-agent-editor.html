@@ -495,13 +495,8 @@
               <button class="pra-btn pra-btn-sm" id="tcLoadContactBtn" type="button">Load</button>
             </div>
             <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:8px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+            <div style="margin-top:12px">
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcRealSendBtn" type="button" disabled title="Load a contact first">Send real cold-open to this contact</button>
-              <select class="pra-select" id="tcRealSendChannel" style="width:auto;font-size:.76rem;padding:6px 8px">
-                <option value="">Auto (agent default)</option>
-                <option value="sms">Force SMS</option>
-                <option value="email">Force Email</option>
-              </select>
             </div>
             <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:8px;display:none"></div>
             <div id="tcRealSendConvo" style="max-height:300px;overflow-y:auto;display:none;flex-direction:column;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--pra-border);border-radius:10px;background:var(--pra-panel)"></div>
@@ -785,6 +780,7 @@ window.addEventListener('beforeunload', (e) => {
 // what's already saved.
 let tcHistory = [];
 let tcContactId = null;
+let tcLoadedEmail = null; // the email actually loaded -- lets the Load button double as a pause/resume toggle for the SAME contact, while a changed email still does a fresh lookup
 const TC_EMPTY_TEXT = document.getElementById('tcEmpty').textContent;
 function tcThread() { return document.getElementById('tcThread'); }
 function resetTestChat() {
@@ -1068,8 +1064,14 @@ async function loadTcContact() {
   const statusEl = document.getElementById('tcContactStatus');
   const realSendBtn = document.getElementById('tcRealSendBtn');
   const email = emailInput.value.trim().toLowerCase();
+  // Clicking Load again on the SAME already-loaded contact toggles their
+  // test batch on/off instead of repeating the lookup -- lets the one
+  // button also serve as "stop this test from sending" / "resume it"
+  // without a separate control. A changed email still does a fresh lookup.
+  if (email && email === tcLoadedEmail && tcContactId) { await toggleTestBatch(); return; }
   if (!email) {
-    tcContactId = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first';
+    tcContactId = null; tcLoadedEmail = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first';
+    document.getElementById('tcLoadContactBtn').textContent = 'Load';
     statusEl.textContent = 'Not set -- replies use no real contact history. Load one to have replies grounded in that person\'s real application/journey.';
     return;
   }
@@ -1079,14 +1081,57 @@ async function loadTcContact() {
     if (!r.ok) { statusEl.textContent = 'Could not search contacts.'; return; }
     const { contacts } = await r.json();
     const match = (contacts || []).find((c) => (c.email || '').toLowerCase() === email);
-    if (!match) { tcContactId = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first'; statusEl.textContent = `No contact found with that email.`; return; }
+    if (!match) { tcContactId = null; tcLoadedEmail = null; realSendBtn.disabled = true; realSendBtn.title = 'Load a contact first'; statusEl.textContent = `No contact found with that email.`; return; }
     tcContactId = match.id;
+    tcLoadedEmail = (match.email || '').toLowerCase();
     statusEl.textContent = `Testing as: ${match.first || ''} ${match.last || ''}`.trim() + ` (${match.email}) -- replies grounded in their real journey.`;
     realSendBtn.disabled = false; realSendBtn.title = `Sends a real SMS/email to ${match.email}`;
     resetTestChat();
     loadRealSendConvo();
+    refreshLoadBtnForTestBatch();
   } catch (err) {
     statusEl.textContent = 'Lookup failed: ' + err.message;
+  }
+}
+// Reflects the loaded contact's real tracked-batch state (if any) on the
+// Load button itself -- "Load" once nothing's been sent yet, "Pause Test"/
+// "Resume Test" once a real cold-open created one (see test-send).
+async function refreshLoadBtnForTestBatch() {
+  const btn = document.getElementById('tcLoadContactBtn');
+  if (!tcContactId || !editingAgentId) { btn.textContent = 'Load'; return; }
+  try {
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/test-batch-status?contactId=${tcContactId}`);
+    const d = await r.json();
+    btn.textContent = !d.exists ? 'Load' : (d.status === 'paused' ? 'Resume Test' : 'Pause Test');
+  } catch {
+    btn.textContent = 'Load';
+  }
+}
+async function toggleTestBatch() {
+  const btn = document.getElementById('tcLoadContactBtn');
+  const statusEl = document.getElementById('tcContactStatus');
+  try {
+    const statusRes = await fetch(`/api/ai-agents/${editingAgentId}/test-batch-status?contactId=${tcContactId}`);
+    const statusData = await statusRes.json();
+    if (!statusData.exists) { statusEl.textContent = 'No active test yet -- send a real cold-open first.'; return; }
+    btn.disabled = true;
+    const r = await fetch(`/api/ai-agents/${editingAgentId}/test-batch-toggle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ batchId: statusData.batchId }),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      btn.textContent = d.status === 'paused' ? 'Resume Test' : 'Pause Test';
+      statusEl.textContent = d.status === 'paused'
+        ? 'Test paused -- Kai will NOT auto-reply/follow-up on this contact until resumed.'
+        : 'Test resumed -- Kai will auto-reply/follow-up on this contact again.';
+    } else {
+      statusEl.textContent = 'Could not toggle: ' + (d.error || r.status);
+    }
+  } catch (err) {
+    statusEl.textContent = 'Network error: ' + err.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 // Real conversation so far with this contact (this agent's own sends only,
@@ -1115,8 +1160,7 @@ async function loadRealSendConvo() {
 async function sendRealColdOpen() {
   if (!tcContactId || !editingAgentId) return;
   const email = document.getElementById('tcContactEmail').value.trim();
-  const channel = document.getElementById('tcRealSendChannel').value;
-  if (!confirm(`This sends a REAL ${channel ? channel.toUpperCase() : 'SMS AND email (every enabled channel)'} to ${email} right now -- not a preview. Continue?`)) return;
+  if (!confirm(`This sends a REAL SMS AND email (every enabled channel) to ${email} right now -- not a preview. Continue?`)) return;
   const btn = document.getElementById('tcRealSendBtn');
   const statusEl = document.getElementById('tcRealSendStatus');
   btn.disabled = true;
@@ -1125,7 +1169,7 @@ async function sendRealColdOpen() {
   try {
     const r = await fetch(`/api/ai-agents/${editingAgentId}/test-send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contactId: tcContactId, agentDraft: currentAgentDraft(), channel: channel || undefined }),
+      body: JSON.stringify({ contactId: tcContactId, agentDraft: currentAgentDraft() }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { statusEl.textContent = 'Error: ' + (d.error || r.status); }
@@ -1133,6 +1177,7 @@ async function sendRealColdOpen() {
     else {
       statusEl.textContent = d.tracked ? 'Sent -- now tracking this contact, a real reply will get a real automatic reply/follow-up on the Timing settings below.' : 'Sent.';
       await loadRealSendConvo();
+      await refreshLoadBtnForTestBatch();
     }
   } catch (err) {
     statusEl.textContent = 'Network error: ' + err.message;
@@ -1148,6 +1193,11 @@ document.getElementById('tcLoadContactBtn').addEventListener('click', loadTcCont
 setInterval(() => { if (tcContactId) loadRealSendConvo(); }, 6000);
 document.getElementById('tcContactEmail').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); loadTcContact(); }
+});
+// Typing a different address means the next click should do a fresh
+// lookup, not toggle whatever contact was previously loaded's test batch.
+document.getElementById('tcContactEmail').addEventListener('input', (e) => {
+  if (e.target.value.trim().toLowerCase() !== tcLoadedEmail) document.getElementById('tcLoadContactBtn').textContent = 'Load';
 });
 document.getElementById('tcInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTestChatMessage(); }

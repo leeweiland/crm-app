@@ -3,6 +3,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
 import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
+import { getPublicBaseUrl } from "./integrations_backend.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
   generateAgentReply, contactMatchesTargeting, isExcludable,
@@ -176,11 +177,23 @@ function replySubject(priorSubject) {
   const s = (priorSubject || "PacificRimAthletics.com").trim();
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
+// A short plain sign-off for an in-thread reply, instead of repeating the
+// FULL footer template (photo, marketing copy, physical address, its own
+// unsubscribe line) on every single back-and-forth -- confirmed live that
+// doing so made Gmail auto-collapse the repeated block, and reads nothing
+// like how a real person actually emails back and forth. Keeps a minimal,
+// always-required unsubscribe link (not the surrounding marketing copy)
+// rather than dropping compliance entirely.
+function replySignoffHtml(senderFirstName, contactId) {
+  const name = (senderFirstName || "").trim();
+  const unsubscribeUrl = `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
+  return `<div style="margin-top:16px">Coach ${name || "Kai"}</div>
+    <div style="margin-top:10px;font-size:11px;color:#888"><a href="${unsubscribeUrl}" style="color:#888">Unsubscribe</a></div>`;
+}
 export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active", senderId = null) {
   if (channel === "email" && contact.email) {
     const { text: cleaned, gifUrl } = extractGifMarker(text);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
-    const blocks = [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml }];
     const sender = senderId ? readJson(USERS_FILE, []).find((u) => u.id === senderId && u.gmailRefreshToken) : null;
     if (sender) {
       const { sendViaGmail } = await import("./gmail_backend.js");
@@ -195,11 +208,14 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
       // alone) -- prior's own References plus prior's own real Message-ID,
       // not just the single immediate parent.
       const references = prior ? [prior.references, prior.messageIdHeader].filter(Boolean).join(" ") || undefined : undefined;
+      const signoff = prior ? replySignoffHtml(sender.first, contact.id) : "";
+      const blocks = [{ id: "b1", type: "text", html: cleaned.replace(/\n/g, "<br/>") + gifHtml + signoff }];
       return sendViaGmail({
         user: sender, to: contact.email,
         subject: prior ? replySubject(prior.subject) : (subject || "PacificRimAthletics.com"),
         blocks, theme: {},
         contactId: contact.id, sourceType, sourceId: agentId, footerTemplateId: sender.footerTemplateId || null,
+        skipFooter: !!prior,
         threadId: prior?.threadId, inReplyTo: prior?.messageIdHeader, references,
       });
     }
@@ -362,6 +378,15 @@ export async function handleAiActiveRequest(req, res, url) {
 // entire ~190MB contacts file the moment any batch was "running" (which can
 // span hours per campaign), confirmed live as a direct cause of multi-
 // second stalls on unrelated concurrent requests.
+// Most recent message of ONE specific channel in an already-sorted (oldest
+// first) journey -- SMS and email are tracked as fully independent
+// sub-conversations below (see the waiting_reply rewrite's own comment for
+// why), so "what's the latest thing on THIS channel" has to be asked
+// separately from "what's the latest thing overall".
+function latestOnChannel(journey, channel) {
+  for (let i = journey.length - 1; i >= 0; i--) if (journey[i].channel === channel) return journey[i];
+  return null;
+}
 export async function processAiActiveBatches() {
   const allBatches = readJson(AI_ACTIVE_BATCHES_FILE, []);
   if (!allBatches.length) return;
@@ -387,11 +412,20 @@ export async function processAiActiveBatches() {
     if (!batch || batch.status === "paused") continue;
     const contact = getContactByIdFast(st.contactId);
     if (!contact) continue;
-    const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel));
-    const lastInbound = [...journey].reverse().find((m) => m.direction === "inbound");
-    if (lastInbound && (!st.lastSeenInboundAt || new Date(lastInbound.createdAt).getTime() > new Date(st.lastSeenInboundAt).getTime())) {
+    const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    // lastSeenInboundAt is per-channel (see waiting_reply below) -- a
+    // channel this conversation never touched, or a pre-migration state
+    // whose lastSeenInboundAt was still the old single-timestamp shape,
+    // both just read as "nothing seen on this channel yet", which is the
+    // correct, safe default either way.
+    const seen = (st.lastSeenInboundAt && typeof st.lastSeenInboundAt === "object") ? st.lastSeenInboundAt : {};
+    const reactivateChannel = ["sms", "email"].find((channel) => {
+      const last = latestOnChannel(journey, channel);
+      return last && last.direction === "inbound" && (!seen[channel] || new Date(last.createdAt).getTime() > new Date(seen[channel]).getTime());
+    });
+    if (reactivateChannel) {
       st.state = "waiting_reply";
-      st.followUpCount = 0;
+      st.followUpCount = {};
       st.nextActionAt = new Date(now).toISOString();
       st.updatedAt = new Date().toISOString();
       changed = true;
@@ -439,7 +473,6 @@ export async function processAiActiveBatches() {
       if (exclReason) { st.state = contact.status && TERMINAL_STATUSES.has(contact.status) ? "done" : "opted_out"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
 
       const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      const lastMsg = journey.length ? journey.at(-1) : null;
 
       // Human takeover -- a real person (not this engine, not the AI
       // Assist icons, both of which go through the normal compose Send
@@ -479,57 +512,78 @@ export async function processAiActiveBatches() {
             st.state = "done"; // nothing sendable (e.g. neither channel enabled, or model judged no-go)
           }
         } else if (st.state === "waiting_reply") {
-          const hasNewInbound = lastMsg && lastMsg.direction === "inbound" && (!st.lastSeenInboundAt || new Date(lastMsg.createdAt).getTime() > new Date(st.lastSeenInboundAt).getTime());
-          if (hasNewInbound && (now - new Date(lastMsg.createdAt).getTime()) < messageBufferMs(cfg)) {
-            // Still inside the settle buffer -- catches a second rapid-fire
-            // text before generating anything (confirmed live: two texts
-            // sent back to back could otherwise each trigger their own
-            // independent reply instead of one that addresses both).
-            // Deliberately does NOT touch lastSeenInboundAt -- this inbound
-            // is still "pending a reply", not "no reply yet", so the
-            // no-new-inbound follow-up branch below can't misfire while
-            // we're just waiting out the buffer. A newer inbound arriving
-            // before this fires naturally re-anchors the buffer, since
-            // lastMsg/its createdAt will have moved by the next check.
-            st.nextActionAt = new Date(new Date(lastMsg.createdAt).getTime() + messageBufferMs(cfg)).toISOString();
-          } else if (hasNewInbound) {
-            st.lastSeenInboundAt = lastMsg.createdAt;
-            const result = await generateAgentReply(agent, contact.id, lastMsg.body || lastMsg.bodyPreview || "", { autoSend: true, senderName: agent.name });
-            const channel = lastMsg.channel === "sms" ? "sms" : "email";
-            if (result.skip) {
-              st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
-            } else if (result.escalate) {
-              st.state = "escalated";
-            } else if (result.text) {
-              await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
-              st.lastActionAt = new Date().toISOString();
-              if (result.buyingSignal) st.state = "hot_handoff";
-              else st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
+          // SMS and email are tracked as fully independent sub-conversations
+          // here -- confirmed live, three real bugs from treating them as
+          // one shared cursor: (1) a reply could go out on whichever channel
+          // happened to have the chronologically-latest message overall,
+          // answering an SMS with an email or an email with a text; (2) the
+          // no-reply follow-up branch hardcoded "email if the contact has
+          // one, else sms", so an active SMS conversation with an email
+          // address on file got silently abandoned in favor of emailing
+          // instead; (3) once the shared cursor advanced past an inbound on
+          // one channel (because a LATER message arrived on the other
+          // channel), that first channel's message could never trigger its
+          // own reply. Each channel below only ever reacts to and replies on
+          // ITS OWN messages.
+          if (typeof st.lastSeenInboundAt !== "object" || !st.lastSeenInboundAt) st.lastSeenInboundAt = {};
+          if (typeof st.followUpCount !== "object" || !st.followUpCount) st.followUpCount = {};
+          const maxFollowUps = Number.isFinite(cfg.maxFollowUps) ? cfg.maxFollowUps : MAX_FOLLOWUPS;
+          let anyChannelStillActive = false;
+          const nextTimes = [];
+          for (const channel of ["sms", "email"]) {
+            if (st.state !== "waiting_reply") break; // escalated/hot_handoff from the other channel this same tick
+            const chJourney = journey.filter((m) => m.channel === channel);
+            if (!chJourney.length) continue; // Kai has never touched this channel with this contact
+            const lastChMsg = chJourney.at(-1);
+            const seenAt = st.lastSeenInboundAt[channel];
+            const hasNewInbound = lastChMsg.direction === "inbound" && (!seenAt || new Date(lastChMsg.createdAt).getTime() > new Date(seenAt).getTime());
+            if (hasNewInbound && (now - new Date(lastChMsg.createdAt).getTime()) < messageBufferMs(cfg)) {
+              // Still inside the settle buffer -- catches a second rapid-fire
+              // message on THIS channel before generating anything.
+              // Deliberately does NOT touch lastSeenInboundAt -- still
+              // "pending a reply", not "no reply yet".
+              anyChannelStillActive = true;
+              nextTimes.push(new Date(lastChMsg.createdAt).getTime() + messageBufferMs(cfg));
+              continue;
             }
-          } else {
-            // No reply yet -- a varied-timing follow-up, capped so this
-            // never turns into indefinite nagging. Both the cap and the
-            // wait are agent-configurable (maxFollowUps/followUpWaitTimeRange)
-            // and deliberately separate from waitTimeRange above -- a
-            // fast-paced qualification agent wants a short, consistent
-            // follow-up gap (e.g. a flat 4 minutes) that's nothing like its
-            // own reply-to-inbound delay (e.g. a randomized 4-8 minutes).
-            // Falls back to the shared waitTimeRange/MAX_FOLLOWUPS for any
-            // agent that's never set the follow-up-specific fields.
-            const maxFollowUps = Number.isFinite(cfg.maxFollowUps) ? cfg.maxFollowUps : MAX_FOLLOWUPS;
-            if ((st.followUpCount || 0) >= maxFollowUps) { st.state = "done"; }
-            else {
-              const channel = contact.email ? "email" : "sms";
-              const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name });
-              if (!result.skip && !result.escalate && result.text) {
+            if (hasNewInbound) {
+              st.lastSeenInboundAt[channel] = lastChMsg.createdAt;
+              const result = await generateAgentReply(agent, contact.id, lastChMsg.body || lastChMsg.bodyPreview || "", { autoSend: true, senderName: agent.name });
+              if (result.skip) {
+                anyChannelStillActive = true;
+                nextTimes.push(now + randomDelayMs(cfg.waitTimeRange));
+              } else if (result.escalate) {
+                st.state = "escalated";
+              } else if (result.text) {
                 await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
-                st.followUpCount = (st.followUpCount || 0) + 1;
                 st.lastActionAt = new Date().toISOString();
-                st.nextActionAt = new Date(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange)).toISOString();
-              } else {
-                st.state = "done";
+                if (result.buyingSignal) { st.state = "hot_handoff"; }
+                else {
+                  st.followUpCount[channel] = 0; // fresh reply resets this channel's own follow-up cadence
+                  anyChannelStillActive = true;
+                  nextTimes.push(now + randomDelayMs(cfg.waitTimeRange));
+                }
               }
+              continue;
             }
+            // No reply yet on this channel -- a varied-timing follow-up,
+            // capped independently per channel (maxFollowUps/
+            // followUpWaitTimeRange, falling back to waitTimeRange/
+            // MAX_FOLLOWUPS) so one channel exhausting its follow-ups never
+            // stops the other from still following up on its own cadence.
+            if ((st.followUpCount[channel] || 0) >= maxFollowUps) continue; // this channel is done; the other may not be
+            const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name });
+            if (!result.skip && !result.escalate && result.text) {
+              await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
+              st.followUpCount[channel] = (st.followUpCount[channel] || 0) + 1;
+              st.lastActionAt = new Date().toISOString();
+              anyChannelStillActive = true;
+              nextTimes.push(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange));
+            }
+          }
+          if (st.state === "waiting_reply") {
+            st.state = anyChannelStillActive ? "waiting_reply" : "done";
+            if (anyChannelStillActive) st.nextActionAt = new Date(Math.min(...nextTimes)).toISOString();
           }
         }
       } catch (err) {
