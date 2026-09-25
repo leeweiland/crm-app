@@ -201,16 +201,14 @@
       </div>
 
       <div class="tab-panel" id="tab-attribution">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Click-to-conversion attribution by source -- every tracked email/SMS/campaign link (via its <code>el=</code> tag) plus real Meta/Google ad clicks (via that platform's own tracking template) -- distinct from the Online/Gym/Combined cards at the top of Overview, which show ad spend and conversion totals. This is conversion data from this app's own tracking: how many visits each source drove, and of the contacts who opted in, how many went on to book and enroll. Each contact is credited to their EARLIEST tracked touch, even if they clicked something else later. Click any count to see the actual contacts behind it.</div>
-        <!-- No fixed/computed height here (that's what made this "too tall,
-             not on the page properly" -- a JS-measured max-height drifted
-             from the real available space on the live page's actual layout).
-             This just lives in normal page flow now; the PAGE's own
-             scrollbar handles a long table, full width, responsive to
-             whatever the window actually is. The inner div's overflow-x is
-             ONLY for a narrow viewport where the table itself is wider than
-             the screen -- it never clips vertically. -->
-        <div class="pra-panel" id="attributionTablePanel" style="padding:0">
+        <!-- Dynamic max-height (see resizeReportTablePanel below), same
+             mechanism as contacts.html's #contactsTablePanel -- recomputed
+             on window resize/tab-switch/render rather than measured once,
+             which is what made an EARLIER attempt at this "too tall, not on
+             the page properly" (a one-time measurement drifted from the
+             real available space as soon as anything above it changed
+             height). This one re-measures at every point that could move. -->
+        <div class="pra-panel" id="attributionTablePanel" style="padding:0;overflow-y:auto;overflow-x:hidden">
           <div style="overflow-x:auto">
             <table class="pra-table" style="width:100%">
               <thead><tr>
@@ -243,10 +241,8 @@
       </div>
 
       <div class="tab-panel" id="tab-adsreport">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">One row per source -- a specific Meta/Google ad, or an email/SMS/social tag -- with its ad group/campaign hierarchy where that applies, and emails/bookings/sales it drove. "Emails" are the ONLINE EMAIL and GYM EMAIL events (a new contact entering the system -- the ad platforms' Registrations completed), and "Bookings/Apps" are ONLINE BOOKING and GYM APPLICATION events (the platforms' Leads). Each event is credited to the first ad/source click in that person's own click journey. Revenue/Sales/$-per-Sale come from Hyros purchase tags only (an estimate, for contacts carrying the source tag) and read $0 for live sources until a real sales data source is connected (see Settings). Click any Emails or Bookings count to see the contacts behind it.</div>
         <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
-        <div id="adsCoverage" style="display:none;font-size:.8rem;margin-bottom:12px;padding:10px 14px;border:1px solid var(--pra-border);border-radius:8px;background:rgba(255,255,255,0.03)"></div>
-        <div class="pra-panel" id="adsReportTablePanel" style="padding:0">
+        <div class="pra-panel" id="adsReportTablePanel" style="padding:0;overflow-y:auto;overflow-x:hidden">
           <div style="overflow-x:auto">
             <table class="pra-table" style="width:100%">
               <thead><tr id="adsReportHeaderRow"></tr></thead>
@@ -272,7 +268,6 @@
       </div>
 
       <div class="tab-panel" id="tab-journeys">
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Shows every tracked touchpoint for a contact, oldest to newest -- ad/media clicks (from that platform's own tracking template or the <code>el=</code>/social shorthand tags), plus email/SMS/call/task activity.</div>
         <div class="journey-layout">
           <div class="pra-panel" style="padding:0;overflow-y:auto;max-height:75vh;max-height:75dvh">
             <div style="padding:12px"><input class="pra-input" id="journeySearch" placeholder="Search contacts..."/></div>
@@ -318,7 +313,27 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  if (btn.dataset.tab === 'attribution') resizeAttributionTablePanel();
+  if (btn.dataset.tab === 'adsreport') resizeAdsReportTablePanel();
 });
+
+// Same mechanism as contacts.html's #contactsTablePanel -- keeps the
+// pagination bar always in view instead of requiring a page-level scroll
+// past however many rows are on the current page to reach it. Recomputed
+// (not a fixed vh value) at every point the panel's own top position could
+// move: tab switch, window resize, and after each render (a Hyros note or
+// the spend-error message above the panel can change its own height).
+function resizeReportTablePanel(panelId, barId) {
+  const panel = document.getElementById(panelId);
+  const bar = document.getElementById(barId);
+  if (!panel || !bar || panel.getBoundingClientRect().width === 0) return; // tab not visible right now
+  const top = panel.getBoundingClientRect().top;
+  const available = window.innerHeight - top - bar.offsetHeight - 24;
+  panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
+}
+function resizeAttributionTablePanel() { resizeReportTablePanel('attributionTablePanel', 'attributionPaginationBar'); }
+function resizeAdsReportTablePanel() { resizeReportTablePanel('adsReportTablePanel', 'adsReportPaginationBar'); }
+window.addEventListener('resize', () => { resizeAttributionTablePanel(); resizeAdsReportTablePanel(); });
 
 // ── Shared date-range selector -- same preset list/math as ads_backend.js
 // (fetched from /api/ads/periods so both stay in sync), resolved client-
@@ -682,6 +697,7 @@ function renderAttributionTable() {
     document.getElementById('attributionPageIndicator').textContent = '';
     document.getElementById('attributionPrevPageBtn').disabled = true;
     document.getElementById('attributionNextPageBtn').disabled = true;
+    resizeAttributionTablePanel();
     return;
   }
   const { field, dir } = attributionSort;
@@ -722,6 +738,7 @@ function renderAttributionTable() {
   document.getElementById('attributionPageIndicator').textContent = `Page ${attributionPage} of ${pageCount}`;
   document.getElementById('attributionPrevPageBtn').disabled = attributionPage <= 1;
   document.getElementById('attributionNextPageBtn').disabled = attributionPage >= pageCount;
+  resizeAttributionTablePanel();
 }
 document.querySelectorAll('#tab-attribution th.sortable').forEach(th => th.addEventListener('click', () => {
   if (attributionSort.field === th.dataset.sort) attributionSort.dir *= -1;
@@ -819,16 +836,7 @@ async function loadAdsReportTable() {
   allAdsReportTotals = d.totals || null;
   adsReportPage = 1;
   if (d.spendError) msg.textContent = `Note: some ad spend may be missing (${d.spendError}).`;
-  showHyrosNote('adsHyrosNote', d.hyrosNote, document.getElementById('adsCoverage'), 'after');
-  // How much of the period's conversion events (ONLINE/GYM EMAIL, ONLINE BOOKING, GYM APPLICATION)
-  // could be tied to an ad/source click. The rest sit in the Untracked rows.
-  const cov = document.getElementById('adsCoverage');
-  if (d.coverage && (d.coverage.emails.total || d.coverage.bookings.total)) {
-    const pct = (o) => o.total ? Math.round(100 * o.tracked / o.total) : 0;
-    const e = d.coverage.emails, b = d.coverage.bookings;
-    cov.style.display = 'block';
-    cov.innerHTML = `<b>Click tracking coverage:</b> ${e.tracked} of ${e.total} Emails (${pct(e)}%) and ${b.tracked} of ${b.total} Bookings/Apps (${pct(b)}%) are tied to a click${d.coverage.inferred ? ` (${d.coverage.inferred} of those linked by timing -- the visitor who was on the form page just before the sign-up, and who loaded the thank-you page seconds after)` : ''}. The rest show as "Untracked" -- no ad click was recorded for that person (visits weren't being saved before Sep 19, so earlier days can't be recovered).`;
-  } else cov.style.display = 'none';
+  showHyrosNote('adsHyrosNote', d.hyrosNote, document.getElementById('adsReportTablePanel'), 'before');
   renderAdsReportTable();
 }
 function renderAdsReportHeader() {
@@ -879,6 +887,7 @@ function renderAdsReportTable() {
     document.getElementById('adsReportPageIndicator').textContent = '';
     document.getElementById('adsReportPrevPageBtn').disabled = true;
     document.getElementById('adsReportNextPageBtn').disabled = true;
+    resizeAdsReportTablePanel();
     return;
   }
   const { field, dir } = adsReportSort;
@@ -957,6 +966,7 @@ function renderAdsReportTable() {
   document.getElementById('adsReportPageIndicator').textContent = `Page ${adsReportPage} of ${pageCount}`;
   document.getElementById('adsReportPrevPageBtn').disabled = adsReportPage <= 1;
   document.getElementById('adsReportNextPageBtn').disabled = adsReportPage >= pageCount;
+  resizeAdsReportTablePanel();
 }
 document.getElementById('adsReportPageSizeSelect').addEventListener('change', (e) => {
   adsReportPageSize = parseInt(e.target.value, 10) || 20;
