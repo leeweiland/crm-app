@@ -71,42 +71,68 @@ function rollupStats(campaignId) {
 // throws (an individual recipient's send failure is NOT fatal -- sendEmail
 // already reports {ok:false} for that one and the loop continues, same as
 // before this change).
+// Resumable: skips anyone who already has a logged message for this
+// campaign (any status -- sent/delivered/opened/bounced all mean "already
+// contacted", never re-send that same person). This is what makes it safe
+// to call sendCampaignNow again on a campaign that's already partway sent
+// -- necessary because the loop below runs in-process with zero
+// persistence, and a deploy restarting the container mid-send kills it
+// silently, no error, no retry. Confirmed live: a real campaign got stuck
+// at "sending" for 2 days after an unrelated deploy landed mid-flight,
+// with 1035 of 1640 recipients never contacted and nothing surfacing the
+// failure. See scheduler.js's own auto-resume job, which calls this
+// exact function again on anything stuck.
+function alreadyContactedIds(campaignId) {
+  return new Set(getMessagesForSource("campaign", campaignId).map(m => m.contactId).filter(Boolean));
+}
+
 export function sendCampaignNow(campaignId) {
   const campaigns = readJson(CAMPAIGNS_FILE, []);
   const campaign = campaigns.find(c => c.id === campaignId);
   if (!campaign) return { ok: false, reason: "not_found" };
-  const recipients = resolveRecipients(campaign.recipients || {});
+  const allRecipients = resolveRecipients(campaign.recipients || {});
+  const contacted = alreadyContactedIds(campaignId);
+  const remaining = allRecipients.filter(c => !contacted.has(c.id));
   campaign.status = "sending";
-  campaign.sendProgress = { total: recipients.length, sent: 0 };
+  campaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length };
+  // Set immediately (not just at each progress checkpoint below) so the
+  // scheduler's stuck-campaign check -- which looks at how long updatedAt
+  // has been stale -- doesn't see a JUST-(re)started send as already stale
+  // and try to resume it a second time in parallel.
+  campaign.updatedAt = new Date().toISOString();
   writeJson(CAMPAIGNS_FILE, campaigns);
 
   (async () => {
     try {
-      let sent = 0;
-      for (const contact of recipients) {
+      let sentThisRun = 0;
+      for (const contact of remaining) {
         await sendEmail({
           to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
           footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
           sourceType: "campaign", sourceId: campaign.id,
         });
-        sent++;
+        sentThisRun++;
         // Every 10th (and the last one) rather than every single send --
         // this loop can run thousands of times and each write here is a
         // full CAMPAIGNS_FILE readJson+writeJson (small file, but no
         // reason to do it 20,000 times when the badge only needs to be
         // roughly live, not per-email-exact).
-        if (sent % 10 === 0 || sent === recipients.length) {
+        if (sentThisRun % 10 === 0 || sentThisRun === remaining.length) {
           const latest = readJson(CAMPAIGNS_FILE, []);
           const c = latest.find(x => x.id === campaignId);
-          if (c) { c.sendProgress = { total: recipients.length, sent }; writeJson(CAMPAIGNS_FILE, latest); }
+          if (c) {
+            c.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length + sentThisRun };
+            c.updatedAt = new Date().toISOString();
+            writeJson(CAMPAIGNS_FILE, latest);
+          }
         }
       }
       const finalCampaigns = readJson(CAMPAIGNS_FILE, []);
       const finalCampaign = finalCampaigns.find(c => c.id === campaignId);
       if (finalCampaign) {
         finalCampaign.status = "sent";
-        finalCampaign.sentAt = new Date().toISOString();
-        finalCampaign.sendProgress = { total: recipients.length, sent: recipients.length };
+        finalCampaign.sentAt = finalCampaign.sentAt || new Date().toISOString();
+        finalCampaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length };
         finalCampaign.stats = rollupStats(campaignId);
         writeJson(CAMPAIGNS_FILE, finalCampaigns);
       }
@@ -118,7 +144,7 @@ export function sendCampaignNow(campaignId) {
     }
   })();
 
-  return { ok: true, recipientCount: recipients.length };
+  return { ok: true, recipientCount: remaining.length, totalRecipients: allRecipients.length };
 }
 
 export async function handleCampaignsRequest(req, res, url) {

@@ -56,6 +56,23 @@ async function tick() {
         // the background loop even starts (e.g. a read failure).
         try { sendCampaignNow(campaign.id); } catch (e) { console.error("[scheduler] campaign send failed", campaign.id, e.message); }
       }
+      // sendCampaignNow's loop runs in-process with zero persistence -- a
+      // deploy restarting the container mid-send (this app redeploys many
+      // times a day) silently kills it, no error, no retry, status stuck
+      // at "sending" forever. Confirmed live: a real campaign froze at 605
+      // of 1640 recipients for 2 days after an unrelated deploy landed
+      // mid-flight, completely unnoticed until someone happened to look.
+      // sendCampaignNow is resumable now (skips anyone already contacted),
+      // so anything idle for STUCK_SEND_THRESHOLD_MS with no progress is
+      // safe to just call again -- and campaignNow stamps updatedAt the
+      // instant it (re)starts, so a genuinely-still-running send is never
+      // mistaken for stuck and double-resumed by the next tick.
+      const STUCK_SEND_THRESHOLD_MS = 3 * 60 * 1000;
+      const stuck = campaigns.filter(c => c.status === "sending" && c.updatedAt && Date.now() - new Date(c.updatedAt).getTime() > STUCK_SEND_THRESHOLD_MS);
+      for (const campaign of stuck) {
+        console.log(`[scheduler] resuming stuck campaign ${campaign.id} (${campaign.name}), progress was ${campaign.sendProgress?.sent}/${campaign.sendProgress?.total}`);
+        try { sendCampaignNow(campaign.id); } catch (e) { console.error("[scheduler] campaign resume failed", campaign.id, e.message); }
+      }
     });
     await timedPhase("advanceDueEnrollments", advanceDueEnrollments);
     await timedPhase("advanceDueWorkflowEnrollments", advanceDueWorkflowEnrollments);
