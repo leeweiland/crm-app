@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE } from "./auth_backend.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import { logMessage } from "./message_log.js";
-import { createCalendarEvent, deleteCalendarEvent, calendarConfigured, getEventTypes, sendBookingEmail, sendBookingSms, reminderDueMs } from "./scheduling_backend.js";
+import { createCalendarEvent, deleteCalendarEvent, calendarConfigured, reminderDueMs } from "./scheduling_backend.js";
+import { sendEmail } from "./email_backend.js";
+import { sendSms } from "./sms_backend.js";
 import { getMeetingReminderSettings } from "./integrations_backend.js";
 
 // Meetings scheduled directly from the Inbox (calendar icon on a contact's
@@ -18,6 +20,9 @@ import { getMeetingReminderSettings } from "./integrations_backend.js";
 export const MEETINGS_FILE = "crm_meetings.json";
 
 function getContact(id) { return getContactByIdFast(id); }
+function fillTemplate(tpl, vars) {
+  return String(tpl || "").replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] != null ? vars[k] : ""));
+}
 
 export async function handleMeetingsRequest(req, res, url) {
   const p = url.pathname;
@@ -105,31 +110,22 @@ export async function handleMeetingsRequest(req, res, url) {
 // ── Email/SMS reminders ─────────────────────────────────────────────────
 // Polled from the shared scheduler (scheduler.js) rather than its own
 // setInterval -- see scheduler.js's own comment on why every timed feature
-// in this app reuses the one ticker. Reuses one real event type's own
-// confirmation.email/sms content and reminders.email/sms timing wholesale
-// (via scheduling_backend.js's sendBookingEmail/sendBookingSms, the exact
-// same functions a real booking's reminders go through) instead of a
-// separate, duplicated set of timing/copy fields -- an admin edits wording
-// and cadence in exactly one place (that event type's Design page) and it
-// covers both real bookings AND ad-hoc Inbox-scheduled meetings. Which
-// event type to borrow from is set on the Extra Meeting Notifications tab
-// (scheduling.html); no event type linked means no meeting reminders send
-// at all, same as an event type with an empty reminders list today.
-// Each (meeting, reminder id) pair is recorded in meeting.remindersSent
-// once sent, so re-polling never double-sends -- same proven pattern as
-// chat-app's checkAppointmentReminders and scheduling_backend.js's own
-// sendDueBookingReminders.
+// in this app reuses the one ticker. Standalone config (Extra Meetings
+// Notifications tab, scheduling.html) -- these meetings have no event type
+// or calendar behind them to borrow settings from, and always send: an
+// empty reminders list for a channel is what turns it off, there's no
+// separate enabled/disabled flag. reminderDueMs is the one thing reused
+// from scheduling_backend.js (a generic {amount,unit} -> ms helper, same
+// shape as an event type's own reminders.email/sms). Each (meeting,
+// reminder id) pair is recorded in meeting.remindersSent once sent, so
+// re-polling never double-sends -- same proven pattern as chat-app's
+// checkAppointmentReminders and scheduling_backend.js's own sendDueBookingReminders.
 export async function checkMeetingReminders() {
-  const { linkedEventTypeId } = getMeetingReminderSettings();
-  if (!linkedEventTypeId) return;
-  const et = getEventTypes().find(e => e.id === linkedEventTypeId);
-  if (!et) return;
-  const emailReminders = et.reminders?.email || [];
-  const smsReminders = et.reminders?.sms || [];
-  if (!emailReminders.length && !smsReminders.length) return;
-
+  const cfg = getMeetingReminderSettings();
+  if (!cfg.emailReminders.length && !cfg.smsReminders.length) return;
   const meetings = readJson(MEETINGS_FILE, []).filter(m => m.status === "scheduled");
   if (!meetings.length) return;
+  const users = readJson(USERS_FILE, []);
   const now = Date.now();
   let changed = false;
 
@@ -137,35 +133,53 @@ export async function checkMeetingReminders() {
     const startMs = new Date(meeting.startISO).getTime();
     if (!startMs || startMs <= now) continue; // meeting already happened
     const contact = getContact(meeting.contactId);
-    if (!contact) continue;
+    const coach = users.find(u => u.id === meeting.userId);
+    if (!contact || !coach) continue;
     meeting.remindersSent = meeting.remindersSent || [];
     const createdMs = new Date(meeting.createdAt).getTime();
-    // sendBookingEmail/sendBookingSms only need these fields off "booking" --
-    // a meeting has no notes field of its own, so that token just resolves empty.
-    const fakeBooking = { id: meeting.id, startAt: meeting.startISO, timezone: meeting.timezone, notes: "" };
 
-    for (const reminder of emailReminders) {
+    const start = new Date(meeting.startISO);
+    const tz = meeting.timezone || cfg.timezone;
+    const dateStr = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
+    const timeStr = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+    const vars = { coachName: `${coach.first} ${coach.last}`, firstName: contact.first || "", lastName: contact.last || "", date: dateStr, time: timeStr, duration: meeting.durationMinutes };
+
+    for (const reminder of cfg.emailReminders) {
       if (meeting.remindersSent.includes(reminder.id)) continue;
       if (!contact.email) continue;
       const dueAt = startMs - reminderDueMs(reminder);
-      // Same "don't fire retroactively" rule as sendDueBookingReminders --
-      // a meeting booked same-day with a 24-hours-before reminder configured
-      // never had a real advance-notice window to fill.
+      // A reminder whose "before" window had already elapsed by the time
+      // the meeting was even scheduled (same-day, with a 24-hours-before
+      // reminder configured) never had a real advance-notice window to
+      // fill -- skip it permanently instead of firing it retroactively.
       if (dueAt < createdMs) continue;
-      if (now < dueAt) continue;
-      await sendBookingEmail(fakeBooking, et, contact, true).catch(() => {});
-      meeting.remindersSent.push(reminder.id);
-      changed = true;
+      if (now < dueAt) continue; // not due yet
+      try {
+        await sendEmail({
+          to: contact.email, subject: fillTemplate(cfg.emailReminderSubjectTemplate, vars),
+          blocks: [{ id: "b1", type: "text", html: fillTemplate(cfg.emailReminderBodyTemplate, vars) }],
+          theme: {}, footerTemplateId: null, contactId: contact.id,
+          sourceType: "meeting", sourceId: meeting.id, from: coach.email,
+        });
+        meeting.remindersSent.push(reminder.id);
+        changed = true;
+      } catch (e) {
+        console.error(`[meeting reminder] email #${reminder.id} for meeting ${meeting.id} failed:`, e.message);
+      }
     }
-    for (const reminder of smsReminders) {
+    for (const reminder of cfg.smsReminders) {
       if (meeting.remindersSent.includes(reminder.id)) continue;
       if (!contact.phone) continue;
       const dueAt = startMs - reminderDueMs(reminder);
       if (dueAt < createdMs) continue;
       if (now < dueAt) continue;
-      await sendBookingSms(fakeBooking, et, contact, true).catch(() => {});
-      meeting.remindersSent.push(reminder.id);
-      changed = true;
+      try {
+        await sendSms({ to: contact.phone, body: fillTemplate(cfg.smsReminderTemplate, vars), contactId: contact.id, sourceType: "meeting", sourceId: meeting.id });
+        meeting.remindersSent.push(reminder.id);
+        changed = true;
+      } catch (e) {
+        console.error(`[meeting reminder] sms #${reminder.id} for meeting ${meeting.id} failed:`, e.message);
+      }
     }
   }
   if (changed) writeJson(MEETINGS_FILE, meetings);

@@ -38,6 +38,22 @@
   .data-table th[data-sort]:hover { color: var(--pra-white); }
   .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
   .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
+
+  /* ── Extra Meetings Notifications -- same reminder-row/personalize pattern
+       as scheduling-editor.html's Design panel, standalone here since these
+       aren't tied to any event type. ── */
+  .ed-notif-card { background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  .ed-notif-title { font-family: var(--font-primary); font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pra-dim); margin-bottom: 4px; }
+  .ed-notif-hint { font-size: .74rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
+  .ed-sms-toolbar { margin-bottom: 8px; }
+  .ed-sms-toolbar select { font-size: .78rem; padding: 5px 8px; }
+  .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .reminder-row input[type=number] { width: 80px; flex-shrink: 0; }
+  .reminder-row select { width: 130px; flex-shrink: 0; }
+  .reminder-row span { font-size: .8rem; color: var(--pra-dim); white-space: nowrap; }
+  .reminder-del { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 2px 6px; flex-shrink: 0; }
+  .reminder-del:hover { color: var(--pra-red); }
+  .reminder-empty { font-size: .78rem; color: var(--pra-dim); margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -90,15 +106,34 @@
         <button class="pra-btn" id="newCalendarBtn" style="margin-top:6px">+ New Calendar</button>
       </div>
 
-      <!-- ── Extra Meetings Notifications ── -->
-      <div class="tab-panel pra-panel" id="tab-meetings" style="padding:22px;max-width:600px">
-        <div class="pra-h2" style="margin-bottom:6px">Extra Meetings Notifications</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Meetings scheduled from the Inbox's calendar icon (each coach's own Zoom/calendar, per contact) aren't tied to any event type -- pick one below and its Confirmation/Reminders settings (wording, timing, instant-send toggles) get reused for these too. One place to edit the copy and cadence instead of two.</div>
+      <!-- ── Extra Meetings Notifications -- standalone, not borrowed from any
+           event type: meetings scheduled from the Inbox's calendar icon
+           (each coach's own Zoom/calendar, per contact) have no calendar or
+           booking behind them at all. Reminders just fire off whatever's
+           configured below -- no on/off switch, an empty list is what turns
+           a channel off. ── -->
+      <div class="tab-panel" id="tab-meetings" style="max-width:700px">
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Reminders for meetings scheduled from the Inbox's calendar icon (each coach's own Zoom/calendar, per contact) -- these aren't tied to any event type or calendar. Available merge tags: <code>{{firstName}}</code> <code>{{lastName}}</code> <code>{{coachName}}</code> <code>{{date}}</code> <code>{{time}}</code> <code>{{duration}}</code>.</div>
 
-        <div class="field"><label class="pra-label">Use reminder settings from</label>
-          <select class="pra-select" id="meetingLinkedEventType"><option value="">Don't send meeting reminders</option></select>
+        <div class="ed-notif-card">
+          <div class="ed-notif-title">Email Reminders</div>
+          <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="meetingEmailSubject" placeholder="Reminder: your meeting with {{coachName}} is coming up"/></div>
+          <div class="ed-sms-toolbar"><select class="pra-select" id="meetingEmailPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+          <div class="field"><label class="pra-label">Body (HTML)</label><textarea class="pra-input" id="meetingEmailBody" rows="4" style="resize:vertical"></textarea></div>
+          <div id="meetingEmailRemindersList"></div>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addMeetingEmailReminderBtn">+ Add Email Reminder</button>
         </div>
-        <div class="pra-muted" style="font-size:.78rem;margin-bottom:16px" id="meetingLinkedEventTypeHint"></div>
+
+        <div class="ed-notif-card">
+          <div class="ed-notif-title">SMS Reminders</div>
+          <div class="pra-muted" style="font-size:.74rem;margin-bottom:14px">Only sent if the contact has a phone number.</div>
+          <div class="ed-sms-toolbar"><select class="pra-select" id="meetingSmsPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+          <textarea class="pra-input" id="meetingSmsBody" rows="2" style="resize:vertical;margin-bottom:14px"></textarea>
+          <div id="meetingSmsRemindersList"></div>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addMeetingSmsReminderBtn">+ Add SMS Reminder</button>
+        </div>
+
+        <div class="field"><label class="pra-label">Timezone used for date/time in reminders</label><input class="pra-input" id="meetingTimezone" placeholder="America/Anchorage"/></div>
 
         <button class="pra-btn" id="saveMeetingRemindersBtn">Save</button>
         <div class="pra-muted" id="meetingRemindersSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
@@ -389,33 +424,88 @@ document.getElementById('saveEtBtn').onclick = async () => {
   location.href = '/scheduling-editor.html?id=' + d.eventType.id;
 };
 
-// ── Extra Meetings Notifications -- meetings_backend.js's checkMeetingReminders
-// (polled on the shared scheduler tick) reuses whichever event type is
-// linked here for its confirmation/reminders content and timing, instead of
-// this tab carrying its own separate copy of those same settings. ──────────
-async function loadMeetingReminderSettings() {
-  const [cfgRes, etRes] = await Promise.all([
-    fetch('/api/integrations/meeting-reminders'),
-    fetch('/api/scheduling/admin/event-types'),
-  ]);
-  const cfg = cfgRes.ok ? await cfgRes.json() : { linkedEventTypeId: null };
-  const eventTypes = etRes.ok ? (await etRes.json()).eventTypes : [];
-  const sel = document.getElementById('meetingLinkedEventType');
-  sel.innerHTML = '<option value="">Don\'t send meeting reminders</option>' +
-    eventTypes.map(et => `<option value="${et.id}" ${cfg.linkedEventTypeId === et.id ? 'selected' : ''}>${escapeHtml(et.name)}</option>`).join('');
-  const hint = document.getElementById('meetingLinkedEventTypeHint');
-  hint.innerHTML = cfg.linkedEventTypeId && eventTypes.some(et => et.id === cfg.linkedEventTypeId)
-    ? `Edit the actual wording/timing on <a class="pra-link" href="/scheduling-editor.html?id=${cfg.linkedEventTypeId}">that event type's Design page</a>.`
-    : '';
+// ── Extra Meetings Notifications -- fully standalone (no event type/calendar
+// behind these at all): meetings_backend.js's checkMeetingReminders polls
+// this config directly. An empty reminders list for a channel is what turns
+// it off -- no separate enabled/disabled switch to also keep in sync.
+let meetingCfg = null;
+const MEETING_PERSONALIZE_OPTIONS = [
+  { value: '{{firstName}}', label: 'First name' },
+  { value: '{{lastName}}', label: 'Last name' },
+  { value: '{{coachName}}', label: 'Coach name' },
+  { value: '{{date}}', label: 'Date' },
+  { value: '{{time}}', label: 'Time' },
+  { value: '{{duration}}', label: 'Duration (min)' },
+];
+function wirePersonalizeDropdown(selectId, targetId) {
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = '<option value="">Personalize...</option>' + MEETING_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  sel.addEventListener('change', (e) => {
+    const token = e.target.value;
+    e.target.value = '';
+    if (!token) return;
+    const ta = document.getElementById(targetId);
+    const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = start + token.length;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
-document.getElementById('meetingLinkedEventType').addEventListener('change', () => {
-  const hint = document.getElementById('meetingLinkedEventTypeHint');
-  const sel = document.getElementById('meetingLinkedEventType');
-  hint.innerHTML = sel.value ? `Edit the actual wording/timing on <a class="pra-link" href="/scheduling-editor.html?id=${sel.value}">that event type's Design page</a>.` : '';
-});
+wirePersonalizeDropdown('meetingEmailPersonalize', 'meetingEmailBody');
+wirePersonalizeDropdown('meetingSmsPersonalize', 'meetingSmsBody');
+
+const MEETING_REMINDER_UNITS = ['minutes', 'hours', 'days'];
+function meetingReminderRowHtml(rem, i, prefix) {
+  return `
+    <div class="reminder-row">
+      <input class="pra-input" type="number" min="1" data-mrem-amount="${prefix}-${i}" value="${rem.amount}"/>
+      <select class="pra-select" data-mrem-unit="${prefix}-${i}">
+        ${MEETING_REMINDER_UNITS.map(u => `<option value="${u}" ${rem.unit === u ? 'selected' : ''}>${u}</option>`).join('')}
+      </select>
+      <span>before the meeting</span>
+      <button class="reminder-del" data-mrem-del="${prefix}-${i}" title="Delete reminder">&times;</button>
+    </div>
+  `;
+}
+function renderMeetingReminderList(channel, listId, emptyMsg) {
+  const list = document.getElementById(listId);
+  const arr = meetingCfg[channel + 'Reminders'];
+  list.innerHTML = arr.length ? arr.map((r, i) => meetingReminderRowHtml(r, i, channel)).join('') : `<div class="reminder-empty">${emptyMsg}</div>`;
+  list.querySelectorAll('[data-mrem-amount]').forEach(el => el.oninput = () => { arr[+el.dataset.mremAmount.split('-')[1]].amount = Number(el.value) || 1; });
+  list.querySelectorAll('[data-mrem-unit]').forEach(el => el.onchange = () => { arr[+el.dataset.mremUnit.split('-')[1]].unit = el.value; });
+  list.querySelectorAll('[data-mrem-del]').forEach(el => el.onclick = () => { arr.splice(+el.dataset.mremDel.split('-')[1], 1); renderMeetingReminderList(channel, listId, emptyMsg); });
+}
+document.getElementById('addMeetingEmailReminderBtn').onclick = () => {
+  meetingCfg.emailReminders.push({ id: crypto.randomUUID(), amount: 24, unit: 'hours' });
+  renderMeetingReminderList('email', 'meetingEmailRemindersList', 'No email reminders yet.');
+};
+document.getElementById('addMeetingSmsReminderBtn').onclick = () => {
+  meetingCfg.smsReminders.push({ id: crypto.randomUUID(), amount: 1, unit: 'hours' });
+  renderMeetingReminderList('sms', 'meetingSmsRemindersList', 'No SMS reminders yet.');
+};
+
+async function loadMeetingReminderSettings() {
+  const r = await fetch('/api/integrations/meeting-reminders');
+  meetingCfg = r.ok ? await r.json() : null;
+  meetingCfg = {
+    emailReminderSubjectTemplate: '', emailReminderBodyTemplate: '', smsReminderTemplate: '',
+    timezone: 'America/Anchorage', emailReminders: [], smsReminders: [],
+    ...(meetingCfg || {}),
+  };
+  document.getElementById('meetingEmailSubject').value = meetingCfg.emailReminderSubjectTemplate;
+  document.getElementById('meetingEmailBody').value = meetingCfg.emailReminderBodyTemplate;
+  document.getElementById('meetingSmsBody').value = meetingCfg.smsReminderTemplate;
+  document.getElementById('meetingTimezone').value = meetingCfg.timezone;
+  renderMeetingReminderList('email', 'meetingEmailRemindersList', 'No email reminders yet.');
+  renderMeetingReminderList('sms', 'meetingSmsRemindersList', 'No SMS reminders yet.');
+}
 document.getElementById('saveMeetingRemindersBtn').onclick = async () => {
-  const body = { linkedEventTypeId: document.getElementById('meetingLinkedEventType').value || null };
-  const r = await fetch('/api/integrations/meeting-reminders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  meetingCfg.emailReminderSubjectTemplate = document.getElementById('meetingEmailSubject').value.trim();
+  meetingCfg.emailReminderBodyTemplate = document.getElementById('meetingEmailBody').value.trim();
+  meetingCfg.smsReminderTemplate = document.getElementById('meetingSmsBody').value.trim();
+  meetingCfg.timezone = document.getElementById('meetingTimezone').value.trim() || 'America/Anchorage';
+  const r = await fetch('/api/integrations/meeting-reminders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(meetingCfg) });
   document.getElementById('meetingRemindersSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
   if (r.ok) loadMeetingReminderSettings();
 };

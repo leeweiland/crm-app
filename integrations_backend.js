@@ -124,17 +124,28 @@ export function getNavPermissions() {
 }
 
 // Reminders for Inbox-scheduled meetings (see meetings_backend.js, which
-// polls these on the shared scheduler tick) used to carry their own
-// separate timing/copy/timezone fields, duplicating what an event type's
-// Design page already has. Now this just POINTS at one real event type --
-// its confirmation.email/sms content and reminders.email/sms timing are
-// reused verbatim (via scheduling_backend.js's sendBookingEmail/sendBookingSms),
-// so there's exactly one place to edit meeting-reminder wording/cadence,
-// not two. One shared org-wide config, not per-user, same reasoning as
-// every other integrations setting here.
+// polls these on the shared scheduler tick) -- standalone, not tied to any
+// event type or calendar: these meetings have neither. emailReminders/
+// smsReminders are lists of {id, amount, unit}, same shape as an event
+// type's own reminders.email/sms -- an empty list is what turns a channel
+// off, no separate enabled/disabled flag to keep in sync with it. One
+// shared org-wide config, not per-user, same reasoning as every other
+// integrations setting here.
+const DEFAULT_MEETING_REMINDERS = {
+  timezone: "America/Anchorage",
+  emailReminderSubjectTemplate: "Reminder: your meeting with {{coachName}} is coming up",
+  emailReminderBodyTemplate: "Hi {{firstName}},<br><br>Just a reminder — your meeting with {{coachName}} is <strong>{{date}} at {{time}}</strong> ({{duration}} min).",
+  smsReminderTemplate: "Reminder: your meeting with {{coachName}} is {{date}} at {{time}} ({{duration}} min).",
+  emailReminders: [{ id: "default-email-1440", amount: 24, unit: "hours" }, { id: "default-email-60", amount: 60, unit: "minutes" }],
+  smsReminders: [{ id: "default-sms-60", amount: 60, unit: "minutes" }],
+};
 export function getMeetingReminderSettings() {
   const stored = readSettings().meetingReminders || {};
-  return { linkedEventTypeId: stored.linkedEventTypeId || null };
+  return {
+    ...DEFAULT_MEETING_REMINDERS, ...stored,
+    emailReminders: Array.isArray(stored.emailReminders) ? stored.emailReminders : DEFAULT_MEETING_REMINDERS.emailReminders,
+    smsReminders: Array.isArray(stored.smsReminders) ? stored.smsReminders : DEFAULT_MEETING_REMINDERS.smsReminders,
+  };
 }
 
 // A reply CONTAINING (not being exactly) one of these words moves the
@@ -380,8 +391,22 @@ export async function handleIntegrationsRequest(req, res, url) {
   if (p === "/api/integrations/meeting-reminders" && req.method === "POST") {
     const body = await readJsonBody(req);
     const all = readSettings();
-    all.meetingReminders = all.meetingReminders || {};
-    if ("linkedEventTypeId" in body) all.meetingReminders.linkedEventTypeId = body.linkedEventTypeId || null;
+    const cleanReminders = (arr) => (Array.isArray(arr) ? arr : [])
+      .map(r => ({ id: String(r.id || ""), amount: Number(r.amount), unit: r.unit }))
+      .filter(r => r.id && Number.isFinite(r.amount) && r.amount > 0 && ["minutes", "hours", "days"].includes(r.unit));
+    // Written as a fresh object, not merged onto whatever's already stored --
+    // this setting has changed shape a couple times; merging would leave old
+    // now-unused keys (an earlier enabled/minutesBefore or linkedEventTypeId
+    // design) sitting in the file forever even though nothing reads them.
+    const current = getMeetingReminderSettings();
+    all.meetingReminders = {
+      timezone: "timezone" in body ? String(body.timezone) : current.timezone,
+      emailReminderSubjectTemplate: "emailReminderSubjectTemplate" in body ? String(body.emailReminderSubjectTemplate) : current.emailReminderSubjectTemplate,
+      emailReminderBodyTemplate: "emailReminderBodyTemplate" in body ? String(body.emailReminderBodyTemplate) : current.emailReminderBodyTemplate,
+      smsReminderTemplate: "smsReminderTemplate" in body ? String(body.smsReminderTemplate) : current.smsReminderTemplate,
+      emailReminders: "emailReminders" in body ? cleanReminders(body.emailReminders) : current.emailReminders,
+      smsReminders: "smsReminders" in body ? cleanReminders(body.smsReminders) : current.smsReminders,
+    };
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true, ...getMeetingReminderSettings() });
   }
