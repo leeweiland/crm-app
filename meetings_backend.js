@@ -6,6 +6,7 @@ import { createCalendarEvent, deleteCalendarEvent, calendarConfigured, reminderD
 import { sendEmail } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { getMeetingReminderSettings } from "./integrations_backend.js";
+import { resolveContactTimezone } from "./contact_timezone.js";
 
 // Meetings scheduled directly from the Inbox (calendar icon on a contact's
 // chat panel) -- distinct from scheduling_backend.js's self-serve Calendly-
@@ -139,7 +140,14 @@ export async function checkMeetingReminders() {
     const createdMs = new Date(meeting.createdAt).getTime();
 
     const start = new Date(meeting.startISO);
-    const tz = meeting.timezone || cfg.timezone;
+    // Contact's own timezone (inferred from their phone number) wins when
+    // available and enabled -- "today at 3pm" should read as 3pm where THEY
+    // are, not wherever this org-wide fallback happens to be set. Falls back
+    // to the meeting's own timezone (set from whichever the scheduling coach
+    // was in), then the fixed setting, same order a missing contact tz has
+    // always degraded through.
+    const contactTz = cfg.useContactTimezone ? resolveContactTimezone(contact.phone) : null;
+    const tz = contactTz?.tz || meeting.timezone || cfg.timezone;
     const dateStr = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: tz });
     const timeStr = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
     const vars = { coachName: `${coach.first} ${coach.last}`, firstName: contact.first || "", lastName: contact.last || "", date: dateStr, time: timeStr, duration: meeting.durationMinutes };
@@ -155,10 +163,15 @@ export async function checkMeetingReminders() {
       if (dueAt < createdMs) continue;
       if (now < dueAt) continue; // not due yet
       try {
+        // Same customBlocks pattern as scheduling_backend.js's sendBookingEmail
+        // -- fill the {{tokens}} into each text block's html before it goes
+        // through the block renderer, so the visual email creator's content
+        // (images/buttons alongside text) survives, not just a plain string.
+        const blocks = (cfg.emailBlocks || []).map(b => (b.type === "text" && b.html) ? { ...b, html: fillTemplate(b.html, vars) } : b);
         await sendEmail({
           to: contact.email, subject: fillTemplate(cfg.emailReminderSubjectTemplate, vars),
-          blocks: [{ id: "b1", type: "text", html: fillTemplate(cfg.emailReminderBodyTemplate, vars) }],
-          theme: {}, footerTemplateId: null, contactId: contact.id,
+          previewText: fillTemplate(cfg.emailPreviewTextTemplate, vars) || undefined,
+          blocks, theme: cfg.emailTheme || {}, footerTemplateId: cfg.emailFooterTemplateId || null, contactId: contact.id,
           sourceType: "meeting", sourceId: meeting.id, from: coach.email,
         });
         meeting.remindersSent.push(reminder.id);

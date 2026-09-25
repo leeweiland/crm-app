@@ -47,6 +47,11 @@
   .ed-notif-hint { font-size: .74rem; color: var(--pra-dim); margin-bottom: 14px; line-height: 1.5; }
   .ed-sms-toolbar { margin-bottom: 8px; }
   .ed-sms-toolbar select { font-size: .78rem; padding: 5px 8px; }
+  .ed-notif-email-layout { display: grid; grid-template-columns: 1fr 220px; gap: 20px; align-items: start; margin-bottom: 14px; }
+  .ed-notif-email-main .field { margin-bottom: 12px; }
+  @media (max-width: 1200px) { .ed-notif-email-layout { grid-template-columns: 1fr; } }
+  .ed-test-send-row { display: flex; gap: 8px; margin-top: 12px; }
+  .ed-test-send-row input { flex: 1; }
   .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .reminder-row input[type=number] { width: 80px; flex-shrink: 0; }
   .reminder-row select { width: 130px; flex-shrink: 0; }
@@ -117,11 +122,23 @@
 
         <div class="ed-notif-card">
           <div class="ed-notif-title">Email Reminders</div>
-          <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="meetingEmailSubject" placeholder="Reminder: your meeting with {{coachName}} is coming up"/></div>
-          <div class="ed-sms-toolbar"><select class="pra-select" id="meetingEmailPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
-          <div class="field"><label class="pra-label">Body (HTML)</label><textarea class="pra-input" id="meetingEmailBody" rows="4" style="resize:vertical"></textarea></div>
+          <div class="ed-notif-email-layout">
+            <div class="ed-notif-email-main">
+              <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="meetingEmailSubject" placeholder="Reminder: your meeting with {{coachName}} is coming up"/></div>
+              <div class="field"><label class="pra-label">Preview text</label><input class="pra-input" id="meetingEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/></div>
+              <div id="meetingEmailEditorRoot"></div>
+            </div>
+            <div class="ed-notif-email-sidebar">
+              <div class="pra-label" style="margin-bottom:8px">Footer</div>
+              <select class="pra-select" id="meetingEmailFooter"><option value="">Default</option></select>
+            </div>
+          </div>
           <div id="meetingEmailRemindersList"></div>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addMeetingEmailReminderBtn">+ Add Email Reminder</button>
+          <div class="ed-test-send-row">
+            <input class="pra-input" id="meetingEmailTestTo" placeholder="you@email.com"/>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="meetingEmailTestBtn">Send Test</button>
+          </div>
         </div>
 
         <div class="ed-notif-card">
@@ -131,9 +148,17 @@
           <textarea class="pra-input" id="meetingSmsBody" rows="2" style="resize:vertical;margin-bottom:14px"></textarea>
           <div id="meetingSmsRemindersList"></div>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addMeetingSmsReminderBtn">+ Add SMS Reminder</button>
+          <div class="ed-test-send-row">
+            <input class="pra-input" id="meetingSmsTestTo" placeholder="+19075551234"/>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="meetingSmsTestBtn">Send Test</button>
+          </div>
         </div>
 
-        <div class="field"><label class="pra-label">Timezone used for date/time in reminders</label><input class="pra-input" id="meetingTimezone" placeholder="America/Anchorage"/></div>
+        <div class="field" style="display:flex;align-items:center;gap:8px;cursor:pointer" id="meetingUseContactTzRow">
+          <div class="toggle-switch" id="meetingUseContactTzToggle"></div>
+          <label for="meetingUseContactTzToggle" style="font-size:.82rem">Use each contact's own timezone when we can tell it from their phone number</label>
+        </div>
+        <div class="field"><label class="pra-label">Fallback timezone (used when a contact's own can't be determined, or the option above is off)</label><input class="pra-input" id="meetingTimezone" placeholder="America/Anchorage"/></div>
 
         <button class="pra-btn" id="saveMeetingRemindersBtn">Save</button>
         <div class="pra-muted" id="meetingRemindersSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
@@ -159,6 +184,7 @@
 
 <script src="/crm-nav.js"></script>
 <script src="/column-resize.js"></script>
+<script src="/block-editor-client.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtWhen(iso) { return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }); }
@@ -428,7 +454,7 @@ document.getElementById('saveEtBtn').onclick = async () => {
 // behind these at all): meetings_backend.js's checkMeetingReminders polls
 // this config directly. An empty reminders list for a channel is what turns
 // it off -- no separate enabled/disabled switch to also keep in sync.
-let meetingCfg = null;
+let meetingCfg = null, meetingEmailEditor = null, meetingAllFooters = [];
 const MEETING_PERSONALIZE_OPTIONS = [
   { value: '{{firstName}}', label: 'First name' },
   { value: '{{lastName}}', label: 'Last name' },
@@ -437,6 +463,15 @@ const MEETING_PERSONALIZE_OPTIONS = [
   { value: '{{time}}', label: 'Time' },
   { value: '{{duration}}', label: 'Duration (min)' },
 ];
+// Same fillTemplate() as meetings_backend.js -- used client-side only to
+// build a realistic Send Test preview with sample values, never saved.
+function fillMeetingTemplate(tpl, vars) {
+  return String(tpl || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] != null ? vars[k] : ''));
+}
+const MEETING_TEST_SAMPLE_VARS = { coachName: 'Coach Name', firstName: 'Alex', lastName: 'Athlete', date: 'Thursday, January 1', time: '3:00 PM', duration: 30 };
+// SMS stays a plain textarea (same as Confirmation SMS elsewhere) -- the
+// email side's Personalize control is the block editor's own built-in one
+// (extraPersonalizeOptions below), not a second dropdown here.
 function wirePersonalizeDropdown(selectId, targetId) {
   const sel = document.getElementById(selectId);
   sel.innerHTML = '<option value="">Personalize...</option>' + MEETING_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
@@ -452,8 +487,44 @@ function wirePersonalizeDropdown(selectId, targetId) {
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
-wirePersonalizeDropdown('meetingEmailPersonalize', 'meetingEmailBody');
 wirePersonalizeDropdown('meetingSmsPersonalize', 'meetingSmsBody');
+
+document.getElementById('meetingUseContactTzToggle').addEventListener('click', (e) => {
+  meetingCfg.useContactTimezone = e.target.classList.toggle('on');
+});
+
+function meetingCurrentFooter() {
+  const sel = document.getElementById('meetingEmailFooter');
+  return meetingAllFooters.find(f => f.id === sel.value) || meetingAllFooters.find(f => f.isDefault) || null;
+}
+document.getElementById('meetingEmailFooter').addEventListener('change', () => {
+  meetingCfg.emailFooterTemplateId = document.getElementById('meetingEmailFooter').value || null;
+  meetingEmailEditor.setFooter(meetingCurrentFooter());
+});
+document.getElementById('meetingEmailTestBtn').onclick = async () => {
+  const to = document.getElementById('meetingEmailTestTo').value.trim();
+  if (!to) return;
+  const state = meetingEmailEditor.getState();
+  const blocks = (state.blocks || []).map(b => (b.type === 'text' && b.html) ? { ...b, html: fillMeetingTemplate(b.html, MEETING_TEST_SAMPLE_VARS) } : b);
+  const r = await fetch('/api/email/test-send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to, subject: '[TEST] ' + fillMeetingTemplate(document.getElementById('meetingEmailSubject').value, MEETING_TEST_SAMPLE_VARS),
+      previewText: fillMeetingTemplate(document.getElementById('meetingEmailPreviewText').value, MEETING_TEST_SAMPLE_VARS),
+      blocks, theme: state.theme, footerTemplateId: meetingCfg.emailFooterTemplateId,
+    }),
+  });
+  const d = await r.json().catch(() => ({}));
+  showToast(r.ok ? 'Test sent' : (d.error || 'Test send failed'), !r.ok);
+};
+document.getElementById('meetingSmsTestBtn').onclick = async () => {
+  const to = document.getElementById('meetingSmsTestTo').value.trim();
+  if (!to) return;
+  const body = '[TEST] ' + fillMeetingTemplate(document.getElementById('meetingSmsBody').value, MEETING_TEST_SAMPLE_VARS);
+  const r = await fetch('/api/sms/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body }) });
+  const d = await r.json().catch(() => ({}));
+  showToast(r.ok ? 'Test sent' : (d.error || 'Test send failed'), !r.ok);
+};
 
 const MEETING_REMINDER_UNITS = ['minutes', 'hours', 'days'];
 function meetingReminderRowHtml(rem, i, prefix) {
@@ -486,23 +557,45 @@ document.getElementById('addMeetingSmsReminderBtn').onclick = () => {
 };
 
 async function loadMeetingReminderSettings() {
-  const r = await fetch('/api/integrations/meeting-reminders');
-  meetingCfg = r.ok ? await r.json() : null;
+  const [cfgRes, footersRes] = await Promise.all([
+    fetch('/api/integrations/meeting-reminders'),
+    fetch('/api/footer-templates'),
+  ]);
+  meetingCfg = cfgRes.ok ? await cfgRes.json() : null;
   meetingCfg = {
-    emailReminderSubjectTemplate: '', emailReminderBodyTemplate: '', smsReminderTemplate: '',
-    timezone: 'America/Anchorage', emailReminders: [], smsReminders: [],
+    emailReminderSubjectTemplate: '', emailPreviewTextTemplate: '', emailBlocks: [], emailTheme: {}, emailFooterTemplateId: null,
+    smsReminderTemplate: '', timezone: 'America/Anchorage', useContactTimezone: true, emailReminders: [], smsReminders: [],
     ...(meetingCfg || {}),
   };
+  meetingAllFooters = footersRes.ok ? (await footersRes.json()).templates : [];
+
   document.getElementById('meetingEmailSubject').value = meetingCfg.emailReminderSubjectTemplate;
-  document.getElementById('meetingEmailBody').value = meetingCfg.emailReminderBodyTemplate;
+  document.getElementById('meetingEmailPreviewText').value = meetingCfg.emailPreviewTextTemplate;
   document.getElementById('meetingSmsBody').value = meetingCfg.smsReminderTemplate;
   document.getElementById('meetingTimezone').value = meetingCfg.timezone;
+  document.getElementById('meetingUseContactTzToggle').classList.toggle('on', meetingCfg.useContactTimezone !== false);
+
+  const footerSel = document.getElementById('meetingEmailFooter');
+  footerSel.innerHTML = '<option value="">Default</option>' + meetingAllFooters.map(f => `<option value="${f.id}" ${meetingCfg.emailFooterTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+
+  const root = document.getElementById('meetingEmailEditorRoot');
+  root.innerHTML = '';
+  meetingEmailEditor = BlockEditor.init(
+    root, { blocks: meetingCfg.emailBlocks, theme: meetingCfg.emailTheme },
+    () => {}, () => {},
+    { extraPersonalizeOptions: MEETING_PERSONALIZE_OPTIONS }
+  );
+  meetingEmailEditor.setFooter(meetingCurrentFooter());
+
   renderMeetingReminderList('email', 'meetingEmailRemindersList', 'No email reminders yet.');
   renderMeetingReminderList('sms', 'meetingSmsRemindersList', 'No SMS reminders yet.');
 }
 document.getElementById('saveMeetingRemindersBtn').onclick = async () => {
+  const state = meetingEmailEditor.getState();
+  meetingCfg.emailBlocks = state.blocks;
+  meetingCfg.emailTheme = state.theme;
   meetingCfg.emailReminderSubjectTemplate = document.getElementById('meetingEmailSubject').value.trim();
-  meetingCfg.emailReminderBodyTemplate = document.getElementById('meetingEmailBody').value.trim();
+  meetingCfg.emailPreviewTextTemplate = document.getElementById('meetingEmailPreviewText').value.trim();
   meetingCfg.smsReminderTemplate = document.getElementById('meetingSmsBody').value.trim();
   meetingCfg.timezone = document.getElementById('meetingTimezone').value.trim() || 'America/Anchorage';
   const r = await fetch('/api/integrations/meeting-reminders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(meetingCfg) });

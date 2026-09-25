@@ -132,9 +132,21 @@ export function getNavPermissions() {
 // shared org-wide config, not per-user, same reasoning as every other
 // integrations setting here.
 const DEFAULT_MEETING_REMINDERS = {
+  // Fallback only -- used when useContactTimezone is off, or on but no
+  // timezone could be inferred for that particular contact (no phone, or
+  // one contact_timezone.js can't resolve).
   timezone: "America/Anchorage",
+  // On by default: contact_timezone.js infers a real timezone from most
+  // US/Canada/Caribbean phone numbers (and a good chunk of international
+  // ones) for free, off data already sitting on the contact -- reminders
+  // read as "today at 3pm" in the contact's own afternoon instead of
+  // whoever set up this page's.
+  useContactTimezone: true,
   emailReminderSubjectTemplate: "Reminder: your meeting with {{coachName}} is coming up",
-  emailReminderBodyTemplate: "Hi {{firstName}},<br><br>Just a reminder — your meeting with {{coachName}} is <strong>{{date}} at {{time}}</strong> ({{duration}} min).",
+  emailPreviewTextTemplate: "",
+  emailBlocks: [{ id: "b1", type: "text", html: "Hi {{firstName}},<br><br>Just a reminder — your meeting with {{coachName}} is <strong>{{date}} at {{time}}</strong> ({{duration}} min)." }],
+  emailTheme: {},
+  emailFooterTemplateId: null,
   smsReminderTemplate: "Reminder: your meeting with {{coachName}} is {{date}} at {{time}} ({{duration}} min).",
   emailReminders: [{ id: "default-email-1440", amount: 24, unit: "hours" }, { id: "default-email-60", amount: 60, unit: "minutes" }],
   smsReminders: [{ id: "default-sms-60", amount: 60, unit: "minutes" }],
@@ -143,6 +155,7 @@ export function getMeetingReminderSettings() {
   const stored = readSettings().meetingReminders || {};
   return {
     ...DEFAULT_MEETING_REMINDERS, ...stored,
+    emailBlocks: Array.isArray(stored.emailBlocks) && stored.emailBlocks.length ? stored.emailBlocks : DEFAULT_MEETING_REMINDERS.emailBlocks,
     emailReminders: Array.isArray(stored.emailReminders) ? stored.emailReminders : DEFAULT_MEETING_REMINDERS.emailReminders,
     smsReminders: Array.isArray(stored.smsReminders) ? stored.smsReminders : DEFAULT_MEETING_REMINDERS.smsReminders,
   };
@@ -401,8 +414,12 @@ export async function handleIntegrationsRequest(req, res, url) {
     const current = getMeetingReminderSettings();
     all.meetingReminders = {
       timezone: "timezone" in body ? String(body.timezone) : current.timezone,
+      useContactTimezone: "useContactTimezone" in body ? !!body.useContactTimezone : current.useContactTimezone,
       emailReminderSubjectTemplate: "emailReminderSubjectTemplate" in body ? String(body.emailReminderSubjectTemplate) : current.emailReminderSubjectTemplate,
-      emailReminderBodyTemplate: "emailReminderBodyTemplate" in body ? String(body.emailReminderBodyTemplate) : current.emailReminderBodyTemplate,
+      emailPreviewTextTemplate: "emailPreviewTextTemplate" in body ? String(body.emailPreviewTextTemplate) : current.emailPreviewTextTemplate,
+      emailBlocks: Array.isArray(body.emailBlocks) ? body.emailBlocks : current.emailBlocks,
+      emailTheme: body.emailTheme && typeof body.emailTheme === "object" ? body.emailTheme : current.emailTheme,
+      emailFooterTemplateId: "emailFooterTemplateId" in body ? (body.emailFooterTemplateId || null) : current.emailFooterTemplateId,
       smsReminderTemplate: "smsReminderTemplate" in body ? String(body.smsReminderTemplate) : current.smsReminderTemplate,
       emailReminders: "emailReminders" in body ? cleanReminders(body.emailReminders) : current.emailReminders,
       smsReminders: "smsReminders" in body ? cleanReminders(body.smsReminders) : current.smsReminders,
