@@ -50,6 +50,12 @@
   .ed-notif-email-layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; align-items: start; margin-bottom: 14px; }
   .ed-notif-email-main .field { margin-bottom: 12px; }
   @media (max-width: 900px) { .ed-notif-email-layout { grid-template-columns: 1fr; } }
+  /* Keeps Subject/Preview text in view while scrolling the block editor
+     below, same as campaign-builder.html's .mobile-sticky-header pinning
+     its own subject/preview -- offset below THIS page's own nav header
+     (shared across all 4 Calendars tabs, so it can't hold per-tab fields
+     itself) via --meet-header-h, synced from that header's real height. */
+  .meet-email-sticky { position: sticky; top: var(--meet-header-h, 90px); z-index: 15; background: var(--pra-panel-2); margin: -18px -18px 14px; padding: 18px 18px 14px; border-radius: 10px 10px 0 0; }
   .ed-test-send-row { display: flex; gap: 8px; margin-top: 12px; }
   .ed-test-send-row input { flex: 1; }
   .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -121,11 +127,13 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px;max-width:700px">Reminders for meetings scheduled from the Inbox's calendar icon (each coach's own Zoom/calendar, per contact) -- these aren't tied to any event type or calendar. Available merge tags: <code>{{firstName}}</code> <code>{{lastName}}</code> <code>{{coachName}}</code> <code>{{date}}</code> <code>{{time}}</code> <code>{{duration}}</code>.</div>
 
         <div class="ed-notif-card">
-          <div class="ed-notif-title">Email Reminders</div>
+          <div class="meet-email-sticky">
+            <div class="ed-notif-title">Email Reminders</div>
+            <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="meetingEmailSubject" placeholder="Reminder: your meeting with {{coachName}} is coming up"/></div>
+            <div class="field" style="margin-bottom:0"><label class="pra-label">Preview text</label><input class="pra-input" id="meetingEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/></div>
+          </div>
           <div class="ed-notif-email-layout">
             <div class="ed-notif-email-main">
-              <div class="field"><label class="pra-label">Subject</label><input class="pra-input" id="meetingEmailSubject" placeholder="Reminder: your meeting with {{coachName}} is coming up"/></div>
-              <div class="field"><label class="pra-label">Preview text</label><input class="pra-input" id="meetingEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/></div>
               <div id="meetingEmailEditorRoot"></div>
             </div>
             <div class="ed-notif-email-sidebar">
@@ -614,6 +622,15 @@ document.getElementById('saveMeetingRemindersBtn').onclick = async () => {
   loadMeetingReminderSettings();
   await window.crmNavReady;
   wireColumnResize('#eventTypesHeadRow', 'eventTypesColumnWidths');
+
+  const stickyHeaderEl = document.querySelector('.mobile-sticky-header');
+  if (stickyHeaderEl) {
+    const syncHeaderHeight = () => {
+      document.documentElement.style.setProperty('--meet-header-h', stickyHeaderEl.getBoundingClientRect().height + 'px');
+    };
+    new ResizeObserver(syncHeaderHeight).observe(stickyHeaderEl);
+    syncHeaderHeight();
+  }
 })();
 </script>
 </body>
