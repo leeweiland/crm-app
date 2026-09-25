@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
-import { getContactMessages, getSourceMessages } from "./message_index.js";
+import { getContactMessages, getSourceMessages, removeContactMessagesByIds, recomputeConversationSummary } from "./message_index.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
 import { BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
 
@@ -678,6 +678,14 @@ async function handleAiAgentsCrud(req, res, url) {
   if (!p.startsWith("/api/ai-agents")) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
+  // Every sourceType an agent's own outbound sends can carry -- see
+  // sentCategoryForSourceType's "ai_agent" bucket plus the real test-send
+  // path -- so "this agent's own conversation with a contact" means the
+  // union of all of them, not just AI Active specifically. Declared here
+  // (not just where Activity first needed it) since test-batch-reset below
+  // needs the exact same scoping to know which of a contact's messages are
+  // actually this agent's to delete.
+  const AGENT_SOURCE_TYPES = ["ai_active", "behavioral_trigger", "ai_coverage", "ai_active_test"];
 
   if (p === "/api/ai-agents" && req.method === "GET") {
     const agents = readJson(AI_AGENTS_FILE, []);
@@ -824,11 +832,17 @@ async function handleAiAgentsCrud(req, res, url) {
     if (stopped) writeJson(AI_ACTIVE_BATCHES_FILE, batches);
     return sendJson(res, 200, { ok: true, stopped });
   }
-  // Wipes this contact's test batch/state entirely (not their real message
-  // history -- the send/receive log stays exactly as it happened) so the
-  // next "Send real cold-open" starts a genuinely clean cycle: fresh
-  // follow-up counts, fresh lastSeenInboundAt, no leftover "done"/
-  // "completed" row for the reactivation logic to revive later.
+  // Wipes this contact's test batch/state AND this agent's own message
+  // history with them -- confirmed live that resetting just the batch/state
+  // wasn't a real fresh start at all: every reply is built from
+  // getContactMessages' full real journey (formatCustomerJourney), which
+  // Fresh Start never touched, so the model kept "remembering" everything
+  // from prior test rounds (financials already discussed, stalls already
+  // offered, etc) regardless of the tracking reset. Scoped to exactly what
+  // the Activity panel itself shows for this agent -- this agent's own
+  // tagged outbound plus inbound once it started talking to this contact --
+  // so an unrelated old campaign or a different agent's/human rep's history
+  // living in the same per-contact shard is never touched.
   const testBatchResetMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-batch-reset$/);
   if (testBatchResetMatch && req.method === "POST") {
     const agentId = testBatchResetMatch[1];
@@ -846,14 +860,21 @@ async function handleAiAgentsCrud(req, res, url) {
       const keepStates = states.filter((s) => !removedBatchIds.has(s.batchId));
       if (keepStates.length !== states.length) writeJson(AI_ACTIVE_STATES_FILE, keepStates);
     }
-    return sendJson(res, 200, { ok: true, removed: removedBatchIds.size });
+    const allMessages = getContactMessages(contactId);
+    const agentOutbound = allMessages.filter((m) => m.direction === "outbound" && AGENT_SOURCE_TYPES.includes(m.sourceType) && m.sourceId === agentId);
+    const firstAgentSendAt = agentOutbound.length ? Math.min(...agentOutbound.map((m) => new Date(m.createdAt).getTime())) : null;
+    const toDelete = firstAgentSendAt === null ? [] : allMessages.filter((m) => {
+      if (m.direction === "outbound") return AGENT_SOURCE_TYPES.includes(m.sourceType) && m.sourceId === agentId;
+      return new Date(m.createdAt).getTime() >= firstAgentSendAt;
+    });
+    const messagesRemoved = removeContactMessagesByIds(contactId, new Set(toDelete.map((m) => m.id)));
+    // The Inbox sidebar's own summary row (last message preview, unread
+    // count) was built from these same messages -- without this it'd keep
+    // showing a preview/count for a message that no longer exists.
+    if (messagesRemoved) recomputeConversationSummary(contactId);
+    return sendJson(res, 200, { ok: true, removed: removedBatchIds.size, messagesRemoved });
   }
 
-  // Every sourceType an agent's own outbound sends can carry -- see
-  // sentCategoryForSourceType's "ai_agent" bucket plus the real test-send
-  // path -- so "this agent's activity" means the union of all of them, not
-  // just AI Active specifically.
-  const AGENT_SOURCE_TYPES = ["ai_active", "behavioral_trigger", "ai_coverage", "ai_active_test"];
   const ACTIVITY_PAGE_SIZE = 5;
 
   // Powers the Activity accordion's left-hand list. Two modes, both

@@ -1221,13 +1221,16 @@ async function stopTest() {
     btn.disabled = false;
   }
 }
-// Wipes the tracked test batch/state for this contact entirely (their real
-// send/receive history is untouched) so the next real cold-open starts a
-// genuinely clean cycle instead of resuming/reactivating whatever this test
-// was in the middle of.
+// Wipes the tracked test batch/state AND this agent's own real message
+// history with this contact (see ai_agents_backend.js's test-batch-reset)
+// -- every reply is generated from the contact's real journey, so clearing
+// only the tracking state left the model still "remembering" everything
+// from prior test rounds. Scoped to exactly this agent's own conversation
+// with this contact -- an unrelated old campaign or a different agent's
+// history is never touched.
 async function freshStartTest() {
   if (!tcContactId || !editingAgentId) return;
-  if (!confirm('This clears this test\'s tracked state (follow-up counts, what\'s been seen/replied to) so the next cold-open starts fresh. Their real message history is kept. Continue?')) return;
+  if (!confirm('This DELETES this contact\'s real message history with THIS agent (what Kai sent/received) and clears the tracked test state, so the next cold-open starts genuinely fresh -- Kai won\'t remember anything from before. This cannot be undone. Continue?')) return;
   const btn = document.getElementById('tcFreshStartBtn');
   const statusEl = document.getElementById('tcContactStatus');
   btn.disabled = true;
@@ -1237,8 +1240,10 @@ async function freshStartTest() {
       body: JSON.stringify({ contactId: tcContactId }),
     });
     const d = await r.json();
-    statusEl.textContent = r.ok && d.ok ? 'Reset -- send a new real cold-open to start a fresh test cycle.' : 'Could not reset: ' + (d.error || r.status);
+    statusEl.textContent = r.ok && d.ok ? `Reset -- ${d.messagesRemoved || 0} old message(s) cleared. Send a new real cold-open to start a genuinely fresh test.` : 'Could not reset: ' + (d.error || r.status);
     document.getElementById('tcLoadContactBtn').textContent = 'Load';
+    resetTestChat();
+    await loadRealSendConvo();
   } catch (err) {
     statusEl.textContent = 'Network error: ' + err.message;
   } finally {

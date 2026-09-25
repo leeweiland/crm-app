@@ -207,6 +207,21 @@ export function updateContactMessagesByIds(contactId, idSet, updater) {
   messages.forEach(m => { if (idSet.has(m.id)) { updater(m); changed = true; } });
   if (changed) writeJson(contactFile(contactId), messages);
 }
+// Removes SPECIFIC messages from a contact's own shard by id -- unlike
+// deleteContactMessageFile (which wipes the contact's ENTIRE history), this
+// is for a caller that already knows exactly which of a contact's messages
+// it wants gone (e.g. ai_agents_backend.js's test-batch-reset scoping the
+// deletion to just one AI agent's own test conversation) without touching
+// unrelated history -- an old campaign, a different agent, a human rep's
+// own outreach -- that happens to live in the same per-contact file.
+export function removeContactMessagesByIds(contactId, idSet) {
+  if (!contactId || !idSet?.size) return 0;
+  const messages = getContactMessages(contactId);
+  const kept = messages.filter(m => !idSet.has(m.id));
+  const removed = messages.length - kept.length;
+  if (removed) writeJson(contactFile(contactId), kept);
+  return removed;
+}
 
 function slimMessage(m) {
   // A click can't happen without an open first -- pixel-based open tracking
