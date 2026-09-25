@@ -40,7 +40,7 @@
   .tpl-preview-row td { padding: 0; }
   .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
   .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
-  #tab-automations .data-table, #tab-templates .data-table { table-layout: fixed; }
+  #tab-automations .data-table td:last-child, #tab-automations .data-table th:last-child { min-width: 220px; }
 </style>
 </head>
 <body>
@@ -59,18 +59,8 @@
         <button class="tab-btn" data-tab="templates">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-automations">
-        <div class="pra-panel">
+        <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <colgroup>
-              <col style="width:auto"/>
-              <col style="width:170px"/>
-              <col style="width:80px"/>
-              <col style="width:110px"/>
-              <col style="width:150px"/>
-              <col style="width:130px"/>
-              <col style="width:160px"/>
-              <col style="width:230px"/>
-            </colgroup>
             <thead><tr id="automationsHeadRow">
               <th class="sortable" data-sort="name" data-col-key="name">Name</th>
               <th class="sortable" data-sort="trigger" data-col-key="trigger">Trigger</th>
@@ -88,7 +78,7 @@
       </div>
       <div class="tab-panel" id="tab-templates">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Every email an automation step can send, one row per template rather than per recipient -- including ones ActiveCampaign automations sent before this CRM existed. Stats for ActiveCampaign-sourced rows aren't available yet.</div>
-        <div class="pra-panel">
+        <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
             <thead><tr>
               <th>Source</th>

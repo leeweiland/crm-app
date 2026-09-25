@@ -32,15 +32,16 @@
   .tpl-preview-row td { padding: 0; }
   .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
   .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
-  /* Fixed column widths (via <colgroup>) instead of the browser's auto table
-     layout -- auto layout let this table's Actions column (Preview/View
-     Report/Copy/Delete) get silently squeezed past the panel's right edge
-     while Name crushed itself to a couple characters trying to compensate,
-     with no visible scrollbar hint that Copy/Delete were still there,
-     off-screen. Fixed layout guarantees Actions always has room and the
-     table fills the page at its natural width instead of needing a nested
-     scroll box. */
-  #tab-campaigns .data-table { table-layout: fixed; }
+  /* Auto table layout let this table's last (Actions) column get silently
+     squeezed past the panel's right edge, no visible hint Copy/Delete were
+     still there off-screen -- table-layout:fixed briefly "fixed" that but
+     broke column-resize.js (fixed layout locks column widths from the
+     colgroup/first row and ignores width changes column-resize.js applies
+     to later cells, so drag-to-resize stopped working -- confirmed live,
+     reverted 2026-09-25). A plain min-width on the actions column is enough
+     to stop the default crush without touching table-layout at all, so
+     resize still works exactly like it did before any of this. */
+  #tab-campaigns .data-table td:last-child, #tab-campaigns .data-table th:last-child { min-width: 300px; }
 </style>
 </head>
 <body>
@@ -60,19 +61,8 @@
         <button class="tab-btn" data-tab="external">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-campaigns">
-        <div class="pra-panel">
+        <div class="pra-panel" style="overflow-x:auto">
           <table class="data-table">
-            <colgroup>
-              <col style="width:auto"/>
-              <col style="width:110px"/>
-              <col style="width:110px"/>
-              <col style="width:110px"/>
-              <col style="width:70px"/>
-              <col style="width:80px"/>
-              <col style="width:80px"/>
-              <col style="width:150px"/>
-              <col style="width:340px"/>
-            </colgroup>
             <thead><tr id="campaignsHeadRow">
               <th class="sortable" data-sort="name" data-col-key="name">Name</th>
               <th class="sortable" data-sort="status" data-col-key="status">Status</th>
@@ -134,15 +124,25 @@ function statusLabel(c) {
   if (c.status === 'send_error') return 'error';
   return c.status;
 }
+// c.stats.sent is a one-time snapshot only written once a send loop fully
+// finishes (see rollupStats in campaigns_backend.js) -- reads as 0 the
+// entire time a large campaign is mid-send, looking exactly like nothing
+// happened even while sendProgress is climbing in the background. Confirmed
+// live: "ALL YT rusty bicycle" sat at "Sent: 0" while actually 1234/3267
+// through, updatedAt seconds old.
+function sentCount(c) {
+  if (c.status === 'sending' && c.sendProgress) return c.sendProgress.sent;
+  return c.stats?.sent ?? 0;
+}
 function renderCampaignsTable() {
   const q = document.getElementById('campaignSearch').value.trim().toLowerCase();
   let rows = allCampaigns.filter(c => !q || campaignSearchText(c).includes(q));
   const { field, dir } = campaignSort;
   rows = [...rows].sort((a, b) => {
     let av, bv;
-    if (field === 'sent') { av = a.stats?.sent ?? 0; bv = b.stats?.sent ?? 0; }
-    else if (field === 'opened') { av = a.stats?.sent ? (a.stats.opened ?? 0) / a.stats.sent : 0; bv = b.stats?.sent ? (b.stats.opened ?? 0) / b.stats.sent : 0; }
-    else if (field === 'clicked') { av = a.stats?.sent ? (a.stats.clicked ?? 0) / a.stats.sent : 0; bv = b.stats?.sent ? (b.stats.clicked ?? 0) / b.stats.sent : 0; }
+    if (field === 'sent') { av = sentCount(a); bv = sentCount(b); }
+    else if (field === 'opened') { av = sentCount(a) ? (a.stats?.opened ?? 0) / sentCount(a) : 0; bv = sentCount(b) ? (b.stats?.opened ?? 0) / sentCount(b) : 0; }
+    else if (field === 'clicked') { av = sentCount(a) ? (a.stats?.clicked ?? 0) / sentCount(a) : 0; bv = sentCount(b) ? (b.stats?.clicked ?? 0) / sentCount(b) : 0; }
     else if (field === 'updatedAt') { av = a.updatedAt || ''; bv = b.updatedAt || ''; }
     else { av = (a[field] || '').toString().toLowerCase(); bv = (b[field] || '').toString().toLowerCase(); }
     return av < bv ? -dir : av > bv ? dir : 0;
@@ -167,9 +167,9 @@ function renderCampaignsTable() {
       <td><span class="status-pill status-${c.status}" title="${c.status === 'send_error' && c.sendError ? escapeHtml(c.sendError) : ''}">${statusLabel(c)}</span></td>
       <td class="pra-muted">${escapeHtml(listNames(c.recipients?.listIds))}</td>
       <td class="pra-muted">${escapeHtml(segmentName(c.recipients?.segmentId))}</td>
-      <td>${c.stats?.sent ?? 0}</td>
-      <td>${pct(c.stats?.opened ?? 0, c.stats?.sent ?? 0)}</td>
-      <td>${pct(c.stats?.clicked ?? 0, c.stats?.sent ?? 0)}</td>
+      <td>${sentCount(c)}</td>
+      <td>${pct(c.stats?.opened ?? 0, sentCount(c))}</td>
+      <td>${pct(c.stats?.clicked ?? 0, sentCount(c))}</td>
       <td class="pra-muted">${fmtDate(c.updatedAt)}</td>
       <td style="white-space:nowrap">
         <button class="tpl-expand-btn" data-expand="${idx}" onclick="event.stopPropagation()">Preview</button>
