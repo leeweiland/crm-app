@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
@@ -123,16 +122,16 @@ function encodeHeaderValue(value) {
 // appended after everything above, not folded into `blocks` by the caller
 // -- the footer belongs right after the NEW reply, not after the whole
 // quoted thread underneath it.
-// threadId/inReplyTo (both optional) place a send inside an EXISTING Gmail
-// thread instead of always starting a new one -- threadId is Gmail's own
-// proprietary grouping (most reliable, when known), inReplyTo is the RFC822
-// Message-ID of the message being replied to (drives the standard
-// In-Reply-To/References headers every other mail client keys threading
-// off of, and is also Gmail's own fallback when threadId isn't available,
-// e.g. replying to a message this app never itself logged with one).
-// Confirmed live: without either, every AI Active reply landed as its own
-// separate top-level email instead of a reply in the lead's inbox.
-export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml, threadId, inReplyTo }) {
+// threadId/inReplyTo/references (all optional) place a send inside an
+// EXISTING Gmail thread instead of always starting a new one -- threadId is
+// Gmail's own proprietary grouping, but it's scoped to THIS mailbox only
+// (Kai's own Sent view), not shared with the recipient's separate Gmail
+// account/thread-ids -- confirmed live: matching threadId on our side still
+// left the recipient's inbox showing separate, unthreaded messages.
+// inReplyTo/references (the RFC822 In-Reply-To/References headers) are what
+// the RECIPIENT's own mail client actually keys its threading off of, so
+// they're the ones that matter for how this shows up on their end.
+export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml, threadId, inReplyTo, references }) {
   if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
   if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
   const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
@@ -163,21 +162,16 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
   // broken escaping from stored history -- see ai_agents_backend.js's
   // formatCustomerJourney/buildPromptForState) carried straight into the
   // stored preview too.
-  // Minted here (not left to Gmail) so it can be stored alongside threadId
-  // in the very same logMessage call below -- a LATER reply needs this
-  // exact value to put itself in this thread too, and there's no cheap way
-  // to read a just-sent message's own Message-ID back out of Gmail's send
-  // response (it only returns the send id + threadId, not RFC822 headers).
-  const ourMessageId = `<${randomUUID()}@pacificrimathletics.com>`;
   const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: fullHtml, bodyPreview: plainPreview(fullHtml, 140) };
   try {
     const accessToken = await getAccessToken(user.gmailRefreshToken);
+    const refsHeader = [references, inReplyTo].filter(Boolean).join(" ");
     const raw = [
       `From: ${encodeHeaderValue(fromName)} <${user.gmailEmail}>`,
       `To: ${to}`,
       `Subject: ${encodeHeaderValue(subject || "(no subject)")}`,
-      `Message-ID: ${ourMessageId}`,
-      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`] : []),
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+      ...(refsHeader ? [`References: ${refsHeader}`] : []),
       `MIME-Version: 1.0`,
       `Content-Type: text/html; charset="UTF-8"`,
       ``,
@@ -194,12 +188,27 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
       logMessage({ ...baseRow, status: "failed", failReason: d.error?.message });
       return { ok: false, reason: d.error?.message || "Gmail send failed" };
     }
+    // Gmail assigns its OWN Message-ID to every sent message regardless of
+    // any Message-ID header we put in the raw MIME -- confirmed live: a
+    // custom one this app set was silently discarded, so the recipient's
+    // OWN reply referenced Gmail's real <CA...@mail.gmail.com>-style id
+    // instead, and the chain broke on the very next hop since we'd stored
+    // the wrong value. Fetching it back is the only way to know what the
+    // recipient's client will actually reference.
+    let realMessageId = null;
+    try {
+      const metaRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${d.id}?format=metadata&metadataHeaders=Message-ID`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: gmailFetchTimeout() });
+      const metaD = await metaRes.json();
+      realMessageId = metaD.payload?.headers?.find((h) => h.name.toLowerCase() === "message-id")?.value || null;
+    } catch (e) {
+      console.error("[gmail] could not read back sent message's real Message-ID:", e.message);
+    }
     // Registers in PROVIDER_ID_INDEX_FILE immediately (via logMessage) --
     // when the 30s poller or an on-open reconcile later sees this SAME
     // message in the Sent folder (it's the sender's own mailbox, so of
     // course it shows up there), processGmailMessage's dedupe check skips
     // it instead of logging a duplicate.
-    logMessage({ ...baseRow, status: "sent", providerMessageId: d.id, extra: { threadId: d.threadId, messageIdHeader: ourMessageId } });
+    logMessage({ ...baseRow, status: "sent", providerMessageId: d.id, extra: { threadId: d.threadId, messageIdHeader: realMessageId, references: refsHeader || undefined } });
     return { ok: true, id: d.id, threadId: d.threadId };
   } catch (e) {
     logMessage({ ...baseRow, status: "failed", failReason: e.message });

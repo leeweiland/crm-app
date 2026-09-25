@@ -190,12 +190,17 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
       // place, so a prior thread's own subject (with Re:) always wins over
       // the generic fallback once one exists.
       const prior = findEmailThreadContext(contact, sender.gmailEmail);
+      // References should carry the WHOLE chain (RFC-correct, and more
+      // robust for a recipient client's own threading than In-Reply-To
+      // alone) -- prior's own References plus prior's own real Message-ID,
+      // not just the single immediate parent.
+      const references = prior ? [prior.references, prior.messageIdHeader].filter(Boolean).join(" ") || undefined : undefined;
       return sendViaGmail({
         user: sender, to: contact.email,
         subject: prior ? replySubject(prior.subject) : (subject || "PacificRimAthletics.com"),
         blocks, theme: {},
         contactId: contact.id, sourceType, sourceId: agentId, footerTemplateId: sender.footerTemplateId || null,
-        threadId: prior?.threadId, inReplyTo: prior?.messageIdHeader,
+        threadId: prior?.threadId, inReplyTo: prior?.messageIdHeader, references,
       });
     }
     const { sendEmail } = await import("./email_backend.js");
