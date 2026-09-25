@@ -328,12 +328,51 @@ export async function handleAiActiveRequest(req, res, url) {
 // span hours per campaign), confirmed live as a direct cause of multi-
 // second stalls on unrelated concurrent requests.
 export async function processAiActiveBatches() {
-  const batches = readJson(AI_ACTIVE_BATCHES_FILE, []).filter((b) => b.status === "running");
-  if (!batches.length) return;
+  const allBatches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+  if (!allBatches.length) return;
   const agents = readJson(AI_AGENTS_FILE, []);
   const states = readJson(AI_ACTIVE_STATES_FILE, []);
   const now = Date.now();
   let changed = false;
+
+  // A lead who used up their follow-ups without ever replying (state
+  // "done") isn't a dead end forever -- if they reply for real later on,
+  // Kai should pick the conversation back up instead of leaving a genuine
+  // reply permanently unanswered. Confirmed live: a real reply sent well
+  // after the last follow-up went completely unanswered because "done"
+  // (and a batch that auto-completed once nothing was left active) were
+  // never reconsidered by anything below. Skipped for a batch the user
+  // explicitly paused -- that's a deliberate "stop touching this", same as
+  // everywhere else -- but a batch that merely auto-completed is exactly
+  // the case this exists to undo.
+  const reactivatedBatchIds = new Set();
+  for (const st of states) {
+    if (st.state !== "done") continue;
+    const batch = allBatches.find((b) => b.id === st.batchId);
+    if (!batch || batch.status === "paused") continue;
+    const contact = getContactByIdFast(st.contactId);
+    if (!contact) continue;
+    const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel));
+    const lastInbound = [...journey].reverse().find((m) => m.direction === "inbound");
+    if (lastInbound && (!st.lastSeenInboundAt || new Date(lastInbound.createdAt).getTime() > new Date(st.lastSeenInboundAt).getTime())) {
+      st.state = "waiting_reply";
+      st.followUpCount = 0;
+      st.nextActionAt = new Date(now).toISOString();
+      st.updatedAt = new Date().toISOString();
+      changed = true;
+      if (batch.status === "completed") reactivatedBatchIds.add(batch.id);
+    }
+  }
+  if (reactivatedBatchIds.size) {
+    for (const b of allBatches) if (reactivatedBatchIds.has(b.id)) b.status = "running";
+    writeJson(AI_ACTIVE_BATCHES_FILE, allBatches);
+  }
+
+  const batches = allBatches.filter((b) => b.status === "running");
+  if (!batches.length) {
+    if (changed) writeJson(AI_ACTIVE_STATES_FILE, states);
+    return;
+  }
 
   for (const batch of batches) {
     const agent = agents.find((a) => a.id === batch.agentId);
