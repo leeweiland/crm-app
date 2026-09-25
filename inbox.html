@@ -389,6 +389,8 @@
   <div id="ctxSelectionCount" style="display:none;padding:4px 10px 6px;font-size:.72rem;color:var(--pra-dim);border-bottom:1px solid var(--pra-border);margin-bottom:4px"></div>
   <button type="button" id="ctxDoneBtn">Mark Done</button>
   <button type="button" id="ctxArchiveBtn">Archive</button>
+  <button type="button" id="ctxEmailOptOutBtn">Email Opt-Out</button>
+  <button type="button" id="ctxSmsOptOutBtn">SMS Opt-Out</button>
   <button type="button" id="ctxBlacklistBtn">Blacklist</button>
   <button type="button" class="danger" id="ctxDeleteBtn">Delete Conversation</button>
 </div>
@@ -1232,6 +1234,8 @@ function openContextMenu(c, x, y, additive) {
   document.getElementById('ctxDoneBtn').style.display = anyContact ? '' : 'none';
   document.getElementById('ctxArchiveBtn').textContent = rows.every(r => r.archived) ? 'Unarchive' : 'Archive';
   document.getElementById('ctxArchiveBtn').style.display = anyContact ? '' : 'none';
+  document.getElementById('ctxEmailOptOutBtn').style.display = anyContact ? '' : 'none';
+  document.getElementById('ctxSmsOptOutBtn').style.display = anyContact ? '' : 'none';
   document.getElementById('ctxBlacklistBtn').style.display = anyContact ? '' : 'none';
   // No safe bulk-confirm UX for a permanent delete yet -- stays single-row.
   document.getElementById('ctxDeleteBtn').style.display = rows.length > 1 ? 'none' : '';
@@ -1305,6 +1309,26 @@ document.getElementById('ctxArchiveBtn').onclick = () => {
   clearConvoSelection();
   loadConversations();
 };
+// One-way suppression actions, same shape (and same reasoning) as
+// ctxBlacklistBtn below -- no "remove opt-out" counterpart here, since
+// reversing one is a more deliberate action and now has its own quick
+// toggle in the open chat panel's header (conversation-panel.js's
+// optOutTogglesHtml) instead. Nothing in the sidebar row itself displays
+// opt-out state, so there's no local field to flip optimistically here --
+// only the open chat panel's header pill, if the affected contact happens
+// to be open right now.
+function ctxSuppressAction(field, label) {
+  const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
+  closeContextMenu();
+  if (!rows.length) { clearConvoSelection(); return; }
+  showToast(rows.length > 1 ? `${label} for ${rows.length}` : label);
+  clearConvoSelection();
+  for (const r of rows) chatPanelInstance?.handleRemoteUpdate({ type: 'optOut', contactId: r.contactId, field, value: true });
+  Promise.all(rows.map(r => fetch('/api/contacts/' + r.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: true }) })))
+    .catch(() => showToast('Could not save -- try again', true));
+}
+document.getElementById('ctxEmailOptOutBtn').onclick = () => ctxSuppressAction('emailOptOut', 'Email opted out');
+document.getElementById('ctxSmsOptOutBtn').onclick = () => ctxSuppressAction('smsOptOut', 'SMS opted out');
 document.getElementById('ctxBlacklistBtn').onclick = () => {
   const rows = [...selectedConvoKeys].map(k => conversations.find(x => x.key === k)).filter(r => r?.contactId);
   closeContextMenu();

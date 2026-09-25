@@ -589,6 +589,13 @@ body { margin: 0; }
 .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
 .chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
 .chat-zoom-link { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
+/* Email/SMS opt-out toggles in the chat panel header's sub-info line
+   (conversation-panel.js's optOutTogglesHtml) -- quiet ghost pill normally,
+   red when that channel is opted out, always clickable either way. */
+.chat-optout-pill { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; font-size: .7rem; font-weight: 700; letter-spacing: .02em; cursor: pointer; vertical-align: middle; background: var(--pra-panel-2); color: var(--pra-dim); border: 1px solid var(--pra-border); }
+.chat-optout-pill:hover { color: var(--pra-white); border-color: var(--pra-dim); }
+.chat-optout-pill.out { background: #3a1414; color: #ff6b6b; border-color: #ff6b6b55; }
+.chat-optout-pill.out:hover { background: #4a1a1a; }
 .zoom-copy-btn { width: 18px; height: 18px; border-radius: 4px; border: none; background: transparent; color: var(--pra-dim); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; opacity: .6; flex-shrink: 0; }
 .zoom-copy-btn:hover { opacity: 1; color: var(--pra-blue); }
 .zoom-copy-btn svg { width: 13px; height: 13px; }

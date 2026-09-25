@@ -200,11 +200,16 @@
       </div>
     `;
   }
-  // Same badge markup used in every contact view that shows opt-out state.
-  function optOutBadgesHtml(contact) {
+  // Always-visible Email/SMS opt-out toggles for the header's sub-info line
+  // (next to Zoom -- doesn't crowd the actions row below, which already has
+  // Tasks/Notes/Calls/Schedule/status/Image). Red pill + "click to opt back
+  // in" when opted out, a quiet ghost pill otherwise -- so the common case
+  // (not opted out) stays low-key while the toggle is still one click away,
+  // not buried in the full contact form.
+  function optOutTogglesHtml(contact) {
     if (!contact) return '';
-    const badge = (label) => `<span class="pra-badge" style="background:#3a1414;color:#ff6b6b;border:1px solid #ff6b6b55">${label}</span>`;
-    return (contact.emailOptOut ? badge('EMAIL OPT-OUT') : '') + (contact.smsOptOut ? badge('SMS OPT-OUT') : '');
+    const pill = (field, label, isOut) => `<span class="chat-optout-pill${isOut ? ' out' : ''}" data-optout-field="${field}" title="Click to ${isOut ? 'remove the' : 'set an'} opt-out">${label} ${isOut ? 'Opted Out' : 'Opt Out'}</span>`;
+    return pill('emailOptOut', 'Email', !!contact.emailOptOut) + pill('smsOptOut', 'SMS', !!contact.smsOptOut);
   }
   // Always the LOGGED-IN user's own Zoom link, never the assigned coach's or
   // the contact's -- whoever's actually in the conversation is who'd be
@@ -766,7 +771,7 @@
               // number doesn't reveal a timezone or that script isn't loaded.
               contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
               zoomLinkHtml(config.currentUser),
-            ].filter(Boolean).join(' · ')}</div>
+            ].filter(Boolean).join(' · ')}${optOutTogglesHtml(contact)}</div>
           </div>
           ${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
@@ -835,7 +840,6 @@
           </div>
           ${isFull ? `<select class="pra-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Change status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>` : ''}
           ${isFull && contactId ? `<button class="pra-btn pra-btn-outline pra-btn-sm" id="chatGenSummaryImageBtn" type="button" title="Generate a summary image">Image</button>` : ''}
-          ${isFull ? optOutBadgesHtml(contact) : ''}
           ${!isFull && contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
       `;
@@ -1013,6 +1017,28 @@
             });
         };
       }
+      // Email/SMS opt-out toggles (header sub-line) -- same optimistic-update
+      // shape as chatMarkDoneBtn above: flip the pill and the cached contact
+      // immediately, PATCH in the background, roll back + toast on failure.
+      container.querySelectorAll('.chat-optout-pill').forEach(pill => {
+        pill.onclick = (e) => {
+          e.stopPropagation();
+          const field = pill.dataset.optoutField;
+          const c = getContact();
+          if (!c || !contactId) return;
+          const next = !c[field];
+          c[field] = next;
+          render();
+          fetch(`/api/contacts/${contactId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: next }) })
+            .then(r => { if (!r.ok) throw new Error(); showToast(next ? 'Opted out' : 'Opt-out removed'); })
+            .catch(() => {
+              const c2 = getContact();
+              if (c2) c2[field] = !next;
+              showToast('Could not save -- try again', true);
+              render();
+            });
+        };
+      });
       if (isFull && contactId) {
         const typeBadge = container.querySelector('#chatPanelTypeBadge');
         if (typeBadge && typeof window.wireInlineEditClick === 'function') {
@@ -1107,6 +1133,21 @@
         // just because a teammate marked this same conversation done.
         const btn = container.querySelector('#chatMarkDoneBtn');
         if (btn) btn.textContent = markDoneLabel();
+      }
+      if (data.type === 'optOut') {
+        // Same cheap-patch reasoning as 'done' above -- an opt-out set from
+        // the sidebar's context menu (inbox.html's ctxEmailOptOutBtn/
+        // ctxSmsOptOutBtn) while this same contact's thread happens to be
+        // open shouldn't blow away an in-progress compose draft either.
+        const c = getContact();
+        if (c) c[data.field] = data.value;
+        const pill = container.querySelector(`.chat-optout-pill[data-optout-field="${data.field}"]`);
+        if (pill) {
+          const label = data.field === 'emailOptOut' ? 'Email' : 'SMS';
+          pill.classList.toggle('out', !!data.value);
+          pill.textContent = `${label} ${data.value ? 'Opted Out' : 'Opt Out'}`;
+          pill.title = `Click to ${data.value ? 'remove the' : 'set an'} opt-out`;
+        }
       }
     }
 
