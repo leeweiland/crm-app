@@ -99,6 +99,12 @@
   .tc-bubble { max-width: 85%; padding: 8px 12px; border-radius: 14px; font-size: .85rem; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }
   .tc-bubble-row.user .tc-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
   .tc-bubble-row.assistant .tc-bubble { background: var(--pra-panel); color: var(--pra-white); border: 1px solid var(--pra-border); border-bottom-left-radius: 3px; }
+  /* #tcRealSendConvo ("Test as a real contact") sits in a much narrower
+     single column than the Test Conversation panel above it or the
+     Activity accordion's two-column layout -- the default 85% max-width
+     left too small a gap for outbound's right-alignment to read clearly at
+     that width, so it gets its own tighter cap. */
+  #tcRealSendConvo .tc-bubble { max-width: 78%; }
 
   /* ── Activity accordion: contact list + simple conversation, side by
        side inside one panel. Custom scrollbar comes free from
@@ -481,14 +487,15 @@
             <button class="tc-send-btn" id="tcSendBtn" type="button">Send</button>
           </div>
           <div class="pra-muted" style="font-size:.72rem;margin-top:6px">Replies and follow-ups happen automatically on the real configured wait times from the Timing tab below -- stay quiet to see a follow-up fire.</div>
-          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--pra-border)">
-            <label class="pra-label" style="display:block;margin-bottom:6px">Test as a real contact (optional)</label>
-            <div style="display:flex;gap:6px">
-              <input class="pra-input" id="tcContactEmail" placeholder="e.g. lee@pacificrimathletics.com" style="flex:1;font-size:.82rem;padding:8px 10px"/>
+          <div style="margin-top:14px;padding:14px;border-top:1px solid var(--pra-border)">
+            <div class="tc-title">Test as a real contact</div>
+            <div class="tc-sub" style="margin-bottom:12px">Optional -- sends a real SMS/email and grounds replies in this person's real journey</div>
+            <div style="display:flex;gap:8px">
+              <input class="pra-input" id="tcContactEmail" placeholder="e.g. lee@pacificrimathletics.com" style="flex:1;font-size:.82rem;padding:10px 12px"/>
               <button class="pra-btn pra-btn-sm" id="tcLoadContactBtn" type="button">Load</button>
             </div>
-            <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:6px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
-            <div style="display:flex;gap:6px;align-items:center;margin-top:10px">
+            <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:8px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcRealSendBtn" type="button" disabled title="Load a contact first">Send real cold-open to this contact</button>
               <select class="pra-select" id="tcRealSendChannel" style="width:auto;font-size:.76rem;padding:6px 8px">
                 <option value="">Auto (agent default)</option>
@@ -496,8 +503,8 @@
                 <option value="email">Force Email</option>
               </select>
             </div>
-            <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:6px;display:none"></div>
-            <div id="tcRealSendConvo" style="max-height:280px;overflow-y:auto;display:none;flex-direction:column;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--pra-border)"></div>
+            <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:8px;display:none"></div>
+            <div id="tcRealSendConvo" style="max-height:300px;overflow-y:auto;display:none;flex-direction:column;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--pra-border);border-radius:10px;background:var(--pra-panel)"></div>
           </div>
         </div>
       </div>

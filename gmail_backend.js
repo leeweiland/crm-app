@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
@@ -122,7 +123,16 @@ function encodeHeaderValue(value) {
 // appended after everything above, not folded into `blocks` by the caller
 // -- the footer belongs right after the NEW reply, not after the whole
 // quoted thread underneath it.
-export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml }) {
+// threadId/inReplyTo (both optional) place a send inside an EXISTING Gmail
+// thread instead of always starting a new one -- threadId is Gmail's own
+// proprietary grouping (most reliable, when known), inReplyTo is the RFC822
+// Message-ID of the message being replied to (drives the standard
+// In-Reply-To/References headers every other mail client keys threading
+// off of, and is also Gmail's own fallback when threadId isn't available,
+// e.g. replying to a message this app never itself logged with one).
+// Confirmed live: without either, every AI Active reply landed as its own
+// separate top-level email instead of a reply in the lead's inbox.
+export async function sendViaGmail({ user, to, subject, blocks, theme, contactId, sourceType, sourceId, footerTemplateId, trailingHtml, threadId, inReplyTo }) {
   if (!user.gmailRefreshToken) return { ok: false, reason: "Gmail not connected" };
   if (!user.gmailScope?.includes("gmail.send")) return { ok: false, reason: "Reconnect Gmail (Settings > My Account) to enable sending -- the current connection was made before send access existed." };
   const fromName = `${user.first || ""} ${user.last || ""}`.trim() || user.gmailEmail;
@@ -153,6 +163,12 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
   // broken escaping from stored history -- see ai_agents_backend.js's
   // formatCustomerJourney/buildPromptForState) carried straight into the
   // stored preview too.
+  // Minted here (not left to Gmail) so it can be stored alongside threadId
+  // in the very same logMessage call below -- a LATER reply needs this
+  // exact value to put itself in this thread too, and there's no cheap way
+  // to read a just-sent message's own Message-ID back out of Gmail's send
+  // response (it only returns the send id + threadId, not RFC822 headers).
+  const ourMessageId = `<${randomUUID()}@pacificrimathletics.com>`;
   const baseRow = { channel: "email", direction: "outbound", contactId, sourceType: sourceType || "inbox", sourceId, to, from: fromHeader, subject: subject || "(no subject)", body: fullHtml, bodyPreview: plainPreview(fullHtml, 140) };
   try {
     const accessToken = await getAccessToken(user.gmailRefreshToken);
@@ -160,6 +176,8 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
       `From: ${encodeHeaderValue(fromName)} <${user.gmailEmail}>`,
       `To: ${to}`,
       `Subject: ${encodeHeaderValue(subject || "(no subject)")}`,
+      `Message-ID: ${ourMessageId}`,
+      ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`] : []),
       `MIME-Version: 1.0`,
       `Content-Type: text/html; charset="UTF-8"`,
       ``,
@@ -168,7 +186,7 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
     const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ raw: b64urlEncode(raw) }),
+      body: JSON.stringify({ raw: b64urlEncode(raw), ...(threadId ? { threadId } : {}) }),
       signal: gmailFetchTimeout(),
     });
     const d = await res.json();
@@ -181,8 +199,8 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
     // message in the Sent folder (it's the sender's own mailbox, so of
     // course it shows up there), processGmailMessage's dedupe check skips
     // it instead of logging a duplicate.
-    logMessage({ ...baseRow, status: "sent", providerMessageId: d.id });
-    return { ok: true, id: d.id };
+    logMessage({ ...baseRow, status: "sent", providerMessageId: d.id, extra: { threadId: d.threadId, messageIdHeader: ourMessageId } });
+    return { ok: true, id: d.id, threadId: d.threadId };
   } catch (e) {
     logMessage({ ...baseRow, status: "failed", failReason: e.message });
     return { ok: false, reason: e.message };
@@ -464,12 +482,16 @@ async function processGmailMessage(user, msg) {
   // reporting_backend.js's countReplies a real thread link instead of only
   // a same-contact-and-after-the-send timing guess.
   const inReplyTo = headerValue(msg.payload?.headers, "In-Reply-To") || (headerValue(msg.payload?.headers, "References") || "").trim().split(/\s+/).pop() || null;
+  // threadId/messageIdHeader captured here so a LATER reply from this
+  // mailbox (see ai_active_backend.js's sendViaChannel) can find this
+  // message and thread its own reply against it, instead of always
+  // starting a new top-level email.
   logMessage({
     channel: "email", direction: "inbound", contactId,
     sourceType: "inbound", sourceId: null, providerMessageId: msg.id,
     to: user.gmailEmail, from: fromHeader, subject, body, bodyPreview: plainPreview(body, 140),
     status: "received", createdAt,
-    extra: inReplyTo ? { inReplyTo } : undefined,
+    extra: { threadId: msg.threadId, messageIdHeader: headerValue(msg.payload?.headers, "Message-ID"), ...(inReplyTo ? { inReplyTo } : {}) },
   });
   checkConversionGoal("incoming_email", contactId);
   // A reply is unambiguous proof they read whatever they're replying to --

@@ -844,7 +844,22 @@ async function handleAiAgentsCrud(req, res, url) {
   // straight to spaces (the old behavior) is exactly what made a footer-
   // heavy email read as a single undifferentiated wall of text.
   function htmlToActivityText(html) {
-    return stripStyleAndScript(html)
+    const src = String(html || "");
+    // Cut off two well-known "not really the message" blocks before
+    // extracting any text, rather than trying to filter their words out
+    // afterward: our own outbound footer (this exact wrapper -- see
+    // renderEmailBody/resolveFooterHtml, always this shape) and, for a real
+    // inbound Gmail message, whatever Gmail itself detected as the sender's
+    // own signature (class="gmail_signature" -- Gmail's API tags it this
+    // way; not something this app adds). Confirmed live: a lead's own
+    // "Creator / Founder / [legal disclaimer]" signature was dominating
+    // their reply bubbles the exact same way our own footer was dominating
+    // ours before this.
+    const footerAt = src.search(/<div[^>]*style="[^"]*margin-top:\s*24px/i);
+    const sigAt = src.search(/<div[^>]*class="[^"]*gmail_signature/i);
+    const cutAt = [footerAt, sigAt].filter((i) => i >= 0).sort((a, b) => a - b)[0];
+    const trimmed = cutAt >= 0 ? src.slice(0, cutAt) : src;
+    return stripStyleAndScript(trimmed)
       .replace(/<(br|\/p|\/div|\/li|\/tr|\/h[1-6])\s*\/?>/gi, "\n")
       .replace(/<[^>]+>/g, " ")
       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))

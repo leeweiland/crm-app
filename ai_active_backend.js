@@ -155,6 +155,27 @@ export async function generateColdOpen(agent, contact, cfg, forceChannel = null)
 // behavior, unchanged) when unset or when that user hasn't connected
 // Gmail -- an agent with no sender picked isn't broken, it just sends the
 // way it always has.
+// Every email after the very first one in a real conversation should land
+// as a REPLY inside that same Gmail thread, not as its own new top-level
+// email -- confirmed live: a lead got a wall of separate unthreaded emails
+// instead of one growing conversation. Finds the most recent prior email
+// that actually passed through THIS mailbox (matched by address, not just
+// "any email this contact has ever gotten" -- an old campaign or a
+// different sender's email lives in a different mailbox/thread entirely)
+// and threads against it. Returns null for a genuine first contact --
+// nothing to reply to yet.
+function findEmailThreadContext(contact, mailboxEmail) {
+  const addr = (mailboxEmail || "").toLowerCase();
+  if (!addr) return null;
+  const prior = getContactMessages(contact.id)
+    .filter((m) => m.channel === "email" && ((m.to || "").toLowerCase().includes(addr) || (m.from || "").toLowerCase().includes(addr)))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  return prior || null;
+}
+function replySubject(priorSubject) {
+  const s = (priorSubject || "PacificRimAthletics.com").trim();
+  return /^re:/i.test(s) ? s : `Re: ${s}`;
+}
 export async function sendViaChannel(contact, channel, text, agentId, subject, sourceType = "ai_active", senderId = null) {
   if (channel === "email" && contact.email) {
     const { text: cleaned, gifUrl } = extractGifMarker(text);
@@ -163,9 +184,18 @@ export async function sendViaChannel(contact, channel, text, agentId, subject, s
     const sender = senderId ? readJson(USERS_FILE, []).find((u) => u.id === senderId && u.gmailRefreshToken) : null;
     if (sender) {
       const { sendViaGmail } = await import("./gmail_backend.js");
+      // subject is only ever passed explicitly for the cold-open (see
+      // generateColdOpen) -- every other call (a reply/follow-up) passes
+      // undefined and relies entirely on threading to land in the right
+      // place, so a prior thread's own subject (with Re:) always wins over
+      // the generic fallback once one exists.
+      const prior = findEmailThreadContext(contact, sender.gmailEmail);
       return sendViaGmail({
-        user: sender, to: contact.email, subject: subject || "PacificRimAthletics.com", blocks, theme: {},
+        user: sender, to: contact.email,
+        subject: prior ? replySubject(prior.subject) : (subject || "PacificRimAthletics.com"),
+        blocks, theme: {},
         contactId: contact.id, sourceType, sourceId: agentId, footerTemplateId: sender.footerTemplateId || null,
+        threadId: prior?.threadId, inReplyTo: prior?.messageIdHeader,
       });
     }
     const { sendEmail } = await import("./email_backend.js");
