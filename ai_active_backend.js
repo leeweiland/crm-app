@@ -194,8 +194,20 @@ function stripForeignPreamble(text) {
   }
   return lines.join("\n").trim();
 }
+// The model habitually bakes its own sign-off ("See you in training soon!"
+// / "Coach <name>") into the reply text itself, on top of the real footer
+// template this code already appends every send -- confirmed live: a real
+// email went out with "See you in training soon! Coach Kai" TWICE, once
+// from the model's own text and once from the footer right after it.
+// Strips a trailing sign-off block so the footer template is the only
+// place it ever appears.
+function stripModelSignoff(text) {
+  return String(text || "")
+    .replace(/\n+\s*see (you |u )?(in training )?soon!?\s*(\n+\s*coach\s+\w+\s*)?$/i, "")
+    .trim();
+}
 export async function sendViaChannel(contact, channel, rawText, agentId, subject, sourceType = "ai_active", senderId = null) {
-  const text = stripForeignPreamble(rawText);
+  const text = stripModelSignoff(stripForeignPreamble(rawText));
   if (channel === "email" && contact.email) {
     const { text: cleaned, gifUrl } = extractGifMarker(text);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
