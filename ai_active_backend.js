@@ -337,10 +337,17 @@ export async function processAiActiveBatches() {
 
   for (const batch of batches) {
     const agent = agents.find((a) => a.id === batch.agentId);
-    // The agent's own Active toggle is the master kill-switch -- flipping
-    // it off stops every batch it owns from taking any further action,
-    // same as pausing each one individually.
-    if (!agent || !agent.active) continue;
+    if (!agent) continue;
+    // The agent's own Active toggle is the master kill-switch for REAL
+    // campaigns -- flipping it off stops every real batch it owns from
+    // taking any further action, same as pausing each one individually. A
+    // test-send-tracked batch (isTestBatch) is a single contact the user
+    // explicitly, directly told to send a real message to (behind its own
+    // confirm() dialog) -- confirmed live: turning that into "also flip the
+    // agent live" just to get a real reply answered during testing isn't
+    // what a one-off test should require, so it runs regardless of the
+    // agent's own Active state.
+    if (!agent.active && !batch.isTestBatch) continue;
     const cfg = agent.activeConfig || {};
     // A test-send-tracked contact (see ai_agents_backend.js's /test-send)
     // gets its own real single-contact batch so real replies actually get
