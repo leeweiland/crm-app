@@ -167,8 +167,30 @@
               <div class="accordion-body">
                 <div class="active-section-sub">Only leads matching BOTH the segment and the lead type/status below are ever contacted. Turning AI Active on does not start anything by itself — you still preview and start a batch explicitly.</div>
                 <div class="editor-row">
-                  <label>Segment</label>
-                  <select id="fSegment"><option value="">Select a saved segment…</option></select>
+                  <label>Segment(s) -- a lead in ANY of these is eligible</label>
+                  <div class="multiselect" id="msSegments">
+                    <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
+                    <div class="multiselect-panel" id="fSegments"></div>
+                  </div>
+                  <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newSegmentBtn" type="button" style="margin-top:6px">+ Create new segment</button>
+                  <div id="newSegmentForm" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--pra-border);border-radius:8px">
+                    <input class="pra-input" id="newSegmentName" placeholder="Segment name, e.g. New leads since today" style="margin-bottom:6px"/>
+                    <label class="pra-label" style="display:block;margin-bottom:4px">Who's in it</label>
+                    <select class="pra-select" id="newSegmentPreset" style="margin-bottom:6px">
+                      <option value="createdAfter">Created on or after a date (stays live -- catches every new lead from then on)</option>
+                      <option value="createdBetween">Created within a specific date range (fixed window)</option>
+                      <option value="everyone">Everyone (no filter -- edit conditions later on the Contacts page)</option>
+                    </select>
+                    <div id="newSegmentDateFields" style="display:flex;gap:6px;margin-bottom:8px">
+                      <input class="pra-input" type="date" id="newSegmentDateFrom" style="flex:1"/>
+                      <input class="pra-input" type="date" id="newSegmentDateTo" style="flex:1;display:none"/>
+                    </div>
+                    <div style="display:flex;gap:6px">
+                      <button class="pra-btn pra-btn-sm" id="saveNewSegmentBtn" type="button">Create</button>
+                      <button class="pra-btn pra-btn-ghost pra-btn-sm" id="cancelNewSegmentBtn" type="button">Cancel</button>
+                    </div>
+                    <div class="pra-muted" style="font-size:.7rem;margin-top:6px">For anything more specific than this (income, tags, behavior, etc.), create it on the Contacts page instead -- this is just a fast path for the common "new leads" case.</div>
+                  </div>
                   <div class="pra-muted" id="segmentCountLabel" style="font-size:.76rem;margin-top:6px"></div>
                 </div>
                 <div class="editor-row">
@@ -519,9 +541,63 @@ async function loadSegments() {
     const data = await r.json();
     allSegments = data.segments || [];
   } catch { allSegments = []; }
-  document.getElementById('fSegment').innerHTML = '<option value="">Select a saved segment…</option>' +
-    allSegments.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
 }
+function getSelectedSegmentIds() {
+  return Array.from(document.querySelectorAll('#fSegments input:checked')).map((cb) => cb.value);
+}
+function renderSegmentCheckboxes(selected) {
+  document.getElementById('fSegments').innerHTML = allSegments.map((s) =>
+    `<label><input type="checkbox" value="${s.id}" data-label="${escapeHtml(s.name)}" ${selected.includes(s.id) ? 'checked' : ''}/> ${escapeHtml(s.name)}</label>`
+  ).join('');
+  updateMsSummary('msSegments', 'Select a saved segment…');
+}
+// Fast path for the one case this came up for ("new leads since a date,
+// ongoing") -- builds a real segment via the same POST /api/segments the
+// full Contacts-page segment editor uses (same filter language,
+// segments_shared.js's matchesSegment/evalCondition), just skipping
+// straight to the one condition instead of a general condition builder.
+// Anything more specific still belongs on the Contacts page.
+document.getElementById('newSegmentBtn').addEventListener('click', () => {
+  const form = document.getElementById('newSegmentForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('cancelNewSegmentBtn').addEventListener('click', () => {
+  document.getElementById('newSegmentForm').style.display = 'none';
+  document.getElementById('newSegmentName').value = '';
+});
+document.getElementById('newSegmentPreset').addEventListener('change', (e) => {
+  document.getElementById('newSegmentDateTo').style.display = e.target.value === 'createdBetween' ? '' : 'none';
+});
+document.getElementById('saveNewSegmentBtn').addEventListener('click', async () => {
+  const name = document.getElementById('newSegmentName').value.trim();
+  if (!name) { showToast('Name it first', true); return; }
+  const preset = document.getElementById('newSegmentPreset').value;
+  const fromVal = document.getElementById('newSegmentDateFrom').value;
+  const toVal = document.getElementById('newSegmentDateTo').value;
+  let filter;
+  if (preset === 'everyone') {
+    filter = { all: [] }; // matches every contact -- see matchesSegment's [].every() === true
+  } else if (preset === 'createdAfter') {
+    if (!fromVal) { showToast('Pick a date', true); return; }
+    filter = { all: [{ field: 'createdAt', op: 'after', value: new Date(fromVal + 'T00:00:00').toISOString() }] };
+  } else {
+    if (!fromVal || !toVal) { showToast('Pick both dates', true); return; }
+    filter = { all: [{ field: 'createdAt', op: 'between', value: { from: new Date(fromVal + 'T00:00:00').toISOString(), to: new Date(toVal + 'T23:59:59.999').toISOString() } }] };
+  }
+  const r = await fetch('/api/segments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, filter }),
+  });
+  const d = await r.json();
+  if (!r.ok) { showToast(d.error || 'Could not create segment', true); return; }
+  allSegments.push(d.segment);
+  renderSegmentCheckboxes([...getSelectedSegmentIds(), d.segment.id]);
+  document.getElementById('newSegmentForm').style.display = 'none';
+  document.getElementById('newSegmentName').value = '';
+  showToast('Segment created and selected');
+  updateSegmentSizeDisplay(true);
+  scheduleAutosave();
+});
 
 // ── Dropdown multi-selects (lead type / status / covering users) ────────
 function closeAllMultiselects(except) {
@@ -554,6 +630,7 @@ function initMultiselect(msId, placeholder) {
 initMultiselect('msProgramTypes', 'Select lead type(s)…');
 initMultiselect('msStatuses', 'Select status(es)…');
 initMultiselect('msCoverUsers', 'Select user(s)…');
+initMultiselect('msSegments', 'Select a saved segment…');
 
 async function loadEditor() {
   const r = await fetch(`/api/ai-agents/${editingAgentId}`);
@@ -566,7 +643,7 @@ async function loadEditor() {
   setToggle('fAiAssistToggle', agent.aiAssist);
   document.getElementById('fSystemPrompt').value = agent.systemPrompt || '';
   const cfg = agent.activeConfig || {};
-  document.getElementById('fSegment').value = cfg.segmentId || '';
+  renderSegmentCheckboxes(cfg.segmentIds || (cfg.segmentId ? [cfg.segmentId] : []));
   document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
   document.getElementById('segmentCountLabel').textContent = '';
   updateSegmentSizeDisplay(false);
@@ -1013,7 +1090,7 @@ function buildAgentPayload() {
     systemPrompt: document.getElementById('fSystemPrompt').value,
     targeting: { programTypes, statuses, coverForUserIds },
     activeConfig: {
-      segmentId: document.getElementById('fSegment').value || null,
+      segmentIds: getSelectedSegmentIds(),
       batchSize: Number(document.getElementById('fBatchSize').value) || 25,
       emailSenderId: document.getElementById('fEmailSender').value || null,
       messageBuffer: {
@@ -1090,7 +1167,7 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fSegment', 'fBatchSize', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fName', 'fDescription', 'fSystemPrompt', 'fBatchSize', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
     'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
     'fReengageSmsPrompt', 'fReengageEmailPrompt',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
@@ -1113,15 +1190,15 @@ function wireAutosave() {
 // tweak just refreshes the live count/ceiling without overwriting a
 // batch size you already dialed down.
 async function updateSegmentSizeDisplay(resetToMax) {
-  const segmentId = document.getElementById('fSegment').value;
+  const segmentIds = getSelectedSegmentIds();
   const label = document.getElementById('segmentCountLabel');
   const batchSizeInput = document.getElementById('fBatchSize');
-  if (!segmentId || !editingAgentId) { label.textContent = ''; batchSizeInput.removeAttribute('max'); return; }
+  if (!segmentIds.length || !editingAgentId) { label.textContent = ''; batchSizeInput.removeAttribute('max'); return; }
   label.textContent = 'Checking segment size…';
   try {
     const r = await fetch('/api/ai-active/preview', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId: editingAgentId, segmentId, batchSize: 100000 }),
+      body: JSON.stringify({ agentId: editingAgentId, segmentIds, batchSize: 100000 }),
     });
     const data = await r.json();
     if (!r.ok) { label.textContent = 'Could not check segment size.'; return; }
@@ -1136,7 +1213,9 @@ async function updateSegmentSizeDisplay(resetToMax) {
     label.textContent = '';
   }
 }
-document.getElementById('fSegment').addEventListener('change', () => updateSegmentSizeDisplay(true));
+document.querySelectorAll('#fSegments').forEach((el) => {
+  el.addEventListener('change', (e) => { if (e.target.matches('input[type="checkbox"]')) updateSegmentSizeDisplay(true); });
+});
 document.getElementById('fBatchSize').addEventListener('input', () => {
   const max = Number(document.getElementById('fBatchSize').max);
   if (max && Number(document.getElementById('fBatchSize').value) > max) document.getElementById('fBatchSize').value = String(max);
@@ -1148,18 +1227,18 @@ document.querySelectorAll('#msProgramTypes input, #fStatuses').forEach((el) => {
 // ── AI Active: preview / start / monitor batches ─────────────────────────
 function currentActiveConfig() {
   return {
-    segmentId: document.getElementById('fSegment').value || null,
+    segmentIds: getSelectedSegmentIds(),
     batchSize: Number(document.getElementById('fBatchSize').value) || 25,
   };
 }
 async function previewBatch() {
-  const { segmentId, batchSize } = currentActiveConfig();
+  const { segmentIds, batchSize } = currentActiveConfig();
   const resultEl = document.getElementById('previewResult');
-  if (!segmentId) { showToast('Select a segment first', true); return; }
+  if (!segmentIds.length) { showToast('Select at least one segment first', true); return; }
   resultEl.style.display = 'block';
   resultEl.textContent = 'Checking segment…';
   try {
-    const r = await fetch('/api/ai-active/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId: editingAgentId, segmentId, batchSize }) });
+    const r = await fetch('/api/ai-active/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId: editingAgentId, segmentIds, batchSize }) });
     const data = await r.json();
     if (!r.ok) { resultEl.textContent = data.error || 'Preview failed.'; return; }
     resultEl.innerHTML = `
@@ -1169,21 +1248,21 @@ async function previewBatch() {
       ${data.willContact.length ? `<button class="pra-btn" id="startBatchBtn" type="button" style="margin-top:8px">Start Batch (${data.willContact.length} leads)</button>` : ''}
     `;
     const startBtn = document.getElementById('startBatchBtn');
-    if (startBtn) startBtn.addEventListener('click', () => startBatch(segmentId, batchSize));
+    if (startBtn) startBtn.addEventListener('click', () => startBatch(segmentIds, batchSize));
   } catch (err) {
     resultEl.textContent = 'Preview failed: ' + err.message;
   }
 }
-async function startBatch(segmentId, batchSize, confirmOver100) {
+async function startBatch(segmentIds, batchSize, confirmOver100) {
   if (!editingAgentId) return;
   const r = await fetch('/api/ai-active/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agentId: editingAgentId, segmentId, batchSize, confirmOver100: !!confirmOver100 }),
+    body: JSON.stringify({ agentId: editingAgentId, segmentIds, batchSize, confirmOver100: !!confirmOver100 }),
   });
   const data = await r.json();
   if (!r.ok) { showToast(data.error || 'Could not start batch', true); return; }
   if (data.needsConfirmation) {
-    if (confirm(`This will start messaging ${data.count} leads. Continue?`)) startBatch(segmentId, batchSize, true);
+    if (confirm(`This will start messaging ${data.count} leads. Continue?`)) startBatch(segmentIds, batchSize, true);
     return;
   }
   showToast('Batch started — leads will be contacted per the wait-time settings.');
@@ -1203,7 +1282,7 @@ async function loadBatchList(agentId) {
     el.innerHTML = mine.map(b => `
       <div class="batch-row">
         <div class="batch-row-head">
-          <span class="batch-name">${escapeHtml(b.segmentName || 'Batch')}</span>
+          <span class="batch-name">${escapeHtml((b.segmentNames || (b.segmentName ? [b.segmentName] : [])).join(', ') || 'Batch')}</span>
           <span class="batch-status-pill ${b.status}">${escapeHtml(b.status)}</span>
         </div>
         <div class="batch-stats">${batchStatsLine(b.stats)}</div>

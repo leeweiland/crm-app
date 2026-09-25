@@ -40,9 +40,14 @@ const MAX_FOLLOWUPS = 3; // fallback default when an agent has no cfg.maxFollowU
 // exclusions above, then caps to batchSize -- the exact same logic /preview
 // shows and /start freezes, so what you approved in preview is what
 // actually gets contacted.
-function buildCandidateList(segment, batchSize, targeting) {
+// segments is an array now (was a single segment) -- a contact counts if
+// it matches ANY of them (OR across segments' own filters), so a batch can
+// target the union of several audiences (e.g. an existing applicant
+// segment PLUS a "new leads since <date>, ongoing" segment) in one Start
+// instead of needing one batch per segment.
+function buildCandidateList(segments, batchSize, targeting) {
   const contacts = readJson(CONTACTS_FILE, []);
-  const matching = contacts.filter((c) => matchesSegment(c, segment.filter) && contactMatchesTargeting(c, targeting));
+  const matching = contacts.filter((c) => segments.some((s) => matchesSegment(c, s.filter)) && contactMatchesTargeting(c, targeting));
   const excluded = [];
   const candidates = [];
   for (const c of matching) {
@@ -192,12 +197,16 @@ export async function handleAiActiveRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
   if (p === "/api/ai-active/preview" && req.method === "POST") {
-    const { agentId, segmentId, batchSize } = await readJsonBody(req);
+    // segmentIds (array) is current; segmentId (single) still accepted so
+    // an older saved agent config (or a stale client) keeps working.
+    const { agentId, segmentId, segmentIds, batchSize } = await readJsonBody(req);
+    const ids = Array.isArray(segmentIds) && segmentIds.length ? segmentIds : (segmentId ? [segmentId] : []);
     const agent = readJson(AI_AGENTS_FILE, []).find((a) => a.id === agentId);
-    const segment = readJson(SEGMENTS_FILE, []).find((s) => s.id === segmentId);
-    if (!segment) return sendJson(res, 404, { error: "Segment not found" });
+    const allSegments = readJson(SEGMENTS_FILE, []);
+    const segments = ids.map((id) => allSegments.find((s) => s.id === id)).filter(Boolean);
+    if (!segments.length) return sendJson(res, 404, { error: "Segment not found" });
     const size = Math.max(1, Math.min(1000, Number(batchSize) || 25));
-    const result = buildCandidateList(segment, size, agent?.targeting);
+    const result = buildCandidateList(segments, size, agent?.targeting);
     return sendJson(res, 200, {
       totalMatchingSegment: result.totalMatching,
       willContact: result.candidates.map((c) => ({ id: c.id, name: `${c.first} ${c.last}`.trim(), email: c.email, phone: c.phone, status: c.status })),
@@ -208,20 +217,22 @@ export async function handleAiActiveRequest(req, res, url) {
   }
 
   if (p === "/api/ai-active/start" && req.method === "POST") {
-    const { agentId, segmentId, batchSize, confirmOver100 } = await readJsonBody(req);
+    const { agentId, segmentId, segmentIds, batchSize, confirmOver100 } = await readJsonBody(req);
+    const ids = Array.isArray(segmentIds) && segmentIds.length ? segmentIds : (segmentId ? [segmentId] : []);
     const agent = readJson(AI_AGENTS_FILE, []).find((a) => a.id === agentId);
     if (!agent) return sendJson(res, 404, { error: "Agent not found" });
-    const segment = readJson(SEGMENTS_FILE, []).find((s) => s.id === segmentId);
-    if (!segment) return sendJson(res, 404, { error: "Segment not found" });
+    const allSegments = readJson(SEGMENTS_FILE, []);
+    const segments = ids.map((id) => allSegments.find((s) => s.id === id)).filter(Boolean);
+    if (!segments.length) return sendJson(res, 404, { error: "Segment not found" });
     const size = Math.max(1, Math.min(1000, Number(batchSize) || 25));
-    const result = buildCandidateList(segment, size, agent.targeting);
+    const result = buildCandidateList(segments, size, agent.targeting);
     if (!result.candidates.length) return sendJson(res, 400, { error: "No contacts left to message after exclusions" });
     if (result.candidates.length > 100 && !confirmOver100) {
       return sendJson(res, 200, { needsConfirmation: true, count: result.candidates.length });
     }
     const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
     const batch = {
-      id: randomUUID(), agentId, segmentId, segmentName: segment.name, batchSize: size,
+      id: randomUUID(), agentId, segmentIds: ids, segmentNames: segments.map((s) => s.name), batchSize: size,
       contactIds: result.candidates.map((c) => c.id), // frozen -- never re-evaluated against the live segment
       excludedCount: result.excludedCount,
       status: "running",
