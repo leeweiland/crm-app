@@ -180,7 +180,7 @@ function openFooterEditor(id, ownerLabel) {
   if (!footerEditor) footerEditor = BlockEditor.init(document.getElementById('footerEditorRoot'), state, () => {});
   else footerEditor.setState(state);
 }
-document.getElementById('saveFooterBtn').onclick = async () => {
+async function saveFooter() {
   if (!editingFooterId || !footerEditor) return;
   const state = footerEditor.getState ? footerEditor.getState() : { blocks: [], theme: {} };
   const body = {
@@ -195,7 +195,20 @@ document.getElementById('saveFooterBtn').onclick = async () => {
   await loadFooters();
   document.getElementById('myFooterName').textContent = currentUser.footerTemplateId ? `Footer: ${footerNameFor(currentUser.footerTemplateId)}` : 'No footer set up yet.';
   loadTeamStatus();
-};
+}
+document.getElementById('saveFooterBtn').onclick = saveFooter;
+// Click-away also saves, not just closes -- crm-nav.js's generic
+// click-outside-to-close (any .modal-backdrop) has no idea this specific
+// modal has unsaved edits, so it just hides it. Same drag-vs-genuine-click
+// mousedown-tracking safeguard as that handler, scoped to just this modal,
+// so a drag that starts inside the editor and releases outside doesn't
+// trigger a save-then-close mid-edit.
+let footerModalMouseDownTarget = null;
+const footerModalEl = document.getElementById('footerModal');
+footerModalEl.addEventListener('mousedown', (e) => { footerModalMouseDownTarget = e.target; }, true);
+footerModalEl.addEventListener('click', (e) => {
+  if (e.target === footerModalEl && footerModalMouseDownTarget === e.target) saveFooter();
+});
 
 document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailReconnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
