@@ -40,6 +40,7 @@
   .tpl-preview-row td { padding: 0; }
   .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
   .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
+  #tab-automations .data-table, #tab-templates .data-table { table-layout: fixed; }
 </style>
 </head>
 <body>
@@ -58,8 +59,18 @@
         <button class="tab-btn" data-tab="templates">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-automations">
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel">
           <table class="data-table">
+            <colgroup>
+              <col style="width:auto"/>
+              <col style="width:170px"/>
+              <col style="width:80px"/>
+              <col style="width:110px"/>
+              <col style="width:150px"/>
+              <col style="width:130px"/>
+              <col style="width:160px"/>
+              <col style="width:230px"/>
+            </colgroup>
             <thead><tr id="automationsHeadRow">
               <th class="sortable" data-sort="name" data-col-key="name">Name</th>
               <th class="sortable" data-sort="trigger" data-col-key="trigger">Trigger</th>
@@ -73,10 +84,11 @@
             <tbody id="automationsBody"><tr><td colspan="8" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
+        <div id="automationsPagination"></div>
       </div>
       <div class="tab-panel" id="tab-templates">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Every email an automation step can send, one row per template rather than per recipient -- including ones ActiveCampaign automations sent before this CRM existed. Stats for ActiveCampaign-sourced rows aren't available yet.</div>
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel">
           <table class="data-table">
             <thead><tr>
               <th>Source</th>
@@ -123,6 +135,8 @@ function triggerSummary(a) {
 
 let allAutomations = [];
 let automationSort = { field: 'updatedAt', dir: -1 };
+let automationsPage = 1;
+let automationsPageSize = parseInt(localStorage.getItem('automationsPageSize'), 10) || 20;
 function renderAutomationsTable() {
   const { field, dir } = automationSort;
   const rows = [...allAutomations].sort((a, b) => {
@@ -141,8 +155,15 @@ function renderAutomationsTable() {
     if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
   });
   const body = document.getElementById('automationsBody');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="pra-muted">No automations yet.</td></tr>'; return; }
-  body.innerHTML = rows.map(a => `
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="8" class="pra-muted">No automations yet.</td></tr>';
+    praRenderPagination(document.getElementById('automationsPagination'), { total: 0, page: 1, pageSize: automationsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { automationsPageSize = size; localStorage.setItem('automationsPageSize', size); automationsPage = 1; renderAutomationsTable(); } });
+    return;
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / automationsPageSize));
+  automationsPage = Math.min(automationsPage, pageCount);
+  const pageRows = rows.slice((automationsPage - 1) * automationsPageSize, automationsPage * automationsPageSize);
+  body.innerHTML = pageRows.map(a => `
     <tr>
       <td class="clickable"><a href="/automation-builder.html?id=${a.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(a.name)}</a></td>
       <td class="pra-muted">${escapeHtml(triggerSummary(a))}</td>
@@ -173,6 +194,12 @@ function renderAutomationsTable() {
     if (!confirm('Delete this automation?')) return;
     await fetch('/api/automations/' + btn.dataset.del, { method: 'DELETE' });
     loadAutomations();
+  });
+  praRenderPagination(document.getElementById('automationsPagination'), {
+    total: rows.length, page: automationsPage, pageSize: automationsPageSize,
+    onPrev() { if (automationsPage > 1) { automationsPage--; renderAutomationsTable(); } },
+    onNext() { automationsPage++; renderAutomationsTable(); },
+    onPageSize(size) { automationsPageSize = size; localStorage.setItem('automationsPageSize', size); automationsPage = 1; renderAutomationsTable(); },
   });
 }
 async function openEnrolledPanel(automationId, name) {

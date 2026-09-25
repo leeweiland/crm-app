@@ -32,6 +32,15 @@
   .tpl-preview-row td { padding: 0; }
   .tpl-preview-row iframe { width: 100%; height: 360px; border: none; background: #fff; }
   .tpl-expand-btn { cursor: pointer; color: var(--pra-blue); background: none; border: none; font-size: .8rem; font-weight: 700; }
+  /* Fixed column widths (via <colgroup>) instead of the browser's auto table
+     layout -- auto layout let this table's Actions column (Preview/View
+     Report/Copy/Delete) get silently squeezed past the panel's right edge
+     while Name crushed itself to a couple characters trying to compensate,
+     with no visible scrollbar hint that Copy/Delete were still there,
+     off-screen. Fixed layout guarantees Actions always has room and the
+     table fills the page at its natural width instead of needing a nested
+     scroll box. */
+  #tab-campaigns .data-table { table-layout: fixed; }
 </style>
 </head>
 <body>
@@ -51,8 +60,19 @@
         <button class="tab-btn" data-tab="external">Templates</button>
       </div>
       <div class="tab-panel active" id="tab-campaigns">
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel">
           <table class="data-table">
+            <colgroup>
+              <col style="width:auto"/>
+              <col style="width:110px"/>
+              <col style="width:110px"/>
+              <col style="width:110px"/>
+              <col style="width:70px"/>
+              <col style="width:80px"/>
+              <col style="width:80px"/>
+              <col style="width:150px"/>
+              <col style="width:340px"/>
+            </colgroup>
             <thead><tr id="campaignsHeadRow">
               <th class="sortable" data-sort="name" data-col-key="name">Name</th>
               <th class="sortable" data-sort="status" data-col-key="status">Status</th>
@@ -67,6 +87,7 @@
             <tbody id="campaignsBody"><tr><td colspan="9" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
+        <div id="campaignsPagination"></div>
       </div>
       <div class="tab-panel" id="tab-external">
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Bulk campaigns ActiveCampaign sent before this CRM existed -- read-only. Automation-triggered ones are in Email Automations' own Templates tab instead. Stats fill in gradually as the background sync reaches each campaign's messages.</div>
@@ -90,6 +111,8 @@ function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '—'; }
 let allCampaigns = [];
 let allLists = [], allSegments = [];
 let campaignSort = { field: 'updatedAt', dir: -1 };
+let campaignsPage = 1;
+let campaignsPageSize = parseInt(localStorage.getItem('campaignsPageSize'), 10) || 20;
 function listNames(listIds) {
   if (!listIds?.length) return '—';
   return listIds.map(id => allLists.find(l => l.id === id)?.name || id).join(', ');
@@ -130,8 +153,15 @@ function renderCampaignsTable() {
     if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
   });
   const body = document.getElementById('campaignsBody');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="pra-muted">No campaigns match.</td></tr>'; return; }
-  body.innerHTML = rows.map((c, idx) => `
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="9" class="pra-muted">No campaigns match.</td></tr>';
+    praRenderPagination(document.getElementById('campaignsPagination'), { total: 0, page: 1, pageSize: campaignsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { campaignsPageSize = size; localStorage.setItem('campaignsPageSize', size); campaignsPage = 1; renderCampaignsTable(); } });
+    return;
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / campaignsPageSize));
+  campaignsPage = Math.min(campaignsPage, pageCount);
+  const pageRows = rows.slice((campaignsPage - 1) * campaignsPageSize, campaignsPage * campaignsPageSize);
+  body.innerHTML = pageRows.map((c, idx) => `
     <tr>
       <td class="clickable"><a href="/campaign-builder.html?id=${c.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(c.name)}</a></td>
       <td><span class="status-pill status-${c.status}" title="${c.status === 'send_error' && c.sendError ? escapeHtml(c.sendError) : ''}">${statusLabel(c)}</span></td>
@@ -161,7 +191,7 @@ function renderCampaignsTable() {
     if (nowExpanded && iframe.dataset.loaded === '0') {
       iframe.dataset.loaded = '1';
       iframe.srcdoc = '<p style="font-family:sans-serif;color:#888;padding:16px">Loading preview...</p>';
-      const r = await fetch(`/api/campaigns/${rows[idx].id}/body`);
+      const r = await fetch(`/api/campaigns/${pageRows[idx].id}/body`);
       const d = r.ok ? await r.json() : null;
       iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">${escapeHtml(d?.note || 'No preview available.')}</p>`;
     }
@@ -177,6 +207,12 @@ function renderCampaignsTable() {
     if (!confirm('Delete this campaign?')) return;
     await fetch('/api/campaigns/' + btn.dataset.del, { method: 'DELETE' });
     loadCampaigns();
+  });
+  praRenderPagination(document.getElementById('campaignsPagination'), {
+    total: rows.length, page: campaignsPage, pageSize: campaignsPageSize,
+    onPrev() { if (campaignsPage > 1) { campaignsPage--; renderCampaignsTable(); } },
+    onNext() { campaignsPage++; renderCampaignsTable(); },
+    onPageSize(size) { campaignsPageSize = size; localStorage.setItem('campaignsPageSize', size); campaignsPage = 1; renderCampaignsTable(); },
   });
 }
 let sendPollTimer = null;
@@ -208,7 +244,7 @@ async function loadCampaigns() {
   clearTimeout(sendPollTimer);
   if (allCampaigns.some(c => c.status === 'sending')) sendPollTimer = setTimeout(loadCampaigns, 3000);
 }
-document.getElementById('campaignSearch').addEventListener('input', () => { clearTimeout(window._cst); window._cst = setTimeout(renderCampaignsTable, 200); });
+document.getElementById('campaignSearch').addEventListener('input', () => { clearTimeout(window._cst); window._cst = setTimeout(() => { campaignsPage = 1; renderCampaignsTable(); }, 200); });
 // Sort choice persists per-user (server-side) so it survives navigation,
 // reload, and a fresh device -- same pattern as contacts.html's column
 // preferences.

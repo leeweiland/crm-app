@@ -15,6 +15,7 @@
   .data-table th[data-sort]:hover { color: var(--pra-white); }
   .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
   .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
+  .data-table { table-layout: fixed; }
 </style>
 </head>
 <body>
@@ -29,14 +30,23 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">Your Zapier alternative — trigger a flow from a webhook (Framer, or anything else), a form submission, or a booking, then filter, delay, branch, write to Google Sheets, enroll in an Email Automation or SMS Sequence, or change a contact's status.</div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel">
         <table class="data-table">
+          <colgroup>
+            <col style="width:auto"/>
+            <col style="width:170px"/>
+            <col style="width:90px"/>
+            <col style="width:150px"/>
+            <col style="width:170px"/>
+            <col style="width:140px"/>
+          </colgroup>
           <thead><tr id="flowsHeadRow">
             <th data-sort="name" data-col-key="name">Name</th><th data-sort="trigger" data-col-key="trigger">Trigger</th><th data-sort="active" data-col-key="active">Active</th><th data-sort="runs" data-col-key="runs">Runs</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Edited</th><th data-col-key="actions"></th>
           </tr></thead>
           <tbody id="flowsBody"><tr><td colspan="6" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
+      <div id="flowsPagination"></div>
     </div>
   </div>
 </div>
@@ -49,6 +59,8 @@ const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', b
 
 let flowsCache = [];
 let flowsSort = { key: 'updatedAt', dir: 'desc' };
+let flowsPage = 1;
+let flowsPageSize = parseInt(localStorage.getItem('flowsPageSize'), 10) || 20;
 const FLOW_SORT_ACCESSORS = {
   name: f => (f.name || '').toLowerCase(),
   trigger: f => TRIGGER_LABELS[f.trigger?.type] || '',
@@ -119,11 +131,18 @@ function renderFlowsTable() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.dataset.sort === flowsSort.key) th.classList.add('sort-' + flowsSort.dir);
   });
-  if (!flowsCache.length) { body.innerHTML = enrollFlowRowHtml() + '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>'; return; }
+  if (!flowsCache.length) {
+    body.innerHTML = enrollFlowRowHtml() + '<tr><td colspan="6" class="pra-muted">No flows yet — click "+ New Flow" to build one.</td></tr>';
+    praRenderPagination(document.getElementById('flowsPagination'), { total: 0, page: 1, pageSize: flowsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { flowsPageSize = size; localStorage.setItem('flowsPageSize', size); flowsPage = 1; renderFlowsTable(); } });
+    return;
+  }
   const acc = FLOW_SORT_ACCESSORS[flowsSort.key];
   const factor = flowsSort.dir === 'asc' ? 1 : -1;
   const sorted = [...flowsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
-  body.innerHTML = enrollFlowRowHtml() + sorted.map(f => `
+  const pageCount = Math.max(1, Math.ceil(sorted.length / flowsPageSize));
+  flowsPage = Math.min(flowsPage, pageCount);
+  const pageRows = sorted.slice((flowsPage - 1) * flowsPageSize, flowsPage * flowsPageSize);
+  body.innerHTML = (flowsPage === 1 ? enrollFlowRowHtml() : '') + pageRows.map(f => `
     <tr>
       <td class="clickable"><a href="/flow-builder.html?id=${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
       <td class="pra-muted">${TRIGGER_LABELS[f.trigger?.type] || ''}</td>
@@ -144,6 +163,12 @@ function renderFlowsTable() {
     if (!confirm('Delete this flow? Its run history is deleted too.')) return;
     await fetch('/api/flows/' + btn.dataset.del, { method: 'DELETE' });
     loadFlows();
+  });
+  praRenderPagination(document.getElementById('flowsPagination'), {
+    total: sorted.length, page: flowsPage, pageSize: flowsPageSize,
+    onPrev() { if (flowsPage > 1) { flowsPage--; renderFlowsTable(); } },
+    onNext() { flowsPage++; renderFlowsTable(); },
+    onPageSize(size) { flowsPageSize = size; localStorage.setItem('flowsPageSize', size); flowsPage = 1; renderFlowsTable(); },
   });
 }
 

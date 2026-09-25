@@ -14,6 +14,7 @@
   .data-table th[data-sort]:hover { color: var(--pra-white); }
   .data-table th[data-sort].sort-asc::after { content: ' \25B2'; font-size: .7em; }
   .data-table th[data-sort].sort-desc::after { content: ' \25BC'; font-size: .7em; }
+  .data-table { table-layout: fixed; }
 </style>
 </head>
 <body>
@@ -28,14 +29,22 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">Build lead-capture forms, publish them, and every submission lands in Contacts and can trigger automations/workflows.</div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel">
         <table class="data-table">
+          <colgroup>
+            <col style="width:auto"/>
+            <col style="width:130px"/>
+            <col style="width:120px"/>
+            <col style="width:170px"/>
+            <col style="width:300px"/>
+          </colgroup>
           <thead><tr id="formsHeadRow">
             <th data-sort="name" data-col-key="name">Name</th><th data-sort="status" data-col-key="status">Status</th><th data-sort="responses" data-col-key="responses">Responses</th><th data-sort="updatedAt" data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
           </tr></thead>
           <tbody id="formsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
+      <div id="formsPagination"></div>
     </div>
   </div>
 </div>
@@ -47,6 +56,8 @@ function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
 let formsCache = [];
 let formsSort = { key: 'updatedAt', dir: 'desc' };
+let formsPage = 1;
+let formsPageSize = parseInt(localStorage.getItem('formsPageSize'), 10) || 20;
 const FORM_SORT_ACCESSORS = {
   name: f => (f.name || '').toLowerCase(),
   status: f => f.status || '',
@@ -88,11 +99,18 @@ function renderFormsTable() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.dataset.sort === formsSort.key) th.classList.add('sort-' + formsSort.dir);
   });
-  if (!formsCache.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No forms yet — click "+ New Form" to build one.</td></tr>'; return; }
+  if (!formsCache.length) {
+    body.innerHTML = '<tr><td colspan="5" class="pra-muted">No forms yet — click "+ New Form" to build one.</td></tr>';
+    praRenderPagination(document.getElementById('formsPagination'), { total: 0, page: 1, pageSize: formsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { formsPageSize = size; localStorage.setItem('formsPageSize', size); formsPage = 1; renderFormsTable(); } });
+    return;
+  }
   const acc = FORM_SORT_ACCESSORS[formsSort.key];
   const factor = formsSort.dir === 'asc' ? 1 : -1;
   const sorted = [...formsCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
-  body.innerHTML = sorted.map(f => `
+  const pageCount = Math.max(1, Math.ceil(sorted.length / formsPageSize));
+  formsPage = Math.min(formsPage, pageCount);
+  const pageRows = sorted.slice((formsPage - 1) * formsPageSize, formsPage * formsPageSize);
+  body.innerHTML = pageRows.map(f => `
     <tr>
       <td class="clickable"><a href="/form-builder.html?id=${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
       <td><span class="status-pill status-${f.status}">${f.status}</span></td>
@@ -111,6 +129,12 @@ function renderFormsTable() {
     if (!confirm('Delete this form and all its responses?')) return;
     await fetch('/api/forms/' + btn.dataset.del, { method: 'DELETE' });
     loadForms();
+  });
+  praRenderPagination(document.getElementById('formsPagination'), {
+    total: sorted.length, page: formsPage, pageSize: formsPageSize,
+    onPrev() { if (formsPage > 1) { formsPage--; renderFormsTable(); } },
+    onNext() { formsPage++; renderFormsTable(); },
+    onPageSize(size) { formsPageSize = size; localStorage.setItem('formsPageSize', size); formsPage = 1; renderFormsTable(); },
   });
 }
 

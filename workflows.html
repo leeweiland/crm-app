@@ -21,6 +21,7 @@
   .row-item:last-child { border-bottom: none; }
   .row-item button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 4px; }
   .row-item button:hover { color: var(--pra-red); }
+  .data-table { table-layout: fixed; }
 </style>
 </head>
 <body>
@@ -34,8 +35,17 @@
           <button class="pra-btn" id="newWorkflowBtn">+ New Workflow</button>
         </div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel">
         <table class="data-table">
+          <colgroup>
+            <col style="width:auto"/>
+            <col style="width:110px"/>
+            <col style="width:80px"/>
+            <col style="width:140px"/>
+            <col style="width:110px"/>
+            <col style="width:160px"/>
+            <col style="width:200px"/>
+          </colgroup>
           <thead><tr id="workflowsHeadRow">
             <th class="sortable" data-sort="name" data-col-key="name">Name</th>
             <th class="sortable" data-sort="steps" data-col-key="steps">Total SMS</th>
@@ -48,6 +58,7 @@
           <tbody id="workflowsBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
+      <div id="workflowsPagination"></div>
     </div>
   </div>
 </div>
@@ -70,6 +81,8 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 
 let allWorkflows = [];
 let workflowSort = { field: 'updatedAt', dir: -1 };
+let workflowsPage = 1;
+let workflowsPageSize = parseInt(localStorage.getItem('workflowsPageSize'), 10) || 20;
 function renderWorkflowsTable() {
   const { field, dir } = workflowSort;
   const rows = [...allWorkflows].sort((a, b) => {
@@ -88,8 +101,15 @@ function renderWorkflowsTable() {
     if (th.dataset.sort === field) th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${dir === 1 ? '▲' : '▼'}</span>`);
   });
   const body = document.getElementById('workflowsBody');
-  if (!rows.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No workflows yet.</td></tr>'; return; }
-  body.innerHTML = rows.map(w => `
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" class="pra-muted">No workflows yet.</td></tr>';
+    praRenderPagination(document.getElementById('workflowsPagination'), { total: 0, page: 1, pageSize: workflowsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { workflowsPageSize = size; localStorage.setItem('workflowsPageSize', size); workflowsPage = 1; renderWorkflowsTable(); } });
+    return;
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / workflowsPageSize));
+  workflowsPage = Math.min(workflowsPage, pageCount);
+  const pageRows = rows.slice((workflowsPage - 1) * workflowsPageSize, workflowsPage * workflowsPageSize);
+  body.innerHTML = pageRows.map(w => `
     <tr>
       <td class="clickable"><a href="/workflow-detail.html?id=${w.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(w.name)}</a></td>
       <td class="pra-muted">${w.steps.filter(s => s.type === 'sms').length}</td>
@@ -117,6 +137,12 @@ function renderWorkflowsTable() {
     const next = btn.dataset.active !== 'true';
     await fetch(`/api/workflows/${btn.dataset.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) });
     loadWorkflows();
+  });
+  praRenderPagination(document.getElementById('workflowsPagination'), {
+    total: rows.length, page: workflowsPage, pageSize: workflowsPageSize,
+    onPrev() { if (workflowsPage > 1) { workflowsPage--; renderWorkflowsTable(); } },
+    onNext() { workflowsPage++; renderWorkflowsTable(); },
+    onPageSize(size) { workflowsPageSize = size; localStorage.setItem('workflowsPageSize', size); workflowsPage = 1; renderWorkflowsTable(); },
   });
   document.querySelectorAll('[data-enrolled]').forEach(td => td.onclick = () => openEnrolledPanel(td.dataset.enrolled, td.dataset.name));
 }

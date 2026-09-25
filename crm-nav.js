@@ -382,3 +382,42 @@ new MutationObserver((records) => {
     });
   }
 }).observe(document.body, { childList: true, subtree: true });
+
+// Shared client-side pagination bar -- same "Showing X-Y of Z" / per-page
+// picker / Prev-Next markup contacts.html uses for its server-paged table,
+// reused as-is on list pages (campaigns, forms, flows, automations,
+// sequences, ai agents) that fetch their full row set in one shot and just
+// need to page through it client-side rather than re-fetching per page.
+function praRenderPagination(container, { total, page, pageSize, onPrev, onNext, onPageSize }) {
+  container.style.cssText = 'display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0';
+  container.innerHTML = `
+    <span class="pra-muted" data-pg-summary></span>
+    <span style="flex:1"></span>
+    <label class="pra-muted" style="display:flex;align-items:center;gap:6px">
+      Per page
+      <select class="pra-select" data-pg-size style="width:auto">
+        <option value="20">20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </label>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" data-pg-prev type="button">‹ Prev</button>
+    <span class="pra-muted" data-pg-indicator></span>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" data-pg-next type="button">Next ›</button>
+  `;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const start = total ? (page - 1) * pageSize + 1 : 0;
+  const end = Math.min(page * pageSize, total);
+  container.querySelector('[data-pg-summary]').textContent = total ? `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}` : 'No results';
+  container.querySelector('[data-pg-indicator]').textContent = `Page ${page} of ${pageCount}`;
+  const prevBtn = container.querySelector('[data-pg-prev]');
+  const nextBtn = container.querySelector('[data-pg-next]');
+  const sizeSelect = container.querySelector('[data-pg-size]');
+  prevBtn.disabled = page <= 1;
+  nextBtn.disabled = page >= pageCount;
+  sizeSelect.value = String(pageSize);
+  prevBtn.onclick = onPrev;
+  nextBtn.onclick = onNext;
+  sizeSelect.onchange = (e) => onPageSize(parseInt(e.target.value, 10) || 20);
+}
+window.praRenderPagination = praRenderPagination;

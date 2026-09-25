@@ -10,6 +10,7 @@
   .agent-active-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .agent-on { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .agent-off { background: rgba(255,255,255,0.1); color: #fff; }
+  .data-table { table-layout: fixed; }
 </style>
 </head>
 <body>
@@ -24,14 +25,22 @@
         </div>
         <div class="pra-muted" style="font-size:.82rem">AI Assist drafts replies for you to review in the Inbox. AI Active independently works a batch of leads you choose and pick to review. Both start OFF until you deliberately turn them on.</div>
       </div>
-      <div class="pra-panel" style="overflow-x:auto">
+      <div class="pra-panel">
         <table class="data-table">
+          <colgroup>
+            <col style="width:auto"/>
+            <col style="width:180px"/>
+            <col style="width:260px"/>
+            <col style="width:170px"/>
+            <col style="width:200px"/>
+          </colgroup>
           <thead><tr id="agentsHeadRow">
             <th data-col-key="name">Name</th><th data-col-key="status">Status</th><th data-col-key="targeting">Targeting</th><th data-col-key="updatedAt">Last Updated</th><th data-col-key="actions"></th>
           </tr></thead>
           <tbody id="agentsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
         </table>
       </div>
+      <div id="agentsPagination"></div>
     </div>
   </div>
 </div>
@@ -42,14 +51,23 @@
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
 
+let agentsPage = 1;
+let agentsPageSize = parseInt(localStorage.getItem('agentsPageSize'), 10) || 20;
 async function loadAgents() {
   const r = await fetch('/api/ai-agents');
   const body = document.getElementById('agentsBody');
   if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Could not load agents.</td></tr>'; return; }
   const { agents } = await r.json();
-  if (!agents.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No agents yet — click "+ New Agent" to create one.</td></tr>'; return; }
+  if (!agents.length) {
+    body.innerHTML = '<tr><td colspan="5" class="pra-muted">No agents yet — click "+ New Agent" to create one.</td></tr>';
+    praRenderPagination(document.getElementById('agentsPagination'), { total: 0, page: 1, pageSize: agentsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { agentsPageSize = size; localStorage.setItem('agentsPageSize', size); agentsPage = 1; loadAgents(); } });
+    return;
+  }
   const sorted = [...agents].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-  body.innerHTML = sorted.map(a => {
+  const pageCount = Math.max(1, Math.ceil(sorted.length / agentsPageSize));
+  agentsPage = Math.min(agentsPage, pageCount);
+  const pageRows = sorted.slice((agentsPage - 1) * agentsPageSize, agentsPage * agentsPageSize);
+  body.innerHTML = pageRows.map(a => {
     const targeting = [];
     if (a.targeting?.programTypes?.length) targeting.push(a.targeting.programTypes.join('/'));
     if (a.targeting?.statuses?.length) targeting.push(a.targeting.statuses.length + ' status(es)');
@@ -73,6 +91,12 @@ async function loadAgents() {
     await fetch(`/api/ai-agents/${el.dataset.del}`, { method: 'DELETE' });
     loadAgents();
   }));
+  praRenderPagination(document.getElementById('agentsPagination'), {
+    total: sorted.length, page: agentsPage, pageSize: agentsPageSize,
+    onPrev() { if (agentsPage > 1) { agentsPage--; loadAgents(); } },
+    onNext() { agentsPage++; loadAgents(); },
+    onPageSize(size) { agentsPageSize = size; localStorage.setItem('agentsPageSize', size); agentsPage = 1; loadAgents(); },
+  });
 }
 
 document.getElementById('newAgentBtn').addEventListener('click', async () => {

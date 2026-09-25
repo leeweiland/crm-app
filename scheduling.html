@@ -16,6 +16,7 @@
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
+  #tab-eventTypes .data-table, #tab-bookings .data-table { table-layout: fixed; }
   .status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .status-confirmed { background: rgba(57,255,20,0.15); color: var(--pra-green); }
   .status-cancelled { background: rgba(255,59,59,0.15); color: var(--pra-red); }
@@ -91,22 +92,40 @@
           <div class="pra-muted" style="font-size:.82rem;flex:1">Each event type gets its own public booking page at <code>/book/&lt;slug&gt;</code>.</div>
           <button class="pra-btn" id="newEventTypeBtn">+ New Event Type</button>
         </div>
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel">
           <table class="data-table">
+            <colgroup>
+              <col style="width:auto"/>
+              <col style="width:100px"/>
+              <col style="width:160px"/>
+              <col style="width:120px"/>
+              <col style="width:80px"/>
+              <col style="width:220px"/>
+              <col style="width:300px"/>
+            </colgroup>
             <thead><tr id="eventTypesHeadRow"><th data-sort="name" data-col-key="name">Name</th><th data-sort="duration" data-col-key="duration">Duration</th><th data-sort="calendar" data-col-key="calendar">Calendar</th><th data-sort="location" data-col-key="location">Location</th><th data-sort="active" data-col-key="active">Active</th><th data-col-key="bookingLink">Booking Link</th><th data-col-key="actions"></th></tr></thead>
             <tbody id="eventTypesBody"><tr><td colspan="7" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
+        <div id="eventTypesPagination"></div>
       </div>
 
       <!-- ── Bookings ── -->
       <div class="tab-panel" id="tab-bookings">
-        <div class="pra-panel" style="overflow-x:auto">
+        <div class="pra-panel">
           <table class="data-table">
+            <colgroup>
+              <col style="width:220px"/>
+              <col style="width:auto"/>
+              <col style="width:180px"/>
+              <col style="width:220px"/>
+              <col style="width:220px"/>
+            </colgroup>
             <thead><tr><th>When</th><th>Contact</th><th>Event Type</th><th>Status</th><th></th></tr></thead>
             <tbody id="bookingsBody"><tr><td colspan="5" class="pra-muted">Loading…</td></tr></tbody>
           </table>
         </div>
+        <div id="bookingsPagination"></div>
       </div>
 
       <!-- ── Calendars ── -->
@@ -351,14 +370,28 @@ document.getElementById('newCalendarBtn').onclick = async () => {
 };
 
 // ── Bookings ──────────────────────────────────────────────────────────────
+let bookingsCache = [];
+let bookingsPage = 1;
+let bookingsPageSize = parseInt(localStorage.getItem('bookingsPageSize'), 10) || 20;
 async function loadBookings() {
   const body = document.getElementById('bookingsBody');
   const r = await fetch('/api/scheduling/admin/bookings');
   if (!r.ok) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">Could not load bookings.</td></tr>'; return; }
-  const { bookings } = await r.json();
-  if (!bookings.length) { body.innerHTML = '<tr><td colspan="5" class="pra-muted">No bookings yet.</td></tr>'; return; }
-  const upcoming = [...bookings].sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
-  body.innerHTML = upcoming.map(b => `
+  bookingsCache = (await r.json()).bookings;
+  renderBookingsTable();
+}
+function renderBookingsTable() {
+  const body = document.getElementById('bookingsBody');
+  if (!bookingsCache.length) {
+    body.innerHTML = '<tr><td colspan="5" class="pra-muted">No bookings yet.</td></tr>';
+    praRenderPagination(document.getElementById('bookingsPagination'), { total: 0, page: 1, pageSize: bookingsPageSize, onPrev() {}, onNext() {}, onPageSize(size) { bookingsPageSize = size; localStorage.setItem('bookingsPageSize', size); bookingsPage = 1; renderBookingsTable(); } });
+    return;
+  }
+  const upcoming = [...bookingsCache].sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
+  const pageCount = Math.max(1, Math.ceil(upcoming.length / bookingsPageSize));
+  bookingsPage = Math.min(bookingsPage, pageCount);
+  const pageRows = upcoming.slice((bookingsPage - 1) * bookingsPageSize, bookingsPage * bookingsPageSize);
+  body.innerHTML = pageRows.map(b => `
     <tr>
       <td>${fmtWhen(b.startAt)}${b.timezone ? `<br/><span class="pra-muted" style="font-size:.72rem">invitee: ${escapeHtml(b.timezone)}</span>` : ''}</td>
       <td>${escapeHtml(b.name)}<br/><span class="pra-muted" style="font-size:.76rem">${escapeHtml(b.email)}</span></td>
@@ -378,11 +411,19 @@ async function loadBookings() {
     await fetch('/api/scheduling/admin/bookings/' + btn.dataset.cancel + '/cancel', { method: 'POST' });
     loadBookings();
   });
+  praRenderPagination(document.getElementById('bookingsPagination'), {
+    total: upcoming.length, page: bookingsPage, pageSize: bookingsPageSize,
+    onPrev() { if (bookingsPage > 1) { bookingsPage--; renderBookingsTable(); } },
+    onNext() { bookingsPage++; renderBookingsTable(); },
+    onPageSize(size) { bookingsPageSize = size; localStorage.setItem('bookingsPageSize', size); bookingsPage = 1; renderBookingsTable(); },
+  });
 }
 
 // ── Event types ───────────────────────────────────────────────────────────
 let eventTypesCache = [];
 let eventTypesSort = { key: 'updatedAt', dir: 'desc' };
+let eventTypesPage = 1;
+let eventTypesPageSize = parseInt(localStorage.getItem('eventTypesPageSize'), 10) || 20;
 const EVENT_TYPE_SORT_ACCESSORS = {
   name: et => (et.name || '').toLowerCase(),
   duration: et => et.durationMinutes || 0,
@@ -424,11 +465,18 @@ function renderEventTypesTable() {
     th.classList.remove('sort-asc', 'sort-desc');
     if (th.dataset.sort === eventTypesSort.key) th.classList.add('sort-' + eventTypesSort.dir);
   });
-  if (!eventTypesCache.length) { body.innerHTML = '<tr><td colspan="7" class="pra-muted">No event types yet — click "+ New Event Type".</td></tr>'; return; }
+  if (!eventTypesCache.length) {
+    body.innerHTML = '<tr><td colspan="7" class="pra-muted">No event types yet — click "+ New Event Type".</td></tr>';
+    praRenderPagination(document.getElementById('eventTypesPagination'), { total: 0, page: 1, pageSize: eventTypesPageSize, onPrev() {}, onNext() {}, onPageSize(size) { eventTypesPageSize = size; localStorage.setItem('eventTypesPageSize', size); eventTypesPage = 1; renderEventTypesTable(); } });
+    return;
+  }
   const acc = EVENT_TYPE_SORT_ACCESSORS[eventTypesSort.key];
   const factor = eventTypesSort.dir === 'asc' ? 1 : -1;
   const eventTypes = [...eventTypesCache].sort((a, b) => { const av = acc(a), bv = acc(b); return av < bv ? -factor : av > bv ? factor : 0; });
-  body.innerHTML = eventTypes.map(et => `
+  const pageCount = Math.max(1, Math.ceil(eventTypes.length / eventTypesPageSize));
+  eventTypesPage = Math.min(eventTypesPage, pageCount);
+  const pageRows = eventTypes.slice((eventTypesPage - 1) * eventTypesPageSize, eventTypesPage * eventTypesPageSize);
+  body.innerHTML = pageRows.map(et => `
     <tr>
       <td><a class="pra-link" href="/scheduling-editor.html?id=${et.id}">${escapeHtml(et.name)}</a></td>
       <td>${et.durationMinutes} min</td>
@@ -448,6 +496,12 @@ function renderEventTypesTable() {
     if (!confirm('Delete this event type? Existing bookings are kept.')) return;
     await fetch('/api/scheduling/admin/event-types/' + btn.dataset.del, { method: 'DELETE' });
     loadEventTypes();
+  });
+  praRenderPagination(document.getElementById('eventTypesPagination'), {
+    total: eventTypes.length, page: eventTypesPage, pageSize: eventTypesPageSize,
+    onPrev() { if (eventTypesPage > 1) { eventTypesPage--; renderEventTypesTable(); } },
+    onNext() { eventTypesPage++; renderEventTypesTable(); },
+    onPageSize(size) { eventTypesPageSize = size; localStorage.setItem('eventTypesPageSize', size); eventTypesPage = 1; renderEventTypesTable(); },
   });
 }
 document.getElementById('newEventTypeBtn').onclick = () => openModal('etModal');
