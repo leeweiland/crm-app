@@ -172,8 +172,18 @@ function newAgent({ name, description }) {
 // exact broken escaping style back ("it&#39;s") -- stripped/decoded here too
 // as a second line of defense, not just at the point content first gets
 // stored.
+// Marketing/automation HTML emails routinely carry a <style> block (Outlook/
+// Apple Mail resets like .ExternalClass) whose CSS text has no tags of its
+// own to strip -- a plain <[^>]+> pass removes the <style> tags but leaves
+// the rule text sitting in the output verbatim. Confirmed live: the Activity
+// panel showed ".ExternalClass { width: 100%; background: inherit; ... }" as
+// if it were message content. Cutting the whole element (tag + contents)
+// before the generic tag-strip is the only way to keep that out.
+function stripStyleAndScript(html) {
+  return String(html || "").replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ");
+}
 function plainJourneyText(s) {
-  return String(s || "")
+  return stripStyleAndScript(s)
     .replace(/<[^>]+>/g, " ")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
@@ -790,21 +800,53 @@ async function handleAiAgentsCrud(req, res, url) {
   // conversation, but deliberately plain: no HTML rendering, no thread
   // quoting, just channel + who-said-it + when, the way the request asked
   // for ("no super detailed email section... just simple interaction").
+  // Same HTML-email problem plainJourneyText solves above, plus paragraph
+  // structure: the Activity bubble CSS (.tc-bubble) already renders
+  // white-space: pre-wrap, so real line breaks here show up as real
+  // paragraph breaks client-side instead of one run-on line. Collapsing
+  // straight to spaces (the old behavior) is exactly what made a footer-
+  // heavy email read as a single undifferentiated wall of text.
+  function htmlToActivityText(html) {
+    return stripStyleAndScript(html)
+      .replace(/<(br|\/p|\/div|\/li|\/tr|\/h[1-6])\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+      .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+      .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"').replace(/&apos;/gi, "'")
+      .replace(/[ \t]+/g, " ")
+      .replace(/ *\n */g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
   const activityContactMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/activity-contact\/([^/]+)$/);
   if (activityContactMatch && req.method === "GET") {
+    const agentId = activityContactMatch[1];
     const contactId = activityContactMatch[2];
     // Full HTML email bodies commonly run hundreds/thousands of characters
     // once footer/signature/unsubscribe/legal boilerplate is included --
-    // stripped of its own HTML structure (line breaks, sections), that
-    // reads as one giant undifferentiated wall of text, not a "simple
-    // interaction". Capped well past a real message's actual content but
-    // well short of an appended footer/legal block.
+    // capped well past a real message's actual content but well short of an
+    // appended footer/legal block.
     const ACTIVITY_TEXT_CAP = 500;
-    const journey = getContactMessages(contactId)
-      .filter((m) => ["email", "sms"].includes(m.channel))
+    const allMessages = getContactMessages(contactId).filter((m) => ["email", "sms"].includes(m.channel));
+    // getContactMessages returns EVERY message this contact has ever been
+    // part of -- old campaigns/imports, other agents, human reps, all mixed
+    // in the same shard. "This agent's conversation" means only the outbound
+    // sends actually tagged to it (sourceType/sourceId, set at send time by
+    // sendViaChannel) plus whatever inbound came in once this agent started
+    // talking to this lead -- not the contact's entire lifetime history.
+    // Confirmed live: opening a lead who'd previously gotten years-old
+    // marketing sends and a manual rep email pulled all of it into "Kai"'s
+    // activity view.
+    const agentOutbound = allMessages.filter((m) => m.direction === "outbound" && AGENT_SOURCE_TYPES.includes(m.sourceType) && m.sourceId === agentId);
+    const firstAgentSendAt = agentOutbound.length ? Math.min(...agentOutbound.map((m) => new Date(m.createdAt).getTime())) : null;
+    const journey = (firstAgentSendAt === null ? [] : allMessages.filter((m) => {
+      if (m.direction === "outbound") return AGENT_SOURCE_TYPES.includes(m.sourceType) && m.sourceId === agentId;
+      return new Date(m.createdAt).getTime() >= firstAgentSendAt;
+    }))
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
       .map((m) => {
-        const plain = (m.subject ? `${m.subject}\n\n` : "") + (m.body || m.bodyPreview || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        const plain = (m.subject ? `${m.subject}\n\n` : "") + htmlToActivityText(m.body || m.bodyPreview || "");
         return {
           channel: m.channel, direction: m.direction, createdAt: m.createdAt,
           text: plain.length > ACTIVITY_TEXT_CAP ? plain.slice(0, ACTIVITY_TEXT_CAP).trim() + "…" : plain,
