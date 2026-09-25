@@ -76,7 +76,7 @@ function messageBufferMs(cfg) {
   if (!b || b.value == null || b.value === "") return DEFAULT_MESSAGE_BUFFER_MS;
   return (Number(b.value) || 0) * (WAIT_UNIT_MS[b.unit] || WAIT_UNIT_MS.seconds);
 }
-function randomDelayMs(waitTimeRange) {
+export function randomDelayMs(waitTimeRange) {
   const range = waitTimeRange || {};
   const minMult = WAIT_UNIT_MS[range.minUnit || range.unit] || WAIT_UNIT_MS.hours;
   const maxMult = WAIT_UNIT_MS[range.maxUnit || range.unit] || WAIT_UNIT_MS.hours;
@@ -342,6 +342,12 @@ export async function processAiActiveBatches() {
     // same as pausing each one individually.
     if (!agent || !agent.active) continue;
     const cfg = agent.activeConfig || {};
+    // A test-send-tracked contact (see ai_agents_backend.js's /test-send)
+    // gets its own real single-contact batch so real replies actually get
+    // real automatic follow-ups -- but its ongoing sends still need to stay
+    // out of real Activity/reporting counts, same reasoning as the initial
+    // one-off send itself.
+    const sourceType = batch.isTestBatch ? "ai_active_test" : "ai_active";
 
     const due = states.filter((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state) && (!s.nextActionAt || new Date(s.nextActionAt).getTime() <= now));
     for (const st of due) {
@@ -369,7 +375,7 @@ export async function processAiActiveBatches() {
       // human_takeover. Old campaign history has no bearing on whether
       // AI Active should send its own first message.
       if (st.state === "waiting_reply") {
-        const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_active");
+        const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_active" && m.sourceType !== "ai_active_test");
         if (lastHumanOutbound && st.lastActionAt && new Date(lastHumanOutbound.createdAt).getTime() > new Date(st.lastActionAt).getTime()) {
           st.state = "human_takeover"; st.updatedAt = new Date().toISOString(); changed = true; continue;
         }
@@ -383,7 +389,7 @@ export async function processAiActiveBatches() {
             // generateColdOpen) -- send each opener in turn rather than just
             // the first.
             for (const o of opener.openers) {
-              await sendViaChannel(contact, o.channel, o.body, agent.id, o.subject, "ai_active", cfg.emailSenderId);
+              await sendViaChannel(contact, o.channel, o.body, agent.id, o.subject, sourceType, cfg.emailSenderId);
             }
             st.state = "waiting_reply";
             st.lastActionAt = new Date().toISOString();
@@ -414,7 +420,7 @@ export async function processAiActiveBatches() {
             } else if (result.escalate) {
               st.state = "escalated";
             } else if (result.text) {
-              await sendViaChannel(contact, channel, result.text, agent.id, undefined, "ai_active", cfg.emailSenderId);
+              await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
               st.lastActionAt = new Date().toISOString();
               if (result.buyingSignal) st.state = "hot_handoff";
               else st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
@@ -435,7 +441,7 @@ export async function processAiActiveBatches() {
               const channel = contact.email ? "email" : "sms";
               const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name });
               if (!result.skip && !result.escalate && result.text) {
-                await sendViaChannel(contact, channel, result.text, agent.id, undefined, "ai_active", cfg.emailSenderId);
+                await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
                 st.followUpCount = (st.followUpCount || 0) + 1;
                 st.lastActionAt = new Date().toISOString();
                 st.nextActionAt = new Date(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange)).toISOString();

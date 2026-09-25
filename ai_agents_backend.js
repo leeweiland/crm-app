@@ -705,15 +705,17 @@ async function handleAiAgentsCrud(req, res, url) {
     return sendJson(res, 200, { ok: true, agent });
   }
 
-  // Real one-off cold-open send to a real contact, no batch/state created --
-  // the agent editor's "Test as a real contact" section, for confirming an
-  // agent's intro actually reaches a real phone/inbox instead of only ever
-  // being previewed in the Test Conversation panel (which never sends
-  // anything real). Reuses processAiActiveBatches' own generateColdOpen so
-  // this proves exactly what the real batch engine would say/do -- not a
-  // separate copy of that logic. sourceType "ai_active_test" keeps it out
-  // of real Activity/reporting counts (falls into the "other" bucket, not
-  // "human" or "ai_agent") since nothing here represents real lead activity.
+  // Real one-off cold-open send to a real contact -- the agent editor's
+  // "Test as a real contact" section, for confirming an agent's intro
+  // actually reaches a real phone/inbox instead of only ever being
+  // previewed in the Test Conversation panel (which never sends anything
+  // real). Reuses processAiActiveBatches' own generateColdOpen so this
+  // proves exactly what the real batch engine would say/do -- not a
+  // separate copy of that logic. sourceType "ai_active_test" throughout
+  // (including whatever this contact goes on to send/receive afterward)
+  // keeps it out of real Activity/reporting counts (falls into the "other"
+  // bucket, not "human" or "ai_agent") since nothing here represents real
+  // lead activity.
   const testSendMatch = p.match(/^\/api\/ai-agents\/([^/]+)\/test-send$/);
   if (testSendMatch && req.method === "POST") {
     const agents = readJson(AI_AGENTS_FILE, []);
@@ -727,7 +729,7 @@ async function handleAiAgentsCrud(req, res, url) {
     // Reflects whatever's currently in the form, same as /chat -- lets you
     // real-send-test an unsaved prompt tweak without saving first.
     const agent = agentDraft && typeof agentDraft === "object" ? { ...savedAgent, ...agentDraft } : savedAgent;
-    const { generateColdOpen, sendViaChannel } = await import("./ai_active_backend.js");
+    const { generateColdOpen, sendViaChannel, randomDelayMs, AI_ACTIVE_BATCHES_FILE, AI_ACTIVE_STATES_FILE } = await import("./ai_active_backend.js");
     // channel ("sms"/"email", optional) forces this ONE test send down a
     // specific path -- e.g. checking the email version of a cold-open on an
     // agent whose real default now prefers SMS -- without touching the
@@ -738,7 +740,35 @@ async function handleAiAgentsCrud(req, res, url) {
     for (const o of opener.openers) {
       await sendViaChannel(contact, o.channel, o.body, agent.id, o.subject, "ai_active_test", agent.activeConfig?.emailSenderId);
     }
-    return sendJson(res, 200, { ok: true, sent: opener.openers });
+    // Track this contact afterward, the same way a real batch would, so a
+    // real reply actually gets a real automatic reply/follow-up on the
+    // agent's configured Timing settings -- a real send used to be a total
+    // dead end otherwise (confirmed live: replying to a test cold-open got
+    // no response at all, since nothing was watching for it). Skipped if
+    // this contact is already being tracked by an active batch (real or a
+    // prior test-send) -- two schedulers racing to reply to the same
+    // inbound would double-send.
+    const states = readJson(AI_ACTIVE_STATES_FILE, []);
+    const alreadyTracked = states.some((s) => s.agentId === agent.id && s.contactId === contact.id && ["queued", "waiting_reply"].includes(s.state));
+    if (!alreadyTracked) {
+      const nowIso = new Date().toISOString();
+      const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+      const batch = {
+        id: randomUUID(), agentId: agent.id, segmentIds: [], segmentNames: ["Real test-send"], batchSize: 1,
+        contactIds: [contact.id], excludedCount: 0, status: "running", isTestBatch: true,
+        createdAt: nowIso, startedAt: nowIso, createdBy: me.id,
+      };
+      batches.push(batch);
+      writeJson(AI_ACTIVE_BATCHES_FILE, batches);
+      states.push({
+        id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId: contact.id, state: "waiting_reply",
+        followUpCount: 0, lastActionAt: nowIso,
+        nextActionAt: new Date(Date.now() + randomDelayMs(agent.activeConfig?.waitTimeRange)).toISOString(),
+        createdAt: nowIso, updatedAt: nowIso,
+      });
+      writeJson(AI_ACTIVE_STATES_FILE, states);
+    }
+    return sendJson(res, 200, { ok: true, sent: opener.openers, tracked: true });
   }
 
   // Every sourceType an agent's own outbound sends can carry -- see
