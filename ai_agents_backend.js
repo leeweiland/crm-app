@@ -719,7 +719,7 @@ async function handleAiAgentsCrud(req, res, url) {
     const agents = readJson(AI_AGENTS_FILE, []);
     const savedAgent = agents.find((a) => a.id === testSendMatch[1]);
     if (!savedAgent) return sendJson(res, 404, { error: "Agent not found" });
-    const { agentDraft, contactId } = await readJsonBody(req);
+    const { agentDraft, contactId, channel } = await readJsonBody(req);
     if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
     const contacts = readJson(CONTACTS_FILE, []);
     const contact = contacts.find((c) => c.id === contactId);
@@ -728,7 +728,12 @@ async function handleAiAgentsCrud(req, res, url) {
     // real-send-test an unsaved prompt tweak without saving first.
     const agent = agentDraft && typeof agentDraft === "object" ? { ...savedAgent, ...agentDraft } : savedAgent;
     const { generateColdOpen, sendViaChannel } = await import("./ai_active_backend.js");
-    const opener = await generateColdOpen(agent, contact, agent.activeConfig || {});
+    // channel ("sms"/"email", optional) forces this ONE test send down a
+    // specific path -- e.g. checking the email version of a cold-open on an
+    // agent whose real default now prefers SMS -- without touching the
+    // agent's own saved re-engagement config.
+    const forceChannel = channel === "sms" || channel === "email" ? channel : null;
+    const opener = await generateColdOpen(agent, contact, agent.activeConfig || {}, forceChannel);
     if (!opener.sendable) return sendJson(res, 200, { ok: false, reason: opener.reason });
     await sendViaChannel(contact, opener.channel, opener.body, agent.id, opener.subject, "ai_active_test", agent.activeConfig?.emailSenderId);
     return sendJson(res, 200, { ok: true, channel: opener.channel, subject: opener.subject, body: opener.body });

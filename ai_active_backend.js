@@ -106,12 +106,22 @@ function extractGifMarker(text) {
 // below) -- same cold-open generation either way, so a real test-send
 // proves exactly what the real batch engine would actually say/do,
 // instead of a second, potentially-drifting copy of this logic.
-export async function generateColdOpen(agent, contact, cfg) {
+// forceChannel (test-send only) lets a specific real send be checked on
+// demand without touching the agent's own default -- it still has to be an
+// actually-enabled, actually-available channel, same as the auto pick.
+export async function generateColdOpen(agent, contact, cfg, forceChannel = null) {
   const reengage = cfg.reengagement || {};
   const smsOk = reengage.sms?.enabled && !!contact.phone;
   const emailOk = reengage.email?.enabled && !!contact.email;
   if (!smsOk && !emailOk) return { sendable: false, reason: "Neither Re-engagement SMS nor Email is enabled (or the contact has no phone/email for the enabled channel)." };
-  const channel = emailOk ? "email" : "sms"; // prefer email when both are enabled and available
+  if (forceChannel === "sms" && !smsOk) return { sendable: false, reason: "SMS re-engagement isn't enabled, or this contact has no phone number." };
+  if (forceChannel === "email" && !emailOk) return { sendable: false, reason: "Email re-engagement isn't enabled, or this contact has no email address." };
+  // This agent's own voice/format (see the system prompt's MESSAGE FORMAT
+  // rules -- 180 char limit, double-text splits, texting shorthand) is
+  // built texting-native, so SMS wins by default when both channels are
+  // enabled. Email used to win here unconditionally, which meant a lead
+  // with both channels enabled never actually got Kai's real SMS voice.
+  const channel = forceChannel || (smsOk ? "sms" : "email");
   const customPrompt = reengage[channel]?.prompt?.trim();
   const defaultPrompt = channel === "email"
     ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."

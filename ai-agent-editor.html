@@ -488,7 +488,14 @@
               <button class="pra-btn pra-btn-sm" id="tcLoadContactBtn" type="button">Load</button>
             </div>
             <div class="pra-muted" id="tcContactStatus" style="font-size:.72rem;margin-top:6px">Not set -- replies use no real contact history. Load one to have replies grounded in that person's real application/journey.</div>
-            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcRealSendBtn" type="button" style="margin-top:10px" disabled title="Load a contact first">Send real cold-open to this contact</button>
+            <div style="display:flex;gap:6px;align-items:center;margin-top:10px">
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcRealSendBtn" type="button" disabled title="Load a contact first">Send real cold-open to this contact</button>
+              <select class="pra-select" id="tcRealSendChannel" style="width:auto;font-size:.76rem;padding:6px 8px">
+                <option value="">Auto (agent default)</option>
+                <option value="sms">Force SMS</option>
+                <option value="email">Force Email</option>
+              </select>
+            </div>
             <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:6px;display:none"></div>
           </div>
         </div>
@@ -1081,7 +1088,8 @@ async function loadTcContact() {
 async function sendRealColdOpen() {
   if (!tcContactId || !editingAgentId) return;
   const email = document.getElementById('tcContactEmail').value.trim();
-  if (!confirm(`This sends a REAL SMS/email to ${email} right now -- not a preview. Continue?`)) return;
+  const channel = document.getElementById('tcRealSendChannel').value;
+  if (!confirm(`This sends a REAL ${channel ? channel.toUpperCase() : 'SMS/email'} to ${email} right now -- not a preview. Continue?`)) return;
   const btn = document.getElementById('tcRealSendBtn');
   const statusEl = document.getElementById('tcRealSendStatus');
   btn.disabled = true;
@@ -1090,7 +1098,7 @@ async function sendRealColdOpen() {
   try {
     const r = await fetch(`/api/ai-agents/${editingAgentId}/test-send`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contactId: tcContactId, agentDraft: currentAgentDraft() }),
+      body: JSON.stringify({ contactId: tcContactId, agentDraft: currentAgentDraft(), channel: channel || undefined }),
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { statusEl.textContent = 'Error: ' + (d.error || r.status); }
