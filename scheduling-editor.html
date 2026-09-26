@@ -822,14 +822,20 @@ let calPreviewTimer;
 // (calendar descriptions don't render HTML) -- this formatting is purely
 // for THIS preview's own readability.
 function formatPreviewHtml(text) {
+  // formatFormAnswers/formatExtraAnswers (scheduling_backend.js) now put a
+  // question's own label ALONE on its own line ending in ":", with the
+  // answer on the line right after it -- the only real visual separation a
+  // plain-text Google Calendar/.ics description can actually show (no bold
+  // there). This just bolds+brightens that already-real line break for
+  // readability here; the static header lines (Name: X, Email: X) still
+  // keep their original "Label: value" inline shape, so both forms need
+  // handling. style="color:#fff" since this box's ambient text is dimmed
+  // (.pra-muted) -- without it the bold barely stood out.
   return String(text || '').split('\n').map(line => {
     if (!line) return '';
+    if (/:$/.test(line.trim())) return `<b style="color:#fff">${escapeHtml(line)}</b>`;
     const m = /^([^:]{1,80}):\s?(.*)$/.exec(line);
-    // Label on its OWN bold line, value on the line below it -- not inline
-    // after the colon -- matching the internal notification email's own
-    // Q&A blocks. style="color:#fff" since this box's ambient text is
-    // dimmed (.pra-muted); without it the bold label barely stood out.
-    return m && m[2] ? `<b style="color:#fff">${escapeHtml(m[1])}:</b><br>${escapeHtml(m[2])}` : escapeHtml(line);
+    return m && m[2] ? `<b style="color:#fff">${escapeHtml(m[1])}:</b> ${escapeHtml(m[2])}` : escapeHtml(line);
   }).join('<br>');
 }
 async function refreshCalendarPreview() {

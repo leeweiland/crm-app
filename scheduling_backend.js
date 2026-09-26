@@ -514,7 +514,12 @@ function extractBookingIdentity(questions, answers) {
 function formatExtraAnswers(questions, answers) {
   return (questions || [])
     .filter(q => !CORE_QUESTION_TYPES.includes(q.type) && (answers || {})[q.id] !== undefined && (answers || {})[q.id] !== "")
-    .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n\n");
+    // Value on its own line under the question, not inline after the colon
+    // -- Google Calendar (and Outlook/.ics) descriptions are plain text with
+    // no bold available, so this line break is the only visual separation
+    // a real calendar event can actually show; confirmed live it was
+    // otherwise a long run-on "Question: Answer" line.
+    .map(q => `${q.label || "Question"}:\n${answers[q.id]}`).join("\n\n");
 }
 // The OUTER form's answers when this calendar is embedded inside a
 // multi-step form (see book.html's prefillFormAnswersJson) -- distinct
@@ -538,7 +543,9 @@ function formatFormAnswers(formAnswers, fieldLabels) {
   const codeKeysWithLabel = new Set(Object.keys(fieldLabels || {}).filter(k => fieldLabels[k]));
   return Object.entries(formAnswers)
     .filter(([k, v]) => v !== undefined && v !== null && v !== "" && !codeKeysWithLabel.has(k))
-    .map(([label, v]) => `${label}: ${v}`).join("\n\n");
+    // Same reasoning as formatExtraAnswers above -- value on its own line,
+    // the only real separation a plain-text calendar description can show.
+    .map(([label, v]) => `${label}:\n${v}`).join("\n\n");
 }
 // Same rule as forms_backend.js's validateAnswers -- a required question
 // with no answer blocks the booking, checked server-side since the public
