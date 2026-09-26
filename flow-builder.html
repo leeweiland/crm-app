@@ -987,6 +987,11 @@ function openStepConfigModal(step, isNew) {
   editingStepId = step.id;
   stepConfigDirty = false;
   document.getElementById('stepConfigTitle').textContent = TYPE_LABELS[step.type];
+  // sheet_upsert's match-rule/column rows (header input + token editor +
+  // "Digits only" checkbox + 3 buttons) need real room -- the default modal
+  // width squeezed the token editor so hard its text wrapped one character
+  // per line.
+  document.querySelector('#stepConfigModal .modal-box').classList.toggle('wide', step.type === 'sheet_upsert');
   const body = document.getElementById('stepConfigBody');
   // Shared across the google_sheet branch's helper functions and its save
   // handler below -- one object instead of separate DOM-input reads, since

@@ -593,7 +593,14 @@ function renderSidebar() {
   document.getElementById('fRedirectUrl').value = draft.branding.redirectUrl || '';
   document.getElementById('fNotifyEmails').value = (draft.notifyEmails || []).join(', ');
   document.getElementById('fIncludeFormAnswersInCalendar').checked = draft.includeFormAnswersInCalendar !== false;
-  document.getElementById('calDescTemplate').value = draft.calendarDescriptionTemplate || '';
+  // Shows the REAL default text here (not blank, not a placeholder) when
+  // nothing's been customized yet -- otherwise inserting one token into an
+  // empty box looked broken (the preview only ever showed that one line,
+  // not the actual name/email/phone/etc a real event carries). draft.
+  // calendarDescriptionTemplate itself stays untouched until the box is
+  // actually edited (see its 'input' handler), so an event type nobody's
+  // customized still automatically follows future changes to the default.
+  document.getElementById('calDescTemplate').value = draft.calendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
   refreshCalendarPreviewDebounced();
 
   const b = draft.branding;
@@ -1114,9 +1121,11 @@ async function saveCalendarNow() {
   }
 }
 
+let defaultCalendarDescriptionTemplate = '';
 async function init() {
   const r = await fetch('/api/scheduling/admin/event-types');
-  const { eventTypes } = await r.json();
+  const { eventTypes, defaultCalendarDescriptionTemplate: defaultTemplate } = await r.json();
+  defaultCalendarDescriptionTemplate = defaultTemplate || '';
   draft = eventTypes.find(e => e.id === eventTypeId);
   if (!draft) { document.getElementById('edEventName').textContent = 'Event type not found'; return; }
   draft.branding = {

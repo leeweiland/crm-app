@@ -1395,7 +1395,7 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/admin/event-types" && req.method === "GET") {
-    return sendJson(res, 200, { eventTypes: getEventTypes() });
+    return sendJson(res, 200, { eventTypes: getEventTypes(), defaultCalendarDescriptionTemplate: DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE });
   }
   if (p === "/api/scheduling/admin/event-types" && req.method === "POST") {
     const body = await readJsonBody(req);
