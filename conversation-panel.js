@@ -149,7 +149,7 @@
     return m ? m[1] : null;
   }
   function noteBubbleHtml(item) {
-    const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : item.channel === 'call' ? '📞' : '📝';
+    const icon = item.channel === 'booking' ? '📅' : item.channel === 'meeting' ? '📆' : item.channel === 'activity' ? '📈' : item.channel === 'call' ? '📞' : item.channel === 'task_due' ? '✅' : '📝';
     const recordingLink = callRecordingLink(item);
     const bodyHtml = item.body
       ? (item.channel === 'form'
@@ -912,7 +912,7 @@
         </div>
       `;
 
-      const items = [...state.threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting', 'click'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
+      const items = [...state.threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting', 'click', 'task_due'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
       const threadEl = container.querySelector('#chatThread');
       threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : item.itemType === 'click' ? clickBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
       threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {

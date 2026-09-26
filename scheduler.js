@@ -8,7 +8,7 @@ import { syncWritingCacheIfDue } from "./ai_agents_backend.js";
 import { processAiActiveBatches } from "./ai_active_backend.js";
 import { checkMeetingReminders } from "./meetings_backend.js";
 import { sendDueBookingReminders } from "./scheduling_backend.js";
-import { sendDueScheduledMessages } from "./inbox_backend.js";
+import { sendDueScheduledMessages, checkDueTasks } from "./inbox_backend.js";
 import { checkGmailInbox } from "./gmail_backend.js";
 import { processCloseAltBackfillBatch, processStopStatusRecoveryBatch } from "./import_backend.js";
 import { resyncStaleStopRows, resyncStaleLegacyLabelRows } from "./sqlite_inbox.js";
@@ -85,6 +85,7 @@ async function tick() {
     await timedPhase("checkMeetingReminders", checkMeetingReminders);
     await timedPhase("sendDueBookingReminders", sendDueBookingReminders);
     await timedPhase("sendDueScheduledMessages", sendDueScheduledMessages);
+    await timedPhase("checkDueTasks", checkDueTasks);
     await timedPhase("checkGmailInbox", checkGmailInbox);
     await timedPhase("processCloseAltBackfillBatch", processCloseAltBackfillBatch);
     await timedPhase("processStopStatusRecoveryBatch", processStopStatusRecoveryBatch);

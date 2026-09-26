@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, updateJsonArrayRecordByField, appendJsonRecordFast, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
-import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE } from "./message_log.js";
+import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE, logMessage } from "./message_log.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { CONVERSATION_META_FILE, getConvoMeta, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
@@ -101,6 +101,34 @@ export async function sendDueScheduledMessages() {
       return rec;
     });
     if (status === "failed") console.error(`[inbox] scheduled message ${m.id} failed:`, failReason);
+  }
+}
+
+// A task/reminder's due time arriving used to be silent -- nothing checked
+// dueAt at all, so staff only ever saw one by opening that contact's Tasks
+// tab and looking. This logs it into the contact's own conversation the
+// moment it comes due (channel "task_due", direction "inbound" -- a real
+// notification, per the same NOTIFY_CHANNELS/SIDEBAR_CHANNELS mechanism
+// email/sms/form/booking already use, not a silent "activity" log like a
+// status change or a scheduled meeting), which bumps unreadCount and fires
+// the sidebar's live SSE update. "task_due" rather than "task" specifically
+// so this notification is never confused with the raw task record itself
+// (itemType "task"/"reminder" below) -- they're different kinds of item and
+// can both legitimately exist for the same task. notifiedAt stamped right
+// after so a task left sitting past its due time doesn't re-notify on every
+// 30s tick.
+export async function checkDueTasks() {
+  const tasks = readJson(TASKS_FILE, []);
+  const due = tasks.filter(t => !t.done && !t.notifiedAt && t.contactId && t.dueAt && new Date(t.dueAt).getTime() <= Date.now());
+  for (const t of due) {
+    logMessage({
+      channel: "task_due", direction: "inbound", contactId: t.contactId,
+      sourceType: "task", sourceId: t.id,
+      subject: t.type === "reminder" ? "Reminder due" : "Task due",
+      body: t.title, bodyPreview: String(t.title || "").slice(0, 140),
+      status: "received",
+    });
+    updateJsonArrayRecordByField(TASKS_FILE, "id", t.id, (rec) => { rec.notifiedAt = new Date().toISOString(); return rec; });
   }
 }
 

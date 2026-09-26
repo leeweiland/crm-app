@@ -248,7 +248,7 @@ export function conversationKey(m) {
 // single combined `last` can't answer both questions at once, so each
 // channel that actually shows up in the sidebar keeps its own slim ref
 // alongside the combined one.
-export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", "meeting"];
+export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", "meeting", "task_due"];
 // Narrower than SIDEBAR_CHANNELS on purpose: SIDEBAR_CHANNELS controls what
 // renders in a conversation thread and what counts toward per-channel
 // preview text (lastByChannel below) -- activity/meeting logs belong there.
@@ -258,7 +258,15 @@ export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", 
 // never do any of those three things, even though today's SIDEBAR_CHANNELS
 // already (correctly, by accident) never carries one inbound. This makes
 // that exclusion structural instead of "nothing happens to violate it yet."
-export const NOTIFY_CHANNELS = ["email", "sms", "form", "booking"];
+// "task_due" is the deliberate exception: a due task/reminder
+// (inbox_backend.js's checkDueTasks) is meant to notify exactly like a real
+// inbound message, per explicit request -- not an accidental carry-over of
+// the activity/meeting exclusion above. Named distinctly from the raw task
+// record's own itemType ("task"/"reminder", see inbox_backend.js's /timeline
+// endpoint) so the two are never confused for the same kind of item -- this
+// is a NOTIFICATION that a task came due, not the task record itself, and
+// both can legitimately appear in the same contact's history at once.
+export const NOTIFY_CHANNELS = ["email", "sms", "form", "booking", "task_due"];
 function emptyGroup(key, contactId) {
   const g = { key, contactId: contactId || null, last: null, lastMine: null, lastInboundAt: null, unreadCount: 0, lastByChannel: {} };
   SIDEBAR_CHANNELS.forEach(c => { g.lastByChannel[c] = null; });
