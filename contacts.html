@@ -213,10 +213,8 @@
         <div class="pra-h2" style="margin:0 0 6px">Email Lists</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Used to target campaigns and automations, same as ActiveCampaign lists.</div>
         <div class="bulk-delete-bar" id="listsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="list">Delete Selected (<span data-bulk-count>0</span>)</button></div>
-        <div class="pra-panel" id="listsTablePanel" style="overflow-y:auto;overflow-x:hidden">
-          <div style="overflow-x:auto">
-            <table class="data-table"><thead><tr id="listsHeadRow"></tr></thead><tbody id="listsBody"></tbody></table>
-          </div>
+        <div class="pra-panel" id="listsTablePanel" style="overflow:auto">
+            <table class="data-table sticky-head-table"><thead><tr id="listsHeadRow"></tr></thead><tbody id="listsBody"></tbody></table>
         </div>
         <div class="pagination-bar" id="listsPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="listsPaginationSummary"></span>
@@ -235,10 +233,8 @@
         <div class="pra-h2" style="margin:0 0 6px">Segments</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters used to target campaigns, automations, and SMS sequences. Build one from the Contacts tab's filter panel.</div>
         <div class="bulk-delete-bar" id="segmentsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="segment">Delete Selected (<span data-bulk-count>0</span>)</button></div>
-        <div class="pra-panel" id="segmentsTablePanel" style="overflow-y:auto;overflow-x:hidden">
-          <div style="overflow-x:auto">
-            <table class="data-table"><thead><tr id="segmentsHeadRow"></tr></thead><tbody id="segmentsBody"></tbody></table>
-          </div>
+        <div class="pra-panel" id="segmentsTablePanel" style="overflow:auto">
+            <table class="data-table sticky-head-table"><thead><tr id="segmentsHeadRow"></tr></thead><tbody id="segmentsBody"></tbody></table>
         </div>
         <div class="pagination-bar" id="segmentsPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="segmentsPaginationSummary"></span>
@@ -255,10 +251,8 @@
       <div class="tab-panel" id="tab-tags">
         <div class="pra-h2" style="margin:0 0 14px">Tags</div>
         <div class="bulk-delete-bar" id="tagsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="tag">Delete Selected (<span data-bulk-count>0</span>)</button></div>
-        <div class="pra-panel" id="tagsTablePanel" style="overflow-y:auto;overflow-x:hidden">
-          <div style="overflow-x:auto">
-            <table class="data-table"><thead><tr id="tagsHeadRow"></tr></thead><tbody id="tagsBody"></tbody></table>
-          </div>
+        <div class="pra-panel" id="tagsTablePanel" style="overflow:auto">
+            <table class="data-table sticky-head-table"><thead><tr id="tagsHeadRow"></tr></thead><tbody id="tagsBody"></tbody></table>
         </div>
         <div class="pagination-bar" id="tagsPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="tagsPaginationSummary"></span>
@@ -337,13 +331,11 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Flags two separate contact records that share an exact email or phone, or that share a name plus a tracked website visit's IP address or rough location. Never merges automatically -- even an exact match could be two different people (e.g. a shared office phone line), so every merge is a deliberate choice below.</div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanDuplicatesBtn">Scan for Duplicates</button>
         <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
-        <div class="pra-panel" id="duplicatesTablePanel" style="overflow-y:auto;overflow-x:hidden;margin-top:18px">
-          <div style="overflow-x:auto">
-            <table class="data-table">
-              <thead><tr><th style="width:16%">Matched By</th><th>Contact A</th><th>Contact B</th><th style="width:120px"></th></tr></thead>
+        <div class="pra-panel" id="duplicatesTablePanel" style="overflow:auto;margin-top:18px">
+            <table class="data-table sticky-head-table">
+              <thead><tr><th style="width:160px">Matched By</th><th style="flex:1 1 0">Contact A</th><th style="flex:1 1 0">Contact B</th><th style="width:120px"></th></tr></thead>
               <tbody id="duplicatesList"></tbody>
             </table>
-          </div>
         </div>
         <div class="pagination-bar" id="duplicatesPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="duplicatesPaginationSummary"></span>
@@ -361,13 +353,11 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">An anonymous website visit (someone who clicked an ad or social post but hasn't identified themselves yet) that shares an IP address or rough location with a known contact's own tracked visits -- e.g. their phone clicked the ad, their laptop is what opted in. Confirming links that visit (and everything else from that same anonymous session) into the contact's history. Never linked automatically -- an IP can be shared by more than one person (same office, same household), so this is always a deliberate choice below.</div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanVisitorMatchesBtn">Scan for Visitor Matches</button>
         <span class="pra-muted" id="visitorMatchesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
-        <div class="pra-panel" id="visitorMatchesTablePanel" style="overflow-y:auto;overflow-x:hidden;margin-top:18px">
-          <div style="overflow-x:auto">
-            <table class="data-table">
-              <thead><tr><th style="width:16%">Matched By</th><th>Known Contact</th><th>Anonymous Session</th><th style="width:160px"></th></tr></thead>
+        <div class="pra-panel" id="visitorMatchesTablePanel" style="overflow:auto;margin-top:18px">
+            <table class="data-table sticky-head-table">
+              <thead><tr><th style="width:160px">Matched By</th><th style="flex:1 1 0">Known Contact</th><th style="flex:1 1 0">Anonymous Session</th><th style="width:160px"></th></tr></thead>
               <tbody id="visitorMatchesList"></tbody>
             </table>
-          </div>
         </div>
         <div class="pagination-bar" id="visitorMatchesPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="visitorMatchesPaginationSummary"></span>
@@ -581,6 +571,11 @@ const KIND_COLUMNS = {
   segment: [{ key: 'name', label: 'Name' }, { key: 'count', label: 'Contacts' }],
   list: [{ key: 'name', label: 'Name' }, { key: 'subscribed', label: 'Subscribed' }, { key: 'count', label: 'Total Contacts' }],
 };
+const KIND_DEFAULT_WIDTHS = {
+  tag: { name: 400, count: 140 },
+  segment: { name: 500, count: 140 },
+  list: { name: 340, subscribed: 140, count: 160 },
+};
 // Page/sort state per kind -- page size and sort persist across reloads
 // (same convention as contactsPageSize); current page and the underlying
 // item list are kept here so a header click or Prev/Next can re-render
@@ -700,7 +695,7 @@ function renderManagedTable(kind, barId) {
     const sortedClass = st.sortField === col.key ? ' sorted' : '';
     const arrow = st.sortField === col.key ? `<span class="sort-arrow">${st.sortDir === 1 ? '▲' : '▼'}</span>` : '';
     return `<th class="sortable${sortedClass}" data-col-key="${col.key}" data-sort="${col.key}">${escapeHtml(col.label)}${arrow}</th>`;
-  }).join('') + `<th></th>`;
+  }).join('') + `<th style="width:140px"></th>`;
   headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = (e) => {
     if (e.target.closest('.col-resize-handle')) return;
     const key = th.dataset.sort;
@@ -709,6 +704,12 @@ function renderManagedTable(kind, barId) {
     localStorage.setItem(kind + 'SortDir', String(st.sortDir));
     renderManagedTable(kind, barId);
   });
+  // Seeds a stable default width per column the first time (or for any
+  // column the user hasn't personally dragged yet) -- same reasoning as
+  // reporting.html's seedDefaultColumnWidths: without SOME explicit width,
+  // nothing constrains these columns and the browser's own layout shifts
+  // them around as sort order brings different-length content to the top.
+  window.crmMe.preferences = { ...(window.crmMe.preferences || {}), [kind + 'ColumnWidths']: { ...KIND_DEFAULT_WIDTHS[kind], ...(window.crmMe.preferences?.[kind + 'ColumnWidths'] || {}) } };
   wireColumnResize('#' + p + 'HeadRow', kind + 'ColumnWidths');
 
   const body = document.getElementById(p + 'Body');
@@ -728,7 +729,7 @@ function renderManagedTable(kind, barId) {
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
       </td>
     </tr>`;
-  }).join('') || `<tr><td colspan="${cols.length + 2}" class="pra-muted">None yet.</td></tr>`;
+  }).join('') || `<tr><td style="flex:1 1 auto" class="pra-muted">None yet.</td></tr>`;
 
   body.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
   body.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
@@ -1479,14 +1480,14 @@ for (const key of ['duplicates', 'visitorMatches']) {
   const savedSize = parseInt(localStorage.getItem(key + 'PageSize'), 10);
   cardPageState[key] = { page: 1, pageSize: [5, 10, 20, 50].includes(savedSize) ? savedSize : 10 };
 }
-function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg, emptyColspan) {
+function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg) {
   const st = cardPageState[key];
   const wrap = document.getElementById(containerId);
   const totalPages = Math.max(1, Math.ceil(allItems.length / st.pageSize));
   st.page = Math.min(Math.max(1, st.page), totalPages);
   const start = (st.page - 1) * st.pageSize;
   const pageItems = allItems.slice(start, start + st.pageSize);
-  wrap.innerHTML = pageItems.map(cardFn).join('') || `<tr><td colspan="${emptyColspan}" class="pra-muted">${emptyMsg}</td></tr>`;
+  wrap.innerHTML = pageItems.map(cardFn).join('') || `<tr><td style="flex:1 1 auto" class="pra-muted">${emptyMsg}</td></tr>`;
   wireFn(wrap);
   const end = Math.min(start + pageItems.length, allItems.length);
   document.getElementById(key + 'PaginationSummary').textContent = allItems.length ? `Showing ${(start + 1).toLocaleString()}–${end.toLocaleString()} of ${allItems.length.toLocaleString()}` : 'None yet.';
@@ -1495,7 +1496,7 @@ function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyM
   document.getElementById(key + 'NextPageBtn').disabled = st.page >= totalPages;
   const sizeSel = document.getElementById(key + 'PageSizeSelect');
   sizeSel.value = String(st.pageSize);
-  const rerender = () => renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg, emptyColspan);
+  const rerender = () => renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg);
   sizeSel.onchange = () => { st.pageSize = parseInt(sizeSel.value, 10); localStorage.setItem(key + 'PageSize', String(st.pageSize)); st.page = 1; rerender(); };
   document.getElementById(key + 'PrevPageBtn').onclick = () => { if (st.page > 1) { st.page--; rerender(); } };
   document.getElementById(key + 'NextPageBtn').onclick = () => { if (st.page < totalPages) { st.page++; rerender(); } };
@@ -1514,10 +1515,10 @@ async function loadDuplicates() {
   `;
   renderPaginatedCards('duplicates', pairs, 'duplicatesList', d => `
     <tr>
-      <td class="pra-muted" style="font-size:.78rem">${reasonLabel(d.reason)}</td>
-      <td>${contactCell(d.contactA, d.id)}</td>
-      <td>${contactCell(d.contactB, d.id)}</td>
-      <td><button class="pra-btn pra-btn-ghost pra-btn-sm" data-dismiss="${d.id}">Not a Duplicate</button></td>
+      <td class="pra-muted" style="font-size:.78rem;width:160px;flex-basis:160px">${reasonLabel(d.reason)}</td>
+      <td style="flex:1 1 0">${contactCell(d.contactA, d.id)}</td>
+      <td style="flex:1 1 0">${contactCell(d.contactB, d.id)}</td>
+      <td style="width:120px;flex-basis:120px"><button class="pra-btn pra-btn-ghost pra-btn-sm" data-dismiss="${d.id}">Not a Duplicate</button></td>
     </tr>
   `, wrap => {
     wrap.querySelectorAll('[data-keep]').forEach(btn => btn.onclick = async () => {
@@ -1529,7 +1530,7 @@ async function loadDuplicates() {
       const r = await fetch(`/api/duplicates/${btn.dataset.dismiss}/dismiss`, { method: 'POST' });
       if (r.ok) { showToast('Dismissed'); loadDuplicates(); } else showToast('Could not dismiss', true);
     });
-  }, 'No possible duplicates flagged. Click "Scan for Duplicates" to check.', 4);
+  }, 'No possible duplicates flagged. Click "Scan for Duplicates" to check.');
 }
 document.getElementById('scanDuplicatesBtn').onclick = async () => {
   const msg = document.getElementById('duplicatesScanMsg');
@@ -1547,16 +1548,16 @@ async function loadVisitorMatches() {
   const { matches } = await r.json();
   renderPaginatedCards('visitorMatches', matches, 'visitorMatchesList', m => `
     <tr>
-      <td class="pra-muted" style="font-size:.78rem">${m.reason === 'ip' ? 'same IP address' : 'same rough location'}</td>
-      <td>
+      <td class="pra-muted" style="font-size:.78rem;width:160px;flex-basis:160px">${m.reason === 'ip' ? 'same IP address' : 'same rough location'}</td>
+      <td style="flex:1 1 0">
         <div style="font-weight:700">${escapeHtml(m.contact.first)} ${escapeHtml(m.contact.last)}</div>
         <div class="pra-muted" style="font-size:.8rem">${escapeHtml(m.contact.email || '')}${m.contact.email && m.contact.phone ? ' · ' : ''}${escapeHtml(m.contact.phone || '')}</div>
       </td>
-      <td>
+      <td style="flex:1 1 0">
         <div style="font-weight:700">${m.sampleVisit ? escapeHtml(m.sampleVisit.path) : '(no page recorded)'}</div>
         <div class="pra-muted" style="font-size:.8rem">${m.sampleVisit?.el ? 'Source: ' + escapeHtml(m.sampleVisit.el) : 'No source tag'}${m.sampleVisit?.at ? ' · ' + new Date(m.sampleVisit.at).toLocaleDateString() : ''}</div>
       </td>
-      <td style="white-space:nowrap">
+      <td style="white-space:nowrap;width:160px;flex-basis:160px">
         <button class="pra-btn pra-btn-sm" data-confirm-vm="${m.id}">Yes, Same Person</button>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dismiss-vm="${m.id}">Not a Match</button>
       </td>
@@ -1570,7 +1571,7 @@ async function loadVisitorMatches() {
       const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.dismissVm}/dismiss`, { method: 'POST' });
       if (r.ok) { showToast('Dismissed'); loadVisitorMatches(); } else showToast('Could not dismiss', true);
     });
-  }, 'No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.', 4);
+  }, 'No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.');
 }
 document.getElementById('scanVisitorMatchesBtn').onclick = async () => {
   const msg = document.getElementById('visitorMatchesScanMsg');

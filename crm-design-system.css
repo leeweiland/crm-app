@@ -335,7 +335,7 @@ body { margin: 0; }
 
 /* ── Data table ── */
 .data-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
-.data-table th {
+.data-table th, .pra-table th {
   text-align: left; font-family: var(--font-secondary); font-size: .66rem;
   letter-spacing: .08em; text-transform: uppercase; color: var(--pra-dim);
   padding: 10px 12px; border-bottom: 1px solid var(--pra-border);
@@ -347,6 +347,26 @@ body { margin: 0; }
 .data-table td { padding: 12px; border-bottom: 1px solid var(--pra-border); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-table tr:hover td { background: rgba(255,255,255,0.02); }
 .data-table tr.clickable { cursor: pointer; }
+
+/* Sticky table headers. NOT plain position:sticky on <th>/<thead> --
+   confirmed live via isolated testing (a from-scratch <table><thead><th
+   style="position:sticky;top:0"> inside the exact same scroll panel, no
+   other rules involved) that this renderer does not honor sticky
+   positioning on native table-row-group/table-cell boxes, while a plain
+   sticky <div> in that same panel sticks correctly. Rendering the header
+   and rows as flex boxes instead of native table layout sidesteps the
+   limitation entirely. Every column needs an explicit width for this to
+   line up (either column-resize.js's applied width, or an inline
+   flex-basis) -- table auto-layout's implicit column sizing doesn't exist
+   once display is overridden to flex/block. Opt-in via this class rather
+   than baked into .data-table/.pra-table themselves, since the main
+   Contacts grid's frozen (horizontally-sticky) columns depend on real
+   table layout and aren't part of this fix. */
+.sticky-head-table { display: block; }
+.sticky-head-table thead, .sticky-head-table tbody { display: block; }
+.sticky-head-table thead { position: sticky; top: 0; z-index: 2; background: var(--pra-panel); }
+.sticky-head-table thead tr, .sticky-head-table tbody tr { display: flex; }
+.sticky-head-table th, .sticky-head-table td { flex-shrink: 0; }
 
 /* ── Resizable columns (column-resize.js) ──
    A thin drag strip at each column boundary, spanning the table's full

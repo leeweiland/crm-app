@@ -208,9 +208,8 @@
              the page properly" (a one-time measurement drifted from the
              real available space as soon as anything above it changed
              height). This one re-measures at every point that could move. -->
-        <div class="pra-panel" id="attributionTablePanel" style="padding:0;overflow-y:auto;overflow-x:hidden">
-          <div style="overflow-x:auto">
-            <table class="pra-table" style="width:100%">
+        <div class="pra-panel" id="attributionTablePanel" style="padding:0;overflow:auto">
+            <table class="pra-table sticky-head-table" style="width:100%">
               <thead><tr>
                 <th class="sortable" data-sort="el" data-col-key="el" style="text-align:left;padding:12px 16px">Source</th>
                 <th class="sortable" data-sort="visits" data-col-key="visits" style="text-align:right;padding:12px 16px">Visits</th>
@@ -221,7 +220,6 @@
               </tr></thead>
               <tbody id="attributionBody"></tbody>
             </table>
-          </div>
         </div>
         <div class="pagination-bar" id="attributionPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="attributionPaginationSummary"></span>
@@ -242,13 +240,11 @@
 
       <div class="tab-panel" id="tab-adsreport">
         <div class="pra-muted" id="adsReportMsg" style="font-size:.8rem;margin-bottom:10px;min-height:1em"></div>
-        <div class="pra-panel" id="adsReportTablePanel" style="padding:0;overflow-y:auto;overflow-x:hidden">
-          <div style="overflow-x:auto">
-            <table class="pra-table" style="width:100%">
+        <div class="pra-panel" id="adsReportTablePanel" style="padding:0;overflow:auto">
+            <table class="pra-table sticky-head-table" style="width:100%">
               <thead><tr id="adsReportHeaderRow"></tr></thead>
               <tbody id="adsReportBody"></tbody>
             </table>
-          </div>
         </div>
         <div class="pagination-bar" id="adsReportPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="adsReportPaginationSummary"></span>
@@ -1070,14 +1066,32 @@ function renderJourneyTimeline() {
   }).join('') : '<div class="pra-muted">No activity in this filter.</div>';
 }
 
+// column-resize.js only fixes a column's width once the user has actually
+// dragged it -- until then nothing constrains the browser's own auto
+// table-layout, which recomputes every column's width from whatever
+// content happens to be visible. Confirmed live: re-sorting brought a
+// longer/shorter Source value to the top and visibly reflowed every other
+// column's width along with it. Seeding a sensible default per column (kept
+// only where the user hasn't already dragged a real width in) gives every
+// column a fixed width from the first render, same as if they'd dragged it
+// themselves -- sort order can no longer move them.
+function seedDefaultColumnWidths(prefKey, defaults) {
+  const existing = window.crmMe.preferences?.[prefKey] || {};
+  window.crmMe.preferences = { ...(window.crmMe.preferences || {}), [prefKey]: { ...defaults, ...existing } };
+}
+const ATTRIBUTION_DEFAULT_WIDTHS = { el: 340, visits: 90, uniqueVisitors: 130, optIns: 100, bookings: 100, enrolled: 100 };
+const ADS_REPORT_DEFAULT_WIDTHS = { source: 280, adGroup: 150, campaign: 150, spend: 100, revenue: 100, sales: 80, costPerSale: 100, bookings: 130, costPerBooking: 110, leads: 90, costPerLead: 100, visits: 90 };
+
 (async function init() {
   await loadSortPreference();
   await window.crmNavReady;
   await loadComplianceForToggles();
+  seedDefaultColumnWidths('adsReportColumnWidths', ADS_REPORT_DEFAULT_WIDTHS);
   renderAdsReportHeader();
   // Attribution's header is static HTML (never rebuilt), so this only
   // needs wiring once -- unlike Ads Report's own header, which re-wires
   // itself inside renderAdsReportHeader() every time it's rebuilt.
+  seedDefaultColumnWidths('attributionColumnWidths', ATTRIBUTION_DEFAULT_WIDTHS);
   wireColumnResize('#tab-attribution thead tr', 'attributionColumnWidths');
   await initPeriodSelector();
   applyPeriod();
