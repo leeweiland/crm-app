@@ -338,21 +338,13 @@
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderSmsBtn">+ Add SMS Reminder</button>
             </div>
             <div class="ed-notif-card">
-              <div class="ed-notif-title">Internal Calendar Event (Staff)</div>
-              <div class="ed-notif-hint">What STAFF see on their own Google Calendar for this booking -- staff-only, the contact never sees this one. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %INTAKEANSWERS% %INVITEETIMEZONE% %MANAGEURL%. Leave empty to use the default layout.</div>
+              <div class="ed-notif-title">Calendar Event Description</div>
+              <div class="ed-notif-hint">What shows in the description of this booking's Google Calendar event -- the same text is used for the real event (visible to staff and, once the contact accepts the invite, to the contact) and for the "Add to Google/Outlook Calendar" links and downloaded .ics file. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %INTAKEANSWERS% %INVITEETIMEZONE% %MANAGEURL%. Leave empty to use the default layout.</div>
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;text-transform:none;margin-bottom:10px"><input type="checkbox" id="fIncludeFormAnswersInCalendar"/> Include intake answers (%INTAKEANSWERS%)</label>
-              <div class="ed-sms-toolbar"><select class="pra-select" id="staffCalDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
-              <textarea class="pra-input" id="staffCalDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
-              <div class="pra-label" style="margin-top:14px">Preview -- staff side</div>
-              <div id="staffCalDescPreview" class="pra-muted" style="font-size:.82rem;line-height:1.7;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></div>
-            </div>
-            <div class="ed-notif-card">
-              <div class="ed-notif-title">Contact Calendar Event</div>
-              <div class="ed-notif-hint">What goes on the CONTACT's own calendar (the "Add to Google/Outlook Calendar" links and the downloaded .ics file) -- a fully separate, independently-editable template from the staff one above, starting from the exact same full content (nothing trimmed) since the contact sees everything the staff side sees. Same tokens as above.</div>
-              <div class="ed-sms-toolbar"><select class="pra-select" id="contactCalDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
-              <textarea class="pra-input" id="contactCalDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
-              <div class="pra-label" style="margin-top:14px">Preview -- contact side</div>
-              <div id="contactCalDescPreview" class="pra-muted" style="font-size:.82rem;line-height:1.7;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></div>
+              <div class="ed-sms-toolbar"><select class="pra-select" id="calDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+              <textarea class="pra-input" id="calDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
+              <div class="pra-label" style="margin-top:14px">Preview</div>
+              <div id="calDescPreview" class="pra-muted" style="font-size:.82rem;line-height:1.7;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></div>
             </div>
           </div>
         </div>
@@ -608,8 +600,7 @@ function renderSidebar() {
   // ...DescriptionTemplate itself stays untouched until the box is actually
   // edited (see its 'input' handler), so an event type nobody's customized
   // still automatically follows future changes to the default.
-  document.getElementById('staffCalDescTemplate').value = draft.calendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
-  document.getElementById('contactCalDescTemplate').value = draft.contactCalendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
+  document.getElementById('calDescTemplate').value = draft.calendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
   refreshCalendarPreviewDebounced();
 
   const b = draft.branding;
@@ -759,8 +750,7 @@ function wirePersonalizeDropdown(selectId, textareaId, options) {
   });
 }
 wirePersonalizeDropdown('confSmsPersonalize', 'confSmsBody', SMS_PERSONALIZE_OPTIONS);
-wirePersonalizeDropdown('staffCalDescPersonalize', 'staffCalDescTemplate', CALENDAR_DESC_PERSONALIZE_OPTIONS);
-wirePersonalizeDropdown('contactCalDescPersonalize', 'contactCalDescTemplate', CALENDAR_DESC_PERSONALIZE_OPTIONS);
+wirePersonalizeDropdown('calDescPersonalize', 'calDescTemplate', CALENDAR_DESC_PERSONALIZE_OPTIONS);
 const REMINDER_UNITS = ['minutes', 'hours', 'days'];
 let allFooters = [];
 
@@ -807,12 +797,11 @@ document.getElementById('confSmsBody').addEventListener('input', (e) => {
   saveDebounced();
 });
 // Re-renders against the server's own renderCalendarDescription/
-// applyBookingTokens path (ONE fabricated sample booking shared by both the
-// staff and contact previews, using this event type's real questions with a
-// real-looking sample answer each) so neither preview can ever drift from
-// what a real booking actually produces on either calendar. Debounced
-// separately from saveDebounced (shorter delay, and fires even before the
-// draft has actually saved) since it's read-only and cheap.
+// applyBookingTokens path (ONE fabricated sample booking, using this event
+// type's real questions with a real-looking sample answer each) so the
+// preview can never drift from what a real booking actually produces.
+// Debounced separately from saveDebounced (shorter delay, and fires even
+// before the draft has actually saved) since it's read-only and cheap.
 let calPreviewTimer;
 // Renders each "Label: value" line bold-label/plain-value, same visual
 // weight as the internal booking-notification email's own Q&A blocks
@@ -843,22 +832,16 @@ async function refreshCalendarPreview() {
   const r = await fetch(`/api/scheduling/admin/event-types/${draft.id}/calendar-preview`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      staffTemplate: draft.calendarDescriptionTemplate || '', contactTemplate: draft.contactCalendarDescriptionTemplate || '',
+      template: draft.calendarDescriptionTemplate || '',
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar,
     }),
   });
   const d = r.ok ? await r.json() : null;
-  document.getElementById('staffCalDescPreview').innerHTML = d ? formatPreviewHtml(d.staffPreview) : 'Could not load preview.';
-  document.getElementById('contactCalDescPreview').innerHTML = d ? formatPreviewHtml(d.contactPreview) : 'Could not load preview.';
+  document.getElementById('calDescPreview').innerHTML = d ? formatPreviewHtml(d.preview) : 'Could not load preview.';
 }
 function refreshCalendarPreviewDebounced() { clearTimeout(calPreviewTimer); calPreviewTimer = setTimeout(refreshCalendarPreview, 400); }
-document.getElementById('staffCalDescTemplate').addEventListener('input', (e) => {
+document.getElementById('calDescTemplate').addEventListener('input', (e) => {
   draft.calendarDescriptionTemplate = e.target.value;
-  saveDebounced();
-  refreshCalendarPreviewDebounced();
-});
-document.getElementById('contactCalDescTemplate').addEventListener('input', (e) => {
-  draft.contactCalendarDescriptionTemplate = e.target.value;
   saveDebounced();
   refreshCalendarPreviewDebounced();
 });
@@ -988,7 +971,6 @@ async function saveNow() {
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
       notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, reminders: draft.reminders,
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate,
-      contactCalendarDescriptionTemplate: draft.contactCalendarDescriptionTemplate,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
