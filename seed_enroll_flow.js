@@ -30,6 +30,26 @@ const DEFAULT_COLUMN_NAMES = {
 const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const stepId = () => "st" + Array.from({ length: 8 }, () => ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]).join("");
 
+// Real custom-field IDs on this account (crm_custom_fields.json) -- the same
+// START DATE/END DATE fields the contact detail panel's intake section shows,
+// and that sqlite_inbox.js's renewal-alert stamping already reads. Keeps the
+// contact record itself in sync with what's going into the sheet, not just
+// the external spreadsheet.
+const START_DATE_FIELD_ID = "4e47ce5a-087d-44e6-85e1-e47eb54ac669";
+const END_DATE_FIELD_ID = "d49b092b-3054-4d5c-b7fa-d4ac32e9df3b";
+
+function updateDatesStep(nextStepId) {
+  const id = stepId();
+  return {
+    id, type: "add_update_contact",
+    config: {
+      first: "", last: "", email: "", phone: "", programType: "", statusId: "", altEmail: "", altPhone: "",
+      customFields: { [START_DATE_FIELD_ID]: "{{customFields.enrollStartDate}}", [END_DATE_FIELD_ID]: "{{customFields.enrollEndDate}}" },
+    },
+    nextStepId: nextStepId || null, yesStepId: null, noStepId: null,
+  };
+}
+
 function sheetUpsertStep(sheetName, columnNames, nextStepId) {
   const id = stepId();
   return {
@@ -66,8 +86,10 @@ function sheetUpsertStep(sheetName, columnNames, nextStepId) {
 }
 
 function buildFlow(sheetId, sheetTabs, columnNames) {
-  const onlineStep = sheetUpsertStep(sheetTabs.online, columnNames);
-  const gymStep = sheetUpsertStep(sheetTabs.gym, columnNames);
+  const onlineDatesStep = updateDatesStep();
+  const gymDatesStep = updateDatesStep();
+  const onlineStep = sheetUpsertStep(sheetTabs.online, columnNames, onlineDatesStep.id);
+  const gymStep = sheetUpsertStep(sheetTabs.gym, columnNames, gymDatesStep.id);
   // The spreadsheet picker in flow-builder.html expects spreadsheetId to be
   // set the same way a human would set it (search -> pick), but this seed
   // pre-fills it directly from the sheet the old settings already pointed
@@ -79,6 +101,8 @@ function buildFlow(sheetId, sheetTabs, columnNames) {
     [ifId]: { id: ifId, type: "if_then", config: { filter: { all: [{ field: "programType", op: "eq", value: "online" }] } }, nextStepId: null, yesStepId: onlineStep.id, noStepId: gymStep.id },
     [onlineStep.id]: onlineStep,
     [gymStep.id]: gymStep,
+    [onlineDatesStep.id]: onlineDatesStep,
+    [gymDatesStep.id]: gymDatesStep,
   };
   const now = new Date().toISOString();
   return {
