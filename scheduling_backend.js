@@ -1422,7 +1422,18 @@ export async function handleSchedulingRequest(req, res, url) {
     const previewEt = { ...et, includeFormAnswersInCalendar: body.includeFormAnswersInCalendar };
     const template = typeof body.template === "string" && body.template.trim() ? body.template : DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
     const sampleAnswers = {};
-    for (const q of et.questions || []) if (!CORE_QUESTION_TYPES.includes(q.type)) sampleAnswers[q.id] = "Sample answer";
+    // A real answer where one's available (the question's own placeholder,
+    // or one of a dropdown's real configured options) reads as an actual
+    // filled-in form instead of the same literal "Sample answer" repeated
+    // under every question, which looked obviously fake and identical
+    // regardless of what was actually being asked.
+    for (const q of et.questions || []) {
+      if (CORE_QUESTION_TYPES.includes(q.type)) continue;
+      sampleAnswers[q.id] = q.type === "dropdown" && (q.options || []).length ? q.options[0]
+        : q.placeholder ? q.placeholder
+        : q.type === "long_text" ? "This is a sample long-answer response, to show roughly how much room a real one takes up."
+        : "Sample answer";
+    }
     const sampleBooking = {
       name: "Jamie Sample", email: "jamie@example.com", phone: "(555) 123-4567",
       timezone: "America/Anchorage", startAt: new Date(Date.now() + 86400000).toISOString(),
