@@ -1006,6 +1006,13 @@ function openEmailStepEditor(step, isNew) {
     { value: '%TIME%', label: 'Meeting time' },
     { value: '%LOCATION%', label: 'Meeting location' },
     { value: '%NOTES%', label: 'Meeting notes' },
+    // block-editor-client.js recognizes these 3 token values specially and
+    // inserts a real clickable "Add to Calendar" button instead of plain
+    // token text -- see its ADD_TO_CALENDAR_BUTTONS map. Same resolveTokenBooking
+    // fallback as the tokens above: no booking on file leaves it unresolved.
+    { value: '%ADDTOCALENDARGOOGLE%', label: 'Add to Google Calendar (button)' },
+    { value: '%ADDTOCALENDAROUTLOOK%', label: 'Add to Outlook Calendar (button)' },
+    { value: '%ADDTOCALENDARAPPLE%', label: 'Add to Apple Calendar (button)' },
   ];
   emailStepEditor = BlockEditor.init(root, { blocks: step.config.blocks || [], theme: step.config.theme }, () => {},
     () => { document.getElementById('emailStepFooterDirtyBar').style.display = 'block'; },

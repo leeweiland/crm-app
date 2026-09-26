@@ -715,6 +715,14 @@ const BOOKING_PERSONALIZE_OPTIONS = [
   { value: '%TIME%', label: 'Time' },
   { value: '%LOCATION%', label: 'Location' },
   { value: '%NOTES%', label: 'Notes' },
+  // In the visual email editor (Confirmation Email below), block-editor-
+  // client.js recognizes these 3 token values specially and inserts a real
+  // clickable "Add to Calendar" button instead of plain token text -- see
+  // its ADD_TO_CALENDAR_BUTTONS map. In a plain textarea (Confirmation
+  // SMS/Calendar Event Description), they just insert as a plain link.
+  { value: '%ADDTOCALENDARGOOGLE%', label: 'Add to Google Calendar (button/link)' },
+  { value: '%ADDTOCALENDAROUTLOOK%', label: 'Add to Outlook Calendar (button/link)' },
+  { value: '%ADDTOCALENDARAPPLE%', label: 'Add to Apple Calendar (button/link)' },
 ];
 const SMS_PERSONALIZE_OPTIONS = [
   { value: '%FIRSTNAME%', label: 'First name' },

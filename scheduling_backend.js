@@ -902,22 +902,33 @@ function locationText(location) {
 // and workflows_backend.js reuse this for their own send_email/sms steps
 // when a booking_created-triggered enrollment carries a bookingId (see
 // their fireTrigger/fireWorkflowTrigger and enrollContact call sites).
-export function applyBookingTokens(text, { eventType, when, date, time, notes }) {
+export function applyBookingTokens(text, { eventType, when, date, time, notes, addToCalendarGoogle, addToCalendarOutlook, addToCalendarApple }) {
   return String(text || "")
     .replace(/%EVENTNAME%/gi, eventType.name || "")
     .replace(/%WHEN%/gi, when || "")
     .replace(/%DATE%/gi, date || "")
     .replace(/%TIME%/gi, time || "")
     .replace(/%LOCATION%/gi, locationText(eventType.location) || "")
-    .replace(/%NOTES%/gi, notes || "");
+    .replace(/%NOTES%/gi, notes || "")
+    .replace(/%ADDTOCALENDARGOOGLE%/gi, addToCalendarGoogle || "")
+    .replace(/%ADDTOCALENDAROUTLOOK%/gi, addToCalendarOutlook || "")
+    .replace(/%ADDTOCALENDARAPPLE%/gi, addToCalendarApple || "");
 }
 
-// Same {eventType, when, date, time, notes} shape applyBookingTokens
-// expects, computed once here so every caller (this file's own
-// confirmation/reminder sends, plus automations/workflows steps) formats
-// dates identically instead of each re-deriving when/date/time.
+// Same {eventType, when, date, time, notes, addToCalendar...} shape
+// applyBookingTokens expects, computed once here so every caller (this
+// file's own confirmation/reminder sends, plus automations/workflows steps)
+// formats dates and links identically instead of each re-deriving them.
+// The add-to-calendar links here intentionally use a plain description
+// (the event type's own name), NOT buildCalendarDescription(booking) --
+// that function itself calls getBookingTokenValues to resolve the
+// calendar-description template's own tokens, so reusing it here would
+// recurse infinitely. These links are a convenience for email recipients
+// who want to manually add the event; the REAL calendar event (native
+// Google Calendar invite) already carries the full description separately.
 export function getBookingTokenValues(booking, eventType) {
   const start = new Date(booking.startAt);
+  const end = new Date(booking.endAt);
   const tz = booking.timezone || "America/Anchorage";
   return {
     eventType,
@@ -925,6 +936,9 @@ export function getBookingTokenValues(booking, eventType) {
     date: start.toLocaleDateString("en-US", { timeZone: tz, dateStyle: "full" }),
     time: start.toLocaleTimeString("en-US", { timeZone: tz, timeStyle: "short" }),
     notes: booking.notes,
+    addToCalendarGoogle: buildGoogleCalendarLink({ summary: eventType.name, description: eventType.name, start, end, timezone: tz }),
+    addToCalendarOutlook: buildOutlookCalendarLink({ summary: eventType.name, description: eventType.name, start, end }),
+    addToCalendarApple: `${getPublicBaseUrl()}/api/scheduling/bookings/${booking.id}/ics?token=${booking.cancelToken}`,
   };
 }
 
