@@ -1453,12 +1453,31 @@ export async function handleSchedulingRequest(req, res, url) {
         : q.type === "long_text" ? "This is a sample long-answer response, to show roughly how much room a real one takes up."
         : "Sample answer";
     }
+    // The REAL outer form this calendar is embedded in (a form field with
+    // type "calendar" and this event type's slug -- see forms_backend.js's
+    // hasCalendarStep), if any -- pulls its actual questions so the preview
+    // shows real spacing/formatting for what a real booking's formAnswers
+    // block looks like, not one fabricated example question that doesn't
+    // match reality. Sequentially numbered "Sample 1"/"Sample 2"/... per
+    // explicit request, rather than trying to fabricate a realistic-sounding
+    // answer for each. Dual-keyed (code AND label, both -> the same sample
+    // value) exactly like a real submission's formAnswers/formAnswerLabels,
+    // so formatFormAnswers' own dedup (drop the code-keyed duplicate when a
+    // label exists) runs here identically to how it runs for a real booking.
+    const NON_ANSWERABLE_FORM_TYPES = ["statement", "headline", "image", "video", "calendar", "page_break"];
+    const embeddingForm = readJson("crm_forms.json", []).find(f => (f.fields || []).some(fl => fl.type === "calendar" && fl.eventTypeSlug === et.slug));
+    const formAnswers = {}, formAnswerLabels = {};
+    (embeddingForm?.fields || []).filter(fl => !NON_ANSWERABLE_FORM_TYPES.includes(fl.type)).forEach((fl, i) => {
+      const sample = `Sample ${i + 1}`;
+      const key = fl.code || fl.label || fl.type;
+      formAnswers[key] = sample;
+      if (fl.label) { formAnswers[fl.label] = sample; if (fl.code) formAnswerLabels[fl.code] = fl.label; }
+    });
     const sampleBooking = {
       name: "Jamie Sample", email: "jamie@example.com", phone: "(555) 123-4567",
       timezone: "America/Anchorage", startAt: new Date(Date.now() + 86400000).toISOString(),
       id: "preview", eventTypeSlug: et.slug, cancelToken: "preview",
-      formAnswers: { "What are you hoping to get out of this?": "Sample answer" },
-      formAnswerLabels: {},
+      formAnswers, formAnswerLabels,
       notes: formatExtraAnswers(et.questions, sampleAnswers),
     };
     const staffPreview = renderCalendarDescription(applyBookingTokens(staffTemplate, getBookingTokenValues(sampleBooking, et)), sampleBooking, previewEt);

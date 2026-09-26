@@ -344,7 +344,7 @@
               <div class="ed-sms-toolbar"><select class="pra-select" id="staffCalDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
               <textarea class="pra-input" id="staffCalDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
               <div class="pra-label" style="margin-top:14px">Preview -- staff side</div>
-              <pre id="staffCalDescPreview" class="pra-muted" style="white-space:pre-wrap;font-family:inherit;font-size:.82rem;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></pre>
+              <div id="staffCalDescPreview" class="pra-muted" style="font-size:.82rem;line-height:1.7;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></div>
             </div>
             <div class="ed-notif-card">
               <div class="ed-notif-title">Contact Calendar Event</div>
@@ -352,7 +352,7 @@
               <div class="ed-sms-toolbar"><select class="pra-select" id="contactCalDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
               <textarea class="pra-input" id="contactCalDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
               <div class="pra-label" style="margin-top:14px">Preview -- contact side</div>
-              <pre id="contactCalDescPreview" class="pra-muted" style="white-space:pre-wrap;font-family:inherit;font-size:.82rem;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></pre>
+              <div id="contactCalDescPreview" class="pra-muted" style="font-size:.82rem;line-height:1.7;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></div>
             </div>
           </div>
         </div>
@@ -814,6 +814,20 @@ document.getElementById('confSmsBody').addEventListener('input', (e) => {
 // separately from saveDebounced (shorter delay, and fires even before the
 // draft has actually saved) since it's read-only and cheap.
 let calPreviewTimer;
+// Renders each "Label: value" line bold-label/plain-value, same visual
+// weight as the internal booking-notification email's own Q&A blocks
+// (flow-builder.html's qaBlockHtml) -- so the setup and spacing are actually
+// easy to read at a glance instead of a flat monospace text dump. The real
+// Google Calendar description this feeds is still plain text either way
+// (calendar descriptions don't render HTML) -- this formatting is purely
+// for THIS preview's own readability.
+function formatPreviewHtml(text) {
+  return String(text || '').split('\n').map(line => {
+    if (!line) return '';
+    const m = /^([^:]{1,80}):\s?(.*)$/.exec(line);
+    return m && m[2] ? `<b>${escapeHtml(m[1])}:</b> ${escapeHtml(m[2])}` : escapeHtml(line);
+  }).join('<br>');
+}
 async function refreshCalendarPreview() {
   if (!draft?.id) return;
   const r = await fetch(`/api/scheduling/admin/event-types/${draft.id}/calendar-preview`, {
@@ -824,8 +838,8 @@ async function refreshCalendarPreview() {
     }),
   });
   const d = r.ok ? await r.json() : null;
-  document.getElementById('staffCalDescPreview').textContent = d ? d.staffPreview : 'Could not load preview.';
-  document.getElementById('contactCalDescPreview').textContent = d ? d.contactPreview : 'Could not load preview.';
+  document.getElementById('staffCalDescPreview').innerHTML = d ? formatPreviewHtml(d.staffPreview) : 'Could not load preview.';
+  document.getElementById('contactCalDescPreview').innerHTML = d ? formatPreviewHtml(d.contactPreview) : 'Could not load preview.';
 }
 function refreshCalendarPreviewDebounced() { clearTimeout(calPreviewTimer); calPreviewTimer = setTimeout(refreshCalendarPreview, 400); }
 document.getElementById('staffCalDescTemplate').addEventListener('input', (e) => {
