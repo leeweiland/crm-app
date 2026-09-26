@@ -203,6 +203,12 @@
           <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="autoOptOutFailedSms"/> Auto opt-out on failed SMS send</label>
           <div class="pra-muted optout-desc">Off by default — a single failed send is often transient (a full inbox, a carrier hiccup), not proof the address/number is genuinely dead. Turn either of these on and this CRM stops sending that channel to anyone whose send fails, going forward. Only ever adds the suppression, same as the rules above — reversible only by hand, on the contact's own record. These two switches are the same setting shown next to the Failed number on Reporting's Email and SMS tabs; flipping one updates the other.</div>
         </div>
+
+        <div class="pra-panel optout-card" id="optoutBounceComplaint">
+          <div class="optout-card-head"><div class="optout-card-title">Bounces &amp; Complaints (AWS SES)</div><div class="pra-muted optout-msg"></div></div>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="autoOptOutOnBounceComplaint"/> Auto-unsubscribe on bounce/complaint notification</label>
+          <div class="pra-muted optout-desc">On by default — unlike a failed send above, a bounce or spam complaint reported by AWS SES is the recipient's own mailbox provider telling you directly, not a guess. Turning this off means bounces/complaints are only recorded on the message log, with no automatic suppression.</div>
+        </div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-tracking" style="padding:22px;max-width:600px">
@@ -945,6 +951,7 @@ async function loadComplianceSettings() {
   if (c.blacklistSheetUrl) runBlacklistSheetCheck();
   document.getElementById('autoOptOutFailedEmail').checked = !!c.autoOptOutFailedEmail;
   document.getElementById('autoOptOutFailedSms').checked = !!c.autoOptOutFailedSms;
+  document.getElementById('autoOptOutOnBounceComplaint').checked = !!c.autoOptOutOnBounceComplaint;
 }
 // Each Opt Out card saves ONLY its own fields (the endpoint takes partial
 // bodies), so e.g. a half-typed sheet link can't block a keyword edit in
@@ -956,6 +963,7 @@ const OPTOUT_CARDS = {
   optoutSheet: () => ({ blacklistSheetUrl: document.getElementById('blacklistSheetUrl').value.trim() }),
   optoutTriggers: () => ({ triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked, triggerKeywords: splitKeywords('triggerKeywordsList') }),
   optoutFailedSends: () => ({ autoOptOutFailedEmail: document.getElementById('autoOptOutFailedEmail').checked, autoOptOutFailedSms: document.getElementById('autoOptOutFailedSms').checked }),
+  optoutBounceComplaint: () => ({ autoOptOutOnBounceComplaint: document.getElementById('autoOptOutOnBounceComplaint').checked }),
 };
 async function saveOptoutCard(cardId) {
   const body = OPTOUT_CARDS[cardId]();

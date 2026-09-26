@@ -6,7 +6,7 @@ import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { markContactEmailEngagement, suppressContactEmail } from "./contacts_backend.js";
-import { getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
+import { getSesSettings, getPublicBaseUrl, getComplianceSettings } from "./integrations_backend.js";
 import { resolveSendSourceSlug } from "./source_names.js";
 import { setConvoMeta } from "./conversation_meta.js";
 import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
@@ -371,7 +371,7 @@ export function processSesNotificationMessage(raw) {
       const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
       if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
       if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
-      if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained")) suppressContactEmail(row.contactId, statusMap[eventType]);
+      if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressContactEmail(row.contactId, statusMap[eventType]);
     }
   } catch (e) { console.error("[SES webhook] parse failed", e.message); }
 }

@@ -193,6 +193,12 @@ export function getComplianceSettings() {
     // compliance_backend.js's maybeAutoOptOutOnFailedSend.
     autoOptOutFailedEmail: !!c.autoOptOutFailedEmail,
     autoOptOutFailedSms: !!c.autoOptOutFailedSms,
+    // On by default, unlike the two above -- a bounce/complaint notification
+    // from AWS SES is a definitive signal from the recipient's own mailbox
+    // provider, not a transient failure, so suppressing on it has always
+    // been unconditional (see email_backend.js's processSesNotificationMessage).
+    // This is just the first time it's actually been made optional.
+    autoOptOutOnBounceComplaint: c.autoOptOutOnBounceComplaint !== false,
   };
 }
 
@@ -337,6 +343,7 @@ export async function handleIntegrationsRequest(req, res, url) {
     // its next load, with no separate sync mechanism needed.
     if ("autoOptOutFailedEmail" in body) all.compliance.autoOptOutFailedEmail = !!body.autoOptOutFailedEmail;
     if ("autoOptOutFailedSms" in body) all.compliance.autoOptOutFailedSms = !!body.autoOptOutFailedSms;
+    if ("autoOptOutOnBounceComplaint" in body) all.compliance.autoOptOutOnBounceComplaint = !!body.autoOptOutOnBounceComplaint;
     if ("blacklistSheetUrl" in body) {
       const url = String(body.blacklistSheetUrl || "").trim();
       if (url && !parseSheetUrl(url)) return sendJson(res, 400, { error: "That doesn't look like a Google Sheets link." });
