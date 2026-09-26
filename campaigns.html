@@ -6,6 +6,12 @@
 <title>Email Campaigns — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
+  /* The shared .app-main caps at max-width:1400px, sized for prose/settings
+     pages -- this page is a wide data table that benefits from using the
+     full window instead of forcing an internal horizontal scroll on
+     perfectly ordinary desktop widths (same override contacts.html and
+     reporting.html already use). */
+  .app-main { max-width: none; }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 18px; gap: 8px; }
   .status-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .status-draft { background: rgba(255,255,255,0.1); color: #fff; }

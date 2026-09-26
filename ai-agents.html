@@ -6,6 +6,11 @@
 <title>AI Agents — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
+  /* Same full-width override as contacts.html/reporting.html -- the shared
+     .app-main caps at max-width:1400px, sized for prose/settings pages,
+     which forces an internal horizontal scroll on this data table at
+     perfectly ordinary desktop widths otherwise. */
+  .app-main { max-width: none; }
   .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
   .agent-active-pill { font-size: .68rem; text-transform: uppercase; padding: 3px 10px; border-radius: 10px; }
   .agent-on { background: rgba(0,155,255,0.15); color: var(--pra-blue); }

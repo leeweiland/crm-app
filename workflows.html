@@ -6,6 +6,11 @@
 <title>SMS Sequences — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
+  /* Same full-width override as contacts.html/reporting.html -- the shared
+     .app-main caps at max-width:1400px, sized for prose/settings pages,
+     which forces an internal horizontal scroll on this data table at
+     perfectly ordinary desktop widths otherwise. */
+  .app-main { max-width: none; }
   .toolbar { display: flex; align-items: center; margin-bottom: 18px; }
   .active-toggle { width: 38px; height: 20px; border-radius: 12px; background: var(--pra-border); position: relative; cursor: pointer; display: inline-block; border: none; }
   .active-toggle.on { background: var(--pra-blue); }

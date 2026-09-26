@@ -6,6 +6,11 @@
 <title>Calendars — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
+  /* Same full-width override as contacts.html/reporting.html -- the shared
+     .app-main caps at max-width:1400px, sized for prose/settings pages,
+     which forces an internal horizontal scroll on these data tables at
+     perfectly ordinary desktop widths otherwise. */
+  .app-main { max-width: none; }
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
   .tabs { display: flex; gap: 6px; margin-bottom: 18px; }
   .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
