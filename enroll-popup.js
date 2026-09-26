@@ -187,7 +187,13 @@ window.EnrollPopup = (function () {
       };
       btn.disabled = true; msg.textContent = "Saving...";
       try {
-        const r = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED", customFieldsPatch }) });
+        // programType (top-level, not just the customFields copy above) is
+        // what the flow's If/Then step actually branches ONLINE vs. GYM on --
+        // plenty of older contacts never had this set at all, so without
+        // writing it here too, the flow would silently route based on
+        // whatever (or nothing) was already there instead of what was just
+        // picked in this popup.
+        const r = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED", programType: customFieldsPatch.enrollProgramType, customFieldsPatch }) });
         if (!r.ok) { btn.disabled = false; msg.textContent = "Could not save"; return; }
         toast("Enrolled -- recording the sale in the sheet now");
         opts.onCommitted && opts.onCommitted();
