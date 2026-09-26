@@ -338,7 +338,12 @@
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanDuplicatesBtn">Scan for Duplicates</button>
         <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
         <div class="pra-panel" id="duplicatesTablePanel" style="overflow-y:auto;overflow-x:hidden;margin-top:18px">
-          <div style="overflow-x:auto"><div id="duplicatesList"></div></div>
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr><th style="width:16%">Matched By</th><th>Contact A</th><th>Contact B</th><th style="width:120px"></th></tr></thead>
+              <tbody id="duplicatesList"></tbody>
+            </table>
+          </div>
         </div>
         <div class="pagination-bar" id="duplicatesPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="duplicatesPaginationSummary"></span>
@@ -357,7 +362,12 @@
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanVisitorMatchesBtn">Scan for Visitor Matches</button>
         <span class="pra-muted" id="visitorMatchesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
         <div class="pra-panel" id="visitorMatchesTablePanel" style="overflow-y:auto;overflow-x:hidden;margin-top:18px">
-          <div style="overflow-x:auto"><div id="visitorMatchesList"></div></div>
+          <div style="overflow-x:auto">
+            <table class="data-table">
+              <thead><tr><th style="width:16%">Matched By</th><th>Known Contact</th><th>Anonymous Session</th><th style="width:160px"></th></tr></thead>
+              <tbody id="visitorMatchesList"></tbody>
+            </table>
+          </div>
         </div>
         <div class="pagination-bar" id="visitorMatchesPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
           <span class="pra-muted" id="visitorMatchesPaginationSummary"></span>
@@ -689,15 +699,17 @@ function renderManagedTable(kind, barId) {
   headRow.innerHTML = `<th style="width:28px"></th>` + cols.map(col => {
     const sortedClass = st.sortField === col.key ? ' sorted' : '';
     const arrow = st.sortField === col.key ? `<span class="sort-arrow">${st.sortDir === 1 ? '▲' : '▼'}</span>` : '';
-    return `<th class="sortable${sortedClass}" data-sort="${col.key}">${escapeHtml(col.label)}${arrow}</th>`;
+    return `<th class="sortable${sortedClass}" data-col-key="${col.key}" data-sort="${col.key}">${escapeHtml(col.label)}${arrow}</th>`;
   }).join('') + `<th></th>`;
-  headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+  headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = (e) => {
+    if (e.target.closest('.col-resize-handle')) return;
     const key = th.dataset.sort;
     if (st.sortField === key) st.sortDir *= -1; else { st.sortField = key; st.sortDir = 1; }
     localStorage.setItem(kind + 'SortField', st.sortField);
     localStorage.setItem(kind + 'SortDir', String(st.sortDir));
     renderManagedTable(kind, barId);
   });
+  wireColumnResize('#' + p + 'HeadRow', kind + 'ColumnWidths');
 
   const body = document.getElementById(p + 'Body');
   body.innerHTML = pageItems.map(item => {
@@ -1467,14 +1479,14 @@ for (const key of ['duplicates', 'visitorMatches']) {
   const savedSize = parseInt(localStorage.getItem(key + 'PageSize'), 10);
   cardPageState[key] = { page: 1, pageSize: [5, 10, 20, 50].includes(savedSize) ? savedSize : 10 };
 }
-function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg) {
+function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg, emptyColspan) {
   const st = cardPageState[key];
   const wrap = document.getElementById(containerId);
   const totalPages = Math.max(1, Math.ceil(allItems.length / st.pageSize));
   st.page = Math.min(Math.max(1, st.page), totalPages);
   const start = (st.page - 1) * st.pageSize;
   const pageItems = allItems.slice(start, start + st.pageSize);
-  wrap.innerHTML = pageItems.map(cardFn).join('') || `<div class="pra-muted" style="font-size:.85rem">${emptyMsg}</div>`;
+  wrap.innerHTML = pageItems.map(cardFn).join('') || `<tr><td colspan="${emptyColspan}" class="pra-muted">${emptyMsg}</td></tr>`;
   wireFn(wrap);
   const end = Math.min(start + pageItems.length, allItems.length);
   document.getElementById(key + 'PaginationSummary').textContent = allItems.length ? `Showing ${(start + 1).toLocaleString()}–${end.toLocaleString()} of ${allItems.length.toLocaleString()}` : 'None yet.';
@@ -1483,7 +1495,7 @@ function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyM
   document.getElementById(key + 'NextPageBtn').disabled = st.page >= totalPages;
   const sizeSel = document.getElementById(key + 'PageSizeSelect');
   sizeSel.value = String(st.pageSize);
-  const rerender = () => renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg);
+  const rerender = () => renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg, emptyColspan);
   sizeSel.onchange = () => { st.pageSize = parseInt(sizeSel.value, 10); localStorage.setItem(key + 'PageSize', String(st.pageSize)); st.page = 1; rerender(); };
   document.getElementById(key + 'PrevPageBtn').onclick = () => { if (st.page > 1) { st.page--; rerender(); } };
   document.getElementById(key + 'NextPageBtn').onclick = () => { if (st.page < totalPages) { st.page++; rerender(); } };
@@ -1493,21 +1505,20 @@ async function loadDuplicates() {
   const r = await fetch('/api/duplicates');
   if (!r.ok) return;
   const { pairs } = await r.json();
+  const reasonLabel = r => r === 'email' ? 'same email address' : r === 'phone' ? 'same phone number' : r === 'ip' ? 'same name + shared IP address' : 'same name + shared rough location';
+  const contactCell = (c, dupId) => `
+    <div style="font-weight:700">${escapeHtml(c.first)} ${escapeHtml(c.last)}</div>
+    <div class="pra-muted" style="font-size:.8rem">${escapeHtml(c.email || '')}${c.email && c.phone ? ' · ' : ''}${escapeHtml(c.phone || '')}</div>
+    <div class="pra-muted" style="font-size:.78rem;margin-top:2px">${escapeHtml(c.status || '(no status)')}</div>
+    <button class="pra-btn pra-btn-ghost pra-btn-sm" style="margin-top:6px" data-keep="${c.id}" data-dupid="${dupId}">Keep This One</button>
+  `;
   renderPaginatedCards('duplicates', pairs, 'duplicatesList', d => `
-    <div class="pra-card" style="padding:16px;margin-bottom:12px">
-      <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${d.reason === 'email' ? 'same email address' : d.reason === 'phone' ? 'same phone number' : d.reason === 'ip' ? 'same name + shared IP address' : 'same name + shared rough location'}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        ${[d.contactA, d.contactB].map(c => `
-          <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px">
-            <div style="font-weight:700">${escapeHtml(c.first)} ${escapeHtml(c.last)}</div>
-            <div class="pra-muted" style="font-size:.8rem">${escapeHtml(c.email || '')}${c.email && c.phone ? ' · ' : ''}${escapeHtml(c.phone || '')}</div>
-            <div class="pra-muted" style="font-size:.78rem;margin-top:4px">${escapeHtml(c.status || '(no status)')}</div>
-            <button class="pra-btn pra-btn-sm" style="margin-top:10px;width:100%" data-keep="${c.id}" data-dupid="${d.id}">Keep This One</button>
-          </div>
-        `).join('')}
-      </div>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm" style="margin-top:10px" data-dismiss="${d.id}">Not a Duplicate</button>
-    </div>
+    <tr>
+      <td class="pra-muted" style="font-size:.78rem">${reasonLabel(d.reason)}</td>
+      <td>${contactCell(d.contactA, d.id)}</td>
+      <td>${contactCell(d.contactB, d.id)}</td>
+      <td><button class="pra-btn pra-btn-ghost pra-btn-sm" data-dismiss="${d.id}">Not a Duplicate</button></td>
+    </tr>
   `, wrap => {
     wrap.querySelectorAll('[data-keep]').forEach(btn => btn.onclick = async () => {
       if (!confirm('Merge these two contacts? Every message, call, and task moves onto the kept contact, and the other contact record is deleted. This cannot be undone.')) return;
@@ -1518,7 +1529,7 @@ async function loadDuplicates() {
       const r = await fetch(`/api/duplicates/${btn.dataset.dismiss}/dismiss`, { method: 'POST' });
       if (r.ok) { showToast('Dismissed'); loadDuplicates(); } else showToast('Could not dismiss', true);
     });
-  }, 'No possible duplicates flagged. Click "Scan for Duplicates" to check.');
+  }, 'No possible duplicates flagged. Click "Scan for Duplicates" to check.', 4);
 }
 document.getElementById('scanDuplicatesBtn').onclick = async () => {
   const msg = document.getElementById('duplicatesScanMsg');
@@ -1535,25 +1546,21 @@ async function loadVisitorMatches() {
   if (!r.ok) return;
   const { matches } = await r.json();
   renderPaginatedCards('visitorMatches', matches, 'visitorMatchesList', m => `
-    <div class="pra-card" style="padding:16px;margin-bottom:12px">
-      <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${m.reason === 'ip' ? 'same IP address' : 'same rough location'}</div>
-      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-        <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px;flex:1;min-width:200px">
-          <div class="pra-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Known contact</div>
-          <div style="font-weight:700">${escapeHtml(m.contact.first)} ${escapeHtml(m.contact.last)}</div>
-          <div class="pra-muted" style="font-size:.8rem">${escapeHtml(m.contact.email || '')}${m.contact.email && m.contact.phone ? ' · ' : ''}${escapeHtml(m.contact.phone || '')}</div>
-        </div>
-        <div style="border:1px solid var(--pra-border);border-radius:8px;padding:12px;flex:1;min-width:200px">
-          <div class="pra-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Anonymous session</div>
-          <div style="font-weight:700">${m.sampleVisit ? escapeHtml(m.sampleVisit.path) : '(no page recorded)'}</div>
-          <div class="pra-muted" style="font-size:.8rem">${m.sampleVisit?.el ? 'Source: ' + escapeHtml(m.sampleVisit.el) : 'No source tag'}${m.sampleVisit?.at ? ' · ' + new Date(m.sampleVisit.at).toLocaleDateString() : ''}</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:12px">
-        <button class="pra-btn pra-btn-sm" style="flex:1" data-confirm-vm="${m.id}">Yes, Same Person — Link It</button>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" style="flex:1" data-dismiss-vm="${m.id}">Not a Match</button>
-      </div>
-    </div>
+    <tr>
+      <td class="pra-muted" style="font-size:.78rem">${m.reason === 'ip' ? 'same IP address' : 'same rough location'}</td>
+      <td>
+        <div style="font-weight:700">${escapeHtml(m.contact.first)} ${escapeHtml(m.contact.last)}</div>
+        <div class="pra-muted" style="font-size:.8rem">${escapeHtml(m.contact.email || '')}${m.contact.email && m.contact.phone ? ' · ' : ''}${escapeHtml(m.contact.phone || '')}</div>
+      </td>
+      <td>
+        <div style="font-weight:700">${m.sampleVisit ? escapeHtml(m.sampleVisit.path) : '(no page recorded)'}</div>
+        <div class="pra-muted" style="font-size:.8rem">${m.sampleVisit?.el ? 'Source: ' + escapeHtml(m.sampleVisit.el) : 'No source tag'}${m.sampleVisit?.at ? ' · ' + new Date(m.sampleVisit.at).toLocaleDateString() : ''}</div>
+      </td>
+      <td style="white-space:nowrap">
+        <button class="pra-btn pra-btn-sm" data-confirm-vm="${m.id}">Yes, Same Person</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dismiss-vm="${m.id}">Not a Match</button>
+      </td>
+    </tr>
   `, wrap => {
     wrap.querySelectorAll('[data-confirm-vm]').forEach(btn => btn.onclick = async () => {
       const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.confirmVm}/confirm`, { method: 'POST' });
@@ -1563,7 +1570,7 @@ async function loadVisitorMatches() {
       const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.dismissVm}/dismiss`, { method: 'POST' });
       if (r.ok) { showToast('Dismissed'); loadVisitorMatches(); } else showToast('Could not dismiss', true);
     });
-  }, 'No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.');
+  }, 'No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.', 4);
 }
 document.getElementById('scanVisitorMatchesBtn').onclick = async () => {
   const msg = document.getElementById('visitorMatchesScanMsg');
