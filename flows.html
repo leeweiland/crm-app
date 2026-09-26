@@ -55,7 +55,14 @@
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
-const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', booking_created: 'Booking created', youtube_new_video: 'New YouTube video' };
+const TRIGGER_LABELS = { webhook: 'Webhook', form_submitted: 'Form submitted', booking_created: 'Booking created', youtube_new_video: 'New YouTube video', status_changed: 'Status changed' };
+// status_changed is the one trigger type whose label needs data from the
+// trigger itself (which status), not just a static lookup -- matches the
+// wording flow-builder.html already uses for this same trigger.
+function triggerLabel(f) {
+  if (f.trigger?.type === 'status_changed') return f.trigger.config?.statusId ? `Status → ${f.trigger.config.statusId}` : 'Status changes to anything';
+  return TRIGGER_LABELS[f.trigger?.type] || '';
+}
 
 let flowsCache = [];
 let flowsSort = { key: 'updatedAt', dir: 'desc' };
@@ -63,7 +70,7 @@ let flowsPage = 1;
 let flowsPageSize = parseInt(localStorage.getItem('flowsPageSize'), 10) || 20;
 const FLOW_SORT_ACCESSORS = {
   name: f => (f.name || '').toLowerCase(),
-  trigger: f => TRIGGER_LABELS[f.trigger?.type] || '',
+  trigger: f => triggerLabel(f),
   active: f => f.active ? 1 : 0,
   runs: f => f.totalRuns || 0,
   updatedAt: f => new Date(f.updatedAt).getTime() || 0,
@@ -118,7 +125,7 @@ function renderFlowsTable() {
   body.innerHTML = pageRows.map(f => `
     <tr>
       <td class="clickable"><a href="/flow-builder.html?id=${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
-      <td class="pra-muted">${TRIGGER_LABELS[f.trigger?.type] || ''}</td>
+      <td class="pra-muted">${escapeHtml(triggerLabel(f))}</td>
       <td><button class="active-toggle${f.active ? ' on' : ''}" data-id="${f.id}" data-active="${f.active}"></button></td>
       <td>${f.totalRuns}${f.activeRuns ? ` <span class="pra-muted">(${f.activeRuns} active)</span>` : ''}</td>
       <td class="pra-muted">${fmtDate(f.updatedAt)}</td>
