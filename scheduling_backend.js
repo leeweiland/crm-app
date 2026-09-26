@@ -523,10 +523,21 @@ function formatExtraAnswers(questions, answers) {
 // Body Mastery Call, which only asks name/email/phone) has nowhere for
 // the outer form's answers to land in `notes`, so they'd otherwise never
 // reach the booking notification or the calendar event at all.
-function formatFormAnswers(formAnswers) {
+// formAnswers is dual-keyed on purpose (both the stable code AND the
+// current question wording map to the same value -- see forms_backend.js's
+// labeledAnswers/flows_backend.js's /samples endpoint, which need the code
+// to survive a reworded question). Printed as-is, that means every single
+// answer shows up TWICE here -- once as an ugly snake_case key, once as the
+// readable label -- confirmed live on a real calendar event. fieldLabels
+// (booking.formAnswerLabels: code -> current label) is what lets this drop
+// the code-keyed duplicate and keep only the human-readable one; a key with
+// no code->label mapping (a fixed field like "Timezone", or an event type
+// with no separate outer form) was never duplicated and always stays.
+function formatFormAnswers(formAnswers, fieldLabels) {
   if (!formAnswers || typeof formAnswers !== "object") return "";
+  const codeKeysWithLabel = new Set(Object.keys(fieldLabels || {}).filter(k => fieldLabels[k]));
   return Object.entries(formAnswers)
-    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .filter(([k, v]) => v !== undefined && v !== null && v !== "" && !codeKeysWithLabel.has(k))
     .map(([label, v]) => `${label}: ${v}`).join("\n");
 }
 // Same rule as forms_backend.js's validateAnswers -- a required question
@@ -752,8 +763,15 @@ function buildCalendarDescription(booking) {
   // "Body Mastery Call" calendar) is a separate merge -- see
   // formatFormAnswers -- since an event type with no long_text question has
   // no other way to carry those answers through at all.
-  const formAnswersText = formatFormAnswers(booking.formAnswers);
-  if (formAnswersText) lines.push("", formAnswersText);
+  // Off switches to a bare-bones event (name/email/phone/timezone/manage
+  // link only) for staff who'd rather glance at the CRM for full intake
+  // answers than scroll a long calendar description. Defaults on (unset ===
+  // true) so nothing changes for an event type saved before this existed.
+  const et = getEventTypes().find(e => e.id === booking.eventTypeId);
+  if (et?.includeFormAnswersInCalendar !== false) {
+    const formAnswersText = formatFormAnswers(booking.formAnswers, booking.formAnswerLabels);
+    if (formAnswersText) lines.push("", formAnswersText);
+  }
   if (booking.notes) lines.push("", booking.notes);
   lines.push("", "Booked via CRM scheduling.");
   // Staff-only -- the lead never sees this event or its description.
@@ -1373,7 +1391,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders", "includeFormAnswersInCalendar"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

@@ -240,6 +240,10 @@
               <input class="pra-input" id="fNotifyEmails" placeholder="you@pacificrimathletics.com, alexis@..."/>
               <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">One email, with everything -- the application's other answers, the booked time, and every question here.</div>
             </div>
+            <div class="field">
+              <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;text-transform:none"><input type="checkbox" id="fIncludeFormAnswersInCalendar"/> Include intake answers on the staff calendar event</label>
+              <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Off keeps the calendar event to just name/email/phone/timezone -- the full answers are still on the notification email above and the contact's own record either way.</div>
+            </div>
             <div class="field"><label class="pra-label">Booking link</label>
               <div class="link-row" style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--pra-dim)"><code id="fSlug" style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px"></code></div>
             </div>
@@ -583,6 +587,7 @@ function renderSidebar() {
   document.getElementById('fStatus').value = draft.statusId || '';
   document.getElementById('fRedirectUrl').value = draft.branding.redirectUrl || '';
   document.getElementById('fNotifyEmails').value = (draft.notifyEmails || []).join(', ');
+  document.getElementById('fIncludeFormAnswersInCalendar').checked = draft.includeFormAnswersInCalendar !== false;
 
   const b = draft.branding;
   const fontPrimarySel = document.getElementById('fFontPrimary');
@@ -879,6 +884,7 @@ async function saveNow() {
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
       notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, reminders: draft.reminders,
+      includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -1109,6 +1115,10 @@ async function init() {
 });
 document.getElementById('fNotifyEmails').addEventListener('input', () => {
   draft.notifyEmails = document.getElementById('fNotifyEmails').value.split(',').map(s => s.trim()).filter(Boolean);
+  saveDebounced();
+});
+document.getElementById('fIncludeFormAnswersInCalendar').addEventListener('change', () => {
+  draft.includeFormAnswersInCalendar = document.getElementById('fIncludeFormAnswersInCalendar').checked;
   saveDebounced();
 });
 document.getElementById('fStatus').addEventListener('change', () => {
