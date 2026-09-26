@@ -555,7 +555,17 @@ export async function handleContactsRequest(req, res, url) {
       if (updated.status !== prevStatus) {
         checkConversionGoal("lead_status_change", updated.id);
         checkAutomationGoal("lead_status_change", updated.id, updated.status);
-        fireFlowTrigger("status_changed", { contactId: updated.id, payload: { prevStatus, status: updated.status } });
+        // Deferred, not called inline -- fireFlowTrigger's own startFlowRun/
+        // advanceFlowRun synchronously rewrites crm_flow_runs.json (twice,
+        // once per step so far) before hitting its first real await, and
+        // writeJsonToDisk writes an array one element at a time (see
+        // auth_backend.js), which on this volume is the exact multi-second-
+        // per-write cost the webhook handler above already engineers around
+        // by responding before any writes. Confirmed live: this PATCH was
+        // taking ~30s with this call inline. setImmediate lets this
+        // response go out first; the flow itself doesn't need to complete
+        // before the client hears back that the status change saved.
+        setImmediate(() => fireFlowTrigger("status_changed", { contactId: updated.id, payload: { prevStatus, status: updated.status } }));
       }
       return sendJson(res, 200, { ok: true, contact: publicContact(updated) });
     }
