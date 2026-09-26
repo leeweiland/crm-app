@@ -56,6 +56,8 @@
   .platform-badge { font-weight: 700; }
   .platform-badge.meta { color: #009bff; text-shadow: 0 0 6px rgba(0,155,255,.65); }
   .platform-badge.google { color: #22c55e; text-shadow: 0 0 6px rgba(34,197,94,.65); }
+  .platform-badge.youtube { color: #ff3b3b; text-shadow: 0 0 6px rgba(255,59,59,.65); }
+  .platform-badge.instagram { color: #c026d3; text-shadow: 0 0 6px rgba(192,38,211,.65); }
   .ads-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
   @media (max-width: 900px) { .ads-cards { grid-template-columns: 1fr; } }
   .ads-segment-card { background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 10px; padding: 18px; }
@@ -220,11 +222,6 @@
                 <th class="sortable" data-sort="el" data-col-key="el" style="text-align:left;padding:12px 16px">Source</th>
                 <th data-col-key="adGroup" style="text-align:left;padding:12px 16px">Ad Set/Group</th>
                 <th data-col-key="campaign" style="text-align:left;padding:12px 16px">Campaign</th>
-                <th data-col-key="adName" style="text-align:left;padding:12px 16px">Ad Name</th>
-                <th data-col-key="campaignName" style="text-align:left;padding:12px 16px">Email Campaign</th>
-                <th data-col-key="automationName" style="text-align:left;padding:12px 16px">Email Automation</th>
-                <th data-col-key="emailSubject" style="text-align:left;padding:12px 16px">Email Subject</th>
-                <th data-col-key="youtubeTitle" style="text-align:left;padding:12px 16px">YouTube Title</th>
                 <th class="sortable" data-sort="spend" data-col-key="spend" style="text-align:right;padding:12px 16px">Spend</th>
                 <th class="sortable" data-sort="visits" data-col-key="visits" style="text-align:right;padding:12px 16px">Visits</th>
                 <th class="sortable" data-sort="uniqueVisitors" data-col-key="uniqueVisitors" style="text-align:right;padding:12px 16px">Unique Visitors</th>
@@ -323,18 +320,19 @@ function fmtMoney(n) { return '$' + (n || 0).toLocaleString(undefined, { maximum
 // as before.
 function platformBadge(platform) {
   const p = String(platform || '');
-  if (p === 'Meta') return `<span class="platform-badge meta">Meta</span>`;
-  if (p === 'Google') return `<span class="platform-badge google">Google</span>`;
-  return escapeHtml(p);
+  const cls = { Meta: 'meta', Google: 'google', YouTube: 'youtube', Instagram: 'instagram' }[p];
+  return cls ? `<span class="platform-badge ${cls}">${p}</span>` : escapeHtml(p);
 }
-// Same Meta/Google split as sourceMeta() (reporting_backend.js) applied to
-// a raw attribution key on the client side, for the one place (Customer
+// Same platform split as sourceMeta() (reporting_backend.js) applied to a
+// raw attribution key on the client side, for the one place (Customer
 // Journeys' click timeline) that has the key but not a pre-resolved
 // platform string from the server.
 function platformBadgeForKey(key) {
   if (!key) return '';
   if (key.startsWith('meta-ad:')) return platformBadge('Meta') + ' &middot; ';
   if (key.startsWith('google-ad:')) return platformBadge('Google') + ' &middot; ';
+  if (key.startsWith('yt-') || key.startsWith('youtube:')) return platformBadge('YouTube') + ' &middot; ';
+  if (key.startsWith('instagram:')) return platformBadge('Instagram') + ' &middot; ';
   return '';
 }
 
@@ -757,11 +755,6 @@ function renderAttributionTable() {
       </td>
       ${textCell(s.adGroup && s.adGroup !== '—' ? s.adGroup : null)}
       ${textCell(s.campaign && s.campaign !== '—' ? s.campaign : null)}
-      ${textCell(s.adName)}
-      ${textCell(s.campaignName)}
-      ${textCell(s.automationName)}
-      ${textCell(s.emailSubject)}
-      ${textCell(s.youtubeTitle)}
       <td style="text-align:right;padding:10px 16px">${fmtMoney(s.spend)}</td>
       <td style="text-align:right;padding:10px 16px">${s.hyrosOnly ? '—' : s.visits.toLocaleString()}</td>
       <td style="text-align:right;padding:10px 16px">${s.hyrosOnly ? '—' : s.uniqueVisitors.toLocaleString()}</td>
@@ -846,11 +839,6 @@ const ADS_REPORT_COLUMNS = {
   source:         { label: 'Source', align: 'left' },
   adGroup:        { label: 'Ad Set/Group', align: 'left' },
   campaign:       { label: 'Campaign', align: 'left' },
-  adName:         { label: 'Ad Name', align: 'left' },
-  campaignName:   { label: 'Email Campaign', align: 'left' },
-  automationName: { label: 'Email Automation', align: 'left' },
-  emailSubject:   { label: 'Email Subject', align: 'left' },
-  youtubeTitle:   { label: 'YouTube Title', align: 'left' },
   spend:          { label: 'Spent', align: 'right' },
   revenue:        { label: 'Revenue', align: 'right' },
   sales:          { label: 'Sales', align: 'right' },
@@ -951,11 +939,6 @@ function renderAdsReportTable() {
       case 'source': return `<td style="padding:10px 16px;font-weight:600">${escapeHtml(row.source)}<div style="font-size:.72rem;font-weight:400;margin-top:2px">${platformBadge(row.platform)}</div></td>`;
       case 'adGroup': return `<td style="padding:10px 16px">${escapeHtml(row.adGroup)}</td>`;
       case 'campaign': return `<td style="padding:10px 16px">${escapeHtml(row.campaign)}</td>`;
-      case 'adName': return `<td style="padding:10px 16px">${row.adName ? escapeHtml(row.adName) : '<span class="pra-muted">—</span>'}</td>`;
-      case 'campaignName': return `<td style="padding:10px 16px">${row.campaignName ? escapeHtml(row.campaignName) : '<span class="pra-muted">—</span>'}</td>`;
-      case 'automationName': return `<td style="padding:10px 16px">${row.automationName ? escapeHtml(row.automationName) : '<span class="pra-muted">—</span>'}</td>`;
-      case 'emailSubject': return `<td style="padding:10px 16px">${row.emailSubject ? escapeHtml(row.emailSubject) : '<span class="pra-muted">—</span>'}</td>`;
-      case 'youtubeTitle': return `<td style="padding:10px 16px">${row.youtubeTitle ? escapeHtml(row.youtubeTitle) : '<span class="pra-muted">—</span>'}</td>`;
       case 'spend': return `<td style="text-align:right;padding:10px 16px">${fmtMoney(row.spend)}</td>`;
       case 'revenue': return `<td style="text-align:right;padding:10px 16px">${fmtMoney(row.revenue)}</td>`;
       case 'sales': return `<td style="text-align:right;padding:10px 16px">${row.sales}</td>`;
@@ -982,7 +965,7 @@ function renderAdsReportTable() {
   const totalVisits = allAdsReportRows.reduce((s, r) => s + (r.visits || 0), 0);
   const totalsRow = {
     source: 'Totals', platform: `${allAdsReportRows.length} source${allAdsReportRows.length === 1 ? '' : 's'}`,
-    adGroup: '—', campaign: '—', adName: null, campaignName: null, automationName: null, emailSubject: null, youtubeTitle: null,
+    adGroup: '—', campaign: '—',
     spend: totalSpend || null, revenue: totalRevenue, sales: totalSales, costPerSale: totalSales ? totalSpend / totalSales : null,
     bookings: totalBookings, costPerBooking: totalBookings ? totalSpend / totalBookings : null,
     leads: totalLeads, costPerLead: totalLeads ? totalSpend / totalLeads : null,
@@ -1132,14 +1115,8 @@ function seedDefaultColumnWidths(prefKey, defaults) {
   const existing = window.crmMe.preferences?.[prefKey] || {};
   window.crmMe.preferences = { ...(window.crmMe.preferences || {}), [prefKey]: { ...defaults, ...existing } };
 }
-const ATTRIBUTION_DEFAULT_WIDTHS = {
-  el: 280, adGroup: 150, campaign: 150, adName: 200, campaignName: 200, automationName: 180, emailSubject: 240, youtubeTitle: 220,
-  spend: 90, visits: 90, uniqueVisitors: 130, optIns: 100, bookings: 100, enrolled: 100,
-};
-const ADS_REPORT_DEFAULT_WIDTHS = {
-  source: 280, adGroup: 150, campaign: 150, adName: 200, campaignName: 200, automationName: 180, emailSubject: 240, youtubeTitle: 220,
-  spend: 100, revenue: 100, sales: 80, costPerSale: 100, bookings: 130, costPerBooking: 110, leads: 90, costPerLead: 100, visits: 90,
-};
+const ATTRIBUTION_DEFAULT_WIDTHS = { el: 340, adGroup: 150, campaign: 150, spend: 90, visits: 90, uniqueVisitors: 130, optIns: 100, bookings: 100, enrolled: 100 };
+const ADS_REPORT_DEFAULT_WIDTHS = { source: 280, adGroup: 150, campaign: 150, spend: 100, revenue: 100, sales: 80, costPerSale: 100, bookings: 130, costPerBooking: 110, leads: 90, costPerLead: 100, visits: 90 };
 
 (async function init() {
   await loadSortPreference();

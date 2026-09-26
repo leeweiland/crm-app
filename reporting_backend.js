@@ -482,8 +482,14 @@ function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
     const match = slugIndex.get(slug);
     const isCampaign = match?.type === "campaign";
     const isAutomationLike = match?.type === "automation" || match?.type === "workflow";
+    // Source itself prefers the real subject line over the campaign's own
+    // name when both exist (they can differ -- confirmed live, e.g. name
+    // "ONLINE doors closed for training (copy)", subject "doors closed for
+    // training") -- an automation/workflow match has no resolvable subject
+    // (see below), so it falls back to its own name instead.
+    const title = isCampaign ? (match.subject || match.name) : (match?.name || niceTitle(slug));
     return {
-      ...blank, title: match?.name || niceTitle(slug), campaign: match?.name || "—", platform: isEmail ? "Email" : "SMS",
+      ...blank, title, campaign: match?.name || "—", platform: isEmail ? "Email" : "SMS",
       campaignName: isCampaign ? match.name : null,
       automationName: isAutomationLike ? match.name : null,
       // Only a genuine campaign send maps 1:1 to one subject line -- an
