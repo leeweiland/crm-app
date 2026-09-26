@@ -45,15 +45,7 @@
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
-  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--pra-border); }
-  .row-item:last-child { border-bottom: none; }
-  .row-item input[type="checkbox"] { accent-color: var(--pra-blue); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
-  .row-item .count-link { font-size: .78rem; cursor: pointer; white-space: nowrap; }
   .bulk-delete-bar { margin-bottom: 10px; }
-  .sort-mode-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-  .sort-mode-row select { width: auto; min-width: 190px; }
-  .drag-handle { cursor: grab; color: var(--pra-dim); flex-shrink: 0; }
-  .row-item.drag-over { border-top: 2px solid var(--pra-blue); }
   .add-row { display: flex; gap: 10px; margin-top: 14px; }
   .add-row input { flex: 1; }
   .filter-toggle { font-size: .8rem; }
@@ -218,34 +210,67 @@
       </div>
 
       <div class="tab-panel" id="tab-lists">
-        <div class="pra-panel" style="padding:22px;max-width:560px">
-          <div class="pra-h2" style="margin-bottom:6px">Email Lists</div>
-          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Used to target campaigns and automations, same as ActiveCampaign lists.</div>
-          <div class="sort-mode-row"><label class="pra-label">Sort</label><select class="pra-select" id="listsSortMode"><option value="manual">Manual (drag to reorder)</option><option value="alpha">Alphabetical</option><option value="count">Contact count</option></select></div>
-          <div class="bulk-delete-bar" id="listsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="list">Delete Selected (<span data-bulk-count>0</span>)</button></div>
-          <div id="listsList"></div>
-          <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
+        <div class="pra-h2" style="margin:0 0 6px">Email Lists</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Used to target campaigns and automations, same as ActiveCampaign lists.</div>
+        <div class="bulk-delete-bar" id="listsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="list">Delete Selected (<span data-bulk-count>0</span>)</button></div>
+        <div class="pra-panel" id="listsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table"><thead><tr id="listsHeadRow"></tr></thead><tbody id="listsBody"></tbody></table>
+          </div>
         </div>
+        <div class="pagination-bar" id="listsPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="listsPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">Per page
+            <select class="pra-select" id="listsPageSizeSelect" style="width:auto"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="listsPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="listsPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="listsNextPageBtn" type="button">Next ›</button>
+        </div>
+        <div class="add-row"><input class="pra-input" id="newListName" placeholder="New list..."/><button class="pra-btn" id="addListBtn">Add</button></div>
       </div>
 
       <div class="tab-panel" id="tab-segments">
-        <div class="pra-panel" style="padding:22px">
-          <div class="pra-h2" style="margin-bottom:6px">Segments</div>
-          <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters used to target campaigns, automations, and SMS sequences. Build one from the Contacts tab's filter panel.</div>
-          <div class="sort-mode-row"><label class="pra-label">Sort</label><select class="pra-select" id="segmentsSortMode"><option value="manual">Manual (drag to reorder)</option><option value="alpha">Alphabetical</option><option value="count">Contact count</option></select></div>
-          <div class="bulk-delete-bar" id="segmentsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="segment">Delete Selected (<span data-bulk-count>0</span>)</button></div>
-          <div id="segmentsList"></div>
+        <div class="pra-h2" style="margin:0 0 6px">Segments</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Saved filters used to target campaigns, automations, and SMS sequences. Build one from the Contacts tab's filter panel.</div>
+        <div class="bulk-delete-bar" id="segmentsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="segment">Delete Selected (<span data-bulk-count>0</span>)</button></div>
+        <div class="pra-panel" id="segmentsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table"><thead><tr id="segmentsHeadRow"></tr></thead><tbody id="segmentsBody"></tbody></table>
+          </div>
+        </div>
+        <div class="pagination-bar" id="segmentsPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="segmentsPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">Per page
+            <select class="pra-select" id="segmentsPageSizeSelect" style="width:auto"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="segmentsPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="segmentsPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="segmentsNextPageBtn" type="button">Next ›</button>
         </div>
       </div>
 
       <div class="tab-panel" id="tab-tags">
-        <div class="pra-panel" style="padding:22px;max-width:640px">
-          <div class="pra-h2" style="margin-bottom:14px">Tags</div>
-          <div class="sort-mode-row"><label class="pra-label">Sort</label><select class="pra-select" id="tagsSortMode"><option value="alpha">Alphabetical</option><option value="count">Contact count</option></select></div>
-          <div class="bulk-delete-bar" id="tagsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="tag">Delete Selected (<span data-bulk-count>0</span>)</button></div>
-          <div id="tagsList"></div>
-          <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
+        <div class="pra-h2" style="margin:0 0 14px">Tags</div>
+        <div class="bulk-delete-bar" id="tagsBulkBar" style="display:none"><button class="pra-btn pra-btn-sm pra-btn-danger" data-bulk-delete="tag">Delete Selected (<span data-bulk-count>0</span>)</button></div>
+        <div class="pra-panel" id="tagsTablePanel" style="overflow-y:auto;overflow-x:hidden">
+          <div style="overflow-x:auto">
+            <table class="data-table"><thead><tr id="tagsHeadRow"></tr></thead><tbody id="tagsBody"></tbody></table>
+          </div>
         </div>
+        <div class="pagination-bar" id="tagsPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="tagsPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">Per page
+            <select class="pra-select" id="tagsPageSizeSelect" style="width:auto"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option></select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tagsPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="tagsPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tagsNextPageBtn" type="button">Next ›</button>
+        </div>
+        <div class="add-row"><input class="pra-input" id="newTagName" placeholder="New tag..."/><button class="pra-btn" id="addTagBtn">Add</button></div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-import" style="padding:22px">
@@ -312,14 +337,38 @@
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Flags two separate contact records that share an exact email or phone, or that share a name plus a tracked website visit's IP address or rough location. Never merges automatically -- even an exact match could be two different people (e.g. a shared office phone line), so every merge is a deliberate choice below.</div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanDuplicatesBtn">Scan for Duplicates</button>
         <span class="pra-muted" id="duplicatesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
-        <div id="duplicatesList" style="margin-top:18px"></div>
+        <div class="pra-panel" id="duplicatesTablePanel" style="overflow-y:auto;overflow-x:hidden;margin-top:18px">
+          <div style="overflow-x:auto"><div id="duplicatesList"></div></div>
+        </div>
+        <div class="pagination-bar" id="duplicatesPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="duplicatesPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">Per page
+            <select class="pra-select" id="duplicatesPageSizeSelect" style="width:auto"><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="duplicatesPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="duplicatesPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="duplicatesNextPageBtn" type="button">Next ›</button>
+        </div>
 
         <hr style="border-color:var(--pra-border);margin:28px 0 22px"/>
         <div class="pra-h2" style="margin-bottom:6px">Possible Visitor Matches</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">An anonymous website visit (someone who clicked an ad or social post but hasn't identified themselves yet) that shares an IP address or rough location with a known contact's own tracked visits -- e.g. their phone clicked the ad, their laptop is what opted in. Confirming links that visit (and everything else from that same anonymous session) into the contact's history. Never linked automatically -- an IP can be shared by more than one person (same office, same household), so this is always a deliberate choice below.</div>
         <button class="pra-btn pra-btn-ghost pra-btn-sm" id="scanVisitorMatchesBtn">Scan for Visitor Matches</button>
         <span class="pra-muted" id="visitorMatchesScanMsg" style="font-size:.8rem;margin-left:10px"></span>
-        <div id="visitorMatchesList" style="margin-top:18px"></div>
+        <div class="pra-panel" id="visitorMatchesTablePanel" style="overflow-y:auto;overflow-x:hidden;margin-top:18px">
+          <div style="overflow-x:auto"><div id="visitorMatchesList"></div></div>
+        </div>
+        <div class="pagination-bar" id="visitorMatchesPaginationBar" style="display:flex;align-items:center;gap:14px;margin-top:14px;font-size:.85rem;flex-shrink:0">
+          <span class="pra-muted" id="visitorMatchesPaginationSummary"></span>
+          <span style="flex:1"></span>
+          <label class="pra-muted" style="display:flex;align-items:center;gap:6px">Per page
+            <select class="pra-select" id="visitorMatchesPageSizeSelect" style="width:auto"><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="50">50</option></select>
+          </label>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="visitorMatchesPrevPageBtn" type="button">‹ Prev</button>
+          <span class="pra-muted" id="visitorMatchesPageIndicator"></span>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="visitorMatchesNextPageBtn" type="button">Next ›</button>
+        </div>
       </div>
     </div>
   </div>
@@ -478,7 +527,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // means its visibility has to be toggled by hand instead of coming
     // free from the tab-panel's own show/hide.
     document.getElementById('contactsToolbar').style.display = btn.dataset.tab === 'contacts' ? 'flex' : 'none';
-    if (btn.dataset.tab === 'contacts') resizeContactsTablePanel();
+    const tab = btn.dataset.tab;
+    if (tab === 'contacts') resizeContactsTablePanel();
+    else if (tab === 'lists' || tab === 'segments' || tab === 'tags') resizeTablePanel(tab + 'TablePanel', tab + 'PaginationBar');
+    else if (tab === 'duplicates') { resizeTablePanel('duplicatesTablePanel', 'duplicatesPaginationBar'); resizeTablePanel('visitorMatchesTablePanel', 'visitorMatchesPaginationBar'); }
   };
 });
 
@@ -506,20 +558,35 @@ async function loadStatuses() {
 const bulkSelected = { list: new Set(), tag: new Set(), segment: new Set() };
 const lastCheckedIndex = { list: null, tag: null, segment: null };
 const KIND_CONFIG = {
-  list: { deleteUrl: id => `/api/lists/${id}`, bulkDeleteUrl: '/api/lists/bulk-delete', reorderUrl: '/api/lists/reorder', contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
-  tag: { deleteUrl: id => `/api/tags/${id}`, bulkDeleteUrl: '/api/tags/bulk-delete', reorderUrl: null, contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
-  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', reorderUrl: '/api/segments/reorder', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false, hasEdit: true },
+  list: { deleteUrl: id => `/api/lists/${id}`, bulkDeleteUrl: '/api/lists/bulk-delete', contactsQuery: item => `listId=${item.id}`, removeUrl: (item, cid) => `/api/lists/${item.id}/contacts/${cid}`, hasAddTo: false, hasRemove: true },
+  tag: { deleteUrl: id => `/api/tags/${id}`, bulkDeleteUrl: '/api/tags/bulk-delete', contactsQuery: item => `tag=${item.id}`, removeUrl: (item, cid) => `/api/tags/${item.id}/contacts/${cid}`, hasAddTo: true, hasRemove: true },
+  segment: { deleteUrl: id => `/api/segments/${id}`, bulkDeleteUrl: '/api/segments/bulk-delete', contactsQuery: item => `filter=${encodeURIComponent(JSON.stringify(item.filter))}`, removeUrl: null, hasAddTo: true, hasRemove: false, hasEdit: true },
 };
-// Sort mode persists per-tab across reloads. Tags never gets "manual" (no
-// reorderUrl, no real fixed order to speak of) -- everything else defaults
-// to "manual" the first time, since that's just "whatever order the file
-// already has" (backfilled server-side) and costs nothing to compute.
-function getSortMode(kind) {
-  const saved = localStorage.getItem(kind + 'SortMode');
-  const valid = kind === 'tag' ? ['alpha', 'count'] : ['manual', 'alpha', 'count'];
-  return valid.includes(saved) ? saved : (kind === 'tag' ? 'alpha' : 'manual');
+// Column headers for each kind's table -- same sortable-<th> convention as
+// the main Contacts table (click to sort, arrow shows direction), replacing
+// the old separate "sort mode" dropdown + manual drag-reorder. Lists show
+// two count columns (subscribed vs total membership); tags/segments just one.
+const KIND_COLUMNS = {
+  tag: [{ key: 'name', label: 'Name' }, { key: 'count', label: 'Contacts' }],
+  segment: [{ key: 'name', label: 'Name' }, { key: 'count', label: 'Contacts' }],
+  list: [{ key: 'name', label: 'Name' }, { key: 'subscribed', label: 'Subscribed' }, { key: 'count', label: 'Total Contacts' }],
+};
+// Page/sort state per kind -- page size and sort persist across reloads
+// (same convention as contactsPageSize); current page and the underlying
+// item list are kept here so a header click or Prev/Next can re-render
+// without re-fetching from the server.
+const tableState = {};
+for (const kind of ['list', 'tag', 'segment']) {
+  const savedSize = parseInt(localStorage.getItem(kind + 'PageSize'), 10);
+  const savedSort = localStorage.getItem(kind + 'SortField');
+  tableState[kind] = {
+    page: 1,
+    pageSize: [5, 10, 20, 50, 100].includes(savedSize) ? savedSize : 20,
+    sortField: KIND_COLUMNS[kind].some(c => c.key === savedSort) ? savedSort : 'name',
+    sortDir: localStorage.getItem(kind + 'SortDir') === '-1' ? -1 : 1,
+    items: [], prefetchedCounts: null, nameHtmlFn: null,
+  };
 }
-function setSortMode(kind, mode) { localStorage.setItem(kind + 'SortMode', mode); }
 // Runs fn over items with at most `limit` in flight at once, instead of
 // firing them all simultaneously -- see the count-fetch callers below for
 // why (thousands of tags == thousands of concurrent fetches otherwise).
@@ -536,54 +603,27 @@ async function fetchCount(kind, item) {
     return typeof d.total === 'number' ? d.total : null;
   } catch { return null; }
 }
-// "Contact count" mode needs every row's count BEFORE it can decide an
-// order, so (only in this mode) counts are fetched up front in parallel
-// and handed to renderManagedList to paint immediately instead of the
-// normal progressive per-row fetch-after-render.
-async function loadAndRenderKind(kind, rawItems, containerId, barId, sortSelectId, nameHtmlFn) {
-  const mode = getSortMode(kind);
-  const sel = document.getElementById(sortSelectId);
-  if (sel) sel.value = mode;
-  let items = rawItems, prefetchedCounts = null;
-  // One bulk fetch (one pass over every contact, server-side) instead of
-  // one-or-two requests PER ROW -- at 3500+ tags in production, the old
-  // per-row/per-sort fetchCount pattern fired that many separate
-  // full-contacts-array filters, confirmed live as the actual cause of the
-  // Contacts tab's 10+ second load. Lists and segments had far fewer rows
-  // so this was never applied to them, but at 8+ lists (2 requests each)
-  // plus segments, that was still enough real network round trips -- each
-  // one blocking init()'s loadContacts() from even starting -- to be the
-  // actual cause of a later, separately-reported 5+ second load. Covers
-  // both alpha (the default) and count sort modes; renderManagedList's own
-  // prefetched-counts branch skips any further per-row fetch once this is
-  // set.
-  if (kind === 'tag' || kind === 'list' || kind === 'segment') {
-    const countsUrl = kind === 'tag' ? '/api/tags/counts' : kind === 'list' ? '/api/lists/counts' : '/api/segments/counts';
-    const emptyCount = kind === 'list' ? { total: 0, subscribed: 0 } : 0;
-    try {
-      const r = await fetch(countsUrl);
-      if (r.ok) {
-        const { counts } = await r.json();
-        prefetchedCounts = new Map(rawItems.map(item => [item.id, counts[item.id] ?? emptyCount]));
-      }
-    } catch {}
-  }
-  if (mode === 'manual') {
-    items = [...rawItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  } else if (mode === 'alpha') {
-    items = [...rawItems].sort((a, b) => a.name.localeCompare(b.name));
-  } else if (mode === 'count') {
-    if (!prefetchedCounts) {
-      const counts = new Array(rawItems.length);
-      await runWithConcurrency(rawItems.map((item, i) => ({ item, i })), 6, async ({ item, i }) => { counts[i] = await fetchCount(kind, item); });
-      prefetchedCounts = new Map(rawItems.map((item, i) => [item.id, counts[i]]));
+// Always fetches every row's count up front, in one bulk request (one pass
+// over every contact, server-side) instead of one-or-two requests PER ROW --
+// at 3500+ tags in production, a per-row fetchCount pattern fired that many
+// separate full-contacts-array filters, confirmed live as the actual cause
+// of the Contacts tab's 10+ second load. Needed unconditionally now (not
+// just for a "count" sort mode) since the Contacts column always renders.
+async function loadAndRenderKind(kind, rawItems, barId, nameHtmlFn) {
+  let prefetchedCounts = null;
+  const countsUrl = kind === 'tag' ? '/api/tags/counts' : kind === 'list' ? '/api/lists/counts' : '/api/segments/counts';
+  const emptyCount = kind === 'list' ? { total: 0, subscribed: 0 } : 0;
+  try {
+    const r = await fetch(countsUrl);
+    if (r.ok) {
+      const { counts } = await r.json();
+      prefetchedCounts = new Map(rawItems.map(item => [item.id, counts[item.id] ?? emptyCount]));
     }
-    // Lists' prefetched counts are {total, subscribed} objects (not a bare
-    // number like tags/segments) -- sort by total membership either way.
-    const countOf = (id) => { const c = prefetchedCounts.get(id); return typeof c === 'object' && c ? c.total : (c ?? -1); };
-    items = [...rawItems].sort((a, b) => countOf(b.id) - countOf(a.id));
-  }
-  renderManagedList(kind, items, containerId, barId, nameHtmlFn, mode, prefetchedCounts);
+  } catch {}
+  const st = tableState[kind];
+  st.items = rawItems; st.prefetchedCounts = prefetchedCounts; st.nameHtmlFn = nameHtmlFn;
+  st.page = Math.min(st.page, Math.max(1, Math.ceil(rawItems.length / st.pageSize)));
+  renderManagedTable(kind, barId);
 }
 function reloadKind(kind) {
   bulkSelected[kind].clear();
@@ -616,65 +656,71 @@ document.querySelectorAll('[data-bulk-delete]').forEach(btn => btn.onclick = asy
   }
   reloadKind(kind);
 });
-function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode, prefetchedCounts) {
+// Value a given column sorts on for one item -- 'name' reads the item
+// itself, everything else reads the prefetched counts map (a bare number
+// for tags/segments, {total,subscribed} for lists).
+function sortValueFor(kind, col, item, prefetchedCounts) {
+  if (col === 'name') return (item.name || '').toLowerCase();
+  const c = prefetchedCounts?.get(item.id);
+  if (col === 'subscribed') return (c && typeof c === 'object' ? c.subscribed : null) ?? -1;
+  return (c && typeof c === 'object' ? c.total : c) ?? -1;
+}
+function renderManagedTable(kind, barId) {
+  const st = tableState[kind];
   const cfg = KIND_CONFIG[kind];
-  const container = document.getElementById(containerId);
-  const draggableOn = sortMode === 'manual' && !!cfg.reorderUrl;
-  container.innerHTML = items.map(item => `
-    <div class="row-item"${draggableOn ? ` draggable="true" data-id="${item.id}"` : ''}>
-      ${draggableOn ? `<span class="drag-handle">&#8942;&#8942;</span>` : ''}
-      <input type="checkbox" data-bulk="${item.id}"/>
-      <div style="flex:1">${nameHtmlFn(item)}</div>
-      <a class="pra-link count-link" data-count="${item.id}">${prefetchedCounts ? '' : '…'}</a>
-      ${cfg.hasEdit ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${item.id}">Edit</button>` : ''}
-      ${cfg.hasAddTo ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto="${item.id}">Add to...</button>` : ''}
-      <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
-    </div>
-  `).join('') || `<div class="pra-muted">None yet.</div>`;
-  // Lists (not tags/segments) also show how many of their members are
-  // actually subscribed (not opted out) alongside the raw membership total
-  // -- membership alone doesn't tell you who's actually reachable, which is
-  // the whole point of a list.
-  function paintCount(item, total, subscribed) {
-    const el = container.querySelector(`[data-count="${item.id}"]`);
-    if (!el) return;
-    if (kind !== 'list') { el.textContent = typeof total === 'number' ? `${total} contact${total === 1 ? '' : 's'}` : '— contacts'; return; }
-    const totalTxt = typeof total === 'number' ? total : '—';
-    const subTxt = typeof subscribed === 'number' ? subscribed : '—';
-    el.textContent = `${subTxt} subscribed / ${totalTxt} contacts`;
-  }
-  if (prefetchedCounts) {
-    // Already fetched in bulk up front (loadAndRenderKind) -- paint
-    // immediately, no per-row fetch at all. Lists carry {total, subscribed}
-    // per id; tags/segments carry a bare total.
-    items.forEach(item => {
-      const c = prefetchedCounts.get(item.id);
-      if (kind === 'list' && c && typeof c === 'object') paintCount(item, c.total, c.subscribed);
-      else paintCount(item, c, null);
-    });
-  } else {
-    // Concurrency-capped, not one fetch per row fired all at once: Tags
-    // alone has 3500+ rows in production, and firing that many simultaneous
-    // fetches exhausted the browser's connection pool outright
-    // (net::ERR_INSUFFICIENT_RESOURCES), which also starved the unrelated
-    // main contacts-table fetch running at the same time and made the whole
-    // page look frozen on load, not just this tab. Lists fire two requests
-    // per row (total + subscribed) instead of one, but there are only a
-    // handful of lists, nowhere near the scale that caused that.
-    runWithConcurrency(items, 6, item => {
-      const totalP = fetch(`/api/contacts?${cfg.contactsQuery(item)}&limit=1`).then(r => r.ok ? r.json() : null).catch(() => null);
-      const subP = kind === 'list'
-        ? fetch(`/api/contacts?${cfg.contactsQuery(item)}&emailOptOut=false&limit=1`).then(r => r.ok ? r.json() : null).catch(() => null)
-        : Promise.resolve(null);
-      // A failed/error response (e.g. the server was overloaded) still
-      // resolves here as `null`/a body with no `.total` -- paintCount shows
-      // a dash instead of literally rendering "undefined contacts".
-      return Promise.all([totalP, subP]).then(([td, sd]) => paintCount(item, td?.total, sd?.total));
-    });
-  }
-  container.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
-  container.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
-  const checkboxes = [...container.querySelectorAll('[data-bulk]')];
+  const cols = KIND_COLUMNS[kind];
+  const { items, prefetchedCounts, nameHtmlFn } = st;
+  // Element ids in the HTML use the plural tab name (listsHeadRow,
+  // segmentsBody, tagsPrevPageBtn, ...) while `kind` itself is singular
+  // (KIND_CONFIG/tableState keys) -- this is the one place that bridges them.
+  const p = kind + 's';
+
+  const sorted = [...items].sort((a, b) => {
+    const va = sortValueFor(kind, st.sortField, a, prefetchedCounts), vb = sortValueFor(kind, st.sortField, b, prefetchedCounts);
+    const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return cmp * st.sortDir;
+  });
+  const totalPages = Math.max(1, Math.ceil(sorted.length / st.pageSize));
+  st.page = Math.min(Math.max(1, st.page), totalPages);
+  const start = (st.page - 1) * st.pageSize;
+  const pageItems = sorted.slice(start, start + st.pageSize);
+
+  const headRow = document.getElementById(p + 'HeadRow');
+  headRow.innerHTML = `<th style="width:28px"></th>` + cols.map(col => {
+    const sortedClass = st.sortField === col.key ? ' sorted' : '';
+    const arrow = st.sortField === col.key ? `<span class="sort-arrow">${st.sortDir === 1 ? '▲' : '▼'}</span>` : '';
+    return `<th class="sortable${sortedClass}" data-sort="${col.key}">${escapeHtml(col.label)}${arrow}</th>`;
+  }).join('') + `<th></th>`;
+  headRow.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+    const key = th.dataset.sort;
+    if (st.sortField === key) st.sortDir *= -1; else { st.sortField = key; st.sortDir = 1; }
+    localStorage.setItem(kind + 'SortField', st.sortField);
+    localStorage.setItem(kind + 'SortDir', String(st.sortDir));
+    renderManagedTable(kind, barId);
+  });
+
+  const body = document.getElementById(p + 'Body');
+  body.innerHTML = pageItems.map(item => {
+    const c = prefetchedCounts?.get(item.id);
+    const countCell = kind === 'list'
+      ? `<td><a class="pra-link" data-count="${item.id}">${typeof c?.subscribed === 'number' ? c.subscribed.toLocaleString() : '—'}</a></td><td><a class="pra-link" data-count="${item.id}">${typeof c?.total === 'number' ? c.total.toLocaleString() : '—'}</a></td>`
+      : `<td><a class="pra-link" data-count="${item.id}">${typeof c === 'number' ? c.toLocaleString() : '—'}</a></td>`;
+    return `
+    <tr>
+      <td><input type="checkbox" data-bulk="${item.id}"/></td>
+      <td>${nameHtmlFn(item)}</td>
+      ${countCell}
+      <td style="white-space:nowrap;text-align:right">
+        ${cfg.hasEdit ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit="${item.id}">Edit</button>` : ''}
+        ${cfg.hasAddTo ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-addto="${item.id}">Add to...</button>` : ''}
+        <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${item.id}">Delete</button>
+      </td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="${cols.length + 2}" class="pra-muted">None yet.</td></tr>`;
+
+  body.querySelectorAll('[data-count]').forEach(el => el.onclick = () => openMembershipPanel(kind, items.find(i => i.id === el.dataset.count)));
+  body.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async () => { await fetch(cfg.deleteUrl(btn.dataset.del), { method: 'DELETE' }); reloadKind(kind); });
+  const checkboxes = [...body.querySelectorAll('[data-bulk]')];
   checkboxes.forEach((cb, idx) => {
     cb.checked = bulkSelected[kind].has(cb.dataset.bulk);
     cb.onchange = () => {
@@ -682,14 +728,14 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       updateBulkBar(kind, barId);
     };
     // Shift-click range-select, same convention as Gmail/Finder: extends
-    // from whichever checkbox in this list was last clicked (plain or
+    // from whichever checkbox on THIS PAGE was last clicked (plain or
     // shift) through the one just shift-clicked, matching this one's new
     // checked state. Only the clicked box gets a real user 'change' event,
     // so the rest of the range is applied here directly.
     cb.addEventListener('click', (e) => {
       if (e.shiftKey && lastCheckedIndex[kind] !== null) {
-        const [start, end] = [lastCheckedIndex[kind], idx].sort((a, b) => a - b);
-        for (let i = start; i <= end; i++) {
+        const [s, en] = [lastCheckedIndex[kind], idx].sort((a, b) => a - b);
+        for (let i = s; i <= en; i++) {
           checkboxes[i].checked = cb.checked;
           if (checkboxes[i].checked) bulkSelected[kind].add(checkboxes[i].dataset.bulk);
           else bulkSelected[kind].delete(checkboxes[i].dataset.bulk);
@@ -699,41 +745,26 @@ function renderManagedList(kind, items, containerId, barId, nameHtmlFn, sortMode
       lastCheckedIndex[kind] = idx;
     });
   });
-  if (cfg.hasEdit) {
-    container.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => openEditSegment(items.find(i => i.id === btn.dataset.edit)));
-  }
+  if (cfg.hasEdit) body.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => openEditSegment(items.find(i => i.id === btn.dataset.edit)));
   if (cfg.hasAddTo) {
-    container.querySelectorAll('[data-addto]').forEach(btn => btn.onclick = () => {
+    body.querySelectorAll('[data-addto]').forEach(btn => btn.onclick = () => {
       const item = items.find(i => i.id === btn.dataset.addto);
       openAddToModal(kind === 'tag' ? { tagId: item.id } : { segmentId: item.id }, `${kind === 'tag' ? 'Tag' : 'Segment'}: ${item?.name || ''}`);
     });
   }
-  if (draggableOn) {
-    // Persists the drop as final -- no re-render/reload after, the drag
-    // already left the DOM in the right order, matching settings.html's
-    // own statuses drag-reorder.
-    wireDragReorder(container, (orderedIds) => {
-      fetch(cfg.reorderUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderedIds }) });
-    });
-  }
   updateBulkBar(kind, barId);
-}
-// Same drag-and-drop reorder pattern as settings.html's Lead Statuses list.
-function wireDragReorder(container, onReorder) {
-  let dragEl = null;
-  container.querySelectorAll('[draggable="true"]').forEach(el => {
-    el.addEventListener('dragstart', () => { dragEl = el; el.style.opacity = '.4'; });
-    el.addEventListener('dragend', () => { el.style.opacity = ''; });
-    el.addEventListener('dragover', (e) => e.preventDefault());
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (!dragEl || dragEl === el) return;
-      const items = [...container.children];
-      const dragIdx = items.indexOf(dragEl), dropIdx = items.indexOf(el);
-      if (dragIdx < dropIdx) el.after(dragEl); else el.before(dragEl);
-      onReorder([...container.children].map(c => c.dataset.id));
-    });
-  });
+
+  const end = Math.min(start + pageItems.length, sorted.length);
+  document.getElementById(p + 'PaginationSummary').textContent = sorted.length ? `Showing ${(start + 1).toLocaleString()}–${end.toLocaleString()} of ${sorted.length.toLocaleString()}` : 'None yet.';
+  document.getElementById(p + 'PageIndicator').textContent = `Page ${st.page} of ${totalPages}`;
+  document.getElementById(p + 'PrevPageBtn').disabled = st.page <= 1;
+  document.getElementById(p + 'NextPageBtn').disabled = st.page >= totalPages;
+  const sizeSel = document.getElementById(p + 'PageSizeSelect');
+  sizeSel.value = String(st.pageSize);
+  sizeSel.onchange = () => { st.pageSize = parseInt(sizeSel.value, 10); localStorage.setItem(kind + 'PageSize', String(st.pageSize)); st.page = 1; renderManagedTable(kind, barId); };
+  document.getElementById(p + 'PrevPageBtn').onclick = () => { if (st.page > 1) { st.page--; renderManagedTable(kind, barId); } };
+  document.getElementById(p + 'NextPageBtn').onclick = () => { if (st.page < totalPages) { st.page++; renderManagedTable(kind, barId); } };
+  resizeTablePanel(p + 'TablePanel', p + 'PaginationBar');
 }
 
 // ── Membership panel (paginated GET /api/contacts, same shape the main
@@ -784,15 +815,13 @@ document.getElementById('membershipCloseBtn').onclick = () => document.getElemen
 async function loadTags() {
   const r = await fetch('/api/tags');
   allTags = (await r.json()).tags;
-  await loadAndRenderKind('tag', allTags, 'tagsList', 'tagsBulkBar', 'tagsSortMode', item => escapeHtml(item.name));
+  await loadAndRenderKind('tag', allTags, 'tagsBulkBar', item => escapeHtml(item.name));
 }
 async function loadLists() {
   const r = await fetch('/api/lists');
   allLists = (await r.json()).lists;
-  await loadAndRenderKind('list', allLists, 'listsList', 'listsBulkBar', 'listsSortMode', item => escapeHtml(item.name));
+  await loadAndRenderKind('list', allLists, 'listsBulkBar', item => escapeHtml(item.name));
 }
-document.getElementById('listsSortMode').onchange = (e) => { setSortMode('list', e.target.value); loadLists(); };
-document.getElementById('tagsSortMode').onchange = (e) => { setSortMode('tag', e.target.value); loadTags(); };
 async function loadCustomFields() {
   const r = await fetch('/api/custom-fields?entityType=contact');
   allCustomFields = (await r.json()).fields;
@@ -817,9 +846,8 @@ const describeFilter = (filter) => window.ConditionRowBuilder.describeFilter(fil
 async function loadSegments() {
   const r = await fetch('/api/segments');
   allSegments = (await r.json()).segments;
-  await loadAndRenderKind('segment', allSegments, 'segmentsList', 'segmentsBulkBar', 'segmentsSortMode', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
+  await loadAndRenderKind('segment', allSegments, 'segmentsBulkBar', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
 }
-document.getElementById('segmentsSortMode').onchange = (e) => { setSortMode('segment', e.target.value); loadSegments(); };
 
 // ── Edit Segment ─────────────────────────────────────────────────────────
 // Conditions the row builder can't represent (e.g. `id is any of [...]` from
@@ -886,12 +914,11 @@ document.getElementById('editSegmentSaveBtn').onclick = async () => {
   await loadSegments();
   // The counts cache lags a few minutes behind an edit -- fetch this one's
   // real count now (a live filter query) instead of showing the stale one.
-  const countEl = document.querySelector(`#segmentsList [data-count="${segment.id}"]`);
-  if (countEl) {
-    countEl.textContent = '…';
-    const n = await fetchCount('segment', segment);
-    countEl.textContent = typeof n === 'number' ? `${n} contact${n === 1 ? '' : 's'}` : '— contacts';
-  }
+  const countEl = document.querySelector(`#segmentsBody [data-count="${segment.id}"]`);
+  if (countEl) countEl.textContent = '…';
+  const n = await fetchCount('segment', segment);
+  tableState.segment.prefetchedCounts?.set(segment.id, n ?? 0);
+  if (countEl) countEl.textContent = typeof n === 'number' ? n.toLocaleString() : '—';
 };
 
 // ── "Add to Automation/Sequence" -- shared by the Contacts table's bulk-
@@ -1431,13 +1458,42 @@ document.getElementById('manualImportRunBtn').onclick = async () => {
 };
 
 // ── Possible duplicate contacts ──────────────────────────────────────────
+// Shared client-side pagination for the two card-group lists on the
+// Duplicates tab (not a sortable table -- each "row" is a pair/match card,
+// not a single named item -- but same Showing-X-of-Y + per-page + Prev/Next
+// bottom bar as every other tab, per the "same frame everywhere" ask).
+const cardPageState = {};
+for (const key of ['duplicates', 'visitorMatches']) {
+  const savedSize = parseInt(localStorage.getItem(key + 'PageSize'), 10);
+  cardPageState[key] = { page: 1, pageSize: [5, 10, 20, 50].includes(savedSize) ? savedSize : 10 };
+}
+function renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg) {
+  const st = cardPageState[key];
+  const wrap = document.getElementById(containerId);
+  const totalPages = Math.max(1, Math.ceil(allItems.length / st.pageSize));
+  st.page = Math.min(Math.max(1, st.page), totalPages);
+  const start = (st.page - 1) * st.pageSize;
+  const pageItems = allItems.slice(start, start + st.pageSize);
+  wrap.innerHTML = pageItems.map(cardFn).join('') || `<div class="pra-muted" style="font-size:.85rem">${emptyMsg}</div>`;
+  wireFn(wrap);
+  const end = Math.min(start + pageItems.length, allItems.length);
+  document.getElementById(key + 'PaginationSummary').textContent = allItems.length ? `Showing ${(start + 1).toLocaleString()}–${end.toLocaleString()} of ${allItems.length.toLocaleString()}` : 'None yet.';
+  document.getElementById(key + 'PageIndicator').textContent = `Page ${st.page} of ${totalPages}`;
+  document.getElementById(key + 'PrevPageBtn').disabled = st.page <= 1;
+  document.getElementById(key + 'NextPageBtn').disabled = st.page >= totalPages;
+  const sizeSel = document.getElementById(key + 'PageSizeSelect');
+  sizeSel.value = String(st.pageSize);
+  const rerender = () => renderPaginatedCards(key, allItems, containerId, cardFn, wireFn, emptyMsg);
+  sizeSel.onchange = () => { st.pageSize = parseInt(sizeSel.value, 10); localStorage.setItem(key + 'PageSize', String(st.pageSize)); st.page = 1; rerender(); };
+  document.getElementById(key + 'PrevPageBtn').onclick = () => { if (st.page > 1) { st.page--; rerender(); } };
+  document.getElementById(key + 'NextPageBtn').onclick = () => { if (st.page < totalPages) { st.page++; rerender(); } };
+  resizeTablePanel(key + 'TablePanel', key + 'PaginationBar');
+}
 async function loadDuplicates() {
   const r = await fetch('/api/duplicates');
   if (!r.ok) return;
   const { pairs } = await r.json();
-  const wrap = document.getElementById('duplicatesList');
-  if (!pairs.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">No possible duplicates flagged. Click "Scan for Duplicates" to check.</div>'; return; }
-  wrap.innerHTML = pairs.map(d => `
+  renderPaginatedCards('duplicates', pairs, 'duplicatesList', d => `
     <div class="pra-card" style="padding:16px;margin-bottom:12px">
       <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${d.reason === 'email' ? 'same email address' : d.reason === 'phone' ? 'same phone number' : d.reason === 'ip' ? 'same name + shared IP address' : 'same name + shared rough location'}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
@@ -1452,16 +1508,17 @@ async function loadDuplicates() {
       </div>
       <button class="pra-btn pra-btn-ghost pra-btn-sm" style="margin-top:10px" data-dismiss="${d.id}">Not a Duplicate</button>
     </div>
-  `).join('');
-  wrap.querySelectorAll('[data-keep]').forEach(btn => btn.onclick = async () => {
-    if (!confirm('Merge these two contacts? Every message, call, and task moves onto the kept contact, and the other contact record is deleted. This cannot be undone.')) return;
-    const r = await fetch(`/api/duplicates/${btn.dataset.dupid}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepId: btn.dataset.keep }) });
-    if (r.ok) { showToast('Merged'); loadDuplicates(); } else showToast('Could not merge', true);
-  });
-  wrap.querySelectorAll('[data-dismiss]').forEach(btn => btn.onclick = async () => {
-    const r = await fetch(`/api/duplicates/${btn.dataset.dismiss}/dismiss`, { method: 'POST' });
-    if (r.ok) { showToast('Dismissed'); loadDuplicates(); } else showToast('Could not dismiss', true);
-  });
+  `, wrap => {
+    wrap.querySelectorAll('[data-keep]').forEach(btn => btn.onclick = async () => {
+      if (!confirm('Merge these two contacts? Every message, call, and task moves onto the kept contact, and the other contact record is deleted. This cannot be undone.')) return;
+      const r = await fetch(`/api/duplicates/${btn.dataset.dupid}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepId: btn.dataset.keep }) });
+      if (r.ok) { showToast('Merged'); loadDuplicates(); } else showToast('Could not merge', true);
+    });
+    wrap.querySelectorAll('[data-dismiss]').forEach(btn => btn.onclick = async () => {
+      const r = await fetch(`/api/duplicates/${btn.dataset.dismiss}/dismiss`, { method: 'POST' });
+      if (r.ok) { showToast('Dismissed'); loadDuplicates(); } else showToast('Could not dismiss', true);
+    });
+  }, 'No possible duplicates flagged. Click "Scan for Duplicates" to check.');
 }
 document.getElementById('scanDuplicatesBtn').onclick = async () => {
   const msg = document.getElementById('duplicatesScanMsg');
@@ -1477,9 +1534,7 @@ async function loadVisitorMatches() {
   const r = await fetch('/api/duplicates/visitor-matches');
   if (!r.ok) return;
   const { matches } = await r.json();
-  const wrap = document.getElementById('visitorMatchesList');
-  if (!matches.length) { wrap.innerHTML = '<div class="pra-muted" style="font-size:.85rem">No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.</div>'; return; }
-  wrap.innerHTML = matches.map(m => `
+  renderPaginatedCards('visitorMatches', matches, 'visitorMatchesList', m => `
     <div class="pra-card" style="padding:16px;margin-bottom:12px">
       <div class="pra-muted" style="font-size:.74rem;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em">Matched by: ${m.reason === 'ip' ? 'same IP address' : 'same rough location'}</div>
       <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
@@ -1499,15 +1554,16 @@ async function loadVisitorMatches() {
         <button class="pra-btn pra-btn-ghost pra-btn-sm" style="flex:1" data-dismiss-vm="${m.id}">Not a Match</button>
       </div>
     </div>
-  `).join('');
-  wrap.querySelectorAll('[data-confirm-vm]').forEach(btn => btn.onclick = async () => {
-    const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.confirmVm}/confirm`, { method: 'POST' });
-    if (r.ok) { showToast('Linked'); loadVisitorMatches(); } else showToast('Could not link', true);
-  });
-  wrap.querySelectorAll('[data-dismiss-vm]').forEach(btn => btn.onclick = async () => {
-    const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.dismissVm}/dismiss`, { method: 'POST' });
-    if (r.ok) { showToast('Dismissed'); loadVisitorMatches(); } else showToast('Could not dismiss', true);
-  });
+  `, wrap => {
+    wrap.querySelectorAll('[data-confirm-vm]').forEach(btn => btn.onclick = async () => {
+      const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.confirmVm}/confirm`, { method: 'POST' });
+      if (r.ok) { showToast('Linked'); loadVisitorMatches(); } else showToast('Could not link', true);
+    });
+    wrap.querySelectorAll('[data-dismiss-vm]').forEach(btn => btn.onclick = async () => {
+      const r = await fetch(`/api/duplicates/visitor-matches/${btn.dataset.dismissVm}/dismiss`, { method: 'POST' });
+      if (r.ok) { showToast('Dismissed'); loadVisitorMatches(); } else showToast('Could not dismiss', true);
+    });
+  }, 'No possible visitor matches flagged. Click "Scan for Visitor Matches" to check.');
 }
 document.getElementById('scanVisitorMatchesBtn').onclick = async () => {
   const msg = document.getElementById('visitorMatchesScanMsg');
@@ -1543,15 +1599,25 @@ wireInlineEditTable(document.getElementById('contactsBody'), {
 // (not a fixed vh value) since the panel's own top position shifts
 // whenever the filter panel opens/closes, bulk-actions bar shows/hides, or
 // the window itself is resized.
-function resizeContactsTablePanel() {
-  const panel = document.getElementById('contactsTablePanel');
-  if (!panel || panel.getBoundingClientRect().width === 0) return; // tab not visible right now
+// Generic version of the same fit-to-viewport sizing, reused by every
+// other paginated panel (Lists/Segments/Tags/Duplicates/Visitor Matches) so
+// their bottom bar is always visible without a page-level scroll, same as
+// the Contacts tab itself.
+function resizeTablePanel(panelId, barId) {
+  const panel = document.getElementById(panelId);
+  const bar = document.getElementById(barId);
+  if (!panel || !bar || panel.getBoundingClientRect().width === 0) return; // tab not visible right now
   const top = panel.getBoundingClientRect().top;
-  const paginationBarHeight = document.getElementById('paginationBar').offsetHeight;
-  const available = window.innerHeight - top - paginationBarHeight - 24;
+  const available = window.innerHeight - top - bar.offsetHeight - 24;
   panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
 }
-window.addEventListener('resize', resizeContactsTablePanel);
+function resizeContactsTablePanel() { resizeTablePanel('contactsTablePanel', 'paginationBar'); }
+window.addEventListener('resize', () => {
+  resizeContactsTablePanel();
+  for (const kind of ['list', 'segment', 'tag']) resizeTablePanel(kind + 'sTablePanel', kind + 'sPaginationBar');
+  resizeTablePanel('duplicatesTablePanel', 'duplicatesPaginationBar');
+  resizeTablePanel('visitorMatchesTablePanel', 'visitorMatchesPaginationBar');
+});
 
 (async function init() {
   // ownerFieldHtml/wireOwnerFields (crm-nav.js) read window.crmMe/
