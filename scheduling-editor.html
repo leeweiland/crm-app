@@ -338,13 +338,21 @@
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderSmsBtn">+ Add SMS Reminder</button>
             </div>
             <div class="ed-notif-card">
-              <div class="ed-notif-title">Calendar Event Description</div>
-              <div class="ed-notif-hint">What staff see on the Google Calendar event for this booking. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %INTAKEANSWERS% %INVITEETIMEZONE% %MANAGEURL%. Leave empty to use the default layout.</div>
+              <div class="ed-notif-title">Internal Calendar Event (Staff)</div>
+              <div class="ed-notif-hint">What STAFF see on their own Google Calendar for this booking -- staff-only, the contact never sees this one. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %INTAKEANSWERS% %INVITEETIMEZONE% %MANAGEURL%. Leave empty to use the default layout.</div>
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;text-transform:none;margin-bottom:10px"><input type="checkbox" id="fIncludeFormAnswersInCalendar"/> Include intake answers (%INTAKEANSWERS%)</label>
-              <div class="ed-sms-toolbar"><select class="pra-select" id="calDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
-              <textarea class="pra-input" id="calDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
-              <div class="pra-label" style="margin-top:14px">Preview</div>
-              <pre id="calDescPreview" class="pra-muted" style="white-space:pre-wrap;font-family:inherit;font-size:.82rem;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></pre>
+              <div class="ed-sms-toolbar"><select class="pra-select" id="staffCalDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+              <textarea class="pra-input" id="staffCalDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
+              <div class="pra-label" style="margin-top:14px">Preview -- staff side</div>
+              <pre id="staffCalDescPreview" class="pra-muted" style="white-space:pre-wrap;font-family:inherit;font-size:.82rem;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></pre>
+            </div>
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">Contact Calendar Event</div>
+              <div class="ed-notif-hint">What goes on the CONTACT's own calendar (the "Add to Google/Outlook Calendar" links and the downloaded .ics file) -- a fully separate, independently-editable template from the staff one above, starting from the exact same full content (nothing trimmed) since the contact sees everything the staff side sees. Same tokens as above.</div>
+              <div class="ed-sms-toolbar"><select class="pra-select" id="contactCalDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+              <textarea class="pra-input" id="contactCalDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
+              <div class="pra-label" style="margin-top:14px">Preview -- contact side</div>
+              <pre id="contactCalDescPreview" class="pra-muted" style="white-space:pre-wrap;font-family:inherit;font-size:.82rem;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></pre>
             </div>
           </div>
         </div>
@@ -597,10 +605,11 @@ function renderSidebar() {
   // nothing's been customized yet -- otherwise inserting one token into an
   // empty box looked broken (the preview only ever showed that one line,
   // not the actual name/email/phone/etc a real event carries). draft.
-  // calendarDescriptionTemplate itself stays untouched until the box is
-  // actually edited (see its 'input' handler), so an event type nobody's
-  // customized still automatically follows future changes to the default.
-  document.getElementById('calDescTemplate').value = draft.calendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
+  // ...DescriptionTemplate itself stays untouched until the box is actually
+  // edited (see its 'input' handler), so an event type nobody's customized
+  // still automatically follows future changes to the default.
+  document.getElementById('staffCalDescTemplate').value = draft.calendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
+  document.getElementById('contactCalDescTemplate').value = draft.contactCalendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
   refreshCalendarPreviewDebounced();
 
   const b = draft.branding;
@@ -663,17 +672,22 @@ function renderQuestions() {
   wireQuestions();
 }
 
+// Every question edit also refreshes the two calendar-event previews below
+// (their sample answers -- and for a dropdown, which real option shows as
+// the sample -- are derived straight from draft.questions), so what's
+// previewed there always matches the form as currently edited, not just as
+// last saved.
 function wireQuestions() {
-  document.querySelectorAll('[data-q-label]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qLabel].label = el.value; saveDebounced(); });
-  document.querySelectorAll('[data-q-type]').forEach(el => el.onchange = () => { draft.questions[+el.dataset.qType].type = el.value; renderQuestions(); saveDebounced(); });
-  document.querySelectorAll('[data-q-options]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qOptions].options = el.value.split('\n').map(s => s.trim()).filter(Boolean); saveDebounced(); });
+  document.querySelectorAll('[data-q-label]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qLabel].label = el.value; saveDebounced(); refreshCalendarPreviewDebounced(); });
+  document.querySelectorAll('[data-q-type]').forEach(el => el.onchange = () => { draft.questions[+el.dataset.qType].type = el.value; renderQuestions(); saveDebounced(); refreshCalendarPreviewDebounced(); });
+  document.querySelectorAll('[data-q-options]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qOptions].options = el.value.split('\n').map(s => s.trim()).filter(Boolean); saveDebounced(); refreshCalendarPreviewDebounced(); });
   document.querySelectorAll('[data-q-required]').forEach(el => el.onclick = () => {
     const idx = +el.dataset.qRequired;
     if (draft.questions[idx].type === 'email') return; // always required, not toggleable
     draft.questions[idx].required = el.classList.toggle('on');
     saveDebounced();
   });
-  document.querySelectorAll('[data-q-del]').forEach(el => el.onclick = () => { if (el.disabled) return; draft.questions.splice(+el.dataset.qDel, 1); renderQuestions(); saveDebounced(); });
+  document.querySelectorAll('[data-q-del]').forEach(el => el.onclick = () => { if (el.disabled) return; draft.questions.splice(+el.dataset.qDel, 1); renderQuestions(); saveDebounced(); refreshCalendarPreviewDebounced(); });
   document.querySelectorAll('[data-q-map]').forEach(el => el.onchange = async () => {
     const idx = +el.dataset.qMap;
     if (el.value === '__new__') {
@@ -696,6 +710,7 @@ document.getElementById('addQuestionBtn').onclick = () => {
   draft.questions.push({ id: crypto.randomUUID(), label: '', type: 'short_text', required: false, placeholder: '', options: [], mapToCustomFieldId: '' });
   renderQuestions();
   saveDebounced();
+  refreshCalendarPreviewDebounced();
 };
 
 // ── Confirmation email/SMS + reminders ──────────────────────────────────
@@ -717,40 +732,35 @@ const SMS_PERSONALIZE_OPTIONS = [
   { value: '%PHONE%', label: 'Phone' },
   ...BOOKING_PERSONALIZE_OPTIONS,
 ];
-document.getElementById('confSmsPersonalize').innerHTML = '<option value="">Personalize...</option>' + SMS_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
 const CALENDAR_DESC_PERSONALIZE_OPTIONS = [
   ...SMS_PERSONALIZE_OPTIONS,
   { value: '%INTAKEANSWERS%', label: 'Intake answers' },
   { value: '%INVITEETIMEZONE%', label: "Invitee's timezone" },
   { value: '%MANAGEURL%', label: 'Cancel/manage link' },
 ];
-document.getElementById('calDescPersonalize').innerHTML = '<option value="">Personalize...</option>' + CALENDAR_DESC_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
 // Plain <textarea> has no execCommand/contenteditable to lean on like the
 // block editor's own Personalize dropdown -- insert at the cursor (or
 // replace a selection) by hand and fire input so saveDebounced() picks it
-// up, same as if it had been typed.
-document.getElementById('confSmsPersonalize').addEventListener('change', (e) => {
-  const token = e.target.value;
-  e.target.value = '';
-  if (!token) return;
-  const ta = document.getElementById('confSmsBody');
-  const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
-  ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
-  ta.focus();
-  ta.selectionStart = ta.selectionEnd = start + token.length;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
-});
-document.getElementById('calDescPersonalize').addEventListener('change', (e) => {
-  const token = e.target.value;
-  e.target.value = '';
-  if (!token) return;
-  const ta = document.getElementById('calDescTemplate');
-  const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
-  ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
-  ta.focus();
-  ta.selectionStart = ta.selectionEnd = start + token.length;
-  ta.dispatchEvent(new Event('input', { bubbles: true }));
-});
+// up, same as if it had been typed. Shared by every Personalize dropdown +
+// textarea pair on this page (SMS body, staff/contact calendar templates).
+function wirePersonalizeDropdown(selectId, textareaId, options) {
+  const select = document.getElementById(selectId);
+  select.innerHTML = '<option value="">Personalize...</option>' + options.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  select.addEventListener('change', (e) => {
+    const token = e.target.value;
+    e.target.value = '';
+    if (!token) return;
+    const ta = document.getElementById(textareaId);
+    const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
+    ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = start + token.length;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+wirePersonalizeDropdown('confSmsPersonalize', 'confSmsBody', SMS_PERSONALIZE_OPTIONS);
+wirePersonalizeDropdown('staffCalDescPersonalize', 'staffCalDescTemplate', CALENDAR_DESC_PERSONALIZE_OPTIONS);
+wirePersonalizeDropdown('contactCalDescPersonalize', 'contactCalDescTemplate', CALENDAR_DESC_PERSONALIZE_OPTIONS);
 const REMINDER_UNITS = ['minutes', 'hours', 'days'];
 let allFooters = [];
 
@@ -797,23 +807,34 @@ document.getElementById('confSmsBody').addEventListener('input', (e) => {
   saveDebounced();
 });
 // Re-renders against the server's own renderCalendarDescription/
-// applyBookingTokens path (a fabricated sample booking, since a real one
-// isn't needed to preview formatting) so this can never drift from what a
-// real booking actually produces. Debounced separately from saveDebounced
-// (shorter delay, and fires even before the draft has actually saved) since
-// it's read-only and cheap.
+// applyBookingTokens path (ONE fabricated sample booking shared by both the
+// staff and contact previews, using this event type's real questions with a
+// real-looking sample answer each) so neither preview can ever drift from
+// what a real booking actually produces on either calendar. Debounced
+// separately from saveDebounced (shorter delay, and fires even before the
+// draft has actually saved) since it's read-only and cheap.
 let calPreviewTimer;
 async function refreshCalendarPreview() {
   if (!draft?.id) return;
   const r = await fetch(`/api/scheduling/admin/event-types/${draft.id}/calendar-preview`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ template: draft.calendarDescriptionTemplate || '', includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar }),
+    body: JSON.stringify({
+      staffTemplate: draft.calendarDescriptionTemplate || '', contactTemplate: draft.contactCalendarDescriptionTemplate || '',
+      includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar,
+    }),
   });
-  document.getElementById('calDescPreview').textContent = r.ok ? (await r.json()).preview : 'Could not load preview.';
+  const d = r.ok ? await r.json() : null;
+  document.getElementById('staffCalDescPreview').textContent = d ? d.staffPreview : 'Could not load preview.';
+  document.getElementById('contactCalDescPreview').textContent = d ? d.contactPreview : 'Could not load preview.';
 }
 function refreshCalendarPreviewDebounced() { clearTimeout(calPreviewTimer); calPreviewTimer = setTimeout(refreshCalendarPreview, 400); }
-document.getElementById('calDescTemplate').addEventListener('input', (e) => {
+document.getElementById('staffCalDescTemplate').addEventListener('input', (e) => {
   draft.calendarDescriptionTemplate = e.target.value;
+  saveDebounced();
+  refreshCalendarPreviewDebounced();
+});
+document.getElementById('contactCalDescTemplate').addEventListener('input', (e) => {
+  draft.contactCalendarDescriptionTemplate = e.target.value;
   saveDebounced();
   refreshCalendarPreviewDebounced();
 });
@@ -943,6 +964,7 @@ async function saveNow() {
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
       notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, reminders: draft.reminders,
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate,
+      contactCalendarDescriptionTemplate: draft.contactCalendarDescriptionTemplate,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';

@@ -801,6 +801,20 @@ function buildCalendarDescription(booking) {
   return renderCalendarDescription(withBookingTokens, booking, et);
 }
 
+// The event on the CONTACT's own calendar (the "add to calendar"
+// Google/Outlook links + the downloaded .ics file) -- a completely separate
+// template/field from the staff one above (its own independent
+// contactCalendarDescriptionTemplate), even though the DEFAULT starts as the
+// exact same full content (name/email/phone/timezone/every Q&A/manage link)
+// per explicit direction: this is not a trimmed-down version, everything the
+// staff side shows the contact side shows too, just editable separately in
+// case that ever needs to diverge.
+function buildContactCalendarDescription(booking, et) {
+  const template = et?.contactCalendarDescriptionTemplate || DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
+  const withBookingTokens = et ? applyBookingTokens(template, getBookingTokenValues(booking, et)) : template;
+  return renderCalendarDescription(withBookingTokens, booking, et);
+}
+
 // Creates the staff Google Calendar event for a saved booking and records the
 // outcome ON the booking. This used to be a bare try/catch inside the POST
 // handler that swallowed every failure -- a booking whose calendar write
@@ -1284,8 +1298,8 @@ export async function handleSchedulingRequest(req, res, url) {
       booking: { id: booking.id, startAt: booking.startAt, endAt: booking.endAt, timezone: booking.timezone, cancelToken: booking.cancelToken, name: booking.name, email: booking.email, phone: booking.phone },
       eventType: publicEventType(et),
       addToCalendar: {
-        google: buildGoogleCalendarLink({ summary: et.name, description: notes || "", start: startDate, end: endDate, timezone: booking.timezone }),
-        outlook: buildOutlookCalendarLink({ summary: et.name, description: notes || "", start: startDate, end: endDate }),
+        google: buildGoogleCalendarLink({ summary: et.name, description: buildContactCalendarDescription(booking, et), start: startDate, end: endDate, timezone: booking.timezone }),
+        outlook: buildOutlookCalendarLink({ summary: et.name, description: buildContactCalendarDescription(booking, et), start: startDate, end: endDate }),
         icsUrl: `/api/scheduling/bookings/${booking.id}/ics?token=${booking.cancelToken}`,
       },
     });
@@ -1298,7 +1312,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!booking || booking.cancelToken !== url.searchParams.get("token")) return sendJson(res, 404, { error: "Not found" });
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => e.id === booking.eventTypeId);
-    const ics = buildIcs({ summary: et?.name || "Meeting", description: booking.notes || "", start: new Date(booking.startAt), end: new Date(booking.endAt), uid: booking.id });
+    const ics = buildIcs({ summary: et?.name || "Meeting", description: buildContactCalendarDescription(booking, et), start: new Date(booking.startAt), end: new Date(booking.endAt), uid: booking.id });
     res.writeHead(200, { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": `attachment; filename="event.ics"` });
     res.end(ics);
     return true;
@@ -1406,13 +1420,17 @@ export async function handleSchedulingRequest(req, res, url) {
     writeJson(EVENT_TYPES_FILE, eventTypes);
     return sendJson(res, 200, { ok: true, eventType: et });
   }
-  // Live preview for the Calendar Event Description editor -- renders the
-  // exact same renderCalendarDescription/applyBookingTokens path a real
-  // booking would, against a fabricated sample booking (this event type's
-  // own questions get a placeholder answer each), so what's shown here can
-  // never drift from what actually gets created. Takes the in-progress,
-  // not-yet-saved template text from the request body rather than the
-  // persisted event type, so a preview reflects unsaved edits immediately.
+  // Live preview for the Internal (staff) and Contact calendar event
+  // description editors -- renders the exact same renderCalendarDescription/
+  // applyBookingTokens path a real booking would, against ONE fabricated
+  // sample booking shared by both previews (this event type's own questions
+  // each get a real-looking placeholder answer, not the same literal
+  // "Sample answer" repeated under every question regardless of what's
+  // actually being asked), so neither preview can ever drift from what a
+  // real booking actually produces on either calendar. Takes the
+  // in-progress, not-yet-saved template text for both from the request body
+  // rather than the persisted event type, so editing either updates both
+  // previews immediately, before anything's saved.
   const previewMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)\/calendar-preview$/);
   if (previewMatch && req.method === "POST") {
     const eventTypes = getEventTypes();
@@ -1420,7 +1438,8 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     const body = await readJsonBody(req);
     const previewEt = { ...et, includeFormAnswersInCalendar: body.includeFormAnswersInCalendar };
-    const template = typeof body.template === "string" && body.template.trim() ? body.template : DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
+    const staffTemplate = typeof body.staffTemplate === "string" && body.staffTemplate.trim() ? body.staffTemplate : DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
+    const contactTemplate = typeof body.contactTemplate === "string" && body.contactTemplate.trim() ? body.contactTemplate : DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
     const sampleAnswers = {};
     // A real answer where one's available (the question's own placeholder,
     // or one of a dropdown's real configured options) reads as an actual
@@ -1442,8 +1461,9 @@ export async function handleSchedulingRequest(req, res, url) {
       formAnswerLabels: {},
       notes: formatExtraAnswers(et.questions, sampleAnswers),
     };
-    const withBookingTokens = applyBookingTokens(template, getBookingTokenValues(sampleBooking, et));
-    return sendJson(res, 200, { preview: renderCalendarDescription(withBookingTokens, sampleBooking, previewEt) });
+    const staffPreview = renderCalendarDescription(applyBookingTokens(staffTemplate, getBookingTokenValues(sampleBooking, et)), sampleBooking, previewEt);
+    const contactPreview = renderCalendarDescription(applyBookingTokens(contactTemplate, getBookingTokenValues(sampleBooking, et)), sampleBooking, previewEt);
+    return sendJson(res, 200, { staffPreview, contactPreview });
   }
 
   const etMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)$/);
@@ -1453,7 +1473,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "contactCalendarDescriptionTemplate"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);
