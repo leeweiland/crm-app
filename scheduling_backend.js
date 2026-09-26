@@ -514,7 +514,7 @@ function extractBookingIdentity(questions, answers) {
 function formatExtraAnswers(questions, answers) {
   return (questions || [])
     .filter(q => !CORE_QUESTION_TYPES.includes(q.type) && (answers || {})[q.id] !== undefined && (answers || {})[q.id] !== "")
-    .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n");
+    .map(q => `${q.label || "Question"}: ${answers[q.id]}`).join("\n\n");
 }
 // The OUTER form's answers when this calendar is embedded inside a
 // multi-step form (see book.html's prefillFormAnswersJson) -- distinct
@@ -538,7 +538,7 @@ function formatFormAnswers(formAnswers, fieldLabels) {
   const codeKeysWithLabel = new Set(Object.keys(fieldLabels || {}).filter(k => fieldLabels[k]));
   return Object.entries(formAnswers)
     .filter(([k, v]) => v !== undefined && v !== null && v !== "" && !codeKeysWithLabel.has(k))
-    .map(([label, v]) => `${label}: ${v}`).join("\n");
+    .map(([label, v]) => `${label}: ${v}`).join("\n\n");
 }
 // Same rule as forms_backend.js's validateAnswers -- a required question
 // with no answer blocks the booking, checked server-side since the public
@@ -745,38 +745,60 @@ function formatWhenWithZoneName(date, timeZone) {
   return date.toLocaleString("en-US", { timeZone, weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
+// Default layout for a brand-new event type (nothing typed into
+// calendarDescriptionTemplate yet) -- same content the hardcoded version
+// used to always produce, just expressed as an editable template now.
+const DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE =
+`Name: %FIRSTNAME% %LASTNAME%
+Email: %EMAIL%
+Phone: %PHONE%
+Invitee's timezone: %INVITEETIMEZONE%
+
+%INTAKEANSWERS%
+
+Booked via CRM scheduling.
+
+Need to cancel? %MANAGEURL%`;
+// Calendar-description-only tokens (%FIRSTNAME% etc, %INTAKEANSWERS%,
+// %INVITEETIMEZONE%, %MANAGEURL%) -- deliberately separate from the shared
+// applyBookingTokens/applyMergeTags pair those other confirmation/reminder
+// sends use, since this is the one template built from just the SAVED
+// booking record with no live contact lookup (see buildCalendarDescription's
+// own comment on why: the admin "retry calendar sync" path needs to be able
+// to rebuild the exact same event later from that record alone).
+function renderCalendarDescription(template, booking, et) {
+  const start = new Date(booking.startAt);
+  const manageUrl = `${getPublicBaseUrl()}/book/${booking.eventTypeSlug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
+  const nameParts = String(booking.name || "").trim().split(/\s+/);
+  // Off switches %INTAKEANSWERS% to blank regardless of what the template
+  // says -- for staff who'd rather glance at the CRM for full intake
+  // answers than scroll a long calendar description. Defaults on (unset ===
+  // true) so nothing changes for an event type saved before this existed.
+  const includeAnswers = et?.includeFormAnswersInCalendar !== false;
+  const formAnswersText = includeAnswers ? formatFormAnswers(booking.formAnswers, booking.formAnswerLabels) : "";
+  const intakeAnswers = [formAnswersText, includeAnswers ? booking.notes : ""].filter(Boolean).join("\n\n");
+  return String(template || "")
+    .replace(/%FIRSTNAME%/gi, nameParts[0] || "")
+    .replace(/%LASTNAME%/gi, nameParts.slice(1).join(" "))
+    .replace(/%EMAIL%/gi, booking.email || "")
+    .replace(/%PHONE%/gi, booking.phone || "")
+    .replace(/%INVITEETIMEZONE%/gi, `${booking.timezone} (their time: ${formatWhenInZone(start, booking.timezone)})`)
+    .replace(/%INTAKEANSWERS%/gi, intakeAnswers)
+    .replace(/%MANAGEURL%/gi, manageUrl);
+}
+
 // Everything staff sees on the Google Calendar event. Built from the saved
 // booking record (not local variables of the POST handler) so the admin
 // "retry calendar sync" path can rebuild the exact same event later.
 function buildCalendarDescription(booking) {
-  const start = new Date(booking.startAt);
-  const manageUrl = `${getPublicBaseUrl()}/book/${booking.eventTypeSlug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
-  const lines = [`Name: ${booking.name}`, `Email: ${booking.email}`];
-  if (booking.phone) lines.push(`Phone: ${booking.phone}`);
-  lines.push(`Invitee's timezone: ${booking.timezone} (their time: ${formatWhenInZone(start, booking.timezone)})`);
-  // formatExtraAnswers (-> notes) deliberately excludes the core identity
-  // fields, so a form with no custom questions beyond name/email/phone left
-  // this description with nothing but "Booked via CRM scheduling." --
-  // restating identity here too so the staff calendar event always carries
-  // the same details as the internal notification email. formAnswers (the
-  // outer form's own Q&A, e.g. an "ONLINE BOOKING" lead form embedding this
-  // "Body Mastery Call" calendar) is a separate merge -- see
-  // formatFormAnswers -- since an event type with no long_text question has
-  // no other way to carry those answers through at all.
-  // Off switches to a bare-bones event (name/email/phone/timezone/manage
-  // link only) for staff who'd rather glance at the CRM for full intake
-  // answers than scroll a long calendar description. Defaults on (unset ===
-  // true) so nothing changes for an event type saved before this existed.
   const et = getEventTypes().find(e => e.id === booking.eventTypeId);
-  if (et?.includeFormAnswersInCalendar !== false) {
-    const formAnswersText = formatFormAnswers(booking.formAnswers, booking.formAnswerLabels);
-    if (formAnswersText) lines.push("", formAnswersText);
-  }
-  if (booking.notes) lines.push("", booking.notes);
-  lines.push("", "Booked via CRM scheduling.");
-  // Staff-only -- the lead never sees this event or its description.
-  lines.push("", `Need to cancel? ${manageUrl}`);
-  return lines.join("\n");
+  const template = et?.calendarDescriptionTemplate || DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
+  // applyBookingTokens/getBookingTokenValues cover %EVENTNAME%/%WHEN%/
+  // %DATE%/%TIME%/%LOCATION%/%NOTES% the exact same way the confirmation
+  // email/SMS templates already do, so someone customizing this can use
+  // those same familiar tokens here too.
+  const withBookingTokens = et ? applyBookingTokens(template, getBookingTokenValues(booking, et)) : template;
+  return renderCalendarDescription(withBookingTokens, booking, et);
 }
 
 // Creates the staff Google Calendar event for a saved booking and records the
@@ -1384,6 +1406,35 @@ export async function handleSchedulingRequest(req, res, url) {
     writeJson(EVENT_TYPES_FILE, eventTypes);
     return sendJson(res, 200, { ok: true, eventType: et });
   }
+  // Live preview for the Calendar Event Description editor -- renders the
+  // exact same renderCalendarDescription/applyBookingTokens path a real
+  // booking would, against a fabricated sample booking (this event type's
+  // own questions get a placeholder answer each), so what's shown here can
+  // never drift from what actually gets created. Takes the in-progress,
+  // not-yet-saved template text from the request body rather than the
+  // persisted event type, so a preview reflects unsaved edits immediately.
+  const previewMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)\/calendar-preview$/);
+  if (previewMatch && req.method === "POST") {
+    const eventTypes = getEventTypes();
+    const et = eventTypes.find(e => e.id === previewMatch[1]);
+    if (!et) return sendJson(res, 404, { error: "Event type not found" });
+    const body = await readJsonBody(req);
+    const previewEt = { ...et, includeFormAnswersInCalendar: body.includeFormAnswersInCalendar };
+    const template = typeof body.template === "string" && body.template.trim() ? body.template : DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
+    const sampleAnswers = {};
+    for (const q of et.questions || []) if (!CORE_QUESTION_TYPES.includes(q.type)) sampleAnswers[q.id] = "Sample answer";
+    const sampleBooking = {
+      name: "Jamie Sample", email: "jamie@example.com", phone: "(555) 123-4567",
+      timezone: "America/Anchorage", startAt: new Date(Date.now() + 86400000).toISOString(),
+      id: "preview", eventTypeSlug: et.slug, cancelToken: "preview",
+      formAnswers: { "What are you hoping to get out of this?": "Sample answer" },
+      formAnswerLabels: {},
+      notes: formatExtraAnswers(et.questions, sampleAnswers),
+    };
+    const withBookingTokens = applyBookingTokens(template, getBookingTokenValues(sampleBooking, et));
+    return sendJson(res, 200, { preview: renderCalendarDescription(withBookingTokens, sampleBooking, previewEt) });
+  }
+
   const etMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)$/);
   if (etMatch) {
     const eventTypes = getEventTypes();
@@ -1391,7 +1442,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders", "includeFormAnswersInCalendar"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

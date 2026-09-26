@@ -240,10 +240,6 @@
               <input class="pra-input" id="fNotifyEmails" placeholder="you@pacificrimathletics.com, alexis@..."/>
               <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">One email, with everything -- the application's other answers, the booked time, and every question here.</div>
             </div>
-            <div class="field">
-              <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;text-transform:none"><input type="checkbox" id="fIncludeFormAnswersInCalendar"/> Include intake answers on the staff calendar event</label>
-              <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Off keeps the calendar event to just name/email/phone/timezone -- the full answers are still on the notification email above and the contact's own record either way.</div>
-            </div>
             <div class="field"><label class="pra-label">Booking link</label>
               <div class="link-row" style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--pra-dim)"><code id="fSlug" style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px"></code></div>
             </div>
@@ -340,6 +336,15 @@
               </div>
               <div id="remindersSmsList"></div>
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderSmsBtn">+ Add SMS Reminder</button>
+            </div>
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">Calendar Event Description</div>
+              <div class="ed-notif-hint">What staff see on the Google Calendar event for this booking. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %INTAKEANSWERS% %INVITEETIMEZONE% %MANAGEURL%. Leave empty to use the default layout.</div>
+              <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;text-transform:none;margin-bottom:10px"><input type="checkbox" id="fIncludeFormAnswersInCalendar"/> Include intake answers (%INTAKEANSWERS%)</label>
+              <div class="ed-sms-toolbar"><select class="pra-select" id="calDescPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+              <textarea class="pra-input" id="calDescTemplate" rows="9" placeholder="Leave blank to use the default layout" style="font-family:monospace;font-size:.82rem"></textarea>
+              <div class="pra-label" style="margin-top:14px">Preview</div>
+              <pre id="calDescPreview" class="pra-muted" style="white-space:pre-wrap;font-family:inherit;font-size:.82rem;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></pre>
             </div>
           </div>
         </div>
@@ -588,6 +593,8 @@ function renderSidebar() {
   document.getElementById('fRedirectUrl').value = draft.branding.redirectUrl || '';
   document.getElementById('fNotifyEmails').value = (draft.notifyEmails || []).join(', ');
   document.getElementById('fIncludeFormAnswersInCalendar').checked = draft.includeFormAnswersInCalendar !== false;
+  document.getElementById('calDescTemplate').value = draft.calendarDescriptionTemplate || '';
+  refreshCalendarPreviewDebounced();
 
   const b = draft.branding;
   const fontPrimarySel = document.getElementById('fFontPrimary');
@@ -704,6 +711,13 @@ const SMS_PERSONALIZE_OPTIONS = [
   ...BOOKING_PERSONALIZE_OPTIONS,
 ];
 document.getElementById('confSmsPersonalize').innerHTML = '<option value="">Personalize...</option>' + SMS_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+const CALENDAR_DESC_PERSONALIZE_OPTIONS = [
+  ...SMS_PERSONALIZE_OPTIONS,
+  { value: '%INTAKEANSWERS%', label: 'Intake answers' },
+  { value: '%INVITEETIMEZONE%', label: "Invitee's timezone" },
+  { value: '%MANAGEURL%', label: 'Cancel/manage link' },
+];
+document.getElementById('calDescPersonalize').innerHTML = '<option value="">Personalize...</option>' + CALENDAR_DESC_PERSONALIZE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
 // Plain <textarea> has no execCommand/contenteditable to lean on like the
 // block editor's own Personalize dropdown -- insert at the cursor (or
 // replace a selection) by hand and fire input so saveDebounced() picks it
@@ -713,6 +727,17 @@ document.getElementById('confSmsPersonalize').addEventListener('change', (e) => 
   e.target.value = '';
   if (!token) return;
   const ta = document.getElementById('confSmsBody');
+  const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = start + token.length;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+});
+document.getElementById('calDescPersonalize').addEventListener('change', (e) => {
+  const token = e.target.value;
+  e.target.value = '';
+  if (!token) return;
+  const ta = document.getElementById('calDescTemplate');
   const start = ta.selectionStart ?? ta.value.length, end = ta.selectionEnd ?? ta.value.length;
   ta.value = ta.value.slice(0, start) + token + ta.value.slice(end);
   ta.focus();
@@ -763,6 +788,32 @@ document.getElementById('addReminderSmsBtn').onclick = () => {
 document.getElementById('confSmsBody').addEventListener('input', (e) => {
   draft.confirmation.sms = e.target.value;
   saveDebounced();
+});
+// Re-renders against the server's own renderCalendarDescription/
+// applyBookingTokens path (a fabricated sample booking, since a real one
+// isn't needed to preview formatting) so this can never drift from what a
+// real booking actually produces. Debounced separately from saveDebounced
+// (shorter delay, and fires even before the draft has actually saved) since
+// it's read-only and cheap.
+let calPreviewTimer;
+async function refreshCalendarPreview() {
+  if (!draft?.id) return;
+  const r = await fetch(`/api/scheduling/admin/event-types/${draft.id}/calendar-preview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template: draft.calendarDescriptionTemplate || '', includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar }),
+  });
+  document.getElementById('calDescPreview').textContent = r.ok ? (await r.json()).preview : 'Could not load preview.';
+}
+function refreshCalendarPreviewDebounced() { clearTimeout(calPreviewTimer); calPreviewTimer = setTimeout(refreshCalendarPreview, 400); }
+document.getElementById('calDescTemplate').addEventListener('input', (e) => {
+  draft.calendarDescriptionTemplate = e.target.value;
+  saveDebounced();
+  refreshCalendarPreviewDebounced();
+});
+document.getElementById('fIncludeFormAnswersInCalendar').addEventListener('change', (e) => {
+  draft.includeFormAnswersInCalendar = e.target.checked;
+  saveDebounced();
+  refreshCalendarPreviewDebounced();
 });
 document.getElementById('confEmailInstantToggle').addEventListener('click', (e) => {
   draft.confirmation.emailSendInstant = e.target.classList.toggle('on');
@@ -884,7 +935,7 @@ async function saveNow() {
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
       notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, reminders: draft.reminders,
-      includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar,
+      includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -1115,10 +1166,6 @@ async function init() {
 });
 document.getElementById('fNotifyEmails').addEventListener('input', () => {
   draft.notifyEmails = document.getElementById('fNotifyEmails').value.split(',').map(s => s.trim()).filter(Boolean);
-  saveDebounced();
-});
-document.getElementById('fIncludeFormAnswersInCalendar').addEventListener('change', () => {
-  draft.includeFormAnswersInCalendar = document.getElementById('fIncludeFormAnswersInCalendar').checked;
   saveDebounced();
 });
 document.getElementById('fStatus').addEventListener('change', () => {
