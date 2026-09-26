@@ -69,7 +69,7 @@ function sheetUpsertStep(sheetName, columnNames, nextStepId) {
         { header: columnNames.first, value: "{{first}}" },
         { header: columnNames.last, value: "{{last}}" },
         { header: columnNames.email, value: "{{email}}" },
-        { header: columnNames.phone, value: "{{phone}}" },
+        { header: columnNames.phone, value: "{{phone}}", digitsOnly: true },
         { header: columnNames.qualified, value: "Qualified" },
         { header: columnNames.result, value: "Enrolled" },
         { header: columnNames.program, value: "{{customFields.enrollProgram}}" },

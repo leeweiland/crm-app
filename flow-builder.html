@@ -1247,6 +1247,7 @@ function openStepConfigModal(step, isNew) {
       return `<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center" data-su-col-row>
         <input class="pra-input" style="width:150px;flex-shrink:0" data-su-col-header list="suHeaderOptions" placeholder="Column header" value="${escapeHtml(col.header || '')}"/>
         <div class="token-input-wrap" style="flex:1">${tokenEditorHtml(col.value || '', { placeholder: '{{customFields.enrollProgram}}, static text…', attrs: 'data-su-col-value', expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
+        <label class="pra-muted" style="display:flex;align-items:center;gap:4px;font-size:.72rem;white-space:nowrap;cursor:pointer;flex-shrink:0" title="Strips everything but digits after resolving -- e.g. a phone stored as &quot;+1 951-488-2045&quot; writes as &quot;19514882045&quot;"><input type="checkbox" data-su-col-digits ${col.digitsOnly ? 'checked' : ''}/> Digits only</label>
         <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-move-su-col="up">&uarr;</button>
         <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-move-su-col="down">&darr;</button>
         <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm pra-btn-danger" data-remove-su-col>&times;</button>
@@ -1420,6 +1421,7 @@ function openStepConfigModal(step, isNew) {
       step.config.columns = [...document.querySelectorAll('#suColRows [data-su-col-row]')].map(rowEl => ({
         header: rowEl.querySelector('[data-su-col-header]').value.trim(),
         value: getTokenEditorValue(rowEl.querySelector('[data-su-col-value]')),
+        digitsOnly: rowEl.querySelector('[data-su-col-digits]').checked,
       })).filter(c => c.header);
     }
     else if (step.type === 'enroll_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }

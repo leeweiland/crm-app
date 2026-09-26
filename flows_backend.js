@@ -524,9 +524,17 @@ async function advanceFlowRun(run, flow) {
             // Only a column this run actually resolved to something gets
             // written -- an empty template result never blanks a cell that
             // already has data in it (matched row), and just leaves that
-            // cell out of a freshly appended row.
+            // cell out of a freshly appended row. digitsOnly (a per-column
+            // checkbox in the builder) strips everything but digits AFTER
+            // resolving -- e.g. a phone column stored as "+1 951-488-2045"
+            // writes as "19514882045" instead of carrying the + and hyphens
+            // into the sheet.
             const resolvedCols = (cfg.columns || [])
-              .map(col => ({ header: col.header, value: resolveTemplate(col.value, ctx) }))
+              .map(col => {
+                let value = resolveTemplate(col.value, ctx);
+                if (col.digitsOnly) value = value.replace(/\D/g, "");
+                return { header: col.header, value };
+              })
               .filter(c => c.header && c.value !== "");
             if (rowIndex > 0) {
               const sheetRow = rowIndex + 1; // 1-based for A1 notation
