@@ -419,41 +419,56 @@ function niceTitle(raw) {
 // it. Approximate by nature -- a source renamed since it sent won't match
 // its own historical el= tags anymore -- but exact for the common case
 // (most aren't renamed), with no per-send historical name to fall back on.
+// {name} per slug widened to {type, name, subject} -- resolveSendSourceSlug
+// (source_names.js) only ever slugifies a campaign/automation/workflow's own
+// NAME, never the actual email subject line, so a campaign's real subject
+// (a separate field -- e.g. name "ONLINE doors closed for training (copy)",
+// subject "doors closed for training") was never resolvable from the slug
+// alone. Kept as a distinct field (not folded into name) since Email
+// Subject Line and Email Campaign Name are two different requested columns
+// that happen to be the same string only by convention. An automation can
+// have several send_email steps, each its own subject, and the slug can't
+// tell which one fired -- so automation/workflow-matched sources report the
+// automation's/workflow's NAME (for the Email Automation column) but no
+// subject line; only a genuine campaign match resolves both.
 function buildSlugNameIndex() {
   const idx = new Map();
-  for (const c of readJson(CAMPAIGNS_FILE, [])) idx.set(slugify(c.name), c.name);
-  for (const a of readJson(AUTOMATIONS_FILE, [])) idx.set(slugify(a.name), a.name);
-  for (const w of readJson(WORKFLOWS_FILE, [])) idx.set(slugify(w.name), w.name);
+  for (const c of readJson(CAMPAIGNS_FILE, [])) idx.set(slugify(c.name), { type: "campaign", name: c.name, subject: c.subject || null });
+  for (const a of readJson(AUTOMATIONS_FILE, [])) idx.set(slugify(a.name), { type: "automation", name: a.name, subject: null });
+  for (const w of readJson(WORKFLOWS_FILE, [])) idx.set(slugify(w.name), { type: "workflow", name: w.name, subject: null });
   return idx;
 }
 const SOCIAL_PLATFORM_LABEL = { email: "Email", sms: "SMS", youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", linkedin: "LinkedIn", twitter: "Twitter", tiktok: "TikTok" };
-// Turns one attribution key into {title, adGroup, campaign, spend,
-// platform} for the Ads Report table -- title is always something a
-// human can read, adGroup/campaign are "—" when that hierarchy genuinely
-// doesn't apply (an email/SMS/social source isn't inside a Meta ad set or
-// Google ad group), not when data is merely missing.
+// Turns one attribution key into {title, adGroup, campaign, spend, platform,
+// adName, campaignName, automationName, emailSubject, youtubeTitle} -- title
+// is always something a human can read; every other field is null/"—" when
+// that hierarchy genuinely doesn't apply (an email source isn't a YouTube
+// video, an ad isn't a campaign send), not when data is merely missing.
 function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
-  if (key === HYROS_NO_SOURCE) return { title: "No source tag (Hyros)", adGroup: "—", campaign: "—", spend: 0, platform: "Hyros" };
-  if (key === "meta-ad:unknown") return { title: "Meta ad (ad ID not captured)", adGroup: "—", campaign: "—", spend: 0, platform: "Meta" };
-  if (key === "google-ad:unknown") return { title: "Google ad (ad ID not captured)", adGroup: "—", campaign: "—", spend: 0, platform: "Google" };
+  const blank = { adGroup: "—", campaign: "—", spend: 0, adName: null, campaignName: null, automationName: null, emailSubject: null, youtubeTitle: null };
+  if (key === HYROS_NO_SOURCE) return { ...blank, title: "No source tag (Hyros)", platform: "Hyros" };
+  if (key === "meta-ad:unknown") return { ...blank, title: "Meta ad (ad ID not captured)", platform: "Meta" };
+  if (key === "google-ad:unknown") return { ...blank, title: "Google ad (ad ID not captured)", platform: "Google" };
   if (key.startsWith("meta-ad:")) {
     const id = key.slice(8);
     const info = metaAdMap?.get(id);
-    return { title: info?.name || id, adGroup: info?.adGroup || "—", campaign: info?.campaign || "—", spend: info?.spend || 0, platform: "Meta" };
+    const name = info?.name || id;
+    return { ...blank, title: name, adGroup: info?.adGroup || "—", campaign: info?.campaign || "—", spend: info?.spend || 0, adName: name, platform: "Meta" };
   }
   if (key.startsWith("google-ad:")) {
     const id = key.slice(10);
     const info = googleAdMap?.get(id);
-    return { title: info?.name || id, adGroup: info?.adGroup || "—", campaign: info?.campaign || "—", spend: info?.spend || 0, platform: "Google" };
+    const name = info?.name || id;
+    return { ...blank, title: name, adGroup: info?.adGroup || "—", campaign: info?.campaign || "—", spend: info?.spend || 0, adName: name, platform: "Google" };
   }
   if (key.startsWith("ad:")) {
-    return { title: key.slice(3), adGroup: "—", campaign: "—", spend: 0, platform: "Ad" };
+    return { ...blank, title: key.slice(3), adName: key.slice(3), platform: "Ad" };
   }
   if (key.startsWith("email-") || key.startsWith("sms-")) {
     const isEmail = key.startsWith("email-");
     const slug = key.slice(isEmail ? 6 : 4);
     // slugIndex.get(slug) is the REAL, current campaign/automation/workflow
-    // name (source_names.js's resolveSendSourceSlug slugifies that same
+    // record (source_names.js's resolveSendSourceSlug slugifies that same
     // name at send time, so a match here is exact, not a guess) -- prefer
     // it over niceTitle(slug), which just prettifies whatever's actually
     // stored. Confirmed live: some stored el= slugs are corrupted (garbled
@@ -464,15 +479,26 @@ function sourceMeta(key, metaAdMap, googleAdMap, slugIndex) {
     // send whose source wasn't itself renamed since. Falls back to
     // niceTitle(slug) only when nothing matches (a genuinely corrupted slug,
     // or a real rename) -- same as before, not a regression for those.
-    const realName = slugIndex.get(slug);
-    return { title: realName || niceTitle(slug), adGroup: "—", campaign: realName || "—", spend: 0, platform: isEmail ? "Email" : "SMS" };
+    const match = slugIndex.get(slug);
+    const isCampaign = match?.type === "campaign";
+    const isAutomationLike = match?.type === "automation" || match?.type === "workflow";
+    return {
+      ...blank, title: match?.name || niceTitle(slug), campaign: match?.name || "—", platform: isEmail ? "Email" : "SMS",
+      campaignName: isCampaign ? match.name : null,
+      automationName: isAutomationLike ? match.name : null,
+      // Only a genuine campaign send maps 1:1 to one subject line -- an
+      // automation/workflow's slug alone can't say which of its (possibly
+      // several) send_email steps fired, so this stays blank for those
+      // rather than guessing.
+      emailSubject: isCampaign ? (match.subject || null) : null,
+    };
   }
   const socialMatch = key.match(/^(email|sms|youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
   if (socialMatch) {
     const [, platform, val] = socialMatch;
-    return { title: niceTitle(val), adGroup: "—", campaign: "—", spend: 0, platform: SOCIAL_PLATFORM_LABEL[platform] };
+    return { ...blank, title: niceTitle(val), platform: SOCIAL_PLATFORM_LABEL[platform] };
   }
-  return { title: niceTitle(key), adGroup: "—", campaign: "—", spend: 0, platform: "Other" };
+  return { ...blank, title: niceTitle(key), platform: "Other" };
 }
 
 // Ad Attribution's raw tags -> readable rows: an ad ID becomes the ad's own
@@ -494,10 +520,10 @@ async function labelAttributionSources(keys, startStr, endStr) {
   const out = new Map();
   for (const key of keys) {
     const m = sourceMeta(key, metaAdMap, googleAdMap, slugIndex);
-    let { title, platform } = m;
-    if (key.startsWith("yt-")) { platform = "YouTube"; title = titles.get(videoIdOf(key)) || niceTitle(key.slice(3)); }
-    else if (key.startsWith("youtube:")) title = titles.get(videoIdOf(key)) || title;
-    out.set(key, { label: title, platform, adGroup: m.adGroup, campaign: m.campaign });
+    let { title, platform, youtubeTitle } = m;
+    if (key.startsWith("yt-")) { platform = "YouTube"; youtubeTitle = titles.get(videoIdOf(key)) || null; title = youtubeTitle || niceTitle(key.slice(3)); }
+    else if (key.startsWith("youtube:")) { youtubeTitle = titles.get(videoIdOf(key)) || null; title = youtubeTitle || title; }
+    out.set(key, { label: title, platform, adGroup: m.adGroup, campaign: m.campaign, spend: m.spend, adName: m.adName, campaignName: m.campaignName, automationName: m.automationName, emailSubject: m.emailSubject, youtubeTitle });
   }
   return out;
 }
@@ -533,6 +559,7 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
     const meta = sourceMeta(s.el, metaAdMap, googleAdMap, slugIndex);
     return {
       source: meta.title, platform: s.hyrosOnly && meta.platform === "Other" ? "Hyros" : meta.platform, adGroup: meta.adGroup, campaign: meta.campaign,
+      adName: meta.adName, campaignName: meta.campaignName, automationName: meta.automationName, emailSubject: meta.emailSubject, youtubeTitle: null,
       leads: s.optIns, costPerLead: s.optIns ? money(meta.spend / s.optIns) : null,
       bookings: s.bookings, costPerBooking: s.bookings ? money(meta.spend / s.bookings) : null,
       // Revenue/Sales come only from Hyros purchase tags (customers carrying this source tag, and the sum
@@ -542,10 +569,16 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
       key: s.el,
     };
   });
-  // A y=<video id> tag is labelled with the video's real title (unresolvable
-  // ones keep the prettified tag).
-  const ytTitles = await lookupVideoTitles(rows.filter(r => r.key.startsWith("youtube:")).map(r => r.key.slice(8)));
-  for (const r of rows) if (r.key.startsWith("youtube:") && ytTitles.has(r.key.slice(8))) r.source = ytTitles.get(r.key.slice(8));
+  // A y=<video id> tag (or the tail of an el=yt-<name>-<id> tag) is labelled
+  // with the video's real title (unresolvable ones keep the prettified tag).
+  // Same YT_TAG_ID convention as labelAttributionSources -- kept in sync
+  // manually since this file only defines it once, above.
+  const rowVideoIdOf = (k) => k.startsWith("youtube:") ? k.slice(8) : YT_TAG_ID.exec(k)?.[1] || null;
+  const ytTitles = await lookupVideoTitles(rows.map(r => rowVideoIdOf(r.key)).filter(Boolean));
+  for (const r of rows) {
+    const vid = rowVideoIdOf(r.key);
+    if (vid && ytTitles.has(vid)) { r.source = ytTitles.get(vid); r.youtubeTitle = ytTitles.get(vid); }
+  }
 
   // computeAttribution can only ever see leads/bookings tied to a TRACKED
   // PAGE VISIT -- confirmed live this misses most real leads, since native
