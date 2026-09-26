@@ -825,7 +825,11 @@ function formatPreviewHtml(text) {
   return String(text || '').split('\n').map(line => {
     if (!line) return '';
     const m = /^([^:]{1,80}):\s?(.*)$/.exec(line);
-    return m && m[2] ? `<b>${escapeHtml(m[1])}:</b> ${escapeHtml(m[2])}` : escapeHtml(line);
+    // Label on its OWN bold line, value on the line below it -- not inline
+    // after the colon -- matching the internal notification email's own
+    // Q&A blocks. style="color:#fff" since this box's ambient text is
+    // dimmed (.pra-muted); without it the bold label barely stood out.
+    return m && m[2] ? `<b style="color:#fff">${escapeHtml(m[1])}:</b><br>${escapeHtml(m[2])}` : escapeHtml(line);
   }).join('<br>');
 }
 async function refreshCalendarPreview() {
