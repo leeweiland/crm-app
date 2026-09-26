@@ -199,6 +199,10 @@ export function getComplianceSettings() {
     // been unconditional (see email_backend.js's processSesNotificationMessage).
     // This is just the first time it's actually been made optional.
     autoOptOutOnBounceComplaint: c.autoOptOutOnBounceComplaint !== false,
+    // Where /api/email/unsubscribe sends someone after opting them out --
+    // "" (the default) shows this CRM's own plain built-in confirmation
+    // page instead of redirecting anywhere.
+    unsubscribeRedirectUrl: typeof c.unsubscribeRedirectUrl === "string" ? c.unsubscribeRedirectUrl : "",
   };
 }
 
@@ -349,6 +353,7 @@ export async function handleIntegrationsRequest(req, res, url) {
       if (url && !parseSheetUrl(url)) return sendJson(res, 400, { error: "That doesn't look like a Google Sheets link." });
       all.compliance.blacklistSheetUrl = url;
     }
+    if ("unsubscribeRedirectUrl" in body) all.compliance.unsubscribeRedirectUrl = String(body.unsubscribeRedirectUrl || "").trim();
     writeJson(INTEGRATIONS_FILE, all);
     return sendJson(res, 200, { ok: true });
   }

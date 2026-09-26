@@ -209,6 +209,12 @@
           <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:8px"><input type="checkbox" id="autoOptOutOnBounceComplaint"/> Auto-unsubscribe on bounce/complaint notification</label>
           <div class="pra-muted optout-desc">On by default — unlike a failed send above, a bounce or spam complaint reported by AWS SES is the recipient's own mailbox provider telling you directly, not a guess. Turning this off means bounces/complaints are only recorded on the message log, with no automatic suppression.</div>
         </div>
+
+        <div class="pra-panel optout-card" id="optoutUnsubRedirect">
+          <div class="optout-card-head"><div class="optout-card-title">Unsubscribe Destination</div><div class="pra-muted optout-msg"></div></div>
+          <div class="pra-muted optout-desc">Where the unsubscribe link in every email sends someone after they click it. The contact is still opted out of email either way -- this only changes what page they land on. Leave blank to show this CRM's own plain "You've been unsubscribed" page instead.</div>
+          <div class="field"><label class="pra-label">Redirect URL</label><input class="pra-input" id="unsubscribeRedirectUrl" placeholder="https://www.pacificrimathletics.com/unsubscribe"/></div>
+        </div>
       </div>
 
       <div class="tab-panel pra-panel" id="tab-tracking" style="padding:22px;max-width:600px">
@@ -952,6 +958,7 @@ async function loadComplianceSettings() {
   document.getElementById('autoOptOutFailedEmail').checked = !!c.autoOptOutFailedEmail;
   document.getElementById('autoOptOutFailedSms').checked = !!c.autoOptOutFailedSms;
   document.getElementById('autoOptOutOnBounceComplaint').checked = !!c.autoOptOutOnBounceComplaint;
+  document.getElementById('unsubscribeRedirectUrl').value = c.unsubscribeRedirectUrl || '';
 }
 // Each Opt Out card saves ONLY its own fields (the endpoint takes partial
 // bodies), so e.g. a half-typed sheet link can't block a keyword edit in
@@ -964,6 +971,7 @@ const OPTOUT_CARDS = {
   optoutTriggers: () => ({ triggerKeywordsEnabled: document.getElementById('triggerKeywordsEnabled').checked, triggerKeywords: splitKeywords('triggerKeywordsList') }),
   optoutFailedSends: () => ({ autoOptOutFailedEmail: document.getElementById('autoOptOutFailedEmail').checked, autoOptOutFailedSms: document.getElementById('autoOptOutFailedSms').checked }),
   optoutBounceComplaint: () => ({ autoOptOutOnBounceComplaint: document.getElementById('autoOptOutOnBounceComplaint').checked }),
+  optoutUnsubRedirect: () => ({ unsubscribeRedirectUrl: document.getElementById('unsubscribeRedirectUrl').value.trim() }),
 };
 async function saveOptoutCard(cardId) {
   const body = OPTOUT_CARDS[cardId]();

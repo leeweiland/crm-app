@@ -455,6 +455,15 @@ export async function handleEmailRequest(req, res, url) {
       writeJson(CONTACTS_FILE, contacts);
       setConvoMeta(contact.id, { archived: true });
     }
+    // Settings > Opt Out's "Unsubscribe Redirect" -- "" (the default) falls
+    // back to this CRM's own plain confirmation page below instead of
+    // sending them anywhere.
+    const redirectUrl = getComplianceSettings().unsubscribeRedirectUrl;
+    if (redirectUrl) {
+      res.writeHead(302, { Location: redirectUrl });
+      res.end();
+      return true;
+    }
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px 20px">
       <h2>You've been unsubscribed.</h2><p>You won't receive any more marketing emails from us.</p>
