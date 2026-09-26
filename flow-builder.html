@@ -204,6 +204,7 @@
         <option value="form_submitted">Form is submitted</option>
         <option value="booking_created">Booking is created</option>
         <option value="youtube_new_video">A new video is uploaded to a YouTube channel</option>
+        <option value="status_changed">A contact's status changes</option>
       </select>
     </div>
     <div class="field" id="triggerTargetField" style="display:none">
@@ -252,6 +253,7 @@
       <button data-type="if_then"><svg viewBox="0 0 24 24" fill="none"><circle cx="6" cy="6" r="2" stroke="#fff" stroke-width="1.5"/><circle cx="6" cy="18" r="2" stroke="#fff" stroke-width="1.5"/><circle cx="18" cy="12" r="2" stroke="#009bff" stroke-width="1.5"/><path d="M8 6.5C12 6.5 12 12 16.5 12M8 17.5C12 17.5 12 12 16.5 12" stroke="#fff" stroke-width="1.4"/></svg>If / Then</button>
       <button data-type="delay"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="#fff" stroke-width="1.6"/><path d="M12 7.5V12l3.2 2" stroke="#009bff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Delay</button>
       <button data-type="google_sheet"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="#fff" stroke-width="1.6"/><path d="M3.5 9.5h17M9.5 4.5v15M15 4.5v15" stroke="#009bff" stroke-width="1.4"/></svg>Add Row to Google Sheet</button>
+      <button data-type="sheet_upsert"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="#fff" stroke-width="1.6"/><path d="M3.5 9.5h17M9.5 4.5v15" stroke="#009bff" stroke-width="1.4"/><path d="M14 14.3l1.5 1.5L19.2 12" stroke="#009bff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Find/Update Row in Google Sheet</button>
       <button data-type="enroll_automation"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="13" rx="2" stroke="#fff" stroke-width="1.6"/><path d="M4.5 7l7.5 6 7.5-6" stroke="#009bff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Enroll in Email Automation</button>
       <button data-type="enroll_workflow"><svg viewBox="0 0 24 24" fill="none"><path d="M4 6h16v10H10l-4 3.5V16H4V6Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="9" cy="11" r="1" fill="#009bff"/><circle cx="12" cy="11" r="1" fill="#009bff"/><circle cx="15" cy="11" r="1" fill="#009bff"/></svg>Enroll in SMS Sequence</button>
       <button data-type="add_update_contact"><svg viewBox="0 0 24 24" fill="none"><circle cx="10" cy="8.5" r="3.5" stroke="#fff" stroke-width="1.6"/><path d="M3.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><path d="M18 5v6M15 8h6" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add/Update Contact</button>
@@ -364,6 +366,7 @@ function stepSummary(step) {
   if (step.type === 'if_then') return `If ${c.filter?.all?.[0]?.field || '—'} ${c.filter?.all?.[0]?.op || ''} ${escapeHtml(String(c.filter?.all?.[0]?.value ?? ''))}`;
   if (step.type === 'delay') return `Wait ${c.amount || 0} ${c.unit || 'minutes'}`;
   if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
+  if (step.type === 'sheet_upsert') return `Find/update row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.matchGroups || []).length} match rule${(c.matchGroups || []).length === 1 ? '' : 's'}, ${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
   if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
   if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} field(s)`;
@@ -382,7 +385,7 @@ function stepSummary(step) {
   if (step.type === 'youtube_add_to_playlist') return `Add ${escapeHtml(c.videoId || '—')} to playlist "${escapeHtml(c.playlistTitle || c.playlistId || '—')}"`;
   return '';
 }
-const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist' };
+const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', sheet_upsert: 'Find/Update Row in Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist' };
 
 function stepCardHtml(stepId, isLast) {
   const step = flow.steps[stepId];
@@ -430,7 +433,7 @@ function renderChainHtml(startId, path) {
   return html;
 }
 
-const TRIGGER_LABELS = { webhook: 'A webhook is received', form_submitted: 'Form is submitted', booking_created: 'Booking is created', youtube_new_video: 'A new video is uploaded to a YouTube channel' };
+const TRIGGER_LABELS = { webhook: 'A webhook is received', form_submitted: 'Form is submitted', booking_created: 'Booking is created', youtube_new_video: 'A new video is uploaded to a YouTube channel', status_changed: "A contact's status changes" };
 function render() {
   document.getElementById('flowName').value = flow.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (flow.active ? ' on' : '');
@@ -442,6 +445,7 @@ function render() {
   if (trig.type === 'form_submitted') trigLabel = trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted';
   if (trig.type === 'booking_created') trigLabel = trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created';
   if (trig.type === 'youtube_new_video') trigLabel = trig.config?.channelId ? `New video on YouTube channel ${escapeHtml(trig.config.channelId)}` : 'A new video is uploaded to a YouTube channel (pick the channel)';
+  if (trig.type === 'status_changed') trigLabel = trig.config?.statusId ? `Status changes to "${escapeHtml(trig.config.statusId)}"` : 'A contact\'s status changes to anything';
   canvas.innerHTML = `
     <div class="trigger-card" id="triggerCardBtn" style="cursor:pointer">
       <div class="pra-label">Start flow when</div>
@@ -669,6 +673,7 @@ function openTriggerModal() {
   updateTriggerFields();
   if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
+  if (trig.type === 'status_changed') document.getElementById('triggerTarget').value = trig.config.statusId || '';
   if (trig.type === 'youtube_new_video') document.getElementById('youtubeChannelId').value = trig.config.channelId || '';
   if (trig.type === 'webhook') {
     const token = trig.config?.webhookToken;
@@ -691,6 +696,9 @@ function updateTriggerFields() {
   } else if (type === 'booking_created') {
     field.style.display = 'block'; label.textContent = 'Event type (any if left blank)';
     select.innerHTML = '<option value="">Any event type</option>' + allEventTypes.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
+  } else if (type === 'status_changed') {
+    field.style.display = 'block'; label.textContent = 'Status (any if left blank)';
+    select.innerHTML = '<option value="">Any status</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
   } else {
     field.style.display = 'none';
   }
@@ -700,7 +708,7 @@ document.getElementById('saveTriggerBtn').onclick = async () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
   const oldConfig = flow.trigger?.config || {};
-  let config = type === 'form_submitted' ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : type === 'youtube_new_video' ? { channelId: document.getElementById('youtubeChannelId').value.trim() } : {};
+  let config = type === 'form_submitted' ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : type === 'status_changed' ? { statusId: target || null } : type === 'youtube_new_video' ? { channelId: document.getElementById('youtubeChannelId').value.trim() } : {};
   if (type === 'webhook') {
     config = { webhookToken: flow.trigger?.type === 'webhook' ? oldConfig.webhookToken : undefined };
   }
@@ -814,6 +822,15 @@ function defaultConfig(type) {
   if (type === 'filter' || type === 'if_then') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
   if (type === 'delay') return { amount: 1, unit: 'days' };
   if (type === 'google_sheet') return { spreadsheetId: '', spreadsheetName: '', sheetName: '', columns: [], headers: [] };
+  if (type === 'sheet_upsert') return {
+    spreadsheetId: '', spreadsheetName: '', sheetName: '',
+    matchGroups: [
+      { fields: [{ contactField: 'email', header: 'Email' }] },
+      { fields: [{ contactField: 'phone', header: 'Phone' }] },
+      { fields: [{ contactField: 'first', header: 'First' }, { contactField: 'last', header: 'Last' }] },
+    ],
+    columns: [],
+  };
   if (type === 'enroll_automation') return { automationId: '' };
   if (type === 'enroll_workflow') return { workflowId: '' };
   if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '', customFields: {} };
@@ -984,6 +1001,7 @@ function openStepConfigModal(step, isNew) {
       <div class="field"><label class="pra-label">Field</label><select class="pra-select" id="cfgField">
         <option value="status" ${c.field === 'status' ? 'selected' : ''}>Status</option>
         <option value="tags" ${c.field === 'tags' ? 'selected' : ''}>Has tag</option>
+        <option value="programType" ${c.field === 'programType' ? 'selected' : ''}>Program Type</option>
       </select></div>
       <div class="field"><label class="pra-label">Value</label><select class="pra-select" id="cfgValue"></select></div>
     `;
@@ -991,6 +1009,7 @@ function openStepConfigModal(step, isNew) {
     function updateValueOptions() {
       const valSel = document.getElementById('cfgValue');
       if (fieldSel.value === 'status') valSel.innerHTML = allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.value === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
+      else if (fieldSel.value === 'programType') valSel.innerHTML = ['online', 'gym'].map(v => `<option value="${v}" ${c.value === v ? 'selected' : ''}>${v === 'online' ? 'Online' : 'Gym'}</option>`).join('');
       else valSel.innerHTML = allTags.map(t => `<option value="${t.id}" ${c.value === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
     }
     fieldSel.addEventListener('change', updateValueOptions);
@@ -1132,6 +1151,177 @@ function openStepConfigModal(step, isNew) {
       // as Zapier's own spreadsheet picker.
       document.getElementById('cfgSheetSearch').dispatchEvent(new Event('input'));
     }
+  } else if (step.type === 'sheet_upsert') {
+    const matchGroups = step.config.matchGroups && step.config.matchGroups.length ? step.config.matchGroups : [
+      { fields: [{ contactField: 'email', header: 'Email' }] },
+      { fields: [{ contactField: 'phone', header: 'Phone' }] },
+      { fields: [{ contactField: 'first', header: 'First' }, { contactField: 'last', header: 'Last' }] },
+    ];
+    const columns = step.config.columns || [];
+    body.innerHTML = `
+      ${sheetsIsConfigured ? '' : '<div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Google Sheets isn\'t connected yet -- add GOOGLE_REFRESH_TOKEN_LW to .env. The step still saves and will start working once that\'s set.</div>'}
+      <div class="field">
+        <label class="pra-label">Spreadsheet</label>
+        <div id="sheetPickedRow" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,0.04);border:1px solid var(--pra-border);border-radius:8px">
+            <span style="flex:1;font-size:.86rem" id="sheetPickedName"></span>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="changeSheetBtn">Change</button>
+          </div>
+        </div>
+        <div id="sheetSearchRow">
+          <input class="pra-input" id="cfgSheetSearch" placeholder="Search your Google Sheets by name…" autocomplete="off"/>
+          <div class="sheet-search-results" id="sheetSearchResults" style="display:none"></div>
+        </div>
+      </div>
+      <div class="field" id="sheetTabField" style="display:none">
+        <label class="pra-label">Tab</label>
+        <select class="pra-select" id="cfgSheetTab"></select>
+      </div>
+      <datalist id="suHeaderOptions"></datalist>
+      <div class="pra-label" style="margin:14px 0 8px">Match this contact to a row by <span class="pra-muted" style="text-transform:none;font-weight:400">— matches if ANY rule below is fully satisfied (all its fields together); the most recently added matching row wins</span></div>
+      <div id="suMatchGroups"></div>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addMatchGroupBtn" style="margin-top:2px">+ Add Match Rule</button>
+      <div class="pra-label" style="margin:16px 0 8px">Columns to write <span class="pra-muted" style="text-transform:none;font-weight:400">— only written when this run actually has a value; left alone otherwise</span></div>
+      <div id="suColRows"></div>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSuColBtn" style="margin-top:6px">+ Add Column</button>
+    `;
+
+    const CONTACT_FIELD_OPTIONS = [
+      { value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' },
+      { value: 'first', label: 'First Name' }, { value: 'last', label: 'Last Name' },
+      ...allCustomFields.map(f => ({ value: `customFields.${f.id}`, label: f.label })),
+    ];
+    function matchFieldRowHtml(f) {
+      return `<div style="display:flex;gap:8px;margin-bottom:6px;align-items:center" data-match-field>
+        <select class="pra-select" style="flex:1" data-match-contact-field>${CONTACT_FIELD_OPTIONS.map(o => `<option value="${o.value}" ${f.contactField === o.value ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}</select>
+        <span class="pra-muted" style="font-size:.8rem;white-space:nowrap">= column</span>
+        <input class="pra-input" style="flex:1" data-match-header list="suHeaderOptions" placeholder="Email" value="${escapeHtml(f.header || '')}"/>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm pra-btn-danger" data-remove-field>&times;</button>
+      </div>`;
+    }
+    function matchGroupHtml(g, gi, total) {
+      return `<div class="pra-panel" style="padding:10px 12px;margin-bottom:8px;border:1px solid var(--pra-border)" data-match-group>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span class="pra-muted" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.04em">Rule ${gi + 1} — ALL fields below must match</span>
+          <div style="display:flex;gap:4px">
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-move-group="up" ${gi === 0 ? 'disabled' : ''}>&uarr;</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-move-group="down" ${gi === total - 1 ? 'disabled' : ''}>&darr;</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm pra-btn-danger" data-remove-group>&times;</button>
+          </div>
+        </div>
+        <div data-group-fields>${(g.fields || []).map(matchFieldRowHtml).join('')}</div>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-add-field>+ Add field to this rule</button>
+      </div>`;
+    }
+    function renumberGroups() {
+      const groups = [...document.querySelectorAll('#suMatchGroups [data-match-group]')];
+      groups.forEach((g, gi) => {
+        g.querySelector('.pra-muted').textContent = `Rule ${gi + 1} — ALL fields below must match`;
+        g.querySelector('[data-move-group="up"]').disabled = gi === 0;
+        g.querySelector('[data-move-group="down"]').disabled = gi === groups.length - 1;
+      });
+    }
+    function wireFieldRemoves(groupEl) {
+      groupEl.querySelectorAll('[data-remove-field]').forEach(btn => btn.onclick = () => btn.closest('[data-match-field]').remove());
+    }
+    function wireMatchGroup(groupEl) {
+      groupEl.querySelector('[data-remove-group]').onclick = () => { groupEl.remove(); renumberGroups(); };
+      groupEl.querySelector('[data-move-group="up"]').onclick = () => { const prev = groupEl.previousElementSibling; if (prev) groupEl.parentElement.insertBefore(groupEl, prev); renumberGroups(); };
+      groupEl.querySelector('[data-move-group="down"]').onclick = () => { const next = groupEl.nextElementSibling; if (next) groupEl.parentElement.insertBefore(next, groupEl); renumberGroups(); };
+      groupEl.querySelector('[data-add-field]').onclick = () => {
+        groupEl.querySelector('[data-group-fields]').insertAdjacentHTML('beforeend', matchFieldRowHtml({ contactField: 'email', header: '' }));
+        wireFieldRemoves(groupEl);
+      };
+      wireFieldRemoves(groupEl);
+    }
+    const matchGroupsWrap = document.getElementById('suMatchGroups');
+    matchGroupsWrap.innerHTML = matchGroups.map((g, gi) => matchGroupHtml(g, gi, matchGroups.length)).join('');
+    matchGroupsWrap.querySelectorAll('[data-match-group]').forEach(wireMatchGroup);
+    document.getElementById('addMatchGroupBtn').onclick = () => {
+      matchGroupsWrap.insertAdjacentHTML('beforeend', matchGroupHtml({ fields: [{ contactField: 'email', header: '' }] }, matchGroupsWrap.children.length, matchGroupsWrap.children.length + 1));
+      wireMatchGroup(matchGroupsWrap.lastElementChild);
+      renumberGroups();
+    };
+
+    function suColRowHtml(col) {
+      return `<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center" data-su-col-row>
+        <input class="pra-input" style="width:150px;flex-shrink:0" data-su-col-header list="suHeaderOptions" placeholder="Column header" value="${escapeHtml(col.header || '')}"/>
+        <div class="token-input-wrap" style="flex:1">${tokenEditorHtml(col.value || '', { placeholder: '{{customFields.enrollProgram}}, static text…', attrs: 'data-su-col-value', expand: true })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-move-su-col="up">&uarr;</button>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" data-move-su-col="down">&darr;</button>
+        <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm pra-btn-danger" data-remove-su-col>&times;</button>
+      </div>`;
+    }
+    function wireSuColRow(row) {
+      row.querySelector('[data-remove-su-col]').onclick = () => row.remove();
+      row.querySelector('[data-move-su-col="up"]').onclick = () => { const prev = row.previousElementSibling; if (prev) row.parentElement.insertBefore(row, prev); };
+      row.querySelector('[data-move-su-col="down"]').onclick = () => { const next = row.nextElementSibling; if (next) row.parentElement.insertBefore(next, row); };
+    }
+    const suColRowsWrap = document.getElementById('suColRows');
+    suColRowsWrap.innerHTML = (columns.length ? columns : [{ header: '', value: '' }]).map(suColRowHtml).join('');
+    suColRowsWrap.querySelectorAll('[data-su-col-row]').forEach(wireSuColRow);
+    document.getElementById('addSuColBtn').onclick = () => {
+      suColRowsWrap.insertAdjacentHTML('beforeend', suColRowHtml({ header: '', value: '' }));
+      const row = suColRowsWrap.lastElementChild;
+      wireSuColRow(row);
+      wireTokenButtons(row);
+    };
+
+    // Spreadsheet/tab picker -- same search-and-pick UX as the google_sheet
+    // step, but choosing a tab here only populates the header-name
+    // suggestions (suHeaderOptions): this step's columns are a free-form
+    // header/value list, not one row per real header the way google_sheet's are.
+    async function suLoadTabs() {
+      document.getElementById('sheetTabField').style.display = 'block';
+      const tabSel = document.getElementById('cfgSheetTab');
+      tabSel.innerHTML = '<option>Loading…</option>';
+      const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/tabs`);
+      const d = await r.json();
+      if (!r.ok || !d.tabs?.length) { tabSel.innerHTML = '<option value="">(could not load tabs)</option>'; return; }
+      tabSel.innerHTML = d.tabs.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+      tabSel.value = d.tabs.includes(sheetPicked.tab) ? sheetPicked.tab : d.tabs[0];
+      await suOnTabChosen(tabSel.value);
+    }
+    async function suOnTabChosen(tab) {
+      sheetPicked.tab = tab;
+      const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/headers?tab=${encodeURIComponent(tab)}`);
+      const d = await r.json();
+      sheetPicked.headers = (r.ok && d.headers) || [];
+      document.getElementById('suHeaderOptions').innerHTML = sheetPicked.headers.map(h => `<option value="${escapeHtml(h)}">`).join('');
+    }
+    document.getElementById('cfgSheetTab').addEventListener('change', (e) => suOnTabChosen(e.target.value));
+    function suShowPicked() {
+      sheetPicked.id && (document.getElementById('sheetPickedRow').style.display = 'block');
+      document.getElementById('sheetPickedName').textContent = sheetPicked.name || sheetPicked.id;
+      document.getElementById('sheetSearchRow').style.display = 'none';
+    }
+    function suShowSearch() {
+      document.getElementById('sheetPickedRow').style.display = 'none';
+      document.getElementById('sheetSearchRow').style.display = 'block';
+      document.getElementById('sheetTabField').style.display = 'none';
+    }
+    document.getElementById('changeSheetBtn').onclick = suShowSearch;
+    let suSearchTimer;
+    document.getElementById('cfgSheetSearch').addEventListener('input', (e) => {
+      clearTimeout(suSearchTimer);
+      const q = e.target.value.trim();
+      suSearchTimer = setTimeout(async () => {
+        const resultsEl = document.getElementById('sheetSearchResults');
+        resultsEl.style.display = 'block';
+        resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">Searching…</div>';
+        const r = await fetch('/api/flows/sheets/search?q=' + encodeURIComponent(q));
+        const d = await r.json();
+        if (!d.files?.length) { resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">No spreadsheets found.</div>'; return; }
+        resultsEl.innerHTML = d.files.map(f => `<div class="sheet-search-result" data-id="${f.id}" data-name="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>`).join('');
+        resultsEl.querySelectorAll('[data-id]').forEach(row => row.onclick = () => {
+          sheetPicked.id = row.dataset.id; sheetPicked.name = row.dataset.name; sheetPicked.tab = ''; sheetPicked.headers = [];
+          suShowPicked();
+          suLoadTabs();
+        });
+      }, 300);
+    });
+    if (sheetsIsConfigured && sheetPicked.id) { suShowPicked(); suLoadTabs(); }
+    else { suShowSearch(); document.getElementById('cfgSheetSearch').dispatchEvent(new Event('input')); }
   } else if (step.type === 'enroll_automation') {
     body.innerHTML = `<div class="field"><label class="pra-label">Automation</label><select class="pra-select" id="cfgAutomation">${allAutomations.map(a => `<option value="${a.id}" ${step.config.automationId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'enroll_workflow') {
@@ -1216,6 +1406,21 @@ function openStepConfigModal(step, isNew) {
       step.config.sheetName = sheetPicked.tab || 'Sheet1';
       step.config.headers = sheetPicked.headers;
       step.config.columns = [...document.querySelectorAll('#sheetColRows [data-sheet-col]')].map(el => getTokenEditorValue(el));
+    }
+    else if (step.type === 'sheet_upsert') {
+      step.config.spreadsheetId = sheetPicked.id;
+      step.config.spreadsheetName = sheetPicked.name;
+      step.config.sheetName = sheetPicked.tab || '';
+      step.config.matchGroups = [...document.querySelectorAll('#suMatchGroups [data-match-group]')].map(groupEl => ({
+        fields: [...groupEl.querySelectorAll('[data-match-field]')].map(fieldEl => ({
+          contactField: fieldEl.querySelector('[data-match-contact-field]').value,
+          header: fieldEl.querySelector('[data-match-header]').value.trim(),
+        })).filter(f => f.header),
+      })).filter(g => g.fields.length);
+      step.config.columns = [...document.querySelectorAll('#suColRows [data-su-col-row]')].map(rowEl => ({
+        header: rowEl.querySelector('[data-su-col-header]').value.trim(),
+        value: getTokenEditorValue(rowEl.querySelector('[data-su-col-value]')),
+      })).filter(c => c.header);
     }
     else if (step.type === 'enroll_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
     else if (step.type === 'enroll_workflow') { step.config.workflowId = document.getElementById('cfgWorkflow').value; }

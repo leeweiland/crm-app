@@ -43,7 +43,6 @@ window.crmNavReady = (async function () {
     "/scheduling-editor.html": "/scheduling.html",
     "/flow-builder.html": "/flows.html",
     "/ai-agent-editor.html": "/ai-agents.html",
-    "/enroll-flow.html": "/settings.html",
   };
 
   const sidebar = document.getElementById("appSidebar");

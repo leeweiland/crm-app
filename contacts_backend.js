@@ -4,6 +4,7 @@ import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContac
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
+import { fireFlowTrigger } from "./flows_backend.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { removeConversationSummary, deleteContactMessageFile } from "./message_index.js";
 import { logMessage } from "./message_log.js";
@@ -544,7 +545,18 @@ export async function handleContactsRequest(req, res, url) {
       // was edited.
       updated.listIds.filter(id => !prevListIds.includes(id)).forEach(listId => { fireTrigger("list_subscribe", { contactId: updated.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: updated.id, listId }); });
       updated.tags.filter(id => !prevTags.includes(id)).forEach(tagId => { fireTrigger("tag_added", { contactId: updated.id, tagId }); fireWorkflowTrigger("tag_added", { contactId: updated.id, tagId }); });
-      if (updated.status !== prevStatus) { checkConversionGoal("lead_status_change", updated.id); checkAutomationGoal("lead_status_change", updated.id, updated.status); }
+      // Only fired from THIS one PATCH endpoint -- deliberately NOT also from
+      // flows_backend.js's own add_update_contact step (which sets status via
+      // a direct saveContact, bypassing this handler entirely). That's the
+      // real loop-safety boundary: a flow that changes someone's status can
+      // never recursively re-trigger a status_changed flow. Don't "fix" that
+      // asymmetry by adding the same call there -- it would reopen exactly
+      // the cross-flow trigger cycle this boundary exists to prevent.
+      if (updated.status !== prevStatus) {
+        checkConversionGoal("lead_status_change", updated.id);
+        checkAutomationGoal("lead_status_change", updated.id, updated.status);
+        fireFlowTrigger("status_changed", { contactId: updated.id, payload: { prevStatus, status: updated.status } });
+      }
       return sendJson(res, 200, { ok: true, contact: publicContact(updated) });
     }
     if (req.method === "GET") {

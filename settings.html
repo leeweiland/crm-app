@@ -329,8 +329,13 @@
         <button class="pra-btn" id="saveCallsBtn">Save</button>
         <div class="pra-muted" id="callsSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
         <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--pra-border)">
-          <div class="pra-muted" style="font-size:.82rem;margin-bottom:10px">Marking a contact ENROLLED opens a popup that records the sale in this same sheet -- see exactly what it looks up and writes, and edit the column names/dropdown options it uses, without touching code.</div>
-          <a class="pra-btn pra-btn-outline" href="/enroll-flow.html">View &amp; Edit Enrollment Flow</a>
+          <div class="pra-muted" style="font-size:.82rem;margin-bottom:10px">Marking a contact ENROLLED records the sale in this same sheet -- that logic is now a real, editable Flow ("Enrollment Recording") in the <a class="pra-link" href="/flows.html">Flows</a> tab. These fields are just what the "Record Enrollment" popup itself shows staff, before the flow ever runs.</div>
+          <div class="field"><label class="pra-label">Online program options (comma-separated)</label><input class="pra-input" id="enrollProgramsOnline"/></div>
+          <div class="field"><label class="pra-label">Gym program options (comma-separated)</label><input class="pra-input" id="enrollProgramsGym"/></div>
+          <div class="field"><label class="pra-label">Payment options (comma-separated)</label><input class="pra-input" id="enrollPayments"/></div>
+          <div class="field"><label class="pra-label">Notes template</label><input class="pra-input" id="enrollNotesTemplate" placeholder="[Enrolled {date}] {notes}"/></div>
+          <button class="pra-btn" id="saveEnrollOptionsBtn">Save</button>
+          <div class="pra-muted" id="enrollOptionsSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
         </div>
         </div>
       </div>
@@ -1244,6 +1249,31 @@ document.getElementById('saveCallsBtn').onclick = async () => {
   if (r.ok) loadAdsSettings();
 };
 
+// ── Enrollment popup's own options (program/payment dropdowns, notes
+// template) -- separate from the sheet-write logic above, which is now a
+// real Flow (see flows.html); this is just what the popup shows BEFORE any
+// flow ever runs.
+async function loadEnrollOptions() {
+  const r = await fetch('/api/calls-sheet/settings');
+  if (!r.ok) return;
+  const { settings } = await r.json();
+  document.getElementById('enrollProgramsOnline').value = (settings.programOptions.online || []).join(', ');
+  document.getElementById('enrollProgramsGym').value = (settings.programOptions.gym || []).join(', ');
+  document.getElementById('enrollPayments').value = (settings.paymentOptions || []).join(', ');
+  document.getElementById('enrollNotesTemplate').value = settings.notesTemplate || '';
+}
+document.getElementById('saveEnrollOptionsBtn').onclick = async () => {
+  const splitList = (v) => v.split(',').map(s => s.trim()).filter(Boolean);
+  const body = {
+    programOptions: { online: splitList(document.getElementById('enrollProgramsOnline').value), gym: splitList(document.getElementById('enrollProgramsGym').value) },
+    paymentOptions: splitList(document.getElementById('enrollPayments').value),
+    notesTemplate: document.getElementById('enrollNotesTemplate').value.trim(),
+  };
+  const r = await fetch('/api/calls-sheet/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('enrollOptionsSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadEnrollOptions();
+};
+
 // ── My Account ───────────────────────────────────────────────────────────
 // Gmail connection lives on its own page now (connect-email.html) -- its
 // own nav item, so it can be granted to non-admin roles independently of
@@ -1342,6 +1372,7 @@ loadSiteSettings();
 loadTrackingSettings();
 loadConversionSettings();
 loadAdsSettings();
+loadEnrollOptions();
 
 // ── Cache tab ──────────────────────────────────────────────────────────────────
 const _cc = { writing: [], sales: [], sort: 'az' };

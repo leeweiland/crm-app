@@ -16,9 +16,9 @@ export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
 const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migrated below
 
-export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created", "youtube_new_video"];
+export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created", "youtube_new_video", "status_changed"];
 export const STEP_TYPES = [
-  "filter", "if_then", "delay", "google_sheet",
+  "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
   "youtube_add_to_playlist",
@@ -180,7 +180,7 @@ function withSheetLock(key, fn) {
 // sidesteps that entirely -- values.length reflects the true last row with
 // data (Google preserves gap rows as [] within the array), regardless of
 // any gaps earlier in the sheet.
-async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
+async function appendSheetRow(spreadsheetId, sheetName, rowValues, valueInputOption = "USER_ENTERED") {
   return withSheetLock(`${spreadsheetId}::${sheetName}`, async () => {
     const accessToken = await getSheetsAccessToken();
     const endCol = columnLetter(rowValues.length);
@@ -193,7 +193,7 @@ async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
     const nextRow = (colData.values?.length || 0) + 1;
 
     const writeRange = encodeURIComponent(`'${sheetName}'!A${nextRow}:${endCol}${nextRow}`);
-    const put = () => fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    const put = () => fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${writeRange}?valueInputOption=${valueInputOption}`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ values: [rowValues] }),
@@ -222,6 +222,69 @@ async function appendSheetRow(spreadsheetId, sheetName, rowValues) {
     if (!r.ok) throw new Error("Sheets write failed: " + JSON.stringify(d));
     return d;
   });
+}
+
+// ── sheet_upsert step: find-or-create a row keyed by contact fields, then
+// write only the columns this run actually has a value for -- a generalized,
+// user-configurable port of what used to be hardcoded enrollment-recording
+// logic (calls_sheet_backend.js's old findRow()/enroll-sheet handler,
+// retired in favor of this real, editable step type).
+function matchFieldValue(field, raw) {
+  // Phone compares by last-10-digits (formatting/country-code drift between
+  // the contact record and whatever's typed in the sheet shouldn't break a
+  // match); everything else is a trimmed, case-insensitive string compare.
+  if (field === "phone") return String(raw || "").replace(/\D/g, "").slice(-10);
+  return String(raw || "").trim().toLowerCase();
+}
+function contactValueForMatch(contact, field) {
+  const raw = field.startsWith("customFields.") ? contact.customFields?.[field.slice(13)] : contact[field];
+  return matchFieldValue(field, raw);
+}
+// matchGroups is an OR of AND-groups (a row matches if EVERY field in ANY ONE
+// group matches) -- NOT a flat OR of independent fields, which would let e.g.
+// a contact named "John" match any row with First="John" regardless of Last.
+// Scans every row and keeps the LAST match rather than stopping at the
+// first, same as the hardcoded findRow() this replaces: rows are added
+// call-by-call, so the most recently added matching row is the relevant one.
+function findSheetUpsertRow(rows, contact, matchGroups) {
+  const hdr = (rows[0] || []).map(c => String(c).trim().toLowerCase());
+  const groups = (matchGroups || [])
+    .map(g => (g.fields || []).map(f => ({ ...f, col: hdr.indexOf(String(f.header || "").trim().toLowerCase()) })))
+    .filter(fields => fields.length && fields.every(f => f.col >= 0 && f.contactField));
+  if (!groups.length) return -1;
+  let rowIndex = -1;
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const matched = groups.some(fields => fields.every(f => {
+      const want = contactValueForMatch(contact, f.contactField);
+      return want && matchFieldValue(f.contactField, row[f.col]) === want;
+    }));
+    if (matched) rowIndex = i;
+  }
+  return rowIndex;
+}
+async function batchUpdateSheetCells(spreadsheetId, writes, accessToken) {
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+    method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ valueInputOption: "RAW", data: writes }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.message || "Sheets write failed");
+  return d;
+}
+// A wide, fixed upper bound (not derived from the step's own configured
+// columns) -- this reads the WHOLE real tab so header lookups can find any
+// column the sheet actually has, including ones this step's config never
+// references (Origin, Date Of Call, etc, which must never be touched).
+async function readSheetTabForUpsert(spreadsheetId, sheetName) {
+  const accessToken = await getSheetsAccessToken();
+  const range = encodeURIComponent(`'${sheetName}'!A1:ZZ5000`);
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?valueRenderOption=FORMATTED_VALUE`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.message || "Sheets read failed");
+  return { rows: d.values || [[]], accessToken };
 }
 
 // {{first}}/{{email}}/{{customFields.x}} resolve against the contact;
@@ -424,6 +487,12 @@ async function advanceFlowRun(run, flow) {
         }
       }
       saveContact(workingContact);
+      // Deliberately does NOT also fireFlowTrigger("status_changed", ...) here
+      // -- that trigger only fires from contacts_backend.js's PATCH endpoint,
+      // which this step bypasses entirely (saveContact writes directly). That
+      // asymmetry is the actual loop-safety boundary: a flow that sets status
+      // here can never recursively re-trigger a status_changed flow. Adding
+      // it here "for consistency" would reopen that cross-flow cycle.
       if (workingContact.status !== prevStatus) {
         checkConversionGoal("lead_status_change", workingContact.id);
         checkAutomationGoal("lead_status_change", workingContact.id, workingContact.status);
@@ -442,6 +511,42 @@ async function advanceFlowRun(run, flow) {
         const row = (step.config.columns || []).map(tpl => resolveTemplate(tpl, ctx));
         try { await withTimeout(appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row), 20000, "google_sheet append"); }
         catch (e) { console.error("[flows] sheet append failed", e.message); }
+      }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "sheet_upsert") {
+      const cfg = step.config || {};
+      if (cfg.spreadsheetId && cfg.sheetName && contact) {
+        try {
+          await withTimeout((async () => {
+            const { rows, accessToken } = await readSheetTabForUpsert(cfg.spreadsheetId, cfg.sheetName);
+            const hdr = (rows[0] || []).map(c => String(c).trim().toLowerCase());
+            const rowIndex = findSheetUpsertRow(rows, contact, cfg.matchGroups || []);
+            // Only a column this run actually resolved to something gets
+            // written -- an empty template result never blanks a cell that
+            // already has data in it (matched row), and just leaves that
+            // cell out of a freshly appended row.
+            const resolvedCols = (cfg.columns || [])
+              .map(col => ({ header: col.header, value: resolveTemplate(col.value, ctx) }))
+              .filter(c => c.header && c.value !== "");
+            if (rowIndex > 0) {
+              const sheetRow = rowIndex + 1; // 1-based for A1 notation
+              const writes = resolvedCols
+                .map(c => { const i = hdr.indexOf(String(c.header).trim().toLowerCase()); return i >= 0 ? { range: `'${cfg.sheetName}'!${columnLetter(i + 1)}${sheetRow}`, values: [[c.value]] } : null; })
+                .filter(Boolean);
+              if (writes.length) await batchUpdateSheetCells(cfg.spreadsheetId, writes, accessToken);
+            } else {
+              const byLowerHeader = {};
+              resolvedCols.forEach(c => { byLowerHeader[String(c.header).trim().toLowerCase()] = c.value; });
+              const newRow = hdr.map(h => byLowerHeader[h] ?? "");
+              // RAW, not the default USER_ENTERED -- a date/number-looking
+              // string here should land as literal text, not get parsed into
+              // a Sheets serial number (confirmed live in the code this
+              // replaces: USER_ENTERED silently turned a written date into a
+              // bare number like "46287" on a column with no date format).
+              await appendSheetRow(cfg.spreadsheetId, cfg.sheetName, newRow, "RAW");
+            }
+          })(), 20000, "sheet_upsert");
+        } catch (e) { console.error("[flows] sheet_upsert failed", e.message); }
       }
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "send_email") {
@@ -575,6 +680,7 @@ export function fireFlowTrigger(type, { contactId, formId, eventTypeId, payload 
     let matches = true;
     if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
     if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
+    if (type === "status_changed" && cfg.statusId) matches = cfg.statusId === payload?.status;
     if (matches) startFlowRun(flow, contactId, payload || {});
   }
 }
@@ -1029,6 +1135,12 @@ export async function handleFlowsRequest(req, res, url) {
       // one blank row so {{payload.videoId}} etc. are still pickable tokens.
       const recent = readJson(YT_POLL_STATE_FILE, {})?.[flow.id]?.recent || [];
       return sendJson(res, 200, { samples: recent.length ? recent : [{ videoId: "", title: "", url: "", publishedAt: "", channelId: "", channelTitle: "" }] });
+    }
+    if (type === "status_changed") {
+      // No real "recent hits" history for this trigger (unlike a webhook/
+      // form/booking) -- one blank row so {{payload.status}}/{{payload.
+      // prevStatus}} are still pickable tokens in later steps.
+      return sendJson(res, 200, { samples: [{ status: "", prevStatus: "" }] });
     }
     return sendJson(res, 200, { samples: [] });
   }

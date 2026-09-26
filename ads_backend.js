@@ -362,20 +362,6 @@ function callsPayments(rows) {
   }
   return out;
 }
-// Shared by this file's own /api/ads/settings AND calls_sheet_backend.js's
-// enroll-flow.html (same spreadsheet, same setting -- one place parses "a
-// pasted URL or a bare ID" so the two can never disagree on how). Pass an
-// already-loaded settings object to mutate in place (caller writes once,
-// batched with its other changes); omit it to read+write standalone.
-export function setCallsSheetId(rawIdOrUrl, allSettings) {
-  const id = (/\/d\/([A-Za-z0-9_-]+)/.exec(String(rawIdOrUrl || "").trim()) || [])[1] || String(rawIdOrUrl || "").trim();
-  if (allSettings) { allSettings.ads = allSettings.ads || {}; allSettings.ads.callsSheetId = id; return id; }
-  const all = readSettings();
-  all.ads = all.ads || {};
-  all.ads.callsSheetId = id;
-  writeJson(INTEGRATIONS_FILE, all);
-  return id;
-}
 export async function googleAccessToken() {
   const { clientId, clientSecret, refreshToken } = googleCreds();
   if (!clientId || !clientSecret || !refreshToken) throw new Error("Google Sheets isn't configured");
@@ -805,7 +791,11 @@ export async function handleAdsRequest(req, res, url) {
     const all = readSettings();
     all.ads = all.ads || {};
     for (const k of ["sheetId", "onlinePrefix", "gymPrefix", "googleRefreshToken"]) if (k in body) all.ads[k] = String(body[k]).trim();
-    if ("callsSheetId" in body) setCallsSheetId(body.callsSheetId, all);
+    // Accepts a pasted full Sheet URL or a bare ID, same as every other
+    // spreadsheet-ID field in this app.
+    if (typeof body.callsSheetId === "string" && body.callsSheetId.trim()) {
+      all.ads.callsSheetId = (/\/d\/([A-Za-z0-9_-]+)/.exec(body.callsSheetId.trim()) || [])[1] || body.callsSheetId.trim();
+    }
     // Not returned by config-status (see that handler) -- only overwrite
     // when the admin actually typed something, same "blank means untouched"
     // rule as every masked secret field in this app.

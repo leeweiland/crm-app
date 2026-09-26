@@ -1,10 +1,11 @@
 // "Mark as Enrolled" popup -- fires from wherever a contact's status is
 // changed to ENROLLED (inline-edit.js, the chat panel's status select, and
-// both contact-detail/Inbox-overlay autosave paths). Records the sale in the
-// CALLS TRACKING spreadsheet (calls_sheet_backend.js) -- same spreadsheet
-// ads_backend.js already reads sales from -- instead of that staying a
-// separate, easy-to-forget manual step. Browser global, same convention as
-// call-popup.js.
+// both contact-detail/Inbox-overlay autosave paths). Captures the sale
+// details as customFields and PATCHes status to ENROLLED in one request --
+// the actual sheet write is a real, editable Flow step ("Enrollment
+// Recording (migrated)" in the Flows list) that fires off that status
+// change, not something this popup talks to directly. Browser global, same
+// convention as call-popup.js.
 window.EnrollPopup = (function () {
   // The one source of truth for these lists is calls_sheet_backend.js (which
   // also re-validates against them on save) -- fetched once and cached, so
@@ -39,6 +40,20 @@ window.EnrollPopup = (function () {
   function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
   function toast(msg, isError) { if (window.showToast) window.showToast(msg, isError); }
 
+  // "2026-09-22" -> "September 22, 2026" -- the sheet-write flow step just
+  // resolves whatever's in these customFields as-is (no date math of its
+  // own), so dates need to already be in the sheet's own long-form display
+  // style by the time they're written here.
+  function longDate(dateInputValue) {
+    if (!dateInputValue) return "";
+    const d = new Date(dateInputValue + "T00:00:00");
+    return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  }
+  function formatNote(template, notes, enrollmentDateInputValue) {
+    if (!notes) return "";
+    return template.replace("{date}", longDate(enrollmentDateInputValue) || new Date().toLocaleDateString("en-US")).replace("{notes}", notes);
+  }
+
   let backdropEl = null;
   function close() { backdropEl?.remove(); backdropEl = null; }
 
@@ -59,7 +74,7 @@ window.EnrollPopup = (function () {
       contact = contactRes.contact;
       sheetOptions = loadedOptions;
     } catch { toast("Could not load the contact to record the enrollment", true); return; }
-    const { programOptions, paymentOptions } = sheetOptions;
+    const { programOptions, paymentOptions, notesTemplate } = sheetOptions;
 
     const initialSheet = contact.programType === "gym" ? "gym" : "online"; // defaults to online when unset -- both stay one click away
     const today = todayLocalDateInput();
@@ -95,7 +110,7 @@ window.EnrollPopup = (function () {
         </div>
         <div class="field">
           <label class="pra-label">Notes</label>
-          <textarea class="pra-input" id="epNotes" rows="2" placeholder="Added to whatever's already in Notes -- never overwrites it"></textarea>
+          <textarea class="pra-input" id="epNotes" rows="2" placeholder="Leave blank to leave the sheet's Notes cell untouched"></textarea>
         </div>
         <div class="field">
           <label class="pra-label">Start Date</label>
@@ -152,34 +167,29 @@ window.EnrollPopup = (function () {
     backdropEl.addEventListener("click", (e) => { if (e.target === backdropEl) requestClose(); });
     backdropEl.querySelector("#epSaveBtn").onclick = async () => {
       const btn = backdropEl.querySelector("#epSaveBtn"), msg = backdropEl.querySelector("#epMsg");
-      const payload = {
-        sheet: backdropEl.querySelector('input[name="epSheet"]:checked').value,
-        program: programSel.value,
-        amountPaid: backdropEl.querySelector("#epAmount").value,
-        payment: backdropEl.querySelector("#epPayment").value,
-        notes: backdropEl.querySelector("#epNotes").value.trim(),
-        startDate: backdropEl.querySelector("#epStartDate").value,
-        endDate: endDateEl.value,
-        enrollmentDate: backdropEl.querySelector("#epEnrollDate").value,
+      const notes = backdropEl.querySelector("#epNotes").value.trim();
+      const enrollmentDate = backdropEl.querySelector("#epEnrollDate").value;
+      // Everything the sheet-write flow step needs, captured as customFields
+      // BEFORE the status PATCH below -- that PATCH is what actually fires
+      // the flow's status_changed trigger, so these values need to already
+      // be on the contact by the time it runs. customFieldsPatch (not
+      // customFields) so this never wipes out unrelated custom fields
+      // already set on the contact.
+      const customFieldsPatch = {
+        enrollProgramType: backdropEl.querySelector('input[name="epSheet"]:checked').value,
+        enrollProgram: programSel.value,
+        enrollAmountPaid: backdropEl.querySelector("#epAmount").value,
+        enrollPayment: backdropEl.querySelector("#epPayment").value,
+        enrollNotesFormatted: formatNote(notesTemplate, notes, enrollmentDate),
+        enrollStartDate: longDate(backdropEl.querySelector("#epStartDate").value),
+        enrollEndDate: longDate(endDateEl.value),
+        enrollDate: longDate(enrollmentDate),
       };
       btn.disabled = true; msg.textContent = "Saving...";
       try {
-        const r = await fetch(`/api/contacts/${contactId}/enroll-sheet`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) { btn.disabled = false; msg.textContent = d.error || "Could not save"; return; }
-        // The sheet write is what this whole popup exists for -- only
-        // NOW, once it's actually recorded, does the contact really become
-        // Enrolled (see this function's own top comment for why that's
-        // deferred this far).
-        try {
-          const statusRes = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED" }) });
-          if (!statusRes.ok) throw new Error();
-        } catch {
-          toast("Recorded in the sheet, but could not set status to Enrolled -- change status again to retry", true);
-          close();
-          return;
-        }
-        toast(d.matched ? "Enrollment recorded in the sheet" : "Added as a new row in the sheet (no existing match found)");
+        const r = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED", customFieldsPatch }) });
+        if (!r.ok) { btn.disabled = false; msg.textContent = "Could not save"; return; }
+        toast("Enrolled -- recording the sale in the sheet now");
         opts.onCommitted && opts.onCommitted();
         close();
       } catch { btn.disabled = false; msg.textContent = "Could not reach the server"; }

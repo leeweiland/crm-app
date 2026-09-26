@@ -43,6 +43,7 @@ import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 import { seedKickoffForms } from "./seed_kickoff_forms.js";
 import { runInferredAttributionBackfill } from "./attribution_backfill.js";
 import { seedKickoffFlows } from "./seed_kickoff_flows.js";
+import { seedEnrollFlow } from "./seed_enroll_flow.js";
 import { syncKickoffFlows } from "./sync_kickoff_flows.js";
 import { runEmailFontSize16Migration } from "./email_font_size_migration.js";
 
@@ -148,6 +149,7 @@ try { runInferredAttributionBackfill(); } catch (e) { console.error("[attributio
 removeStaleTmpFiles();
 try { seedKickoffForms(); } catch (e) { console.error("[seed] kickoff forms failed (non-fatal):", e.message); }
 try { seedKickoffFlows(); } catch (e) { console.error("[seed] kickoff flows failed (non-fatal):", e.message); }
+try { seedEnrollFlow(); } catch (e) { console.error("[seed] enroll flow failed (non-fatal):", e.message); }
 try { syncKickoffFlows(); } catch (e) { console.error("[sync] kickoff flows failed (non-fatal):", e.message); }
 try { runEmailFontSize16Migration(); } catch (e) { console.error("[migration] email font size failed (non-fatal, will retry next boot):", e.message); }
 
