@@ -14,7 +14,7 @@ import { queryConversationsSqlite, syncContactFields, getContactByIdFast } from 
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 import { sentCategoryForSourceType } from "./ai_agents_backend.js";
-import { getEmailTheme, getEmailSendPreference } from "./integrations_backend.js";
+import { getEmailTheme, getEmailSendPreference, getGifApiKey } from "./integrations_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sseClients, broadcastInboxUpdate } from "./inbox_events.js";
 
@@ -45,7 +45,7 @@ function markConversationDone(contactId) {
 // scheduled-message job (sendDueScheduledMessages) -- identical Gmail/SES/
 // SMS send path either way, so a scheduled message behaves exactly like
 // typing it and hitting Send right now, just later.
-async function sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta }) {
+async function sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta, mediaUrl }) {
   if (channel === "email") {
     if (!contact.email) return { ok: false, status: 400, reason: "This contact has no email address" };
     const html = body.replace(/\n/g, "<br/>");
@@ -67,7 +67,7 @@ async function sendInboxMessage({ contact, channel, subject, body, sender, quote
   }
   if (channel === "sms") {
     if (!contact.phone) return { ok: false, status: 400, reason: "This contact has no phone number" };
-    const result = await sendSms({ to: contact.phone, body, contactId: contact.id, sourceType: "inbox", sourceId: sender.id });
+    const result = await sendSms({ to: contact.phone, body, contactId: contact.id, sourceType: "inbox", sourceId: sender.id, mediaUrl });
     return result.ok ? { ok: true } : { ok: false, status: 502, reason: result.reason || "Send failed" };
   }
   return { ok: false, status: 400, reason: "channel must be 'email' or 'sms'" };
@@ -170,7 +170,7 @@ function withContact(item, contacts) {
 // rather than a live call feed.
 export async function handleInboxRequest(req, res, url) {
   const p = url.pathname;
-  const owned = p === "/api/inbox" || p === "/api/inbox/activity" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/schedule" || p === "/api/inbox/scheduled" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/") || p.startsWith("/api/inbox/scheduled/");
+  const owned = p === "/api/inbox" || p === "/api/inbox/activity" || p === "/api/inbox/confirm-potential" || p === "/api/inbox/mark-done" || p === "/api/inbox/send" || p === "/api/inbox/schedule" || p === "/api/inbox/scheduled" || p === "/api/inbox/conversations" || p === "/api/inbox/ac-sync-recent" || p === "/api/inbox/events" || p === "/api/inbox/gifs" || p.startsWith("/api/calls") || p.startsWith("/api/tasks") || p.startsWith("/api/notes") || p.startsWith("/api/inbox/contact/") || p.startsWith("/api/inbox/conversations/") || p.startsWith("/api/inbox/scheduled/");
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
@@ -188,6 +188,30 @@ export async function handleInboxRequest(req, res, url) {
     const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* client gone -- close handler below cleans up */ } }, 30000);
     req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
     return true;
+  }
+
+  // GIF search for the compose bar's GIF picker -- same Giphy proxy shape
+  // chat-app's own /api/chat/gifs already uses (see settings.html's GIF
+  // Search section for the admin-managed key this reads).
+  if (p === "/api/inbox/gifs" && req.method === "GET") {
+    const key = getGifApiKey();
+    if (!key) return sendJson(res, 200, { gifs: [], needsConfig: true });
+    const q = url.searchParams.get("q") || "";
+    const endpoint = q
+      ? `https://api.giphy.com/v1/gifs/search?api_key=${key}&q=${encodeURIComponent(q)}&limit=24&rating=pg-13`
+      : `https://api.giphy.com/v1/gifs/trending?api_key=${key}&limit=24&rating=pg-13`;
+    try {
+      const r = await fetch(endpoint);
+      const d = await r.json();
+      const gifs = (d.data || []).map(g => ({
+        id: g.id,
+        preview: g.images?.fixed_width?.url || g.images?.original?.url,
+        full: g.images?.original?.url,
+      })).filter(g => g.preview && g.full);
+      return sendJson(res, 200, { gifs });
+    } catch (e) {
+      return sendJson(res, 200, { gifs: [], error: e.message });
+    }
   }
 
   // A user's own sent/received SMS+email -- messages they personally sent
@@ -634,7 +658,7 @@ export async function handleInboxRequest(req, res, url) {
   // logged-in staff member's own address (see email_backend.js's `from`
   // override), not the single shared campaign sender.
   if (p === "/api/inbox/send" && req.method === "POST") {
-    const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta } = await readJsonBody(req);
+    const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta, mediaUrl } = await readJsonBody(req);
     // getContactByIdFast, not a full readJson(CONTACTS_FILE, []).find() linear
     // scan over ~190MB just to grab this one contact -- same fix already
     // applied to this file's own internal-staff-email filter above, and to
@@ -642,7 +666,10 @@ export async function handleInboxRequest(req, res, url) {
     // Confirmed as part of the Inbox chat panel's own send-lag complaint.
     const contact = getContactByIdFast(contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
-    if (!body || !body.trim()) return sendJson(res, 400, { error: "Message is required" });
+    // mediaUrl (the chat panel's GIF picker, SMS only -- see sendSms) makes
+    // an otherwise-empty body a real, sendable MMS -- a real picture message
+    // has no text either. Every other send still needs real text.
+    if (!mediaUrl && (!body || !body.trim())) return sendJson(res, 400, { error: "Message is required" });
     // Sending "as" a teammate (compose panel's From dropdown, email only) --
     // admin only (enforced here too, not just by hiding the dropdown
     // client-side), and only trusts fromUserId enough to look up a REAL
@@ -656,7 +683,8 @@ export async function handleInboxRequest(req, res, url) {
       const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
       if (other) sender = other;
     }
-    const result = await sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta });
+    if (mediaUrl && channel !== "sms") return sendJson(res, 400, { error: "GIF sending is only supported for SMS right now" });
+    const result = await sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta, mediaUrl });
     if (!result.ok) return sendJson(res, result.status, { error: result.reason });
     return sendJson(res, 200, { ok: true });
   }

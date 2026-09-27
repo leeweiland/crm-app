@@ -11,7 +11,15 @@ export const INTEGRATIONS_FILE = "crm_integrations.json";
 // process.env stays as the zero-config fallback (e.g. Railway env vars) for
 // deployments where nobody has touched this UI yet.
 function readSettings() {
-  return readJson(INTEGRATIONS_FILE, { ses: {}, twilio: {}, site: {} });
+  return readJson(INTEGRATIONS_FILE, { ses: {}, twilio: {}, site: {}, gifs: {} });
+}
+
+// Giphy key for the Inbox chat panel's GIF picker (inbox_backend.js's
+// GET /api/inbox/gifs) -- same idea as getTwilioSettings, a single admin-
+// managed key rather than one more thing that needs an env var set per
+// deploy.
+export function getGifApiKey() {
+  return readSettings().gifs?.apiKey || process.env.GIPHY_API_KEY || "";
 }
 
 export function getPublicBaseUrl() {
@@ -328,6 +336,20 @@ export async function handleIntegrationsRequest(req, res, url) {
     } catch (e) {
       return sendJson(res, 502, { error: e.message });
     }
+  }
+
+  if (p === "/api/integrations/gifs" && req.method === "GET") {
+    const key = getGifApiKey();
+    return sendJson(res, 200, { configured: !!key, apiKey: mask(key) });
+  }
+  if (p === "/api/integrations/gifs" && req.method === "POST") {
+    if (!isAdmin(getSessionUser(req))) return sendJson(res, 403, { error: "Admins only" });
+    const body = await readJsonBody(req);
+    const all = readSettings();
+    all.gifs = all.gifs || {};
+    if ("apiKey" in body && !String(body.apiKey).startsWith("****")) all.gifs.apiKey = body.apiKey;
+    writeJson(INTEGRATIONS_FILE, all);
+    return sendJson(res, 200, { ok: true });
   }
 
   if (p === "/api/integrations/compliance" && req.method === "GET") {

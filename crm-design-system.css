@@ -757,6 +757,29 @@ body { margin: 0; }
    popovers do just clipped the whole panel invisible against that
    boundary, since there's no room below it to open into. */
 .compose-schedule-panel { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); }
+/* Same upward/leftward-opening reasoning as .compose-schedule-panel just
+   above -- these two sit right next to it, same bottom-right corner. */
+.emoji-picker-panel, .gif-picker-panel { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); width: 300px; max-width: 88vw; }
+.emoji-tabs { display: flex; gap: 3px; margin-bottom: 8px; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px solid var(--pra-border); }
+.emoji-tab { flex-shrink: 0; font-size: 1.15rem; padding: 3px 7px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.emoji-tab.active { border-color: var(--pra-blue); background: var(--pra-blue-dim); }
+.emoji-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; max-height: 200px; overflow-y: auto; }
+.emoji-grid span { font-size: 1.3rem; cursor: pointer; text-align: center; padding: 4px; border-radius: 6px; }
+.emoji-grid span:hover { background: rgba(255,255,255,0.06); }
+.gif-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 260px; overflow-y: auto; }
+.gif-grid img { width: 100%; border-radius: 8px; cursor: pointer; display: block; }
+/* The per-message reaction quick-bar (long-press/right-click on an inbound
+   SMS bubble) -- unlike every other .task-panel here, this one isn't
+   anchored to a fixed button in a position:relative wrapper, it opens at
+   wherever the press/click actually landed inside the scrolling thread, so
+   it needs real viewport-fixed positioning with JS-computed left/top
+   (openMsgReactPanel) rather than the generic absolute top:/left:0. */
+.msg-react-panel { position: fixed; width: auto; padding: 6px 8px; }
+.msg-react-row { display: flex; align-items: center; gap: 2px; }
+.mab-emoji { background: none; border: none; cursor: pointer; font-size: 1.35rem; line-height: 1; padding: 4px; border-radius: 50%; transition: background .15s, transform .1s; }
+.mab-emoji:hover { background: rgba(255,255,255,0.08); transform: scale(1.15); }
+.mab-emoji-plus { flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,0.06); border: 1px solid var(--pra-border); color: var(--pra-dim); font-size: 1.1rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.mab-emoji-plus:hover { color: var(--pra-white); border-color: var(--pra-blue); }
 .compose-quote-preview { border: 1px solid var(--pra-border); border-radius: 8px; margin-top: 8px; overflow: hidden; }
 .compose-quote-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--pra-panel-2); font-size: .72rem; color: var(--pra-dim); }
 .compose-quote-preview-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

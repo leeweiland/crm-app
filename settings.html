@@ -158,6 +158,13 @@
         <div class="pra-muted" style="font-size:.78rem;margin:-4px 0 12px">"Call From CRM" recordings upload here automatically. Only recorded calls get a Drive link -- "Call From Personal Phone" is never recorded.</div>
         <button class="pra-btn" id="saveRecordingsFolderBtn">Save</button>
         <div class="pra-muted" id="recordingsFolderMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
+
+        <div class="pra-h2" style="margin:28px 0 6px">GIF Search (Giphy)</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">Powers the GIF button in the Inbox chat panel's compose bar. Get a free key at developers.giphy.com.</div>
+        <div class="pra-muted" id="gifStatusMsg" style="font-size:.82rem;margin-bottom:12px">Loading...</div>
+        <div class="field"><label class="pra-label">Giphy API key</label><input class="pra-input" type="password" id="gifApiKey" autocomplete="off" placeholder="••••••••"/></div>
+        <button class="pra-btn" id="saveGifKeyBtn">Save</button>
+        <div class="pra-muted" id="gifSaveMsg" style="font-size:.8rem;margin-top:8px;min-height:1em"></div>
       </div>
 
       <div class="tab-panel" id="tab-emailsettings" style="max-width:600px">
@@ -944,6 +951,19 @@ document.getElementById('saveTwilioBtn').onclick = async () => {
   if (r.ok) loadTwilioSettings();
 };
 
+async function loadGifSettings() {
+  const r = await fetch('/api/integrations/gifs');
+  if (!r.ok) return;
+  const g = await r.json();
+  document.getElementById('gifStatusMsg').textContent = g.configured ? 'Configured — the GIF button works.' : 'Not configured yet — the GIF button will show "not configured" until this is filled in.';
+  document.getElementById('gifApiKey').value = g.apiKey || '';
+}
+document.getElementById('saveGifKeyBtn').onclick = async () => {
+  const r = await fetch('/api/integrations/gifs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: document.getElementById('gifApiKey').value.trim() }) });
+  document.getElementById('gifSaveMsg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+  if (r.ok) loadGifSettings();
+};
+
 async function loadComplianceSettings() {
   const r = await fetch('/api/integrations/compliance');
   if (!r.ok) return;
@@ -1383,6 +1403,7 @@ loadEmailTheme();
 loadSummaryImagePrompt();
 loadSesSettings();
 loadTwilioSettings();
+loadGifSettings();
 loadComplianceSettings();
 loadSiteSettings();
 loadTrackingSettings();

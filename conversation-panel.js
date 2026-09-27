@@ -71,6 +71,21 @@
   const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/></svg>';
   const CALENDAR_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
+  // Same category set chat-app's own emoji picker uses (chat.html's
+  // EMOJI_CATEGORIES) -- borrowed as-is so the picker here is familiar
+  // rather than a second, differently-curated one.
+  const EMOJI_CATEGORIES = {
+    Popular: ['🥷','💪','🥋','😊','😆','🤣','😁','😄','❤️','🤯','😲','😎','🤙','✋','🦾','🧠','🔥','⚡','⭐','💯','✅','🏆','🥇','🤸‍♂️','🤸‍♀️','✈️'],
+    Smileys: ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','☺️','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖'],
+    Gestures: ['👋','🤚','🖐️','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🙏','✍️','💅','🤳','💪','🦾','🦵','🦿','🦶','👣','👀','👁️','🧠','🦷','🦴'],
+    Hearts: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🕉️','☸️','✡️','🔯','💯','✅','❌','⭐','🌟','✨','🔥','💦','💥','⚡'],
+    Animals: ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐻‍❄️','🐨','🐯','🦁','🐮','🐷','🐽','🐸','🐵','🙈','🙉','🙊','🐒','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦗','🕷️','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦞','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🐇','🦝','🦨','🦡','🦦','🦥','🐁','🐀','🐿️','🦔','🐾'],
+    Food: ['🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🥐','🥯','🍞','🥖','🥨','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🫓','🥪','🌮','🌯','🫔','🥙','🧆','🥘','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🍰','🎂','🧁','🍮','🍭','🍬','🍫','🍿','🧂','🥜','🍩','🍪','☕','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾'],
+    Activities: ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🏋️‍♀️','🏋️‍♂️','🤼','🤸','🤸‍♀️','🤸‍♂️','⛹️','🤺','🤾','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️'],
+    Objects: ['💪','🎯','🏆','🥇','⚡','🔥','💯','✅','❌','⭐','🌟','✨','💥','💦','💧','🎉','🎊','🎈','🎁','🏅','🎗️','🔔','🔕','📣','📢','💬','🗯️','💭','💤','🕐','📅','📌','📍','🔍','🔎','🔒','🔓','🔑','🛡️','⚔️','🏹','🎪','🎭','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🎷','🎺','🎸','🪕','🎻'],
+  };
+  const QUICK_REACT_EMOJIS = ['👍','❤️','😂','😮','😢','🙏'];
+
   // Remembers which compose tab (email/sms) was last open, per contact, so a
   // real browser refresh (a fresh init() with no in-memory state) reopens
   // the same one instead of always landing back on email. Wrapped since
@@ -268,6 +283,12 @@
       if (bookingPanel?.classList.contains('open') && !bookingPanel.contains(e.target) && e.target.id !== 'chatBookingBtn' && !e.target.closest('#chatBookingBtn')) inst._toggleBookingPanel(false);
       const composeSchedulePanel = root.querySelector('#composeSchedulePanel');
       if (composeSchedulePanel?.classList.contains('open') && !composeSchedulePanel.contains(e.target) && e.target.id !== 'composeScheduleBtn' && !e.target.closest('#composeScheduleBtn')) inst._toggleComposeSchedulePanel(false);
+      const composeEmojiPanel = root.querySelector('#composeEmojiPanel');
+      if (composeEmojiPanel?.classList.contains('open') && !composeEmojiPanel.contains(e.target) && e.target.id !== 'composeEmojiBtn' && !e.target.closest('#composeEmojiBtn') && e.target.id !== 'msgReactMoreBtn') inst._toggleComposeEmojiPanel(false);
+      const composeGifPanel = root.querySelector('#composeGifPanel');
+      if (composeGifPanel?.classList.contains('open') && !composeGifPanel.contains(e.target) && e.target.id !== 'composeGifBtn' && !e.target.closest('#composeGifBtn')) inst._toggleComposeGifPanel(false);
+      const msgReactPanel = root.querySelector('#msgReactPanel');
+      if (msgReactPanel?.classList.contains('open') && !msgReactPanel.contains(e.target)) inst._toggleMsgReactPanel(false);
     });
   }
 
@@ -671,6 +692,134 @@
       render();
     }
 
+    // ── Emoji / GIF picker + per-message SMS reactions ─────────────────────
+    // Shared by the compose bar's own 😊 button (insert into the textarea)
+    // and a long-pressed/right-clicked inbound SMS bubble's "+" (send
+    // immediately as a reaction -- see sendQuickReaction) -- emojiPickMode
+    // decides which onPick() below does. Category set borrowed from
+    // chat-app's own emoji picker (EMOJI_CATEGORIES above).
+    let emojiPickMode = 'insert'; // 'insert' | 'react'
+    let emojiTabsWired = false;
+    function renderEmojiGrid(activeCat) {
+      const tabsEl = container.querySelector('#composeEmojiTabs');
+      const gridEl = container.querySelector('#composeEmojiGrid');
+      if (!tabsEl || !gridEl) return;
+      const names = Object.keys(EMOJI_CATEGORIES);
+      const active = activeCat && EMOJI_CATEGORIES[activeCat] ? activeCat : names[0];
+      tabsEl.innerHTML = names.map(name =>
+        `<span class="emoji-tab${name === active ? ' active' : ''}" data-cat="${name}" title="${name}">${EMOJI_CATEGORIES[name][0]}</span>`
+      ).join('');
+      gridEl.innerHTML = EMOJI_CATEGORIES[active].map(e => `<span>${e}</span>`).join('');
+      tabsEl.querySelectorAll('.emoji-tab').forEach(tab => tab.onclick = () => renderEmojiGrid(tab.dataset.cat));
+      gridEl.querySelectorAll('span').forEach(span => span.onclick = () => onEmojiPicked(span.textContent));
+    }
+    function onEmojiPicked(emoji) {
+      // Captured before closing -- _toggleComposeEmojiPanel(false) itself
+      // resets emojiPickMode back to 'insert' (its generic close-from-
+      // anywhere behavior, e.g. a click outside), so checking the mode
+      // after closing always read the just-reset default instead of
+      // whatever this actual pick was for.
+      const mode = emojiPickMode;
+      _toggleComposeEmojiPanel(false);
+      if (mode === 'react') { sendQuickReaction(emoji); return; }
+      const bodyEl = container.querySelector('#composeBody');
+      if (bodyEl) insertAtCursor(bodyEl, emoji);
+    }
+    function insertAtCursor(el, text) {
+      const start = el.selectionStart ?? el.value.length, end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + text.length;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    function _toggleComposeEmojiPanel(forceOpen) {
+      const panel = container.querySelector('#composeEmojiPanel');
+      if (!panel) return;
+      const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      panel.classList.toggle('open', opening);
+      if (opening) { renderEmojiGrid(); if (!emojiTabsWired) emojiTabsWired = true; }
+      else emojiPickMode = 'insert'; // closing any other way (outside click, Esc) cancels a pending reaction pick
+    }
+    // Sends the picked emoji as a brand-new outbound SMS to this contact --
+    // there's no "reaction"/tapback concept on plain SMS the way chat-app's
+    // own native protocol has one, so "liking" a text here just IS sending
+    // them that emoji back, the same as typing it into the compose box and
+    // hitting Send. No success toast (matches sendComposeMessage -- the
+    // emoji showing up in the thread below is already the confirmation).
+    async function sendQuickReaction(emoji) {
+      const contactId = state.contactId;
+      if (!contactId) return;
+      const r = await fetch('/api/inbox/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId, channel: 'sms', body: emoji }),
+      }).catch(() => null);
+      if (!r || !r.ok) { showToast('Could not send', true); return; }
+      loadThread();
+    }
+    function _toggleMsgReactPanel(forceOpen, x, y) {
+      const panel = container.querySelector('#msgReactPanel');
+      if (!panel) return;
+      const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      panel.classList.toggle('open', opening);
+      if (opening && x != null && y != null) {
+        // Measure while hidden (display is already 'block' from the 'open'
+        // class above) so placement uses the panel's real rendered size
+        // instead of a guessed constant -- same reasoning as the booking
+        // panel's own viewport clamp.
+        panel.style.visibility = 'hidden';
+        panel.style.left = '0px'; panel.style.top = '0px';
+        const w = panel.offsetWidth, h = panel.offsetHeight;
+        let left = Math.max(8, Math.min(x - w / 2, window.innerWidth - w - 8));
+        // Opens ABOVE the press point by default (a thumb/cursor just sat on
+        // the message, so the bar reads better floating over what's above
+        // it) with a fallback below when there's no room above.
+        let top = y - h - 12;
+        if (top < 8) top = Math.min(y + 12, window.innerHeight - h - 8);
+        panel.style.left = left + 'px';
+        panel.style.top = top + 'px';
+        panel.style.visibility = '';
+      }
+    }
+    async function loadGifs(q) {
+      const grid = container.querySelector('#composeGifGrid');
+      if (!grid) return;
+      grid.innerHTML = '<div class="pra-muted" style="grid-column:1/3">Loading…</div>';
+      const r = await fetch('/api/inbox/gifs?q=' + encodeURIComponent(q || '')).catch(() => null);
+      const d = r && r.ok ? await r.json() : null;
+      if (!d) { grid.innerHTML = '<div class="pra-muted" style="grid-column:1/3">Could not load GIFs.</div>'; return; }
+      if (d.needsConfig) { grid.innerHTML = '<div class="pra-muted" style="grid-column:1/3">GIF search isn\'t configured yet -- Settings &gt; Twilio &gt; GIF Search.</div>'; return; }
+      grid.innerHTML = (d.gifs || []).map(g => `<img src="${escapeHtml(g.preview)}" data-full="${escapeHtml(g.full)}"/>`).join('') || '<div class="pra-muted" style="grid-column:1/3">No results</div>';
+      grid.querySelectorAll('img').forEach(img => img.onclick = () => sendGifPicked(img.dataset.full));
+    }
+    // SMS can carry a real MMS attachment (sendSms's mediaUrl -- see
+    // inbox_backend.js's /api/inbox/send); email has no equivalent picker
+    // flow here (the compose box is plain text, not a rich editor), so a
+    // GIF picked on the email tab just inserts its URL as a normal link
+    // instead of silently doing nothing.
+    async function sendGifPicked(url) {
+      _toggleComposeGifPanel(false);
+      if (state.composeChannel !== 'sms') {
+        const bodyEl = container.querySelector('#composeBody');
+        if (bodyEl) insertAtCursor(bodyEl, url);
+        return;
+      }
+      const contactId = state.contactId;
+      if (!contactId) return;
+      const r = await fetch('/api/inbox/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId, channel: 'sms', body: '', mediaUrl: url }),
+      }).catch(() => null);
+      if (!r || !r.ok) { showToast('Could not send GIF', true); return; }
+      loadThread();
+    }
+    function _toggleComposeGifPanel(forceOpen) {
+      const panel = container.querySelector('#composeGifPanel');
+      if (!panel) return;
+      const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      panel.classList.toggle('open', opening);
+      if (opening) loadGifs('');
+    }
+
     // ── AI assist ───────────────────────────────────────────────────────
     async function generateAiContent(channel, btn) {
       const contactId = state.contactId;
@@ -968,6 +1117,20 @@
         ${actionsHtml}
         ${emailStatsHtml(emailItems)}
         <div class="chat-thread" id="chatThread"></div>
+        ${showToolbar ? `
+        <!-- Long-press (touch) / right-click (desktop) on an inbound SMS
+             bubble opens this -- picking an emoji sends it as a real new
+             outbound SMS (there's no native "reaction" on plain SMS), same
+             quick-emoji-row-plus-"+" shape as chat-app's own message action
+             bar, just simplified since there's nothing here to react ON
+             (star/forward/reply/delete) besides the reaction itself. -->
+        <div class="task-panel msg-react-panel" id="msgReactPanel">
+          <div class="msg-react-row" id="msgReactRow">
+            ${QUICK_REACT_EMOJIS.map(e => `<button type="button" class="mab-emoji" data-emoji="${e}">${e}</button>`).join('')}
+            <button type="button" class="mab-emoji-plus" id="msgReactMoreBtn" title="More emoji">+</button>
+          </div>
+        </div>
+        ` : ''}
         <div class="compose-resize-handle" id="composeResizeHandle" title="Drag to resize"></div>
         <div class="compose-bar" id="composeBar" style="${state.composeBarHeight ? `height:${state.composeBarHeight}px;flex:0 0 ${state.composeBarHeight}px;` : ''}">
           ${showToolbar ? `
@@ -998,6 +1161,20 @@
               <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}">${escapeHtml(state.composeDraftByContact[contactId] || '')}</textarea>
               <div class="compose-send-group">
                 <button class="pra-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
+                <div class="chat-panel-task-btn compose-emoji-wrap">
+                  <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn" id="composeEmojiBtn" title="Emoji">😊</button>
+                  <div class="task-panel emoji-picker-panel" id="composeEmojiPanel">
+                    <div class="emoji-tabs" id="composeEmojiTabs"></div>
+                    <div class="emoji-grid" id="composeEmojiGrid"></div>
+                  </div>
+                </div>
+                <div class="chat-panel-task-btn compose-gif-wrap">
+                  <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn" id="composeGifBtn" title="GIF">GIF</button>
+                  <div class="task-panel gif-picker-panel" id="composeGifPanel">
+                    <input class="pra-input" id="composeGifSearch" placeholder="Search GIFs…" style="margin-bottom:8px"/>
+                    <div class="gif-grid" id="composeGifGrid"></div>
+                  </div>
+                </div>
                 <div class="chat-panel-task-btn compose-schedule-wrap">
                   <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeScheduleBtn" title="Schedule for later">${CALENDAR_ICON}</button>
                   <div class="task-panel compose-schedule-panel" id="composeSchedulePanel">
@@ -1064,7 +1241,36 @@
       });
       threadEl.scrollTop = threadEl.scrollHeight;
 
+      // Long-press (touch, 450ms) / right-click (desktop) on an inbound SMS
+      // bubble opens the quick-reaction bar (see _toggleMsgReactPanel).
+      // Scoped to inbound only -- "liking their message" is about reacting
+      // to what THEY sent, not staff's own outbound texts. threadEl itself
+      // is a fresh node every render (container.innerHTML rebuild above),
+      // so these listeners never need explicit teardown/re-registration.
       if (showToolbar) {
+        let msgLongPressTimer = null;
+        const cancelMsgLongPress = () => { if (msgLongPressTimer) { clearTimeout(msgLongPressTimer); msgLongPressTimer = null; } };
+        threadEl.addEventListener('touchstart', (e) => {
+          const bubble = e.target.closest('.bubble-row.inbound .sms-bubble');
+          if (!bubble) return;
+          const touch = e.touches[0];
+          const x = touch.clientX, y = touch.clientY;
+          msgLongPressTimer = setTimeout(() => { _toggleMsgReactPanel(true, x, y); msgLongPressTimer = null; }, 450);
+        }, { passive: true });
+        threadEl.addEventListener('touchmove', cancelMsgLongPress, { passive: true });
+        threadEl.addEventListener('touchend', cancelMsgLongPress);
+        threadEl.addEventListener('touchcancel', cancelMsgLongPress);
+        threadEl.addEventListener('contextmenu', (e) => {
+          const bubble = e.target.closest('.bubble-row.inbound .sms-bubble');
+          if (!bubble) return;
+          e.preventDefault();
+          _toggleMsgReactPanel(true, e.clientX, e.clientY);
+        });
+        const msgReactPanel = container.querySelector('#msgReactPanel');
+        msgReactPanel?.querySelectorAll('.mab-emoji').forEach(btn => btn.onclick = () => { _toggleMsgReactPanel(false); sendQuickReaction(btn.dataset.emoji); });
+        const msgReactMoreBtn = container.querySelector('#msgReactMoreBtn');
+        if (msgReactMoreBtn) msgReactMoreBtn.onclick = () => { _toggleMsgReactPanel(false); emojiPickMode = 'react'; _toggleComposeEmojiPanel(true); };
+
         container.querySelectorAll('.compose-channel-toggle [data-ch]').forEach(btn => btn.onclick = () => {
           state.composeReplyTo = null; // manually switching tabs exits reply mode
           if (btn.dataset.ch === 'summary') state.composeView = 'summary';
@@ -1088,6 +1294,16 @@
         const sendBtn = container.querySelector('#composeSendBtn'); if (sendBtn) sendBtn.onclick = sendComposeMessage;
         const scheduleBtn = container.querySelector('#composeScheduleBtn');
         if (scheduleBtn) scheduleBtn.onclick = (e) => { e.stopPropagation(); _toggleComposeSchedulePanel(); };
+        const emojiBtn = container.querySelector('#composeEmojiBtn');
+        if (emojiBtn) emojiBtn.onclick = (e) => { e.stopPropagation(); emojiPickMode = 'insert'; _toggleComposeEmojiPanel(); };
+        const gifBtn = container.querySelector('#composeGifBtn');
+        if (gifBtn) gifBtn.onclick = (e) => { e.stopPropagation(); _toggleComposeGifPanel(); };
+        let gifSearchTimer;
+        const gifSearchInput = container.querySelector('#composeGifSearch');
+        if (gifSearchInput) gifSearchInput.addEventListener('input', (e) => {
+          clearTimeout(gifSearchTimer);
+          gifSearchTimer = setTimeout(() => loadGifs(e.target.value || ''), 350);
+        });
       }
       const backBtn = container.querySelector('#chatBackBtn');
       if (backBtn) backBtn.onclick = () => config.onBack?.();
@@ -1358,6 +1574,7 @@
       _toggleSchedulePanel, _submitNewMeeting,
       _toggleComposeSchedulePanel, _submitScheduledSend,
       _toggleBookingPanel,
+      _toggleComposeEmojiPanel, _toggleComposeGifPanel, _toggleMsgReactPanel,
     };
     _instancesByRoot.set(container, instance);
     return instance;
