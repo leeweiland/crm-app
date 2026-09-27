@@ -809,7 +809,10 @@
       }
       btn.disabled = false; btn.textContent = state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send';
       if (networkError || !r.ok) { showToast(d?.error || networkError?.message || 'Send failed', true); return; }
-      showToast('Sent');
+      // No "Sent" success toast here -- the message immediately appearing in
+      // the thread below is already the confirmation; the toast (fixed
+      // bottom-right) just sat as a redundant dark box on top of the Send
+      // button itself, right where the compose bar already lives.
       delete state.composeDraftByContact[contactId];
       // Resets to the exact same state this panel opens with for a fresh
       // conversation -- not just clearing composeReplyTo (which alone left
