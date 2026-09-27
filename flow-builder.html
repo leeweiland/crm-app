@@ -360,10 +360,26 @@ async function loadRefs() {
   if (acRes.ok) { const acData = await acRes.json(); acIsConfigured = acData.configured; allAcLists = acData.lists; allAcAutomations = acData.automations; allAcCustomFields = acData.customFields; }
 }
 
+// A "payload.<code>" condition (a form question's own answer -- see the
+// if_then config panel above) reads as a raw, un-humanized "payload.type eq
+// Online" otherwise -- meaningless to anyone who didn't just build the
+// step. cachedFieldLabels (code -> the question's current wording) gives a
+// real label to show instead, in the same Question/Answer shape the app's
+// other Q&A displays already use (e.g. the booking confirmation email's
+// intake-answers block).
+function conditionSummary(cond, prefix) {
+  const field = cond?.field, value = cond?.value;
+  if (!field) return `${prefix} —`;
+  if (field.startsWith('payload.')) {
+    const label = escapeHtml(cachedFieldLabels[field.slice('payload.'.length)] || field.slice('payload.'.length));
+    return `Question: ${label}<br>Answer: ${escapeHtml(String(value ?? ''))}`;
+  }
+  return `${prefix} ${field} ${cond.op || ''} ${escapeHtml(String(value ?? ''))}`;
+}
 function stepSummary(step) {
   const c = step.config || {};
-  if (step.type === 'filter') return `Continue only if ${c.filter?.all?.[0]?.field || '—'} ${c.filter?.all?.[0]?.op || ''} ${escapeHtml(String(c.filter?.all?.[0]?.value ?? ''))}`;
-  if (step.type === 'if_then') return `If ${c.filter?.all?.[0]?.field || '—'} ${c.filter?.all?.[0]?.op || ''} ${escapeHtml(String(c.filter?.all?.[0]?.value ?? ''))}`;
+  if (step.type === 'filter') return conditionSummary(c.filter?.all?.[0], 'Continue only if');
+  if (step.type === 'if_then') return conditionSummary(c.filter?.all?.[0], 'If');
   if (step.type === 'delay') return `Wait ${c.amount || 0} ${c.unit || 'minutes'}`;
   if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'sheet_upsert') return `Find/update row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.matchGroups || []).length} match rule${(c.matchGroups || []).length === 1 ? '' : 's'}, ${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
@@ -2346,6 +2362,13 @@ canvasWrap.addEventListener('touchend', (e) => {
   runCounts = d.stepCounts || {};
   render();
   centerCanvasOnTrigger();
+  // cachedFieldLabels (code -> question wording, used by conditionSummary
+  // above to humanize an if_then/filter step's "payload.<code>" condition)
+  // is only populated once fetchRawSamples() has run -- kick it off here so
+  // a form_submitted flow's step cards show "Question: Type" on first load
+  // instead of the raw code, without waiting for something else in the
+  // builder (e.g. opening the token picker) to have fetched it first.
+  if (flow.trigger?.type === 'form_submitted') fetchRawSamples().then(render);
 })();
 </script>
 </body>
