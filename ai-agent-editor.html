@@ -255,7 +255,10 @@
                     <div class="activity-scroll" id="actContactList"></div>
                   </div>
                   <div class="activity-convo-col">
-                    <div class="pra-muted" id="actConvoHeader" style="font-size:.82rem;margin-bottom:8px">Select a contact to see their conversation.</div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                      <div class="pra-muted" id="actConvoHeader" style="font-size:.82rem;flex:1">Select a contact to see their conversation.</div>
+                      <button class="tc-reset-btn" id="actJumpBottomBtn" type="button" title="Jump to the bottom of the conversation">▾</button>
+                    </div>
                     <div class="activity-scroll" id="actConvo"></div>
                   </div>
                 </div>
@@ -481,6 +484,7 @@
               <div class="tc-title">Test Conversation</div>
               <div class="tc-sub">Talk to this agent using what's in the form right now</div>
             </div>
+            <button class="tc-reset-btn" id="tcJumpBottomBtn" type="button" title="Jump to the bottom of the conversation">▾</button>
             <button class="tc-reset-btn" id="tcResetBtn" type="button">Reset</button>
           </div>
           <div class="tc-thread" id="tcThread">
@@ -505,7 +509,10 @@
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="tcFreshStartBtn" type="button" disabled title="Load a contact first">Fresh Start</button>
             </div>
             <div class="pra-muted" id="tcRealSendStatus" style="font-size:.72rem;margin-top:8px;display:none"></div>
-            <div id="tcRealSendConvo" style="max-height:300px;overflow-y:auto;display:none;flex-direction:column;gap:8px;margin-top:12px;padding:14px;border:1px solid var(--pra-border);border-radius:10px;background:var(--pra-panel)"></div>
+            <div id="tcRealSendConvoWrap" style="display:none;flex-direction:column;margin-top:12px">
+              <button class="tc-reset-btn" id="tcRealJumpBottomBtn" type="button" title="Jump to the bottom of the conversation" style="align-self:flex-end;margin-bottom:6px">▾</button>
+              <div id="tcRealSendConvo" style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:14px;border:1px solid var(--pra-border);border-radius:10px;background:var(--pra-panel)"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -797,6 +804,10 @@ function resetTestChat() {
   tcHistory = [];
   tcThread().innerHTML = `<div class="tc-empty" id="tcEmpty">${escapeHtml(TC_EMPTY_TEXT)}</div>`;
 }
+// Manual-only -- previously ran after every new bubble/typing-indicator/
+// countdown tick, which kept yanking the view back down even while someone
+// was deliberately scrolled up reading earlier messages. Now only the
+// tcJumpBottomBtn (▾) chevron in the header calls this.
 function tcScrollToBottom() { const t = tcThread(); t.scrollTop = t.scrollHeight; }
 // [[GIF: <url>]] (see ai_active_backend.js's extractGifMarker) sends as a
 // real MMS/inline image for real -- rendered here as an actual <img>
@@ -830,7 +841,6 @@ function addTcSystemNote(text) {
   el.className = 'tc-system-note';
   el.textContent = text;
   tcThread().appendChild(el);
-  tcScrollToBottom();
 }
 function addTcBubble(role, text) {
   const empty = document.getElementById('tcEmpty');
@@ -848,7 +858,6 @@ function addTcBubble(role, text) {
   }
   row.appendChild(bubble);
   tcThread().appendChild(row);
-  tcScrollToBottom();
   return bubble;
 }
 function setTcTyping(on) {
@@ -860,7 +869,6 @@ function setTcTyping(on) {
       el.className = 'tc-typing';
       el.textContent = (document.getElementById('fName').value.trim() || 'Agent') + ' is typing…';
       tcThread().appendChild(el);
-      tcScrollToBottom();
     }
   } else if (el) el.remove();
 }
@@ -910,7 +918,6 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
           if (!bubble) { setTcTyping(false); bubble = addTcBubble('assistant', ''); }
           full += evt.text;
           bubble.textContent = full;
-          tcScrollToBottom();
         }
       }
     }
@@ -1026,7 +1033,6 @@ function tcShowCountdown(label, untilMs) {
   const tick = () => {
     const remaining = Math.max(0, Math.round((untilMs - Date.now()) / 1000));
     el.textContent = `${label} in ${remaining}s…`;
-    tcScrollToBottom();
   };
   tick();
   tcCountdownInterval = setInterval(tick, 1000);
@@ -1109,6 +1115,9 @@ async function sendTestChatMessage() {
 }
 document.getElementById('tcSendBtn').addEventListener('click', sendTestChatMessage);
 document.getElementById('tcResetBtn').addEventListener('click', resetTestChat);
+document.getElementById('tcJumpBottomBtn').addEventListener('click', tcScrollToBottom);
+document.getElementById('actJumpBottomBtn').addEventListener('click', () => { const c = document.getElementById('actConvo'); c.scrollTop = c.scrollHeight; });
+document.getElementById('tcRealJumpBottomBtn').addEventListener('click', () => { const c = document.getElementById('tcRealSendConvo'); c.scrollTop = c.scrollHeight; });
 // Looks the contact up by email (reuses GET /api/contacts?q=, the same
 // search the Contacts page itself uses) and, once found, passes its id on
 // every /chat call below -- the endpoint already builds real journey
@@ -1210,12 +1219,13 @@ async function toggleTestBatch() {
 // so a genuine inbound reply that already landed shows up too.
 async function loadRealSendConvo() {
   const convoEl = document.getElementById('tcRealSendConvo');
-  if (!tcContactId || !editingAgentId) { convoEl.style.display = 'none'; return; }
+  const wrapEl = document.getElementById('tcRealSendConvoWrap');
+  if (!tcContactId || !editingAgentId) { wrapEl.style.display = 'none'; return; }
   try {
     const r = await fetch(`/api/ai-agents/${editingAgentId}/activity-contact/${tcContactId}`);
     const data = await r.json();
-    if (!r.ok || !data.items.length) { convoEl.style.display = 'none'; return; }
-    convoEl.style.display = 'flex';
+    if (!r.ok || !data.items.length) { wrapEl.style.display = 'none'; return; }
+    wrapEl.style.display = 'flex';
     renderConvoBubbles(convoEl, data.items);
   } catch {
     // Silent -- this is a supplementary view; tcRealSendStatus above still
@@ -1628,7 +1638,8 @@ function renderConvoBubbles(container, items) {
       <div class="tc-bubble"><span class="activity-channel-tag">${escapeHtml(m.channel)} · ${escapeHtml(fmtActTime(m.createdAt))}</span>${escapeHtml(m.text || '(no content)')}</div>
     </div>
   `).join('');
-  container.scrollTop = container.scrollHeight;
+  // No forced scroll-to-bottom here -- see the ▾ jump-to-bottom buttons
+  // (actJumpBottomBtn/tcRealJumpBottomBtn) for the manual equivalent.
 }
 async function selectActivityContact(contactId) {
   actSelectedId = contactId;
