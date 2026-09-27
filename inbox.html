@@ -335,6 +335,7 @@
               <option value="favorites">Favorites</option>
               <option value="archived">Archived</option>
               <option value="hidden">Hidden</option>
+              <option value="everyContact">Every Contact</option>
             </select>
             <select class="pra-select" id="convoChannelSelect">
               <option value="">Email &amp; SMS</option>
@@ -970,7 +971,10 @@ function convoRowHtml(c) {
   // stripped here rather than at the data, so it's fixed for every already-
   // imported row immediately, not just future ones.
   const previewRaw = (c.lastPreview || '').replace(/\s*\(active\)\s*$/i, '');
-  const previewText = escapeHtml(previewRaw.replace(/<[^>]+>/g, ' ')).trim().slice(0, 56);
+  // Every Contact rows can have no conversation at all (a lead who's never
+  // been messaged) -- a blank preview line there read as broken/loading,
+  // not "nothing to show yet".
+  const previewText = previewRaw ? escapeHtml(previewRaw.replace(/<[^>]+>/g, ' ')).trim().slice(0, 56) : (c.lastAt ? '' : 'No messages yet.');
   return `
     <div class="convo-row${selectedConvo?.key === c.key ? ' selected' : ''}${c.pinned ? ' pinned' : ''}${selectedConvoKeys.has(c.key) ? ' multi-selected' : ''}" data-convo="${c.key}">
       <div class="pra-avatar convo-avatar${hasUnread ? ' has-unread' : ''}" style="${avatarStyle(c.contact?.status, c.contact?.email, rn)}">${initials(c.displayName)}</div>

@@ -754,6 +754,80 @@ export function queryConversationsSqlite({ channel, statusFilter, typeFilter, ow
   return { conversations, total, hasMore: offset + limit < total };
 }
 
+// "Every Contact" bucket -- same page shape/row rendering as
+// queryConversationsSqlite's normal buckets, but driven by contacts_idx
+// (every contact, ~176k rows) LEFT JOINed to conversations instead of
+// conversations alone, so a lead who's never been messaged still shows up
+// (as "no messages yet") instead of being invisible in the sidebar until
+// their first contact. Paginated the same way (LIMIT/OFFSET on an indexed
+// query, never a full-table fold), so this is the same cost class as the
+// Contacts page's own listing, not a new risk. Filters/search run against
+// contacts_idx's own indexed columns since a conversation row may not
+// exist at all for a given contact.
+export function queryEveryContactSqlite({ statusFilter, typeFilter, ownerFilter, sortDir, search, limit, offset, currentUserId }) {
+  if (!sqliteInboxAvailable()) return null;
+
+  const where = [];
+  const params = {};
+  if (statusFilter) { where.push("ci.status = :status"); params.status = statusFilter; }
+  if (typeFilter) { where.push("ci.program_type = :programType"); params.programType = typeFilter; }
+  if (ownerFilter === "unassigned") { where.push("(ci.owner_id IS NULL OR ci.owner_id = '')"); }
+  else if (ownerFilter) { where.push("ci.owner_id = :ownerId"); params.ownerId = ownerFilter; }
+  // first/last/email LIKE '%x%' can't use idx_ci_first/last/email's plain
+  // b-tree (no leading-anchor match) -- same tradeoff the Contacts page's
+  // own search already accepts at this scale, not a new cost introduced
+  // here.
+  if (search) {
+    where.push("(LOWER(ci.first) LIKE :search OR LOWER(ci.last) LIKE :search OR LOWER(ci.email) LIKE :search)");
+    params.search = `%${search.toLowerCase()}%`;
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const dir = sortDir === "oldest" ? "ASC" : "DESC";
+  // Newest-CONTACT-first (contacts_idx.created_at), not newest-message --
+  // most rows here have no message at all to sort by. Closest equivalent
+  // to the normal buckets' "Newest first" for a bucket that's fundamentally
+  // about contacts, not conversations.
+  const orderSql = `ORDER BY ci.created_at ${dir}`;
+
+  const total = db.prepare(`SELECT COUNT(*) as n FROM contacts_idx ci ${whereSql}`).get(params).n;
+  const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit) || 40));
+  const safeOffset = Math.max(0, Math.trunc(offset) || 0);
+  const rows = db.prepare(`
+    SELECT ci.id as contact_id, ci.first, ci.last, ci.email, ci.phone, ci.status, ci.program_type, ci.owner_id, ci.first_seen_at,
+           c.key, c.last_channel, c.last_direction, c.last_preview, c.last_at_ms, c.last_inbound_at_ms, c.last_message_id,
+           c.unread_count, c.last_seen_by_json, c.pinned, c.starred, c.archived, c.done, c.last_status, c.last_opened,
+           c.renew_by_ms, c.renew_ack, c.hidden
+    FROM contacts_idx ci
+    LEFT JOIN conversations c ON c.contact_id = ci.id
+    ${whereSql}
+    ${orderSql} LIMIT ${safeLimit} OFFSET ${safeOffset}
+  `).all(params);
+
+  const renewWin = renewalWindow();
+  const bookedContactIds = upcomingBookedContactIds();
+  const conversations = rows.map(r => {
+    const lastSeenMs = lastSeenByMeMs(r, currentUserId);
+    const rLevel = renewalLevel(r.status, r.renew_by_ms, renewWin);
+    const renewal = rLevel ? { level: rLevel === 2 ? "pink" : "orange", endDate: new Date(r.renew_by_ms).toISOString().slice(0, 10), unhandled: !r.done || (r.renew_ack || 0) < rLevel } : null;
+    return {
+      key: r.key || r.contact_id, contactId: r.contact_id, renewal,
+      hasUpcomingBooking: bookedContactIds.has(r.contact_id),
+      contact: { status: r.status, programType: r.program_type, email: r.email, phone: r.phone, firstSeenAt: r.first_seen_at, first: r.first, last: r.last, ownerId: r.owner_id, renewal },
+      displayName: `${r.first || ""} ${r.last || ""}`.trim(),
+      lastChannel: r.last_channel, lastDirection: r.last_direction,
+      lastPreview: r.last_preview,
+      lastAt: r.last_at_ms ? new Date(r.last_at_ms).toISOString() : null,
+      lastInboundAt: r.last_inbound_at_ms ? new Date(r.last_inbound_at_ms).toISOString() : null,
+      lastMessageId: r.last_message_id,
+      unreadCount: r.hidden ? 0 : (r.unread_count || 0),
+      hasUnseen: !r.hidden && !!r.last_inbound_at_ms && (lastSeenMs == null || r.last_inbound_at_ms > lastSeenMs),
+      pinned: !!r.pinned, starred: !!r.starred, archived: !!r.archived, done: !!r.done,
+      lastStatus: r.last_status, lastOpened: !!r.last_opened,
+    };
+  });
+  return { conversations, total, hasMore: offset + limit < total };
+}
+
 // Trivial indexed lookup by primary key -- turns contact-detail.html's
 // ~5s single-contact load (a full readJson(CONTACTS_FILE, []).find(...)
 // linear scan over ~190MB) into effectively instant. raw_json is the exact

@@ -10,7 +10,7 @@ import {
   markContactMessagesDone, upsertConversationSummary, recomputeConversationSummary, removeConversationSummary,
   CONVERSATION_INDEX_FILE,
 } from "./message_index.js";
-import { queryConversationsSqlite, syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
+import { queryConversationsSqlite, queryEveryContactSqlite, syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
 import { reconcileRecentGmailForContact, sendViaGmail } from "./gmail_backend.js";
 import { syncAcEngagementForContact, syncAcEngagementForRecentContacts, getAcCampaignHtml } from "./ac_sync.js";
 import { sentCategoryForSourceType } from "./ai_agents_backend.js";
@@ -385,7 +385,7 @@ export async function handleInboxRequest(req, res, url) {
     const statusFilter = url.searchParams.get("status") || "";
     const typeFilter = url.searchParams.get("type") || "";
     const ownerFilter = url.searchParams.get("owner") || ""; // a user id, "unassigned", or "" (no filter)
-    const bucket = url.searchParams.get("filter") || "all"; // all|done|unresponded|archived|favorites
+    const bucket = url.searchParams.get("filter") || "all"; // all|done|unresponded|archived|favorites|everyContact
     const sortDir = url.searchParams.get("sort") === "oldest" ? "oldest" : "newest";
     const search = (url.searchParams.get("search") || "").trim().toLowerCase();
     const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("limit"), 10) || 40));
@@ -399,9 +399,17 @@ export async function handleInboxRequest(req, res, url) {
     // against or to recover from a bad sync without waiting on a redeploy.
     if (url.searchParams.get("_sqlite") !== "0") {
       const t0 = Date.now();
-      const result = queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset, currentUserId: me.id });
+      // Every Contact is its own query path (contacts_idx LEFT JOIN
+      // conversations -- see its own comment) rather than one more `bucket`
+      // branch inside queryConversationsSqlite, which is driven by the
+      // conversations table alone and has no way to surface a contact with
+      // zero messages at all.
+      const result = bucket === "everyContact"
+        ? queryEveryContactSqlite({ statusFilter, typeFilter, ownerFilter, sortDir, search, limit, offset, currentUserId: me.id })
+        : queryConversationsSqlite({ channel, statusFilter, typeFilter, ownerFilter, bucket, sortDir, search, limit, offset, currentUserId: me.id });
       if (result) return sendJson(res, 200, { ...result, _queryMs: Date.now() - t0, _engine: "sqlite" });
     }
+    if (bucket === "everyContact") return sendJson(res, 200, { conversations: [], total: 0, hasMore: false }); // sqlite unavailable -- no JSON-fold fallback for this bucket (would mean folding all ~176k contacts in JS on every request)
     const _t0 = Date.now();
     const contacts = readJson(CONTACTS_FILE, []);
     // Reads the persisted per-contact summary index (kept incrementally up
