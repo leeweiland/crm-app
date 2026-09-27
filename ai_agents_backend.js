@@ -109,7 +109,9 @@ NO SIGN-OFFS
 // prompt -- an agent whose systemPrompt was customized before this existed
 // (or edited later without knowing about it) must still get these, or
 // AI Active's escalate/hot-handoff/skip transitions silently never fire.
-const RESPONSE_FORMAT_INSTRUCTIONS = `WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
+const RESPONSE_FORMAT_INSTRUCTIONS = `NEVER show your reasoning, deliberation, or thought process in your response -- not "let me think about this," not weighing options out loud, nothing before or around the actual answer. Your entire response is EITHER the reply/marker itself and NOTHING else.
+
+WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
 - \`[[NO_RESPONSE_NEEDED: <short reason>]]\` -- the lead's last message doesn't need a reply (e.g. just "thanks", an automated/system notification, or the conversation has already reached a clear conclusion).
 - \`[[ESCALATE: <short reason>]]\` -- this needs a human, not a suggested reply: a complaint, a refund request, a medical question, or anything else outside a normal sales conversation.
 
@@ -322,10 +324,27 @@ const RECENT_FOLLOWUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 // `[[BUYING_SIGNAL]]` line appended to an otherwise-normal reply.
 function parseAgentOutput(raw) {
   const text = (raw || "").trim();
-  const noResponse = text.match(/^\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]$/i);
-  if (noResponse) return { skip: true, reason: noResponse[1] || "No response needed." };
-  const escalate = text.match(/^\[\[ESCALATE:?\s*(.*?)\]\]$/i);
-  if (escalate) return { escalate: escalate[1] || "Needs a human." };
+  // The model is instructed to output ONLY the marker, nothing else (see
+  // RESPONSE_FORMAT_INSTRUCTIONS) -- checked first, anchored at both ends,
+  // exactly as before. Confirmed live: it sometimes narrates its own
+  // reasoning ("Let me figure out what's happened so far...") before
+  // landing on the marker anyway. Without a fallback, that whole blob --
+  // reasoning included -- fell through and got treated as a normal reply,
+  // which for AI Active (sends with zero human review) means a lead could
+  // receive the model's raw internal monologue as a real text/email. The
+  // second pattern in each `||` only requires the marker at the very END
+  // of the text (matching the observed leak shape), and discards
+  // everything before it rather than showing/sending it.
+  const noResponse = text.match(/^\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]$/i) || text.match(/\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]\s*$/i);
+  if (noResponse) {
+    if (noResponse.index > 0) console.error(`[ai-agent-reply] NO_RESPONSE_NEEDED marker found after ${noResponse.index} chars of leaked reasoning text -- check RESPONSE_FORMAT_INSTRUCTIONS compliance`);
+    return { skip: true, reason: noResponse[1] || "No response needed." };
+  }
+  const escalate = text.match(/^\[\[ESCALATE:?\s*(.*?)\]\]$/i) || text.match(/\[\[ESCALATE:?\s*(.*?)\]\]\s*$/i);
+  if (escalate) {
+    if (escalate.index > 0) console.error(`[ai-agent-reply] ESCALATE marker found after ${escalate.index} chars of leaked reasoning text -- check RESPONSE_FORMAT_INSTRUCTIONS compliance`);
+    return { escalate: escalate[1] || "Needs a human." };
+  }
   const buyingSignalMatch = text.match(/\n?\[\[BUYING_SIGNAL\]\]\s*$/i);
   const buyingSignal = !!buyingSignalMatch;
   const cleanText = buyingSignalMatch ? text.slice(0, buyingSignalMatch.index).trim() : text;

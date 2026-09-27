@@ -121,6 +121,7 @@
   .activity-contact-times { color: var(--pra-dim); font-size: .7rem; margin-top: 2px; }
   .activity-channel-tag { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--pra-white); margin-bottom: 3px; display: block; }
   .tc-typing { font-size: .76rem; color: var(--pra-dim); padding: 2px 4px; }
+  .tc-system-note { font-size: .76rem; color: var(--pra-dim); font-style: italic; text-align: center; padding: 4px 16px; }
   .tc-empty { color: var(--pra-dim); font-size: .78rem; text-align: center; padding: 30px 16px; line-height: 1.5; margin: auto; }
   .tc-input-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--pra-border); flex-shrink: 0; }
   .tc-input-row textarea { flex: 1; resize: none; min-height: 36px; max-height: 100px; background: rgba(255,255,255,0.03); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); padding: 8px 10px; font-size: .84rem; font-family: inherit; }
@@ -806,6 +807,31 @@ function stripGifMarker(text) {
   if (!m) return { text, gifUrl: null };
   return { text: text.replace(m[0], '').trim(), gifUrl: m[1] };
 }
+// Client-side mirror of ai_agents_backend.js's parseAgentOutput -- same
+// lenient fallback (the marker anchored at the END of the text, not
+// requiring the WHOLE response to be just the marker): the model is
+// instructed to output ONLY the marker for these cases, but sometimes
+// narrates its own reasoning first anyway. Confirmed live: without this,
+// that reasoning (plus the marker itself) rendered as if it were the
+// agent's actual reply. Used here purely for what this preview shows --
+// the real send path's own copy in ai_agents_backend.js is what actually
+// governs a live AI Active send.
+function detectControlMarker(text) {
+  const noResponse = text.match(/^\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]$/i) || text.match(/\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]\s*$/i);
+  if (noResponse) return { kind: 'skip', reason: noResponse[1] || 'No response needed.' };
+  const escalate = text.match(/^\[\[ESCALATE:?\s*(.*?)\]\]$/i) || text.match(/\[\[ESCALATE:?\s*(.*?)\]\]\s*$/i);
+  if (escalate) return { kind: 'escalate', reason: escalate[1] || 'Needs a human.' };
+  return null;
+}
+function addTcSystemNote(text) {
+  const empty = document.getElementById('tcEmpty');
+  if (empty) empty.remove();
+  const el = document.createElement('div');
+  el.className = 'tc-system-note';
+  el.textContent = text;
+  tcThread().appendChild(el);
+  tcScrollToBottom();
+}
 function addTcBubble(role, text) {
   const empty = document.getElementById('tcEmpty');
   if (empty) empty.remove();
@@ -889,6 +915,17 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
     }
     setTcTyping(false);
     if (full) {
+      // A NO_RESPONSE_NEEDED/ESCALATE response means no real send would
+      // ever go out here -- shown as a plain system note (not a chat
+      // bubble, and never the literal marker or any reasoning that leaked
+      // ahead of it), and returns null so the caller doesn't add a fake
+      // "reply" into tcHistory for a turn that was never actually sent.
+      const marker = detectControlMarker(full);
+      if (marker) {
+        if (bubble) bubble.closest('.tc-bubble-row')?.remove();
+        addTcSystemNote((marker.kind === 'skip' ? 'No response needed' : 'Escalated to a human') + ' — ' + marker.reason);
+        return null;
+      }
       // [[SPLIT]] (see ai_active_backend.js's sendViaChannel) sends as two
       // separate texts for real -- streamed into one bubble above since we
       // don't know it's coming until it's already in the stream, then torn
