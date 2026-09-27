@@ -874,8 +874,9 @@ function currentAgentDraft() {
 // Shared by the delayed reply and the automatic no-reply follow-up below --
 // streams a reply for the given request history (NOT necessarily the same
 // as tcHistory, see tcSendFollowUp), renders it as one or more bubbles
-// (splitting on [[SPLIT]] same as before), and returns the full raw text
-// (including the marker) or null on failure.
+// (splitting on [[SPLIT]] same as before, [[SHOW_PRICING]] substituted with
+// the real pricing script), and returns that final text (or null on a
+// skip/escalate/failure).
 async function streamAgentReplyIntoBubbles(requestMessages) {
   let bubble = null, full = '';
   try {
@@ -925,6 +926,20 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
         if (bubble) bubble.closest('.tc-bubble-row')?.remove();
         addTcSystemNote((marker.kind === 'skip' ? 'No response needed' : 'Escalated to a human') + ' — ' + marker.reason);
         return null;
+      }
+      // [[SHOW_PRICING]] (see ai_agents_backend.js's applyPricingMarker) --
+      // the model's only job is deciding WHEN to show pricing; the actual
+      // pitch text is pulled straight out of the System Prompt box itself
+      // (the [[PRICING_SCRIPT_START]]/[[..._END]]-delimited block, stripped
+      // out before the prompt is even sent to the model -- see
+      // buildAgentSystemPrompt), substituted in here verbatim, same as the
+      // real send path. Confirmed live: asking the model to reproduce a
+      // long pricing block character-for-character never held up even with
+      // explicit "paste this exactly" instructions.
+      if (full.includes('[[SHOW_PRICING]]')) {
+        const m = document.getElementById('fSystemPrompt').value.match(/\[\[PRICING_SCRIPT_START\]\]([\s\S]*?)\[\[PRICING_SCRIPT_END\]\]/i);
+        full = full.replaceAll('[[SHOW_PRICING]]', m ? m[1].trim() : '');
+        if (bubble) bubble.textContent = full;
       }
       // [[SPLIT]] (see ai_active_backend.js's sendViaChannel) sends as two
       // separate texts for real -- streamed into one bubble above since we
