@@ -57,8 +57,16 @@
         if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
         else if (e.key === 'Escape') { e.preventDefault(); revert(); input.blur(); }
       });
-      input.addEventListener('click', (e) => e.stopPropagation());
-      input.addEventListener('dblclick', (e) => e.stopPropagation());
+      // preventDefault, not just stopPropagation -- el is often an <a href>,
+      // and clicking inside the input to reposition the cursor still counts
+      // as a click landing inside that ancestor link. A browser follows an
+      // anchor's href based on whether the click's default action was
+      // prevented ANYWHERE it was seen, regardless of stopPropagation (which
+      // only stops OTHER LISTENERS from seeing the event, not the browser's
+      // own native default action) -- without this, every click meant to
+      // just move the cursor re-triggered navigation.
+      input.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+      input.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); });
     }
     el.addEventListener('click', (e) => {
       if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
