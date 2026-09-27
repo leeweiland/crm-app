@@ -267,35 +267,51 @@
     if (_delegatedHandlerWired) return;
     _delegatedHandlerWired = true;
     document.addEventListener('click', (e) => {
-      const root = e.target.closest('[data-convo-panel-root]');
-      const inst = root ? _instancesByRoot.get(root) : null;
-      if (!inst) return;
-      if (e.target.id === 'taskPanelCancelBtn') { inst._toggleTaskPanel(false); return; }
-      if (e.target.id === 'taskPanelAddBtn') { inst._submitNewTask(); return; }
-      if (e.target.id === 'notePanelCancelBtn') { inst._toggleNotePanel(false); return; }
-      if (e.target.id === 'notePanelAddBtn') { inst._submitNewNote(); return; }
-      if (e.target.id === 'schedulePanelCancelBtn') { inst._toggleSchedulePanel(false); return; }
-      if (e.target.id === 'schedulePanelAddBtn') { inst._submitNewMeeting(); return; }
-      if (e.target.id === 'composeScheduleCancelBtn') { inst._toggleComposeSchedulePanel(false); return; }
-      if (e.target.id === 'composeScheduleConfirmBtn') { inst._submitScheduledSend(); return; }
-      const taskPanel = root.querySelector('#taskPanel');
-      if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') inst._toggleTaskPanel(false);
-      const notePanel = root.querySelector('#notePanel');
-      if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') inst._toggleNotePanel(false);
-      const callsPanel = root.querySelector('#callsPanel');
-      if (callsPanel?.classList.contains('open') && !callsPanel.contains(e.target) && e.target.id !== 'chatViewCallsBtn') inst._toggleCallsPanel(false);
-      const schedulePanel = root.querySelector('#schedulePanel');
-      if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) inst._toggleSchedulePanel(false);
-      const bookingPanel = root.querySelector('#bookingPanel');
-      if (bookingPanel?.classList.contains('open') && !bookingPanel.contains(e.target) && e.target.id !== 'chatBookingBtn' && !e.target.closest('#chatBookingBtn')) inst._toggleBookingPanel(false);
-      const composeSchedulePanel = root.querySelector('#composeSchedulePanel');
-      if (composeSchedulePanel?.classList.contains('open') && !composeSchedulePanel.contains(e.target) && e.target.id !== 'composeScheduleBtn' && !e.target.closest('#composeScheduleBtn')) inst._toggleComposeSchedulePanel(false);
-      const composeEmojiPanel = root.querySelector('#composeEmojiPanel');
-      if (composeEmojiPanel?.classList.contains('open') && !composeEmojiPanel.contains(e.target) && e.target.id !== 'composeEmojiBtn' && !e.target.closest('#composeEmojiBtn') && e.target.id !== 'msgReactMoreBtn') inst._toggleComposeEmojiPanel(false);
-      const composeGifPanel = root.querySelector('#composeGifPanel');
-      if (composeGifPanel?.classList.contains('open') && !composeGifPanel.contains(e.target) && e.target.id !== 'composeGifBtn' && !e.target.closest('#composeGifBtn')) inst._toggleComposeGifPanel(false);
-      const msgReactPanel = root.querySelector('#msgReactPanel');
-      if (msgReactPanel?.classList.contains('open') && !msgReactPanel.contains(e.target)) inst._toggleMsgReactPanel(false);
+      // Every popover here can render position:fixed well outside its own
+      // panel root's own bounding box now (positionPanelAboveButton clamps
+      // to the VIEWPORT, not to the root element's own layout box) -- a
+      // click closest()-searching from the target alone only finds a root
+      // when the click landed inside that root's actual box, so clicking
+      // the empty space a floating panel visually covers (but the root
+      // itself doesn't extend into) never reached any of the close-on-
+      // outside-click checks below at all. Confirmed live: clicking well
+      // below or to the right of an open Schedule/Task/Note panel did
+      // nothing. Every currently-mounted root is checked when the direct
+      // ancestor lookup fails, not just the closest one, so a click
+      // anywhere else on the page still closes whatever's open (in
+      // practice there's only ever one root mounted at a time anyway).
+      const closestRoot = e.target.closest('[data-convo-panel-root]');
+      const roots = closestRoot ? [closestRoot] : Array.from(document.querySelectorAll('[data-convo-panel-root]'));
+      for (const root of roots) {
+        const inst = _instancesByRoot.get(root);
+        if (!inst) continue;
+        if (e.target.id === 'taskPanelCancelBtn') { inst._toggleTaskPanel(false); continue; }
+        if (e.target.id === 'taskPanelAddBtn') { inst._submitNewTask(); continue; }
+        if (e.target.id === 'notePanelCancelBtn') { inst._toggleNotePanel(false); continue; }
+        if (e.target.id === 'notePanelAddBtn') { inst._submitNewNote(); continue; }
+        if (e.target.id === 'schedulePanelCancelBtn') { inst._toggleSchedulePanel(false); continue; }
+        if (e.target.id === 'schedulePanelAddBtn') { inst._submitNewMeeting(); continue; }
+        if (e.target.id === 'composeScheduleCancelBtn') { inst._toggleComposeSchedulePanel(false); continue; }
+        if (e.target.id === 'composeScheduleConfirmBtn') { inst._submitScheduledSend(); continue; }
+        const taskPanel = root.querySelector('#taskPanel');
+        if (taskPanel?.classList.contains('open') && !taskPanel.contains(e.target) && e.target.id !== 'chatAddTaskBtn') inst._toggleTaskPanel(false);
+        const notePanel = root.querySelector('#notePanel');
+        if (notePanel?.classList.contains('open') && !notePanel.contains(e.target) && e.target.id !== 'chatAddNoteBtn') inst._toggleNotePanel(false);
+        const callsPanel = root.querySelector('#callsPanel');
+        if (callsPanel?.classList.contains('open') && !callsPanel.contains(e.target) && e.target.id !== 'chatViewCallsBtn') inst._toggleCallsPanel(false);
+        const schedulePanel = root.querySelector('#schedulePanel');
+        if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) inst._toggleSchedulePanel(false);
+        const bookingPanel = root.querySelector('#bookingPanel');
+        if (bookingPanel?.classList.contains('open') && !bookingPanel.contains(e.target) && e.target.id !== 'chatBookingBtn' && !e.target.closest('#chatBookingBtn')) inst._toggleBookingPanel(false);
+        const composeSchedulePanel = root.querySelector('#composeSchedulePanel');
+        if (composeSchedulePanel?.classList.contains('open') && !composeSchedulePanel.contains(e.target) && e.target.id !== 'composeScheduleBtn' && !e.target.closest('#composeScheduleBtn')) inst._toggleComposeSchedulePanel(false);
+        const composeEmojiPanel = root.querySelector('#composeEmojiPanel');
+        if (composeEmojiPanel?.classList.contains('open') && !composeEmojiPanel.contains(e.target) && e.target.id !== 'composeEmojiBtn' && !e.target.closest('#composeEmojiBtn') && e.target.id !== 'msgReactMoreBtn') inst._toggleComposeEmojiPanel(false);
+        const composeGifPanel = root.querySelector('#composeGifPanel');
+        if (composeGifPanel?.classList.contains('open') && !composeGifPanel.contains(e.target) && e.target.id !== 'composeGifBtn' && !e.target.closest('#composeGifBtn')) inst._toggleComposeGifPanel(false);
+        const msgReactPanel = root.querySelector('#msgReactPanel');
+        if (msgReactPanel?.classList.contains('open') && !msgReactPanel.contains(e.target)) inst._toggleMsgReactPanel(false);
+      }
     });
   }
 
