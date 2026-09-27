@@ -71,6 +71,20 @@
   const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8"/></svg>';
   const CALENDAR_ICON = '<svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
+  // Remembers which compose tab (email/sms) was last open, per contact, so a
+  // real browser refresh (a fresh init() with no in-memory state) reopens
+  // the same one instead of always landing back on email. Wrapped since
+  // localStorage can throw (private browsing, blocked site data) and this
+  // is a pure convenience, never worth breaking the panel over.
+  function readStoredChannel(contactId) {
+    if (!contactId) return null;
+    try { return localStorage.getItem('chatComposeChannel:' + contactId); } catch { return null; }
+  }
+  function storeChannel(contactId, channel) {
+    if (!contactId) return;
+    try { localStorage.setItem('chatComposeChannel:' + contactId, channel); } catch {}
+  }
+
   // "Coach Lee <lee@pacificrimathletics.com>" -> "lee@pacificrimathletics.com"
   // -- item.from is a raw header string for Gmail-captured sends but a plain
   // address for SES sends, same two shapes server-side extractEmailAddress
@@ -266,7 +280,7 @@
     const state = {
       contactId: config.contactId || null,
       threadItems: [],
-      composeChannel: config.initialChannel || 'email',
+      composeChannel: config.initialChannel || readStoredChannel(config.contactId) || 'email',
       composeView: 'compose', // 'compose' | 'summary'
       composeReplyTo: null, // { subject, quotedHtml, quotedMeta } | null
       aiAssistAvailable: false,
@@ -482,6 +496,17 @@
         </div>
       `;
     }
+    // The header sub-line's own green "booked" link -- a second, always-
+    // visible way into the exact same cancel panel as the chatBookingBtn
+    // icon (shares _toggleBookingPanel/renderBookingPanel with it), so the
+    // actual date/time is readable at a glance instead of only behind a
+    // hover tooltip on the icon.
+    function bookingLinkHtml() {
+      const b = state.upcomingBooking;
+      if (!b) return '';
+      const when = new Date(b.startAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      return `<a href="#" id="chatBookingLink" class="chat-booking-link">${escapeHtml(b.eventType?.name || 'Booked call')} — ${when}</a>`;
+    }
     function renderBookingPanel() {
       const list = container.querySelector('#bookingPanelList');
       if (!list) return;
@@ -506,7 +531,20 @@
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
       panel.classList.toggle('open', opening);
-      if (opening) renderBookingPanel();
+      if (opening) {
+        renderBookingPanel();
+        // chatBookingBtn (and the header's own booking link that also opens
+        // this same panel) can sit anywhere along the actions row, not
+        // reliably near either screen edge like the fixed-position buttons
+        // the generic .task-panel/.compose-schedule-panel positioning was
+        // designed around -- a static left:0 or right:0 ran it off-screen
+        // on a narrow phone depending on which button was clicked. Measuring
+        // and shifting after layout instead of guessing a fixed side works
+        // regardless of where the panel actually opened from.
+        panel.style.left = '';
+        const overflowRight = panel.getBoundingClientRect().right - (window.innerWidth - 8);
+        if (overflowRight > 0) panel.style.left = `-${overflowRight}px`;
+      }
     }
     function _toggleSchedulePanel(forceOpen) {
       const panel = container.querySelector('#schedulePanel');
@@ -710,11 +748,16 @@
           handle.releasePointerCapture(e.pointerId);
           handle.removeEventListener('pointermove', onMove);
           handle.removeEventListener('pointerup', onUp);
+          handle.removeEventListener('pointercancel', onUp);
           handle.classList.remove('dragging');
           state.composeBarHeight = composeBar.getBoundingClientRect().height;
         };
         handle.addEventListener('pointermove', onMove);
         handle.addEventListener('pointerup', onUp);
+        // pointercancel (not pointerup) is what actually fires if a touch
+        // drag ever still gets reclaimed by the browser -- without this the
+        // 'dragging' class (and the listeners themselves) never clean up.
+        handle.addEventListener('pointercancel', onUp);
       };
     }
 
@@ -822,15 +865,21 @@
               ${contactId ? createdPillHtml(contact) : ''}
               ${contact?.renewal ? renewPillHtml(contact.renewal) : ''}
             </span>
-            <div class="chat-panel-sub">${[
-              contact?.email ? escapeHtml(contact.email) : '',
-              contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}" onclick="event.preventDefault();event.stopPropagation();window.CallPopup.open({contactId:'${contactId}',phone:'${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}',anchorEl:this})">${escapeHtml(contact.phone)}</a>` : '',
-              // The contact's own local time, right after their number (see
-              // contact-time.js) -- '' (dropped by the filter) when the
-              // number doesn't reveal a timezone or that script isn't loaded.
-              contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
-              zoomLinkHtml(config.currentUser),
-            ].filter(Boolean).join(' · ')}${optOutTogglesHtml(contact)}</div>
+            <div class="chat-panel-sub">
+              <div class="chat-panel-sub-line">${[
+                contact?.email ? escapeHtml(contact.email) : '',
+                contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}" onclick="event.preventDefault();event.stopPropagation();window.CallPopup.open({contactId:'${contactId}',phone:'${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}',anchorEl:this})">${escapeHtml(contact.phone)}</a>` : '',
+              ].filter(Boolean).join(' · ')}</div>
+              <div class="chat-panel-sub-line">${[
+                // The contact's own local time (see contact-time.js) -- ''
+                // (dropped by the filter) when the number doesn't reveal a
+                // timezone or that script isn't loaded.
+                contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
+                zoomLinkHtml(config.currentUser),
+              ].filter(Boolean).join(' · ')}</div>
+              ${state.upcomingBooking ? `<div class="chat-panel-sub-line">${bookingLinkHtml()}</div>` : ''}
+              <div class="chat-panel-sub-line">${optOutTogglesHtml(contact)}</div>
+            </div>
           </div>
           ${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
@@ -1002,6 +1051,7 @@
           quotedMeta: `On ${fmtDate(item.at)}, ${fromAddr} wrote:`,
         };
         state.composeChannel = 'email';
+        storeChannel(state.contactId, 'email');
         state.composeView = 'compose';
         render();
         const subjEl = container.querySelector('#composeSubject');
@@ -1015,7 +1065,7 @@
         container.querySelectorAll('.compose-channel-toggle [data-ch]').forEach(btn => btn.onclick = () => {
           state.composeReplyTo = null; // manually switching tabs exits reply mode
           if (btn.dataset.ch === 'summary') state.composeView = 'summary';
-          else { state.composeChannel = btn.dataset.ch; state.composeView = 'compose'; }
+          else { state.composeChannel = btn.dataset.ch; storeChannel(state.contactId, btn.dataset.ch); state.composeView = 'compose'; }
           render();
         });
         container.querySelectorAll('.ai-gen-btn').forEach(btn => btn.onclick = () => generateAiContent(btn.dataset.aiCh, btn));
@@ -1046,6 +1096,8 @@
           .then(() => showToast('Zoom link copied'))
           .catch(() => showToast('Could not copy', true));
       };
+      const bookingLink = container.querySelector('#chatBookingLink');
+      if (bookingLink) bookingLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); _toggleBookingPanel(); };
       container.querySelector('#chatAddTaskBtn').onclick = (e) => { e.stopPropagation(); _toggleTaskPanel(); };
       container.querySelector('#chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); _toggleNotePanel(); };
       container.querySelector('#chatScheduleBtn').onclick = (e) => { e.stopPropagation(); _toggleSchedulePanel(); };
@@ -1227,6 +1279,18 @@
       config.onThreadLoaded?.(state.threadItems);
     }
 
+    // inbox.html builds ONE panel instance and reuses it across every
+    // conversation via switchContact -- config.contactId (which the state
+    // init above reads the stored channel from) is never actually set for
+    // that caller, only assigned later through here. Restoring the stored
+    // channel on every switchContact call would fight the "stay on
+    // whichever channel is already open" behavior the compose tabs
+    // deliberately keep while working through several contacts in one
+    // sitting -- so this only kicks in for the FIRST switchContact after a
+    // real page load/refresh (still an unresponded contact if hasSwitchedOnce
+    // is left false forever, i.e. contact-detail.html's single-contact case,
+    // which already gets it from config.contactId at state-init time instead).
+    let hasSwitchedOnce = false;
     function switchContact(contactId, opts) {
       opts = opts || {};
       state.contactId = contactId || null;
@@ -1235,6 +1299,11 @@
       state.composeView = 'compose';
       state.aiAssistAvailable = false;
       state.done = opts.done === undefined ? null : opts.done;
+      if (!hasSwitchedOnce) {
+        hasSwitchedOnce = true;
+        const stored = readStoredChannel(contactId);
+        if (stored) state.composeChannel = stored;
+      }
     }
 
     function handleRemoteUpdate(data) {

@@ -625,7 +625,17 @@ body { margin: 0; }
 .chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
 .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
 .chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
+/* Each row of the header sub-info (email/phone, then timezone+Zoom+copy,
+   then the booked-call link if any, then the opt-out pills) on its own
+   line -- these used to all run together on one line, which crowded
+   together and wrapped unpredictably on a phone-width screen. */
+.chat-panel-sub-line { display: block; margin-top: 3px; }
+.chat-panel-sub-line:first-child { margin-top: 0; }
+.chat-panel-sub-line:empty { display: none; }
+.chat-panel-sub-line .chat-optout-pill:first-child { margin-left: 0; }
 .chat-zoom-link { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
+.chat-booking-link { color: #22c55e; font-weight: 600; text-decoration: none; cursor: pointer; }
+.chat-booking-link:hover { text-decoration: underline; }
 /* Email/SMS opt-out toggles in the chat panel header's sub-info line
    (conversation-panel.js's optOutTogglesHtml) -- quiet ghost pill normally,
    red when that channel is opted out, always clickable either way. */
@@ -695,7 +705,11 @@ body { margin: 0; }
    trade space with chat-thread's flex:1, instead of the thread always just
    taking whatever's left over. The whole bar lights up on hover/drag (not
    just a small grip) so it reads as one draggable line. */
-.compose-resize-handle { height: 8px; cursor: row-resize; flex-shrink: 0; }
+/* touch-action:none is load-bearing on mobile -- without it, the browser
+   takes over a vertical touch-drag here as its own page-scroll/pull gesture
+   partway through, which fires pointercancel (not pointermove/pointerup)
+   and stops the resize dead mid-drag, unable to reach the top or bottom. */
+.compose-resize-handle { height: 8px; cursor: row-resize; flex-shrink: 0; touch-action: none; }
 .compose-resize-handle:hover, .compose-resize-handle.dragging { background: var(--pra-blue); }
 /* AI Assist icons next to the Send Email/Send SMS tabs -- only rendered
    when aiAssistAvailable, click generates/regenerates straight into the
