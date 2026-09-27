@@ -338,6 +338,17 @@
     function getContact() { return config.getContact ? config.getContact() : null; }
     function markDoneLabel() { return state.done ? 'Mark Not Done' : 'Mark Done'; }
 
+    // Tasks/Notes/Calls/Schedule/Booking all anchor along the same actions
+    // row -- opening one used to just add it on top of whatever else was
+    // already open instead of replacing it, letting all five stack up at
+    // once. Called at the start of each one's own toggle whenever it's
+    // about to open, so only ever one is visible at a time.
+    function closeAllActionPanels() {
+      ['taskPanel', 'notePanel', 'callsPanel', 'schedulePanel', 'bookingPanel'].forEach(id => {
+        container.querySelector('#' + id)?.classList.remove('open');
+      });
+    }
+
     // ── Task popover ────────────────────────────────────────────────────
     function taskPanelRowHtml(t) {
       return `
@@ -348,11 +359,37 @@
         </div>
       `;
     }
-    function renderTaskPanel() {
+    // A scheduled send (compose bar's own Schedule button) surfaced here too
+    // -- it's a real pending to-do exactly like a task ("this goes out at
+    // this time"), and used to only be visible from the compose bar's own
+    // calendar icon, easy to lose track of. Read-only text + Cancel (the
+    // actual edit surface stays the compose bar's own scheduled list); same
+    // /api/inbox/scheduled endpoints renderComposeSchedulePanel already uses.
+    function scheduledPanelRowHtml(m) {
+      const when = new Date(m.scheduledAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      const label = m.channel === 'email' ? 'Scheduled email' : 'Scheduled SMS';
+      const preview = escapeHtml((m.body || m.subject || '').replace(/\s+/g, ' ').trim().slice(0, 60));
+      return `
+        <div class="task-panel-row scheduled-send-row" data-scheduled-row="${m.id}">
+          <button type="button" data-scheduled-cancel="${m.id}" title="Cancel scheduled send">&times;</button>
+          <span class="task-panel-due">${when}</span>
+          <span class="scheduled-send-label">${label}${preview ? ': ' + preview : ''}</span>
+        </div>
+      `;
+    }
+    async function renderTaskPanel() {
       const list = container.querySelector('#taskPanelList');
       if (!list) return;
+      const contactId = state.contactId;
       const tasks = state.threadItems.filter(i => i.itemType === 'task').sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
-      list.innerHTML = tasks.length ? tasks.map(taskPanelRowHtml).join('') : '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No tasks yet.</div>';
+      let scheduled = [];
+      if (contactId) {
+        const r = await fetch('/api/inbox/scheduled?contactId=' + encodeURIComponent(contactId)).catch(() => null);
+        if (r?.ok) scheduled = (await r.json()).items || [];
+      }
+      if (state.contactId !== contactId) return; // superseded by a later switchContact/loadThread
+      const rowsHtml = scheduled.map(scheduledPanelRowHtml).join('') + tasks.map(taskPanelRowHtml).join('');
+      list.innerHTML = rowsHtml || '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No tasks yet.</div>';
       list.querySelectorAll('[data-task-title]').forEach(inp => {
         const commit = async () => {
           const id = inp.dataset.taskTitle;
@@ -370,11 +407,18 @@
         state.threadItems = state.threadItems.filter(i => i.id !== id);
         renderTaskPanel();
       });
+      list.querySelectorAll('[data-scheduled-cancel]').forEach(btn => btn.onclick = async () => {
+        if (!confirm('Cancel this scheduled message?')) return;
+        await fetch('/api/inbox/scheduled/' + btn.dataset.scheduledCancel + '/cancel', { method: 'POST' });
+        showToast('Scheduled message cancelled');
+        renderTaskPanel();
+      });
     }
     function _toggleTaskPanel(forceOpen) {
       const panel = container.querySelector('#taskPanel');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) closeAllActionPanels();
       panel.classList.toggle('open', opening);
       if (opening) {
         container.querySelector('#taskPanelTitle').value = '';
@@ -457,6 +501,7 @@
       const panel = container.querySelector('#callsPanel');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) closeAllActionPanels();
       panel.classList.toggle('open', opening);
       if (opening) renderCallsPanel();
     }
@@ -464,6 +509,7 @@
       const panel = container.querySelector('#notePanel');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) closeAllActionPanels();
       panel.classList.toggle('open', opening);
       if (opening) {
         container.querySelector('#notePanelText').value = '';
@@ -564,6 +610,7 @@
       const panel = container.querySelector('#bookingPanel');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) closeAllActionPanels();
       panel.classList.toggle('open', opening);
       if (opening) {
         renderBookingPanel();
@@ -584,6 +631,7 @@
       const panel = container.querySelector('#schedulePanel');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) closeAllActionPanels();
       panel.classList.toggle('open', opening);
       if (opening) {
         container.querySelector('#schedulePanelTitle').value = '';

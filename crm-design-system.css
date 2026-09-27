@@ -875,6 +875,11 @@ body { margin: 0; }
 .task-panel-row:last-child { border-bottom: none; }
 .task-panel-row input[type="text"] { flex: 1; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .82rem; padding: 2px 0; }
 .task-panel-row input[type="text"]:focus { outline: none; border-bottom: 1px solid var(--pra-blue); }
+/* A scheduled send listed in the Tasks panel (see conversation-panel.js's
+   scheduledPanelRowHtml) -- same row shape as a real task, just a plain
+   label instead of an editable title (the compose bar's own Schedule
+   button/list is still where it actually gets edited). */
+.scheduled-send-label { flex: 1; font-size: .82rem; color: var(--pra-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-panel-row.done input[type="text"] { color: var(--pra-dim); text-decoration: line-through; }
 .task-panel-row .task-panel-due { font-size: .68rem; color: var(--pra-dim); white-space: nowrap; }
 .task-panel-row button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 6px; margin: -6px; flex-shrink: 0; }
