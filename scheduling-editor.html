@@ -346,6 +346,23 @@
               <div class="pra-label" style="margin-top:14px">Preview</div>
               <div id="calDescPreview" class="pra-muted" style="font-size:.82rem;line-height:1.7;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px;min-height:60px"></div>
             </div>
+            <div class="ed-notif-card">
+              <div class="ed-notif-title">Cancellation Notification</div>
+              <div class="ed-notif-hint">Sent to the contact whenever this booking is cancelled -- whether they cancel it themselves (the "Need to cancel?" link) or staff cancels it from the CRM. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE%. Leave a field empty to use the default message.</div>
+              <div class="ed-instant-row">
+                <div class="toggle-switch" id="cancelNotifEnabledToggle"></div>
+                <label for="cancelNotifEnabledToggle">Send a cancellation notification</label>
+              </div>
+              <div class="field" style="margin-top:10px"><label class="pra-label">Email subject line</label><input class="pra-input" id="cancelEmailSubject" placeholder="Cancelled: %EVENTNAME%"/></div>
+              <div class="field"><label class="pra-label">Email body</label>
+                <div class="ed-sms-toolbar"><select class="pra-select" id="cancelEmailPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+                <textarea class="pra-input" id="cancelEmailBody" rows="4" placeholder="Your %EVENTNAME% for %WHEN% has been cancelled." style="font-family:monospace;font-size:.82rem"></textarea>
+              </div>
+              <div class="field"><label class="pra-label">SMS (only sent if the contact has a phone number)</label>
+                <div class="ed-sms-toolbar"><select class="pra-select" id="cancelSmsPersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+                <textarea class="pra-input" id="cancelSmsBody" rows="3" placeholder="Your %EVENTNAME% for %WHEN% has been cancelled."></textarea>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -874,6 +891,24 @@ document.getElementById('confEmailPreviewText').addEventListener('input', (e) =>
   draft.confirmation.email.previewText = e.target.value;
   saveDebounced();
 });
+document.getElementById('cancelNotifEnabledToggle').addEventListener('click', (e) => {
+  draft.cancellation.enabled = e.target.classList.toggle('on');
+  saveDebounced();
+});
+document.getElementById('cancelEmailSubject').addEventListener('input', (e) => {
+  draft.cancellation.email.subject = e.target.value;
+  saveDebounced();
+});
+document.getElementById('cancelEmailBody').addEventListener('input', (e) => {
+  draft.cancellation.email.body = e.target.value;
+  saveDebounced();
+});
+document.getElementById('cancelSmsBody').addEventListener('input', (e) => {
+  draft.cancellation.sms = e.target.value;
+  saveDebounced();
+});
+wirePersonalizeDropdown('cancelEmailPersonalize', 'cancelEmailBody', SMS_PERSONALIZE_OPTIONS);
+wirePersonalizeDropdown('cancelSmsPersonalize', 'cancelSmsBody', SMS_PERSONALIZE_OPTIONS);
 
 // ── Confirmation email footer -- same "Default / pick one / edit inline"
 // setup as automation-builder.html's send_email step and campaign-builder,
@@ -946,6 +981,11 @@ function renderNotifications() {
   document.getElementById('confSmsInstantToggle').classList.toggle('on', draft.confirmation.smsSendInstant !== false);
   renderReminders();
 
+  document.getElementById('cancelNotifEnabledToggle').classList.toggle('on', draft.cancellation.enabled !== false);
+  document.getElementById('cancelEmailSubject').value = draft.cancellation.email.subject || '';
+  document.getElementById('cancelEmailBody').value = draft.cancellation.email.body || '';
+  document.getElementById('cancelSmsBody').value = draft.cancellation.sms || '';
+
   const footerSel = document.getElementById('confEmailFooter');
   footerSel.innerHTML = '<option value="">Default</option>' + allFooters.map(f => `<option value="${f.id}" ${draft.confirmation.email.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
 
@@ -977,7 +1017,7 @@ async function saveNow() {
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
-      notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, reminders: draft.reminders,
+      notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders,
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate,
     }),
   });
@@ -1174,6 +1214,8 @@ async function init() {
   draft.confirmation = { email: {}, sms: '', ...(draft.confirmation || {}) };
   draft.confirmation.email = { blocks: [], theme: {}, subject: '', previewText: '', footerTemplateId: null, ...(draft.confirmation.email || {}) };
   draft.reminders = { email: [], sms: [], ...(draft.reminders || {}) };
+  draft.cancellation = { enabled: true, email: {}, sms: '', ...(draft.cancellation || {}) };
+  draft.cancellation.email = { subject: '', body: '', ...(draft.cancellation.email || {}) };
   renderPreview();
   const cfRes = await fetch('/api/custom-fields?entityType=contact');
   customFieldsState = cfRes.ok ? (await cfRes.json()).fields : [];

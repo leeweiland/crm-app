@@ -218,6 +218,7 @@ export function getEventTypes() {
       changed = true;
     }
     if (!et.confirmation) { et.confirmation = { ...DEFAULT_CONFIRMATION }; changed = true; }
+    if (!et.cancellation) { et.cancellation = { ...DEFAULT_CANCELLATION }; changed = true; }
     // subject/previewText/footerTemplateId were added after email/sms --
     // an event type saved between the two ships would otherwise be missing
     // them entirely rather than getting the "" / null defaults.
@@ -425,6 +426,16 @@ const DEFAULT_BRANDING = {
 // (minutes/hours/days) "before the appointment", not a fixed list, since
 // different event types reasonably want different reminder cadences.
 const DEFAULT_CONFIRMATION = { email: { blocks: [], theme: {}, subject: "", previewText: "", footerTemplateId: null }, sms: "" };
+
+// Sent whenever a booking is cancelled, whichever side does it (the
+// invitee's own "Need to cancel?" link, or staff cancelling from the CRM).
+// Deliberately a plain subject/body pair, not the full block-editor
+// DEFAULT_CONFIRMATION gets -- a cancellation notice is short by nature, and
+// this didn't exist as a feature at all before, so there's no legacy
+// customized-block content to stay compatible with. `enabled: false` skips
+// both channels together; there was never a working cancellation
+// notification before this, so no per-channel "instant" toggle either.
+const DEFAULT_CANCELLATION = { enabled: true, email: { subject: "", body: "" }, sms: "" };
 
 // The booking form's whole question list -- NOT just extras beyond a fixed
 // Name/Email/Phone/Notes, those are now ordinary entries in this same list
@@ -1016,6 +1027,32 @@ async function sendBookingConfirmation(booking, eventType, contact) {
   ]);
 }
 
+// Cancellation notice -- same token substitution as the confirmation send
+// (getBookingTokenValues/applyBookingTokens), but a single plain-text body
+// per channel instead of the confirmation's full block editor (see
+// DEFAULT_CANCELLATION's own comment for why). Called from both cancel
+// paths (the invitee's own link, and staff cancelling from the CRM) so
+// there's exactly one place this can drift from what's actually configured.
+async function sendCancellationNotification(booking, eventType, contact) {
+  const cfg = eventType.cancellation || DEFAULT_CANCELLATION;
+  if (cfg.enabled === false) return;
+  const tokens = getBookingTokenValues(booking, eventType);
+  const { when } = tokens;
+  const customSubject = cfg.email?.subject ? applyMergeTags(applyBookingTokens(cfg.email.subject, tokens), contact) : "";
+  const subject = customSubject || `Cancelled: ${eventType.name}`;
+  const customBody = cfg.email?.body ? applyMergeTags(applyBookingTokens(cfg.email.body, tokens), contact) : "";
+  const blocks = [{
+    id: "b1", type: "text",
+    html: customBody || `<p>Hi ${contact.first || "there"},</p><p>Your <b>${eventType.name}</b> for <b>${when}</b> has been cancelled.</p>`,
+  }];
+  const smsTemplate = cfg.sms || `Your ${eventType.name} for %WHEN% has been cancelled.`;
+  const smsBody = applyMergeTags(applyBookingTokens(smsTemplate, tokens), contact);
+  await Promise.all([
+    contact.email ? sendEmail({ to: contact.email, subject, blocks, theme: {}, footerTemplateId: null, contactId: contact.id, sourceType: "booking", sourceId: booking.id }).catch(() => {}) : Promise.resolve(),
+    contact.phone ? sendSms({ to: contact.phone, body: smsBody, contactId: contact.id, sourceType: "booking", sourceId: booking.id }).catch(() => {}) : Promise.resolve(),
+  ]);
+}
+
 export function reminderDueMs(reminder) {
   return reminder.unit === "minutes" ? reminder.amount * 60000
     : reminder.unit === "days" ? reminder.amount * 86400000
@@ -1344,8 +1381,14 @@ export async function handleSchedulingRequest(req, res, url) {
       booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
       booking.cancelledBy = "invitee";
       writeJson(BOOKINGS_FILE, bookings);
-      logBookingCancellation(booking, getEventTypes().find(e => e.id === booking.eventTypeId), "the invitee (booking page)");
+      const et = getEventTypes().find(e => e.id === booking.eventTypeId);
+      logBookingCancellation(booking, et, "the invitee (booking page)");
       if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
+      // Fire-and-forget, same convention as sendBookingConfirmation's own
+      // caller -- the invitee just cancelled their own booking, no reason to
+      // hold this response open on an email/SMS send.
+      const contact = getContactByIdFast(booking.contactId);
+      if (et && contact) sendCancellationNotification(booking, et, contact).catch(() => {});
     }
     return sendJson(res, 200, { ok: true });
   }
@@ -1496,7 +1539,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);
@@ -1511,7 +1554,11 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/admin/bookings" && req.method === "GET") {
-    const bookings = readJson(BOOKINGS_FILE, []).sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    // Optional contactId filter -- the chat panel's own booking badge needs
+    // just one contact's bookings, not the whole business's, on every open.
+    const filterContactId = url.searchParams.get("contactId");
+    let bookings = readJson(BOOKINGS_FILE, []).sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    if (filterContactId) bookings = bookings.filter(b => b.contactId === filterContactId);
     const eventTypes = getEventTypes();
     const withEventType = bookings.map(b => ({ ...b, eventType: eventTypes.find(e => e.id === b.eventTypeId) ? { name: eventTypes.find(e => e.id === b.eventTypeId).name, slug: eventTypes.find(e => e.id === b.eventTypeId).slug } : null }));
     return sendJson(res, 200, { bookings: withEventType });
@@ -1525,8 +1572,11 @@ export async function handleSchedulingRequest(req, res, url) {
       booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
       booking.cancelledBy = "staff";
       writeJson(BOOKINGS_FILE, bookings);
-      logBookingCancellation(booking, getEventTypes().find(e => e.id === booking.eventTypeId), "staff (CRM)");
+      const et = getEventTypes().find(e => e.id === booking.eventTypeId);
+      logBookingCancellation(booking, et, "staff (CRM)");
       if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
+      const contact = getContactByIdFast(booking.contactId);
+      if (et && contact) sendCancellationNotification(booking, et, contact).catch(() => {});
     }
     return sendJson(res, 200, { ok: true });
   }

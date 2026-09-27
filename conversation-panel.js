@@ -250,6 +250,8 @@
       if (callsPanel?.classList.contains('open') && !callsPanel.contains(e.target) && e.target.id !== 'chatViewCallsBtn') inst._toggleCallsPanel(false);
       const schedulePanel = root.querySelector('#schedulePanel');
       if (schedulePanel?.classList.contains('open') && !schedulePanel.contains(e.target) && e.target.id !== 'chatScheduleBtn' && !e.target.closest('#chatScheduleBtn')) inst._toggleSchedulePanel(false);
+      const bookingPanel = root.querySelector('#bookingPanel');
+      if (bookingPanel?.classList.contains('open') && !bookingPanel.contains(e.target) && e.target.id !== 'chatBookingBtn' && !e.target.closest('#chatBookingBtn')) inst._toggleBookingPanel(false);
       const composeSchedulePanel = root.querySelector('#composeSchedulePanel');
       if (composeSchedulePanel?.classList.contains('open') && !composeSchedulePanel.contains(e.target) && e.target.id !== 'composeScheduleBtn' && !e.target.closest('#composeScheduleBtn')) inst._toggleComposeSchedulePanel(false);
     });
@@ -277,6 +279,7 @@
       // to a different conversation and back doesn't leak one contact's
       // half-written reply into another's compose box.
       composeDraftByContact: {},
+      upcomingBooking: null, // the contact's soonest confirmed, not-yet-happened public booking, or null
       // null = unknown/one-way (Mark Done always available, never shows
       // "Mark Not Done" until this instance itself has toggled it once) --
       // see contact-detail.html's config, which has no cheap way to look up
@@ -459,6 +462,51 @@
         loadThread();
         config.onMeetingChanged?.(contactId);
       });
+    }
+    // ── Booked-call badge (public booking calendar, NOT the ad-hoc
+    // /api/meetings above) -- shows the contact's soonest upcoming booking
+    // and lets staff cancel it directly, same admin endpoint the Bookings
+    // tab's own cancel button uses. Notifies the contact on cancel per
+    // whatever's configured in that event type's Cancellation Notification
+    // settings (scheduling_backend.js's sendCancellationNotification).
+    function bookingPanelHtml() {
+      const b = state.upcomingBooking;
+      if (!b) return '<div class="pra-muted" style="font-size:.78rem;padding:4px 0">No upcoming booked call.</div>';
+      const when = new Date(b.startAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      return `
+        <div class="schedule-panel-row">
+          <span class="schedule-panel-when">${escapeHtml(b.eventType?.name || 'Booked call')}<br>${when}</span>
+        </div>
+        <div class="task-panel-footer">
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="bookingPanelCancelBtn" type="button" style="width:100%">Cancel Booking</button>
+        </div>
+      `;
+    }
+    function renderBookingPanel() {
+      const list = container.querySelector('#bookingPanelList');
+      if (!list) return;
+      list.innerHTML = bookingPanelHtml();
+      const cancelBtn = list.querySelector('#bookingPanelCancelBtn');
+      if (cancelBtn) cancelBtn.onclick = async () => {
+        const b = state.upcomingBooking;
+        if (!b || !confirm(`Cancel this booking (${b.eventType?.name || 'call'})? This removes it from the calendar and notifies the contact per that call type's cancellation settings.`)) return;
+        cancelBtn.disabled = true; cancelBtn.textContent = 'Cancelling…';
+        const r = await fetch(`/api/scheduling/admin/bookings/${b.id}/cancel`, { method: 'POST' });
+        if (!r.ok) { showToast('Could not cancel booking', true); cancelBtn.disabled = false; cancelBtn.textContent = 'Cancel Booking'; return; }
+        showToast('Booking cancelled');
+        state.upcomingBooking = null;
+        _toggleBookingPanel(false);
+        render();
+        loadThread();
+        config.onMeetingChanged?.(state.contactId);
+      };
+    }
+    function _toggleBookingPanel(forceOpen) {
+      const panel = container.querySelector('#bookingPanel');
+      if (!panel) return;
+      const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      panel.classList.toggle('open', opening);
+      if (opening) renderBookingPanel();
     }
     function _toggleSchedulePanel(forceOpen) {
       const panel = container.querySelector('#schedulePanel');
@@ -826,6 +874,14 @@
               <div class="task-panel-list" id="callsPanelList"></div>
             </div>
           </div>
+          ${contactId ? `
+          <div class="chat-panel-task-btn">
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatBookingBtn" type="button" title="${state.upcomingBooking ? 'Booked call — click to view/cancel' : 'No upcoming booked call'}" style="${state.upcomingBooking ? 'color:#22c55e;text-shadow:0 0 6px rgba(34,197,94,.65);border-color:#22c55e' : ''}">${CALENDAR_ICON}</button>
+            <div class="task-panel" id="bookingPanel">
+              <div class="task-panel-list" id="bookingPanelList"></div>
+            </div>
+          </div>
+          ` : ''}
           <div class="chat-panel-task-btn">
             <button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatScheduleBtn" type="button" title="Schedule a meeting">${CALENDAR_ICON}</button>
             <div class="task-panel" id="schedulePanel">
@@ -994,6 +1050,7 @@
       container.querySelector('#chatAddNoteBtn').onclick = (e) => { e.stopPropagation(); _toggleNotePanel(); };
       container.querySelector('#chatScheduleBtn').onclick = (e) => { e.stopPropagation(); _toggleSchedulePanel(); };
       container.querySelector('#chatViewCallsBtn').onclick = (e) => { e.stopPropagation(); _toggleCallsPanel(); };
+      container.querySelector('#chatBookingBtn')?.addEventListener('click', (e) => { e.stopPropagation(); _toggleBookingPanel(); });
       const nameLink = container.querySelector('#chatPanelNameLink');
       if (nameLink && contactId) nameLink.onclick = () => config.onOpenContactOverlay?.(contactId);
       if (isFull) {
@@ -1143,10 +1200,11 @@
       const contactId = state.contactId;
       if (!contactId) { state.threadItems = []; state.aiAssistAvailable = false; render(); return; }
       const contact = getContact();
-      const [threadRes, matchRes, clickItems] = await Promise.all([
+      const [threadRes, matchRes, clickItems, bookingsRes] = await Promise.all([
         fetch('/api/inbox/contact/' + contactId),
         fetch('/api/ai-agents/matches?contactId=' + encodeURIComponent(contactId) + '&status=' + encodeURIComponent(contact?.status || '') + '&programType=' + encodeURIComponent(contact?.programType || '')),
         fetchClickItems(contactId),
+        fetch('/api/scheduling/admin/bookings?contactId=' + encodeURIComponent(contactId)),
       ]);
       // Discard a stale response -- switchContact() may have moved this
       // instance on to a different conversation while this fetch was still
@@ -1155,6 +1213,15 @@
       if (state.contactId !== contactId) return;
       state.threadItems = threadRes.ok ? [...(await threadRes.json()).items, ...clickItems] : clickItems;
       state.aiAssistAvailable = matchRes.ok ? (await matchRes.json()).match : false;
+      // The public booking calendar's own confirmed, still-upcoming booking
+      // -- a separate system from the ad-hoc /api/meetings above (chatScheduleBtn),
+      // which only ever knows about staff-created check-in calls, never a
+      // student's actual booked call from the funnel. Soonest one first if
+      // more than one somehow exists.
+      const bookingsData = bookingsRes.ok ? await bookingsRes.json() : { bookings: [] };
+      state.upcomingBooking = (bookingsData.bookings || [])
+        .filter(b => b.status === 'confirmed' && new Date(b.startAt).getTime() > Date.now())
+        .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
       if (state.contactId !== contactId) return;
       render();
       config.onThreadLoaded?.(state.threadItems);
@@ -1218,6 +1285,7 @@
       _toggleCallsPanel,
       _toggleSchedulePanel, _submitNewMeeting,
       _toggleComposeSchedulePanel, _submitScheduledSend,
+      _toggleBookingPanel,
     };
     _instancesByRoot.set(container, instance);
     return instance;
