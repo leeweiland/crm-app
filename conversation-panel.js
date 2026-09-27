@@ -793,7 +793,11 @@
       }
       btn.disabled = false; btn.textContent = 'Schedule';
       if (networkError || !r.ok) { showToast(d?.error || networkError?.message || 'Could not schedule', true); return; }
-      showToast(`Scheduled for ${new Date(scheduledAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`);
+      // No success toast here either (same reasoning as sendComposeMessage's
+      // own removed one) -- the schedule panel closing and the compose bar
+      // resetting back to empty is already the confirmation, and the
+      // scheduled send now shows up in the Tasks panel too if anyone wants
+      // to double check it went through.
       delete state.composeDraftByContact[contactId];
       delete state.composePendingMediaByContact[contactId];
       _toggleComposeSchedulePanel(false);
