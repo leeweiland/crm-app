@@ -639,12 +639,49 @@
         renderComposeSchedulePanel();
       });
     }
+    // Positions a fixed-position popover directly above (right-aligned to)
+    // the button that opened it, clamped to the viewport, measured while
+    // hidden so there's no visible flash at whatever position it happened
+    // to render at first. See .task-panel's own CSS comment for why the
+    // compose-bar popovers can't just rely on a pure CSS anchor -- a short
+    // compose bar near the bottom of an overflow:hidden chat panel often
+    // doesn't have room above the button for the panel's real height.
+    function positionPanelAboveButton(panel, btn) {
+      const margin = 8, gap = 6;
+      panel.style.visibility = 'hidden';
+      panel.style.maxHeight = ''; // reset any shrink a previous open left behind before measuring natural size
+      panel.style.left = '0px'; panel.style.top = '0px';
+      const rect = btn.getBoundingClientRect();
+      const w = panel.offsetWidth;
+      const naturalH = panel.offsetHeight;
+      const spaceAbove = rect.top - gap - margin;
+      const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+      // Prefers opening above (these buttons all live at the bottom of the
+      // chat panel), but flips below when there's genuinely more room that
+      // way -- and if NEITHER direction fits the panel's natural height
+      // (the GIF panel's search box + grid runs taller than the emoji
+      // grid), shrinks it to whatever's actually available instead of
+      // overflowing the viewport edge. Confirmed live: without this, the
+      // GIF panel ran ~190px past the bottom of the screen.
+      const openAbove = spaceAbove >= naturalH || spaceAbove >= spaceBelow;
+      const available = Math.max(80, openAbove ? spaceAbove : spaceBelow);
+      const h = Math.min(naturalH, available);
+      if (h < naturalH) panel.style.maxHeight = h + 'px';
+      let top = openAbove ? (rect.top - h - gap) : (rect.bottom + gap);
+      top = Math.max(margin, Math.min(top, window.innerHeight - h - margin));
+      const left = Math.max(margin, Math.min(rect.right - w, window.innerWidth - w - margin));
+      panel.style.left = left + 'px';
+      panel.style.top = top + 'px';
+      panel.style.visibility = '';
+    }
     function _toggleComposeSchedulePanel(forceOpen) {
       const panel = container.querySelector('#composeSchedulePanel');
+      const btn = container.querySelector('#composeScheduleBtn');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
       panel.classList.toggle('open', opening);
       if (opening) {
+        if (btn) positionPanelAboveButton(panel, btn);
         const now = new Date(Date.now() + 5 * 60000); // 5 min out, so "now" pre-fills to a valid future time
         container.querySelector('#composeScheduleDate').value = now.toISOString().slice(0, 10);
         container.querySelector('#composeScheduleTime').value = now.toTimeString().slice(0, 5);
@@ -734,10 +771,12 @@
     }
     function _toggleComposeEmojiPanel(forceOpen) {
       const panel = container.querySelector('#composeEmojiPanel');
+      const btn = container.querySelector('#composeEmojiBtn');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) _toggleComposeGifPanel(false); // mutually exclusive -- only one picker open at a time
       panel.classList.toggle('open', opening);
-      if (opening) { renderEmojiGrid(); if (!emojiTabsWired) emojiTabsWired = true; }
+      if (opening) { renderEmojiGrid(); if (!emojiTabsWired) emojiTabsWired = true; if (btn) positionPanelAboveButton(panel, btn); }
       else emojiPickMode = 'insert'; // closing any other way (outside click, Esc) cancels a pending reaction pick
     }
     // Sends the picked emoji as a brand-new outbound SMS to this contact --
@@ -812,12 +851,25 @@
       if (!r || !r.ok) { showToast('Could not send GIF', true); return; }
       loadThread();
     }
-    function _toggleComposeGifPanel(forceOpen) {
+    async function _toggleComposeGifPanel(forceOpen) {
       const panel = container.querySelector('#composeGifPanel');
+      const btn = container.querySelector('#composeGifBtn');
       if (!panel) return;
       const opening = forceOpen === undefined ? !panel.classList.contains('open') : !!forceOpen;
+      if (opening) _toggleComposeEmojiPanel(false); // mutually exclusive -- only one picker open at a time
       panel.classList.toggle('open', opening);
-      if (opening) loadGifs('');
+      if (opening) {
+        // Positioning has to wait for loadGifs' real content (its own
+        // "Loading…" placeholder is short; the eventual 24-image grid is
+        // much taller) -- measuring before it resolves sized the panel off
+        // the placeholder and let the real grid overflow past whatever
+        // boundary that briefly fit. Hidden in the meantime so there's no
+        // flash at position:fixed's static top-left default.
+        panel.style.visibility = 'hidden';
+        await loadGifs('');
+        if (!panel.classList.contains('open')) return; // closed again while GIFs were still loading
+        if (btn) positionPanelAboveButton(panel, btn); // restores visibility once positioned
+      }
     }
 
     // ── AI assist ───────────────────────────────────────────────────────
@@ -1140,13 +1192,13 @@
                   ${config.teamUsers.map(u => `<option value="${u.id}" ${config.currentUser && u.id === config.currentUser.id ? 'selected' : ''}>${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}
                 </select>
               ` : ''}
-              <div class="compose-channel-toggle">
+              <div class="compose-channel-toggle compose-channel-toggle-scroll">
                 <span class="compose-tab-group">
-                  <button type="button" data-ch="email" class="${state.composeView === 'compose' && state.composeChannel === 'email' ? 'active' : ''} ${state.composeView === 'compose' && state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}">${state.composeView === 'compose' && state.composeChannel === 'email' && state.composeReplyTo ? 'Reply To Email' : 'Send Email'}</button>
+                  <button type="button" data-ch="email" class="${state.composeView === 'compose' && state.composeChannel === 'email' ? 'active' : ''} ${state.composeView === 'compose' && state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}">${state.composeView === 'compose' && state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Email'}</button>
                   ${state.aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="email" title="Generate email with AI">${SPARKLE_ICON}</button>` : ''}
                 </span>
                 <span class="compose-tab-group">
-                  <button type="button" data-ch="sms" class="${state.composeView === 'compose' && state.composeChannel === 'sms' ? 'active' : ''}">Send SMS</button>
+                  <button type="button" data-ch="sms" class="${state.composeView === 'compose' && state.composeChannel === 'sms' ? 'active' : ''}">SMS</button>
                   ${state.aiAssistAvailable ? `<button type="button" class="ai-gen-btn" data-ai-ch="sms" title="Generate text with AI">${SPARKLE_ICON}</button>` : ''}
                 </span>
                 ${state.aiAssistAvailable ? `<button type="button" data-ch="summary" class="${state.composeView === 'summary' ? 'active' : ''}">Summary</button>` : ''}
@@ -1158,25 +1210,27 @@
           ` : `
             ${state.composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
             <div class="compose-row">
-              <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}">${escapeHtml(state.composeDraftByContact[contactId] || '')}</textarea>
-              <div class="compose-send-group">
-                <button class="pra-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
+              <div class="compose-left-actions">
                 <div class="chat-panel-task-btn compose-emoji-wrap">
-                  <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn" id="composeEmojiBtn" title="Emoji">😊</button>
+                  <button type="button" class="pra-btn pra-btn-outline compose-mini-btn" id="composeEmojiBtn" title="Emoji">😊</button>
                   <div class="task-panel emoji-picker-panel" id="composeEmojiPanel">
                     <div class="emoji-tabs" id="composeEmojiTabs"></div>
                     <div class="emoji-grid" id="composeEmojiGrid"></div>
                   </div>
                 </div>
                 <div class="chat-panel-task-btn compose-gif-wrap">
-                  <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn" id="composeGifBtn" title="GIF">GIF</button>
+                  <button type="button" class="pra-btn pra-btn-outline compose-mini-btn" id="composeGifBtn" title="GIF">GIF</button>
                   <div class="task-panel gif-picker-panel" id="composeGifPanel">
                     <input class="pra-input" id="composeGifSearch" placeholder="Search GIFs…" style="margin-bottom:8px"/>
                     <div class="gif-grid" id="composeGifGrid"></div>
                   </div>
                 </div>
+              </div>
+              <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}">${escapeHtml(state.composeDraftByContact[contactId] || '')}</textarea>
+              <div class="compose-send-group">
+                <button class="pra-btn compose-mini-btn compose-send-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
                 <div class="chat-panel-task-btn compose-schedule-wrap">
-                  <button type="button" class="pra-btn pra-btn-outline compose-schedule-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeScheduleBtn" title="Schedule for later">${CALENDAR_ICON}</button>
+                  <button type="button" class="pra-btn pra-btn-outline compose-mini-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeScheduleBtn" title="Schedule for later">${CALENDAR_ICON}</button>
                   <div class="task-panel compose-schedule-panel" id="composeSchedulePanel">
                     <div class="task-panel-list" id="composeSchedulePanelList"></div>
                     <div class="task-panel-add">

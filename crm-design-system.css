@@ -730,36 +730,33 @@ body { margin: 0; }
    nesting an unrelated <select> in there boxed-within-boxed and made it
    look bulky/mismatched instead of like a second, equally compact
    control on the same row. */
-/* flex-wrap:wrap -- the "send as" sender dropdown (admin + multiple team
-   users, email channel only) used to sit on the same unwrapped row as the
-   Send Email/Send SMS/Summary tabs and their AI sparkle buttons. Its
-   min-content width (driven by the longest team member's name) could eat
-   most of a phone-width row on its own, pushing Summary and the sparkle
-   buttons off-screen with no way to reach them. Wrapping lets the dropdown
-   drop to its own line instead of squeezing everything else out. */
-.compose-toolbar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-.compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; }
-.compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; }
+/* overflow-x:auto, not flex-wrap -- the "send as" sender dropdown (admin +
+   multiple team users, email channel only) needs to stay on the SAME line
+   as the Send Email/Send SMS/Summary tabs (wrapping it to its own line
+   read as visually disconnected from the tabs it's modifying), so instead
+   the whole row scrolls horizontally if the sender name + all three tabs
+   genuinely don't fit a phone-width screen at once -- nothing is ever
+   truly unreachable, it just takes a swipe. flex-shrink:0 on every child
+   keeps them at a legible fixed size rather than getting squashed. */
+.compose-toolbar-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.compose-channel-toggle { display: inline-flex; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.compose-channel-toggle button { background: none; border: none; color: var(--pra-dim); font-size: .76rem; font-weight: 700; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
 .compose-channel-toggle button.active { background: var(--pra-blue-dim); color: var(--pra-blue); }
 .compose-channel-toggle button.active.reply-mode { background: rgba(57,255,20,0.12); color: var(--pra-green); }
-.compose-row { display: flex; gap: 8px; flex: 1; min-height: 0; }
-.compose-send-group { display: flex; align-items: center; gap: 6px; align-self: flex-end; }
+.compose-row { display: flex; gap: 6px; flex: 1; min-height: 0; }
+.compose-left-actions { display: flex; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.compose-send-group { display: flex; align-items: center; gap: 4px; align-self: flex-end; }
 #composeSendBtn.reply-mode { background: var(--pra-green); color: #06210a; }
 .compose-row textarea { flex: 1; resize: vertical; min-height: 40px; }
-.compose-schedule-btn { padding: 0; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.compose-schedule-btn.reply-mode { color: var(--pra-green); border-color: var(--pra-green); }
-.compose-schedule-btn.reply-mode:hover { background: rgba(57,255,20,0.12); }
-/* Opens leftward and UPWARD off the button, not the generic .task-panel's
-   left:0/top:calc(100%+6px) -- this button sits at the bottom-right corner
-   of the compose bar, the very bottom of the whole chat panel, which also
-   has overflow:hidden (needed elsewhere to contain the panel's own height,
-   see .convo-panel) -- confirmed live: opening downward like the other
-   popovers do just clipped the whole panel invisible against that
-   boundary, since there's no room below it to open into. */
-.compose-schedule-panel { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); }
-/* Same upward/leftward-opening reasoning as .compose-schedule-panel just
-   above -- these two sit right next to it, same bottom-right corner. */
-.emoji-picker-panel, .gif-picker-panel { left: auto; right: 0; top: auto; bottom: calc(100% + 6px); width: 300px; max-width: 88vw; }
+/* Shared small-square sizing for every compose-bar action button (Send,
+   Emoji, GIF, Schedule) -- these used to be a mix of a full-padded Send
+   button and 38x38 icon buttons; shrunk across the board so all four fit
+   comfortably together on a phone-width row. */
+.compose-mini-btn { padding: 0; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: .95rem; }
+.compose-send-btn { width: auto; padding: 0 12px; }
+.compose-mini-btn.reply-mode { color: var(--pra-green); border-color: var(--pra-green); }
+.compose-mini-btn.reply-mode:hover { background: rgba(57,255,20,0.12); }
+.emoji-picker-panel, .gif-picker-panel { width: 300px; max-width: 88vw; }
 .emoji-tabs { display: flex; gap: 3px; margin-bottom: 8px; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px solid var(--pra-border); }
 .emoji-tab { flex-shrink: 0; font-size: 1.15rem; padding: 3px 7px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
 .emoji-tab.active { border-color: var(--pra-blue); background: var(--pra-blue-dim); }
@@ -768,13 +765,6 @@ body { margin: 0; }
 .emoji-grid span:hover { background: rgba(255,255,255,0.06); }
 .gif-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 260px; overflow-y: auto; }
 .gif-grid img { width: 100%; border-radius: 8px; cursor: pointer; display: block; }
-/* The per-message reaction quick-bar (long-press/right-click on an inbound
-   SMS bubble) -- unlike every other .task-panel here, this one isn't
-   anchored to a fixed button in a position:relative wrapper, it opens at
-   wherever the press/click actually landed inside the scrolling thread, so
-   it needs real viewport-fixed positioning with JS-computed left/top
-   (openMsgReactPanel) rather than the generic absolute top:/left:0. */
-.msg-react-panel { position: fixed; width: auto; padding: 6px 8px; }
 .msg-react-row { display: flex; align-items: center; gap: 2px; }
 .mab-emoji { background: none; border: none; cursor: pointer; font-size: 1.35rem; line-height: 1; padding: 4px; border-radius: 50%; transition: background .15s, transform .1s; }
 .mab-emoji:hover { background: rgba(255,255,255,0.08); transform: scale(1.15); }
@@ -789,8 +779,23 @@ body { margin: 0; }
 .compose-hint { font-size: .74rem; color: var(--pra-red); margin-top: 4px; }
 /* Shows who a reply sends as -- the sender is always the logged-in user
    (see inbox_backend.js, not client-controlled), this is display-only so
-   teammates are visible but never look clickable. */
-.compose-from-select { font-size: .78rem; padding: 5px 10px; max-width: 200px; }
+   teammates are visible but never look clickable. Shares the toolbar row
+   with the Send Email/Send SMS/Summary tabs (see .compose-toolbar-row's
+   own comment) -- kept narrow and ellipsis-truncated so a long name can't
+   push those tabs out of the row on a phone screen. */
+.compose-from-select { font-size: .78rem; padding: 5px 8px; max-width: 120px; flex-shrink: 0; text-overflow: ellipsis; white-space: nowrap; }
+/* Narrow phones (<900px triggers crm-nav.js's own enhanceSelectForMobile,
+   swapping the native <select> for a .mobile-select-trigger button) --
+   that trigger's own default padding/font-size is sized for a full-width
+   form field, too roomy to share a row with the Send Email/Send SMS/
+   Summary tabs. Scoped to just this toolbar row so every OTHER enhanced
+   select in the app (status pickers, etc.) keeps its normal comfortable
+   size. */
+@media (max-width: 480px) {
+  .compose-toolbar-row .mobile-select-anchor { max-width: 84px; }
+  .compose-toolbar-row .mobile-select-trigger { padding: 5px 6px; font-size: .74rem; }
+  .compose-channel-toggle button { padding: 5px 8px; font-size: .72rem; }
+}
 
 /* Native date/time pickers render a black-on-black calendar icon on a
    dark background otherwise -- color-scheme flips both to the light
@@ -822,6 +827,19 @@ body { margin: 0; }
    Cancel, never needs its own scroll to be usable on a phone screen. */
 .task-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 400; width: 280px; max-width: 88vw; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 12px; }
 .task-panel.open { display: block; }
+/* Every compose-bar popover (Schedule/Emoji/GIF) used to open via .task-
+   panel's own default absolute top:calc(100%+6px)/left:0 -- fine for the
+   compact Schedule form, but the taller emoji grid/GIF results routinely
+   needed more vertical room than was actually left above the button
+   inside .convo-panel's own overflow:hidden box, which silently clipped
+   most of the panel away (confirmed live: "completely hidden on the
+   bottom and right"). These three (and the message reaction quick-bar,
+   which was never anchored to a fixed button to begin with) now position
+   themselves with real viewport-fixed coordinates instead
+   (positionPanelAboveButton) -- this has to come AFTER .task-panel above
+   to actually win the cascade, since both are single-class selectors. */
+.compose-schedule-panel, .emoji-picker-panel, .gif-picker-panel, .msg-react-panel { position: fixed; top: auto; left: auto; right: auto; bottom: auto; overflow-y: auto; }
+.msg-react-panel { width: auto; padding: 6px 8px; }
 .task-panel-list { max-height: 220px; overflow-y: auto; margin-bottom: 10px; }
 .task-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); }
 .task-panel-row:last-child { border-bottom: none; }
