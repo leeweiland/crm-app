@@ -52,6 +52,7 @@
 </div>
 <script src="/crm-nav.js"></script>
 <script src="/column-resize.js"></script>
+<script src="/rename-inline.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
@@ -124,7 +125,7 @@ function renderFlowsTable() {
   const pageRows = sorted.slice((flowsPage - 1) * flowsPageSize, flowsPage * flowsPageSize);
   body.innerHTML = pageRows.map(f => `
     <tr>
-      <td class="clickable"><a href="/flow-builder.html?id=${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
+      <td class="clickable"><a href="/flow-builder.html?id=${f.id}" data-rename-id="${f.id}" style="color:var(--pra-blue);text-decoration:none">${escapeHtml(f.name)}</a></td>
       <td class="pra-muted">${escapeHtml(triggerLabel(f))}</td>
       <td><button class="active-toggle${f.active ? ' on' : ''}" data-id="${f.id}" data-active="${f.active}"></button></td>
       <td>${f.totalRuns}${f.activeRuns ? ` <span class="pra-muted">(${f.activeRuns} active)</span>` : ''}</td>
@@ -144,6 +145,15 @@ function renderFlowsTable() {
     await fetch('/api/flows/' + btn.dataset.del, { method: 'DELETE' });
     loadFlows();
   });
+  document.querySelectorAll('[data-rename-id]').forEach(el => wireRenameCell(el, {
+    getValue: () => flowsCache.find(f => f.id === el.dataset.renameId).name,
+    navigate: () => { location.href = el.href; },
+    save: async (name) => {
+      const r = await fetch('/api/flows/' + el.dataset.renameId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      return r.ok ? { ok: true } : { ok: false, error: 'Could not rename.' };
+    },
+    onRenamed: (name) => { flowsCache.find(f => f.id === el.dataset.renameId).name = name; },
+  }));
   praRenderPagination(document.getElementById('flowsPagination'), {
     total: sorted.length, page: flowsPage, pageSize: flowsPageSize,
     onPrev() { if (flowsPage > 1) { flowsPage--; renderFlowsTable(); } },

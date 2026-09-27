@@ -91,6 +91,23 @@ body { margin: 0; }
   border-color: var(--pra-blue);
   box-shadow: 0 0 0 3px var(--pra-blue-dim);
 }
+/* rename-inline.js's double-click-to-rename text input -- sized to sit
+   flush inside a table cell (a Name column's row height) instead of
+   .pra-input's own much larger padding, which would blow the row out. */
+.rename-inline-input {
+  font-family: var(--font-primary);
+  font-size: inherit;
+  font-weight: inherit;
+  color: var(--pra-white);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--pra-blue);
+  border-radius: 4px;
+  padding: 2px 6px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  outline: none;
+}
 .pra-select { -webkit-appearance: none; appearance: none; cursor: pointer; }
 .pra-select option { background: var(--pra-panel); color: var(--pra-white); }
 
