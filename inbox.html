@@ -537,7 +537,12 @@ function clearConvoSelection() { selectedConvoKeys.clear(); selectAnchorKey = nu
 const CONVO_PAGE_SIZE = 40;
 let convoOffset = 0, convoHasMore = true, convoLoadingMore = false, convoSearchDebounce = null;
 const STOP_STATUSES = ['stop', 'bad fit / blacklist', 'bad fit', 'blacklist'];
-const initialContactId = new URLSearchParams(location.search).get('contact');
+// let, not const -- loadConversations() clears this to null the first time
+// it's actually used (see its own comment), so a deep-linked ?contact= only
+// auto-opens once, right after a real page load, instead of reopening that
+// same contact every time the list refreshes for an unrelated reason
+// (changing the filter/sort/search, a live SSE update, ...).
+let initialContactId = new URLSearchParams(location.search).get('contact');
 
 function initials(name) { return String(name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(); }
 // Outer avatar glow, by CRM status -- lead-stage-at-a-glance in the chat list.
@@ -876,12 +881,22 @@ async function loadConversations(quiet) {
   }
   renderSidebar();
   if (initialContactId) {
-    const match = conversations.find(c => c.contactId === initialContactId);
+    // Consumed exactly once -- a deep link should open its contact right
+    // after the page actually loads, not every time this function runs
+    // again later for an unrelated reason (filter/sort/search change, the
+    // 400ms SSE-triggered refresh on a new message, ...). Confirmed live:
+    // changing the Unresponded filter, or just typing in the search box,
+    // kept silently reopening whatever contact the URL happened to still
+    // carry from an earlier click, because this was read from a `const`
+    // that never got cleared.
+    const deepLinkedId = initialContactId;
+    initialContactId = null;
+    const match = conversations.find(c => c.contactId === deepLinkedId);
     if (match) { selectConversation(match); return; }
     // Not on the first page of conversations (brand-new contact with no
     // messages yet, or just not among the most recent) -- look it up
     // directly instead of scanning the full contact list client-side.
-    const contactRes = await fetch('/api/contacts/' + initialContactId);
+    const contactRes = await fetch('/api/contacts/' + deepLinkedId);
     const contact = contactRes.ok ? (await contactRes.json()).contact : null;
     if (contact) selectConversation({ key: contact.id, contactId: contact.id, contact, displayName: `${contact.first} ${contact.last}`.trim(), lastAt: null, unreadCount: 0 });
   } else if (selectedConvo) {
@@ -1495,11 +1510,20 @@ function backToConvoList() { document.getElementById('chatView').classList.remov
 // Page" is there for that.
 let overlayContact = null, overlayTags = [], overlayLists = [], overlayFields = [];
 let overlayThreadItems = [];
+// Bumped on every call, checked after the fetches below resolve -- clicking
+// a second contact's name before the first overlay's own fetches finished
+// used to let whichever response happened to come back LAST win, regardless
+// of click order, occasionally populating the popup with the wrong
+// person's info. Same discard-a-stale-response shape as conversation-
+// panel.js's own loadThread guard.
+let overlayRequestId = 0;
 async function openContactOverlay(contactId) {
   overlaySaver.flush(); // any unsaved edit on the contact shown last goes out before the form is repopulated
+  const myRequestId = ++overlayRequestId;
   const [tagsRes, listsRes, fieldsRes, contactRes, threadRes] = await Promise.all([
     fetch('/api/tags'), fetch('/api/lists'), fetch('/api/custom-fields?entityType=contact'), fetch('/api/contacts/' + contactId), fetch('/api/inbox/contact/' + contactId)
   ]);
+  if (myRequestId !== overlayRequestId) return; // a newer openContactOverlay call has already superseded this one
   overlayTags = tagsRes.ok ? (await tagsRes.json()).tags : [];
   overlayLists = listsRes.ok ? (await listsRes.json()).lists : [];
   overlayFields = fieldsRes.ok ? (await fieldsRes.json()).fields : [];
