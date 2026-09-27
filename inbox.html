@@ -1472,7 +1472,17 @@ async function selectConversation(c, skipFetch) {
   // there too used to silently drop whatever quote preview or in-progress
   // reply/channel choice the person was looking at, every single time, for
   // no reason tied to what that resync actually needed to fix.
-  if (isRealSwitch) chatPanelInstance.switchContact(c.contactId, { done: c.done });
+  if (isRealSwitch) {
+    chatPanelInstance.switchContact(c.contactId, { done: c.done });
+    // Keeps the open conversation reopenable on refresh -- initialContactId
+    // (below) reads this same "contact" param on load. replaceState, not
+    // pushState: clicking through conversations shouldn't pile up browser-
+    // back history entries, just keep the address bar in sync with whatever
+    // is actually open right now.
+    const url = new URL(location.href);
+    url.searchParams.set('contact', c.contactId);
+    history.replaceState(null, '', url);
+  }
   await chatPanelInstance.loadThread();
 }
 function backToConvoList() { document.getElementById('chatView').classList.remove('thread-open'); }

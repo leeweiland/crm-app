@@ -635,8 +635,12 @@ export async function handleInboxRequest(req, res, url) {
   // override), not the single shared campaign sender.
   if (p === "/api/inbox/send" && req.method === "POST") {
     const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta } = await readJsonBody(req);
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find(c => c.id === contactId);
+    // getContactByIdFast, not a full readJson(CONTACTS_FILE, []).find() linear
+    // scan over ~190MB just to grab this one contact -- same fix already
+    // applied to this file's own internal-staff-email filter above, and to
+    // contacts_backend.js's GET /api/contacts/:id; this endpoint was missed.
+    // Confirmed as part of the Inbox chat panel's own send-lag complaint.
+    const contact = getContactByIdFast(contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
     if (!body || !body.trim()) return sendJson(res, 400, { error: "Message is required" });
     // Sending "as" a teammate (compose panel's From dropdown, email only) --

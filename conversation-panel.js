@@ -269,6 +269,14 @@
       composeReplyTo: null, // { subject, quotedHtml, quotedMeta } | null
       aiAssistAvailable: false,
       composeBarHeight: null,
+      // Keyed by contactId, not a single string -- render() rebuilds
+      // #composeBody's whole DOM node from scratch on every call (a new
+      // inbound message for the currently-open conversation triggers exactly
+      // this), which used to wipe out whatever the staff member was mid-
+      // typing. Keying by contact (not just one bare string) means switching
+      // to a different conversation and back doesn't leak one contact's
+      // half-written reply into another's compose box.
+      composeDraftByContact: {},
       // null = unknown/one-way (Mark Done always available, never shows
       // "Mark Not Done" until this instance itself has toggled it once) --
       // see contact-detail.html's config, which has no cheap way to look up
@@ -564,14 +572,15 @@
       btn.disabled = false; btn.textContent = 'Schedule';
       if (!r.ok) { showToast(d.error || 'Could not schedule', true); return; }
       showToast(`Scheduled for ${new Date(scheduledAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`);
+      delete state.composeDraftByContact[contactId];
       _toggleComposeSchedulePanel(false);
       // Same reset sendComposeMessage does after a live send -- the compose
-      // bar always lands back on a fresh Send Email/SMS box, never left
-      // looking like a reply/draft that already went out (queued, in this
-      // case, rather than sent).
+      // bar always lands back on a fresh Send box, never left looking like a
+      // reply/draft that already went out (queued, in this case, rather than
+      // sent). composeChannel is left alone, same reasoning as the live-send
+      // path -- scheduling an SMS shouldn't bounce the tab back to Email.
       state.composeReplyTo = null;
       state.composeView = 'compose';
-      state.composeChannel = config.initialChannel || 'email';
       state.composeBarHeight = null;
       render();
     }
@@ -710,23 +719,25 @@
       btn.disabled = false; btn.textContent = state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send';
       if (networkError || !r.ok) { showToast(d?.error || networkError?.message || 'Send failed', true); return; }
       showToast('Sent');
+      delete state.composeDraftByContact[contactId];
       // Resets to the exact same state this panel opens with for a fresh
       // conversation -- not just clearing composeReplyTo (which alone left
-      // composeView/composeChannel/composeBarHeight whatever they happened
-      // to be), so hitting Send always lands back on the plain default
-      // Send Email/SMS box, never still looking like "Reply To Email" or a
-      // manually-resized compose bar left over from the reply.
+      // composeView/composeBarHeight whatever they happened to be), so
+      // hitting Send always lands back on the plain default Send box, never
+      // still looking like "Reply To Email" or a manually-resized compose
+      // bar left over from the reply. composeChannel is deliberately NOT
+      // reset here (see below) -- sending an SMS should leave the SMS tab
+      // selected, not bounce back to Email.
       state.composeReplyTo = null;
       state.composeView = 'compose';
-      state.composeChannel = config.initialChannel || 'email';
       state.composeBarHeight = null;
-      // A real reply just went out -- THIS is what actually counts as
-      // responding, not merely having opened the thread earlier. Marks
-      // every prior unread inbound message done and moves the conversation
-      // out of Unresponded (inbox) / clears the sidebar glow (contact-detail).
-      await fetch(`/api/inbox/conversations/${contactId}/done`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: true }) });
-      state.done = true;
-      config.onDoneChanged?.(contactId, true);
+      // Sending does NOT mark the conversation done on its own -- per
+      // explicit direction, only the manual Mark Done button (below) should
+      // clear Unresponded. A reply is often one of several messages a real
+      // conversation needs before it's actually resolved; auto-clearing it
+      // the instant any reply goes out hid conversations that still needed
+      // attention. This also used to be a blocking network round trip here,
+      // adding real latency to every send for a side effect that's gone now.
       if (state.contactId !== contactId) return; // superseded by a later switchContact
       const [threadRes, clickItems] = await Promise.all([fetch('/api/inbox/contact/' + contactId), fetchClickItems(contactId)]);
       state.threadItems = threadRes.ok ? [...(await threadRes.json()).items, ...clickItems] : clickItems;
@@ -876,7 +887,7 @@
           ` : `
             ${state.composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
             <div class="compose-row">
-              <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}"></textarea>
+              <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}">${escapeHtml(state.composeDraftByContact[contactId] || '')}</textarea>
               <div class="compose-send-group">
                 <button class="pra-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
                 <div class="chat-panel-task-btn compose-schedule-wrap">
@@ -961,6 +972,10 @@
       }
       if (state.composeView === 'summary') { if (contactId) loadAiSummary(contactId); }
       else {
+        // Every keystroke saves into state (not just the DOM), keyed to
+        // THIS contact -- see composeDraftByContact's own comment for why.
+        const bodyEl = container.querySelector('#composeBody');
+        if (bodyEl && contactId) bodyEl.addEventListener('input', () => { state.composeDraftByContact[contactId] = bodyEl.value; });
         const sendBtn = container.querySelector('#composeSendBtn'); if (sendBtn) sendBtn.onclick = sendComposeMessage;
         const scheduleBtn = container.querySelector('#composeScheduleBtn');
         if (scheduleBtn) scheduleBtn.onclick = (e) => { e.stopPropagation(); _toggleComposeSchedulePanel(); };
