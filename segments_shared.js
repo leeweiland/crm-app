@@ -151,7 +151,7 @@ export function leadDateMs(contact) {
 // email_backend.js's SES webhook and tracking_backend.js's pageview
 // handler) -- matchesSegment stays exactly as cheap as it already was,
 // touching only the contact object already in memory.
-function evalCondition(contact, cond) {
+function evalCondition(contact, cond, payload) {
   const { field, op, value } = cond;
 
   // "within_last_hours" is deliberately computed against Date.now() at
@@ -220,6 +220,15 @@ function evalCondition(contact, cond) {
   let actual;
   if (field.startsWith("customFields.")) {
     actual = contact.customFields?.[field.slice("customFields.".length)];
+  } else if (field.startsWith("payload.")) {
+    // Reaches into the flow run's own trigger payload (a form's answers,
+    // etc -- same "payload." convention flows_backend.js's resolveTemplate
+    // already uses for {{payload.x}} tokens) instead of the contact record.
+    // Only flows_backend.js's if_then/filter steps ever pass a payload
+    // through -- every other matchesSegment() caller (segments, campaigns,
+    // automations) passes none, so this always resolves to undefined
+    // (never matches) there, same as referencing a field that doesn't exist.
+    actual = payload?.[field.slice("payload.".length)];
   } else if (field === "emailOpened") {
     actual = !!(contact.emailEngagement?.opened || contact.emailEngagement?.clicked); // a click implies an open
   } else if (field === "emailClicked") {
@@ -276,10 +285,10 @@ function staffActivityIndex() {
   if (!_staffIdx || Date.now() - _staffIdxAt > 2000) { _staffIdx = readJson(STAFF_ACTIVITY_FILE, {}); _staffIdxAt = Date.now(); }
   return _staffIdx;
 }
-export function matchesSegment(contact, filter) {
+export function matchesSegment(contact, filter, payload) {
   if (!filter) return true;
-  if (filter.all) return filter.all.every(c => evalCondition(contact, c));
-  if (filter.any) return filter.any.some(c => evalCondition(contact, c));
+  if (filter.all) return filter.all.every(c => evalCondition(contact, c, payload));
+  if (filter.any) return filter.any.some(c => evalCondition(contact, c, payload));
   return true;
 }
 

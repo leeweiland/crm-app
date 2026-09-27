@@ -552,12 +552,19 @@ let cachedRawSamples = null;
 // PICKER shows as a field's name, and which of its two keys is worth
 // offering (see pickableKeys) so the list doesn't show every question twice.
 let cachedFieldLabels = {};
+// Full question metadata (code/label/type/options) for a form_submitted
+// trigger's own form -- only populated for that trigger type (see
+// flows_backend.js's /samples). Lets the If/Then step's Field dropdown
+// offer this form's own dropdown/multiple_choice questions with their REAL
+// configured options as Value choices, same as loadFormFieldOptions below.
+let cachedFormFields = [];
 async function fetchRawSamples(force) {
   if (cachedRawSamples && !force) return cachedRawSamples;
   const r = await fetch(`/api/flows/${flow.id}/samples`);
   const d = r.ok ? await r.json() : { samples: [], fieldLabels: {} };
   cachedRawSamples = d.samples || [];
   cachedFieldLabels = d.fieldLabels || {};
+  cachedFormFields = d.fields || [];
   return cachedRawSamples;
 }
 async function fetchSamples(force) {
@@ -1001,24 +1008,66 @@ function openStepConfigModal(step, isNew) {
 
   if (step.type === 'filter' || step.type === 'if_then') {
     const c = step.config.filter?.all?.[0] || { field: 'status', op: 'eq', value: '' };
+    // This form's own questions (a form_submitted trigger only) become
+    // selectable Field options, keyed "payload.<code>" -- the same
+    // segments_shared.js convention {{payload.x}} tokens already use, now
+    // also readable by evalCondition (see its "payload." branch). Answer
+    // values live in run.triggerPayload, not the contact record, so these
+    // can't be offered as ordinary contact fields.
+    const formFieldOptionsHtml = () => cachedFormFields.map(f => `<option value="payload.${f.code}" ${c.field === `payload.${f.code}` ? 'selected' : ''}>${escapeHtml(f.label)} (form answer)</option>`).join('');
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">${step.type === 'filter' ? "If the contact doesn't match this, the flow stops here." : 'If the contact matches this, they go down the YES path; otherwise NO.'}</div>
       <div class="field"><label class="pra-label">Field</label><select class="pra-select" id="cfgField">
         <option value="status" ${c.field === 'status' ? 'selected' : ''}>Status</option>
         <option value="tags" ${c.field === 'tags' ? 'selected' : ''}>Has tag</option>
         <option value="programType" ${c.field === 'programType' ? 'selected' : ''}>Program Type</option>
+        ${formFieldOptionsHtml()}
       </select></div>
-      <div class="field"><label class="pra-label">Value</label><select class="pra-select" id="cfgValue"></select></div>
+      <div class="field" id="cfgValueField"><label class="pra-label">Value</label><select class="pra-select" id="cfgValue"></select></div>
     `;
     const fieldSel = document.getElementById('cfgField');
     function updateValueOptions() {
+      const formField = cachedFormFields.find(f => `payload.${f.code}` === fieldSel.value);
+      // A dropdown/multiple_choice/checkboxes form question has a real,
+      // known set of answers -- offer them the same way Status/Program Type
+      // already do. Anything else (short_text, etc.) has no fixed answer
+      // set to choose from, so the Value control swaps to free text instead
+      // of guessing at options that don't exist.
+      const valueField = document.getElementById('cfgValueField');
+      if (formField && !['dropdown', 'multiple_choice', 'checkboxes'].includes(formField.type)) {
+        valueField.innerHTML = `<label class="pra-label">Value</label><input class="pra-input" id="cfgValue" value="${escapeHtml(c.value || '')}"/>`;
+        return;
+      }
+      if (!document.getElementById('cfgValue') || document.getElementById('cfgValue').tagName !== 'SELECT') {
+        valueField.innerHTML = `<label class="pra-label">Value</label><select class="pra-select" id="cfgValue"></select>`;
+      }
       const valSel = document.getElementById('cfgValue');
       if (fieldSel.value === 'status') valSel.innerHTML = allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${c.value === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
       else if (fieldSel.value === 'programType') valSel.innerHTML = ['online', 'gym'].map(v => `<option value="${v}" ${c.value === v ? 'selected' : ''}>${v === 'online' ? 'Online' : 'Gym'}</option>`).join('');
+      else if (formField) valSel.innerHTML = formField.options.map(o => `<option value="${escapeHtml(o)}" ${c.value === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('');
       else valSel.innerHTML = allTags.map(t => `<option value="${t.id}" ${c.value === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('');
     }
     fieldSel.addEventListener('change', updateValueOptions);
     updateValueOptions();
+    // cachedFormFields is only ever populated by fetchRawSamples() -- fire
+    // it off (if not already cached) so a form_submitted flow's questions
+    // show up in the Field dropdown without waiting on the token picker
+    // elsewhere in this modal to have loaded them first. Re-renders the
+    // Field select in place, preserving whatever's currently chosen, and is
+    // a no-op if this step's modal has since been closed/swapped.
+    if (flow.trigger?.type === 'form_submitted' && !cachedFormFields.length) {
+      fetchRawSamples().then(() => {
+        if (editingStepId !== step.id || !document.getElementById('cfgField')) return;
+        fieldSel.insertAdjacentHTML('beforeend', formFieldOptionsHtml());
+        // Restores the step's OWN saved field (c.field), not whatever the
+        // select happened to fall back to before its real option existed --
+        // a saved "payload.type" silently shows as "status" (the first
+        // option) until this fetch resolves, since no matching <option>
+        // exists yet at initial render.
+        fieldSel.value = c.field;
+        updateValueOptions();
+      });
+    }
   } else if (step.type === 'delay') {
     body.innerHTML = `
       <div class="field-row">

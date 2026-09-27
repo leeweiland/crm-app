@@ -380,11 +380,11 @@ async function advanceFlowRun(run, flow) {
     }
 
     if (step.type === "filter") {
-      const matched = contact ? matchesSegment(contact, step.config.filter) : false;
+      const matched = contact ? matchesSegment(contact, step.config.filter, ctx.payload) : false;
       if (!matched) { completeRun(run); return; }
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "if_then") {
-      const matched = contact ? matchesSegment(contact, step.config.filter) : false;
+      const matched = contact ? matchesSegment(contact, step.config.filter, ctx.payload) : false;
       run.currentStepId = (matched ? step.yesStepId : step.noStepId) || null;
     } else if (step.type === "add_tag") {
       if (contact && step.config.tagId && !contact.tags.includes(step.config.tagId)) { contact.tags.push(step.config.tagId); saveContact(contact); }
@@ -1086,6 +1086,14 @@ export async function handleFlowsRequest(req, res, url) {
       // label-keyed duplicate -- including on a form with no submissions yet.
       const configuredForm = formId ? forms.find(f => f.id === formId) : null;
       (configuredForm?.fields || []).forEach(f => { if (f.label && f.type !== "headline" && f.type !== "statement" && f.type !== "page_break") fieldLabels[f.code || f.label || f.type] = f.label; });
+      // Full question metadata (not just code->label) for the If/Then step's
+      // Field dropdown (flow-builder.html) -- lets it offer this form's own
+      // dropdown/multiple_choice questions with their REAL configured
+      // options as Value choices, same quality bar as the built-in Status/
+      // Program Type fields, instead of a free-text guess.
+      const answerableFields = (configuredForm?.fields || [])
+        .filter(f => !["statement", "headline", "image", "video", "calendar", "page_break"].includes(f.type))
+        .map(f => ({ code: f.code || f.label || f.type, label: f.label || f.type, type: f.type, options: (f.options || []).map(o => o.label) }));
       const samples = responses.map(r => {
         const form = forms.find(f => f.id === r.formId);
         const labeled = {};
@@ -1103,7 +1111,7 @@ export async function handleFlowsRequest(req, res, url) {
         if (!("Timezone" in labeled)) labeled["Timezone"] = r.timezone || "";
         return labeled;
       });
-      return sendJson(res, 200, { samples, fieldLabels });
+      return sendJson(res, 200, { samples, fieldLabels, fields: answerableFields });
     }
     if (type === "booking_created") {
       const eventTypes = readJson("crm_event_types.json", []);

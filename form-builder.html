@@ -1350,7 +1350,7 @@ function bindCanvas(canvas) {
     const idx = +el.dataset.labelIdx;
     el.addEventListener('input', e => { form.fields[idx].label = e.target.textContent; saveDebounced(); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
-    wireFocusFmtTrigger(el, idx, LABEL_STYLE_PROPS, '13', labelStyle, () => [el]);
+    wireFocusFmtTrigger(el, idx, LABEL_STYLE_PROPS, '15', labelStyle, () => [el]);
   });
   canvas.querySelectorAll('[data-statement-idx]').forEach(el => {
     const idx = +el.dataset.statementIdx;
