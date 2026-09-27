@@ -48,7 +48,13 @@ function markConversationDone(contactId) {
 async function sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta, mediaUrl }) {
   if (channel === "email") {
     if (!contact.email) return { ok: false, status: 400, reason: "This contact has no email address" };
-    const html = body.replace(/\n/g, "<br/>");
+    // Same <img> embed ai_active_backend.js's own [[GIF: url]] marker path
+    // already uses for an agent's email sends -- a GIF picked from the
+    // compose bar's picker (on the email tab) rides along the same way,
+    // instead of the old "insert the raw URL as text" fallback, which just
+    // rendered as a bare link.
+    const gifHtml = mediaUrl ? `<div><img src="${mediaUrl}" alt="" style="max-width:320px"/></div>` : "";
+    const html = body.replace(/\n/g, "<br/>") + gifHtml;
     const blocks = [{ id: "b1", type: "text", html }];
     const theme = getEmailTheme();
     const trailingHtml = quotedHtml
@@ -91,7 +97,7 @@ export async function sendDueScheduledMessages() {
       if (!sender) {
         failReason = "Original sender's account no longer exists";
       } else {
-        const result = await sendInboxMessage({ contact, channel: m.channel, subject: m.subject, body: m.body, sender, quotedHtml: m.quotedHtml, quotedMeta: m.quotedMeta });
+        const result = await sendInboxMessage({ contact, channel: m.channel, subject: m.subject, body: m.body, sender, quotedHtml: m.quotedHtml, quotedMeta: m.quotedMeta, mediaUrl: m.mediaUrl || undefined });
         if (result.ok) { status = "sent"; markConversationDone(contact.id); }
         else failReason = result.reason;
       }
@@ -674,9 +680,9 @@ export async function handleInboxRequest(req, res, url) {
     // Confirmed as part of the Inbox chat panel's own send-lag complaint.
     const contact = getContactByIdFast(contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
-    // mediaUrl (the chat panel's GIF picker, SMS only -- see sendSms) makes
-    // an otherwise-empty body a real, sendable MMS -- a real picture message
-    // has no text either. Every other send still needs real text.
+    // mediaUrl (the chat panel's GIF picker) makes an otherwise-empty body
+    // real and sendable -- a real MMS/picture message legitimately has no
+    // text either. Every other send still needs real text.
     if (!mediaUrl && (!body || !body.trim())) return sendJson(res, 400, { error: "Message is required" });
     // Sending "as" a teammate (compose panel's From dropdown, email only) --
     // admin only (enforced here too, not just by hiding the dropdown
@@ -691,7 +697,6 @@ export async function handleInboxRequest(req, res, url) {
       const other = teamUsers.find(u => u.id === fromUserId && !u.archived);
       if (other) sender = other;
     }
-    if (mediaUrl && channel !== "sms") return sendJson(res, 400, { error: "GIF sending is only supported for SMS right now" });
     const result = await sendInboxMessage({ contact, channel, subject, body, sender, quotedHtml, quotedMeta, mediaUrl });
     if (!result.ok) return sendJson(res, result.status, { error: result.reason });
     return sendJson(res, 200, { ok: true });
@@ -703,19 +708,21 @@ export async function handleInboxRequest(req, res, url) {
   // rather than silently sitting in the queue until the scheduler tries
   // and fails it hours or days later.
   if (p === "/api/inbox/schedule" && req.method === "POST") {
-    const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta, scheduledAt } = await readJsonBody(req);
+    const { contactId, channel, subject, body, fromUserId, quotedHtml, quotedMeta, scheduledAt, mediaUrl } = await readJsonBody(req);
     if (!scheduledAt || new Date(scheduledAt).getTime() <= Date.now()) return sendJson(res, 400, { error: "Pick a date and time in the future" });
     if (channel !== "email" && channel !== "sms") return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find(c => c.id === contactId);
+    // getContactByIdFast, not a full readJson(CONTACTS_FILE, []).find()
+    // linear scan over ~190MB -- same fix already applied to /api/inbox/send
+    // right above; this endpoint was missed.
+    const contact = getContactByIdFast(contactId);
     if (!contact) return sendJson(res, 400, { error: "Unknown contact" });
-    if (!body || !body.trim()) return sendJson(res, 400, { error: "Message is required" });
+    if (!mediaUrl && (!body || !body.trim())) return sendJson(res, 400, { error: "Message is required" });
     if (channel === "email" && !contact.email) return sendJson(res, 400, { error: "This contact has no email address" });
     if (channel === "sms" && !contact.phone) return sendJson(res, 400, { error: "This contact has no phone number" });
     if (fromUserId && fromUserId !== me.id && !isAdmin(me)) return sendJson(res, 403, { error: "Only admins can send as another teammate" });
     const record = {
       id: randomUUID(), contactId, channel, subject: subject || null, body,
-      fromUserId: fromUserId || null, quotedHtml: quotedHtml || null, quotedMeta: quotedMeta || null,
+      fromUserId: fromUserId || null, quotedHtml: quotedHtml || null, quotedMeta: quotedMeta || null, mediaUrl: mediaUrl || null,
       scheduledAt, status: "scheduled", sentAt: null, failReason: null,
       createdBy: me.id, createdAt: new Date().toISOString(),
     };

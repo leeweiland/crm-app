@@ -122,6 +122,12 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId, media
   const baseRow = {
     channel: "sms", direction: "outbound", contactId, sourceType, sourceId,
     to: toFormatted, from: twilioSettings.fromNumber || null, body: body || "", bodyPreview: (body || "").slice(0, 140),
+    // Was passed to Twilio (below) but never actually saved on the row --
+    // a real, successfully-delivered MMS still rendered as a blank bubble
+    // in the thread with nothing to show it ever carried an image. Applies
+    // equally to this compose panel's GIF picker and the AI agent's own
+    // [[GIF: url]] marker (ai_active_backend.js's sendViaChannel).
+    ...(mediaUrl ? { mediaUrl } : {}),
   };
 
   if (!client) { logMessage({ ...baseRow, status: "failed", failReason: "twilio_not_configured" }); return { ok: false, reason: "twilio_not_configured" }; }

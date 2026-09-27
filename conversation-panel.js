@@ -132,10 +132,17 @@
     `;
   }
   function smsBubbleHtml(item) {
+    // mediaUrl (an MMS attachment -- this compose panel's GIF picker or the
+    // AI agent's own [[GIF: url]] marker) used to have nowhere to render at
+    // all: sms_backend.js sent it to Twilio but never saved it on the
+    // logged row, so even a successfully-delivered MMS showed as a blank
+    // bubble here.
+    const mediaHtml = item.mediaUrl ? `<img class="sms-bubble-media" src="${escapeHtml(item.mediaUrl)}" alt=""/>` : '';
+    const textHtml = (item.body || item.bodyPreview) ? escapeHtml(item.body || item.bodyPreview) : '';
     return `
       <div class="bubble-row ${item.direction}">
         <div class="bubble-content">
-          <div class="sms-bubble">${escapeHtml(item.body || item.bodyPreview || '')}</div>
+          <div class="sms-bubble${mediaHtml && !textHtml ? ' media-only' : ''}">${mediaHtml}${textHtml}</div>
           <div class="bubble-time">${fmtDate(item.at)}</div>
         </div>
       </div>
@@ -314,6 +321,12 @@
       // to a different conversation and back doesn't leak one contact's
       // half-written reply into another's compose box.
       composeDraftByContact: {},
+      // A GIF picked from the compose bar's own picker -- staged here (not
+      // sent immediately) exactly like a typed draft, so it goes out
+      // together with whatever's in the textarea on the next real Send
+      // click, same as any other attachment-before-sending flow. Also
+      // per-contact for the same reason composeDraftByContact is.
+      composePendingMediaByContact: {},
       upcomingBooking: null, // the contact's soonest confirmed, not-yet-happened public booking, or null
       // null = unknown/one-way (Mark Done always available, never shows
       // "Mark Not Done" until this instance itself has toggled it once) --
@@ -682,9 +695,16 @@
       panel.classList.toggle('open', opening);
       if (opening) {
         if (btn) positionPanelAboveButton(panel, btn);
-        const now = new Date(Date.now() + 5 * 60000); // 5 min out, so "now" pre-fills to a valid future time
-        container.querySelector('#composeScheduleDate').value = now.toISOString().slice(0, 10);
-        container.querySelector('#composeScheduleTime').value = now.toTimeString().slice(0, 5);
+        // 5 min out, so "now" pre-fills to a valid future time. Both date
+        // AND time read from LOCAL fields (getFullYear/Month/Date, not
+        // toISOString's UTC date) -- mixing a UTC date with a local time
+        // used to disagree about which calendar day it is for roughly a
+        // third of the day (whenever local time and UTC fall on different
+        // dates), silently pre-filling a time that had already passed.
+        const now = new Date(Date.now() + 5 * 60000);
+        const pad = (n) => String(n).padStart(2, '0');
+        container.querySelector('#composeScheduleDate').value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        container.querySelector('#composeScheduleTime').value = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
         renderComposeSchedulePanel();
       }
     }
@@ -693,7 +713,8 @@
       if (!contactId) { showToast('Match this conversation to a contact first', true); return; }
       const bodyEl = container.querySelector('#composeBody');
       const body = (bodyEl?.value || '').trim();
-      if (!body) { showToast('Write a message first', true); return; }
+      const mediaUrl = state.composePendingMediaByContact[contactId];
+      if (!body && !mediaUrl) { showToast('Write a message first', true); return; }
       const dateVal = container.querySelector('#composeScheduleDate').value;
       const timeVal = container.querySelector('#composeScheduleTime').value;
       if (!dateVal || !timeVal) { showToast('Pick a date and time', true); return; }
@@ -704,19 +725,29 @@
       const isReply = state.composeChannel === 'email' && state.composeReplyTo;
       const btn = container.querySelector('#composeScheduleConfirmBtn');
       btn.disabled = true; btn.textContent = 'Scheduling…';
-      const r = await fetch('/api/inbox/schedule', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contactId, channel: state.composeChannel, subject, body, fromUserId, scheduledAt,
-          quotedHtml: isReply ? state.composeReplyTo.quotedHtml : undefined,
-          quotedMeta: isReply ? state.composeReplyTo.quotedMeta : undefined,
-        }),
-      });
-      const d = await r.json();
+      // Wrapped -- an unhandled network failure here (a mid-deploy blip, a
+      // dropped connection) used to leave the button stuck disabled on
+      // "Scheduling…" forever with no toast at all, since nothing ever
+      // reached the r.ok check below to reset it.
+      let r = null, d = null, networkError = null;
+      try {
+        r = await fetch('/api/inbox/schedule', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contactId, channel: state.composeChannel, subject, body, fromUserId, scheduledAt, mediaUrl,
+            quotedHtml: isReply ? state.composeReplyTo.quotedHtml : undefined,
+            quotedMeta: isReply ? state.composeReplyTo.quotedMeta : undefined,
+          }),
+        });
+        d = await r.json();
+      } catch (e) {
+        networkError = e;
+      }
       btn.disabled = false; btn.textContent = 'Schedule';
-      if (!r.ok) { showToast(d.error || 'Could not schedule', true); return; }
+      if (networkError || !r.ok) { showToast(d?.error || networkError?.message || 'Could not schedule', true); return; }
       showToast(`Scheduled for ${new Date(scheduledAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`);
       delete state.composeDraftByContact[contactId];
+      delete state.composePendingMediaByContact[contactId];
       _toggleComposeSchedulePanel(false);
       // Same reset sendComposeMessage does after a live send -- the compose
       // bar always lands back on a fresh Send box, never left looking like a
@@ -736,6 +767,13 @@
     // decides which onPick() below does. Category set borrowed from
     // chat-app's own emoji picker (EMOJI_CATEGORIES above).
     let emojiPickMode = 'insert'; // 'insert' | 'react'
+    // The bubble text a long-press/right-click opened the reaction bar on --
+    // captured at open time (see the touchstart/contextmenu wiring below) so
+    // the reaction reads as an actual reply-with-context ("😉 to your
+    // message: <what they said>") instead of a bare, floating emoji with no
+    // indication of what it's reacting to -- there's no visual threading on
+    // plain SMS the way there is in a real chat UI.
+    let reactingToText = '';
     let emojiTabsWired = false;
     function renderEmojiGrid(activeCat) {
       const tabsEl = container.querySelector('#composeEmojiTabs');
@@ -788,10 +826,12 @@
     async function sendQuickReaction(emoji) {
       const contactId = state.contactId;
       if (!contactId) return;
+      const body = reactingToText ? `${emoji} to your message: ${reactingToText}` : emoji;
       const r = await fetch('/api/inbox/send', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId, channel: 'sms', body: emoji }),
+        body: JSON.stringify({ contactId, channel: 'sms', body }),
       }).catch(() => null);
+      reactingToText = '';
       if (!r || !r.ok) { showToast('Could not send', true); return; }
       loadThread();
     }
@@ -835,21 +875,20 @@
     // flow here (the compose box is plain text, not a rich editor), so a
     // GIF picked on the email tab just inserts its URL as a normal link
     // instead of silently doing nothing.
-    async function sendGifPicked(url) {
+    // Stages the GIF (attaches it, doesn't send it) -- picking one used to
+    // fire the send immediately with no chance to add text, review, or back
+    // out, which read as "tries to send immediately without clicking send"
+    // and, since a real MMS take a moment, as "doesn't send the gif" when
+    // someone expected to see it appear right away. Now it just shows a
+    // preview above the textarea (composeAttachmentPreviewHtml) and goes
+    // out together with the message on the next real Send click, exactly
+    // like typing text first.
+    function sendGifPicked(url) {
       _toggleComposeGifPanel(false);
-      if (state.composeChannel !== 'sms') {
-        const bodyEl = container.querySelector('#composeBody');
-        if (bodyEl) insertAtCursor(bodyEl, url);
-        return;
-      }
       const contactId = state.contactId;
       if (!contactId) return;
-      const r = await fetch('/api/inbox/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId, channel: 'sms', body: '', mediaUrl: url }),
-      }).catch(() => null);
-      if (!r || !r.ok) { showToast('Could not send GIF', true); return; }
-      loadThread();
+      state.composePendingMediaByContact[contactId] = url;
+      render();
     }
     async function _toggleComposeGifPanel(forceOpen) {
       const panel = container.querySelector('#composeGifPanel');
@@ -978,7 +1017,11 @@
       const contactId = state.contactId;
       const bodyEl = container.querySelector('#composeBody');
       const body = (bodyEl?.value || '').trim();
-      if (!body || !contactId) { state.sendInFlight = false; return; }
+      const mediaUrl = contactId ? state.composePendingMediaByContact[contactId] : undefined;
+      // A staged GIF makes an otherwise-empty message real and sendable
+      // (a picture message legitimately has no text) -- text is only
+      // required when there's no attachment to carry it instead.
+      if ((!body && !mediaUrl) || !contactId) { state.sendInFlight = false; return; }
       const subject = state.composeChannel === 'email' ? container.querySelector('#composeSubject')?.value.trim() : undefined;
       const fromUserId = state.composeChannel === 'email' ? container.querySelector('#composeFromUserId')?.value : undefined;
       const btn = container.querySelector('#composeSendBtn');
@@ -996,7 +1039,7 @@
         r = await fetch('/api/inbox/send', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contactId, channel: state.composeChannel, subject, body, fromUserId,
+            contactId, channel: state.composeChannel, subject, body, fromUserId, mediaUrl,
             quotedHtml: isReply ? state.composeReplyTo.quotedHtml : undefined,
             quotedMeta: isReply ? state.composeReplyTo.quotedMeta : undefined,
           }),
@@ -1015,6 +1058,7 @@
       // bottom-right) just sat as a redundant dark box on top of the Send
       // button itself, right where the compose bar already lives.
       delete state.composeDraftByContact[contactId];
+      delete state.composePendingMediaByContact[contactId];
       // Resets to the exact same state this panel opens with for a fresh
       // conversation -- not just clearing composeReplyTo (which alone left
       // composeView/composeBarHeight whatever they happened to be), so
@@ -1209,6 +1253,13 @@
             <div class="ai-summary-panel" id="aiSummaryPanel"><div class="pra-muted">Loading summary…</div></div>
           ` : `
             ${state.composeChannel === 'email' ? `<input class="pra-input" id="composeSubject" placeholder="Subject" style="margin-bottom:8px"/>` : ''}
+            ${contactId && state.composePendingMediaByContact[contactId] ? `
+              <div class="compose-attachment-preview">
+                <img src="${escapeHtml(state.composePendingMediaByContact[contactId])}" alt=""/>
+                <span class="compose-attachment-label">GIF attached${state.composeChannel === 'email' ? ' -- sent as an image in the email' : ''}</span>
+                <button type="button" id="composeAttachmentRemoveBtn" title="Remove attachment">✕</button>
+              </div>
+            ` : ''}
             <div class="compose-row">
               <div class="compose-left-actions">
                 <div class="chat-panel-task-btn compose-emoji-wrap">
@@ -1309,7 +1360,11 @@
           if (!bubble) return;
           const touch = e.touches[0];
           const x = touch.clientX, y = touch.clientY;
-          msgLongPressTimer = setTimeout(() => { _toggleMsgReactPanel(true, x, y); msgLongPressTimer = null; }, 450);
+          // textContent skips the <img> (an MMS/GIF bubble) automatically --
+          // an image-only message just reacts with no quoted text, same as
+          // if there'd been nothing to quote.
+          const text = bubble.textContent.trim();
+          msgLongPressTimer = setTimeout(() => { reactingToText = text; _toggleMsgReactPanel(true, x, y); msgLongPressTimer = null; }, 450);
         }, { passive: true });
         threadEl.addEventListener('touchmove', cancelMsgLongPress, { passive: true });
         threadEl.addEventListener('touchend', cancelMsgLongPress);
@@ -1318,6 +1373,7 @@
           const bubble = e.target.closest('.bubble-row.inbound .sms-bubble');
           if (!bubble) return;
           e.preventDefault();
+          reactingToText = bubble.textContent.trim();
           _toggleMsgReactPanel(true, e.clientX, e.clientY);
         });
         const msgReactPanel = container.querySelector('#msgReactPanel');
@@ -1358,6 +1414,8 @@
           clearTimeout(gifSearchTimer);
           gifSearchTimer = setTimeout(() => loadGifs(e.target.value || ''), 350);
         });
+        const attachmentRemoveBtn = container.querySelector('#composeAttachmentRemoveBtn');
+        if (attachmentRemoveBtn) attachmentRemoveBtn.onclick = () => { delete state.composePendingMediaByContact[contactId]; render(); };
       }
       const backBtn = container.querySelector('#chatBackBtn');
       if (backBtn) backBtn.onclick = () => config.onBack?.();
