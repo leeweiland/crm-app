@@ -777,6 +777,11 @@ Invitee's timezone: %INVITEETIMEZONE%
 Booked via CRM scheduling.
 
 Need to cancel? %MANAGEURL%`;
+// Default event title on the actual Google Calendar event -- same order the
+// hardcoded version always used, now an editable template so staff can put
+// the contact's name first (calendars/agendas often truncate long titles,
+// so leading with the name reads better at a glance).
+const DEFAULT_CALENDAR_TITLE_TEMPLATE = "%EVENTNAME% — %FIRSTNAME% %LASTNAME%";
 // Calendar-description-only tokens (%FIRSTNAME% etc, %INTAKEANSWERS%,
 // %INVITEETIMEZONE%, %MANAGEURL%) -- deliberately separate from the shared
 // applyBookingTokens/applyMergeTags pair those other confirmation/reminder
@@ -819,6 +824,17 @@ function buildCalendarDescription(booking) {
   return renderCalendarDescription(withBookingTokens, booking, et);
 }
 
+// The staff Google Calendar event's title -- reuses renderCalendarDescription
+// for token substitution (%FIRSTNAME%/%LASTNAME%/etc. resolve identically to
+// the description above; unused tokens like %INTAKEANSWERS% just don't match
+// anything in a one-line title template and are left alone).
+function buildCalendarTitle(booking) {
+  const et = getEventTypes().find(e => e.id === booking.eventTypeId);
+  const template = et?.calendarTitleTemplate || DEFAULT_CALENDAR_TITLE_TEMPLATE;
+  const withBookingTokens = et ? applyBookingTokens(template, getBookingTokenValues(booking, et)) : template;
+  return renderCalendarDescription(withBookingTokens, booking, et);
+}
+
 // Creates the staff Google Calendar event for a saved booking and records the
 // outcome ON the booking. This used to be a bare try/catch inside the POST
 // handler that swallowed every failure -- a booking whose calendar write
@@ -833,7 +849,7 @@ async function syncBookingToCalendar(booking, et, calendar) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const created = await createCalendarEvent({
-        summary: `${et.name} — ${booking.name}`,
+        summary: buildCalendarTitle(booking),
         description: buildCalendarDescription(booking),
         startISO: booking.startAt, durationMinutes: et.durationMinutes,
         attendees: [{ email: booking.email, name: booking.name }], timezone: booking.timezone || calendar.availability.timezone,
@@ -1459,7 +1475,7 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/admin/event-types" && req.method === "GET") {
-    return sendJson(res, 200, { eventTypes: getEventTypes(), defaultCalendarDescriptionTemplate: DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE });
+    return sendJson(res, 200, { eventTypes: getEventTypes(), defaultCalendarDescriptionTemplate: DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE, defaultCalendarTitleTemplate: DEFAULT_CALENDAR_TITLE_TEMPLATE });
   }
   if (p === "/api/scheduling/admin/event-types" && req.method === "POST") {
     const body = await readJsonBody(req);
@@ -1486,8 +1502,14 @@ export async function handleSchedulingRequest(req, res, url) {
     const et = eventTypes.find(e => e.id === previewMatch[1]);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     const body = await readJsonBody(req);
+    // Wrapped: a bad template or an edge case in token substitution used to
+    // throw as an unhandled rejection here, which never sends a response at
+    // all -- the request just hangs until the browser gives up, and the
+    // preview box silently stays blank forever instead of showing an error.
+    try {
     const previewEt = { ...et, includeFormAnswersInCalendar: body.includeFormAnswersInCalendar };
     const template = typeof body.template === "string" && body.template.trim() ? body.template : DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE;
+    const titleTemplate = typeof body.titleTemplate === "string" && body.titleTemplate.trim() ? body.titleTemplate : DEFAULT_CALENDAR_TITLE_TEMPLATE;
     const sampleAnswers = {};
     // A real answer where one's available (the question's own placeholder,
     // or one of a dropdown's real configured options) reads as an actual
@@ -1521,15 +1543,22 @@ export async function handleSchedulingRequest(req, res, url) {
       formAnswers[key] = sample;
       if (fl.label) { formAnswers[fl.label] = sample; if (fl.code) formAnswerLabels[fl.code] = fl.label; }
     });
+    const sampleStart = new Date(Date.now() + 86400000);
     const sampleBooking = {
       name: "Jamie Sample", email: "jamie@example.com", phone: "(555) 123-4567",
-      timezone: "America/Anchorage", startAt: new Date(Date.now() + 86400000).toISOString(),
+      timezone: "America/Anchorage", startAt: sampleStart.toISOString(),
+      endAt: new Date(sampleStart.getTime() + (et.durationMinutes || 30) * 60000).toISOString(),
       id: "preview", eventTypeSlug: et.slug, cancelToken: "preview",
       formAnswers, formAnswerLabels,
       notes: formatExtraAnswers(et.questions, sampleAnswers),
     };
     const preview = renderCalendarDescription(applyBookingTokens(template, getBookingTokenValues(sampleBooking, et)), sampleBooking, previewEt);
-    return sendJson(res, 200, { preview });
+    const titlePreview = renderCalendarDescription(applyBookingTokens(titleTemplate, getBookingTokenValues(sampleBooking, et)), sampleBooking, previewEt);
+    return sendJson(res, 200, { preview, titlePreview });
+    } catch (e) {
+      console.error(`[scheduling] calendar-preview failed for event type ${et.id}: ${e.message}`);
+      return sendJson(res, 500, { error: "Preview failed" });
+    }
   }
 
   const etMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)$/);
@@ -1539,7 +1568,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

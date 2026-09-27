@@ -338,6 +338,14 @@
               <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addReminderSmsBtn">+ Add SMS Reminder</button>
             </div>
             <div class="ed-notif-card">
+              <div class="ed-notif-title">Calendar Event Title</div>
+              <div class="ed-notif-hint">The title of this booking's Google Calendar event -- reorder or reword it however you want. Tokens: %EVENTNAME% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %WHEN% %DATE% %TIME% %LOCATION%. Leave empty to use the default order.</div>
+              <div class="ed-sms-toolbar"><select class="pra-select" id="calTitlePersonalize" style="width:auto"><option value="">Personalize...</option></select></div>
+              <input class="pra-input" id="calTitleTemplate" placeholder="%EVENTNAME% — %FIRSTNAME% %LASTNAME%"/>
+              <div class="pra-label" style="margin-top:14px">Preview</div>
+              <div id="calTitlePreview" class="pra-muted" style="font-size:.82rem;word-break:break-word;background:rgba(255,255,255,0.03);border:1px solid var(--pra-border);border-radius:8px;padding:12px;margin-top:6px"></div>
+            </div>
+            <div class="ed-notif-card">
               <div class="ed-notif-title">Calendar Event Description</div>
               <div class="ed-notif-hint">What shows in the description of this booking's Google Calendar event -- the same text is used for the real event (visible to staff and, once the contact accepts the invite, to the contact) and for the "Add to Google/Outlook Calendar" links and downloaded .ics file. Tokens: %EVENTNAME% %WHEN% %DATE% %TIME% %LOCATION% %NOTES% %FIRSTNAME% %LASTNAME% %EMAIL% %PHONE% %INTAKEANSWERS% %INVITEETIMEZONE% %MANAGEURL%. Leave empty to use the default layout.</div>
               <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;text-transform:none;margin-bottom:10px"><input type="checkbox" id="fIncludeFormAnswersInCalendar"/> Include intake answers (%INTAKEANSWERS%)</label>
@@ -618,6 +626,7 @@ function renderSidebar() {
   // edited (see its 'input' handler), so an event type nobody's customized
   // still automatically follows future changes to the default.
   document.getElementById('calDescTemplate').value = draft.calendarDescriptionTemplate || defaultCalendarDescriptionTemplate;
+  document.getElementById('calTitleTemplate').value = draft.calendarTitleTemplate || defaultCalendarTitleTemplate;
   refreshCalendarPreviewDebounced();
 
   const b = draft.branding;
@@ -776,6 +785,7 @@ function wirePersonalizeDropdown(selectId, textareaId, options) {
 }
 wirePersonalizeDropdown('confSmsPersonalize', 'confSmsBody', SMS_PERSONALIZE_OPTIONS);
 wirePersonalizeDropdown('calDescPersonalize', 'calDescTemplate', CALENDAR_DESC_PERSONALIZE_OPTIONS);
+wirePersonalizeDropdown('calTitlePersonalize', 'calTitleTemplate', SMS_PERSONALIZE_OPTIONS);
 const REMINDER_UNITS = ['minutes', 'hours', 'days'];
 let allFooters = [];
 
@@ -858,15 +868,22 @@ async function refreshCalendarPreview() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       template: draft.calendarDescriptionTemplate || '',
+      titleTemplate: draft.calendarTitleTemplate || '',
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar,
     }),
   });
   const d = r.ok ? await r.json() : null;
   document.getElementById('calDescPreview').innerHTML = d ? formatPreviewHtml(d.preview) : 'Could not load preview.';
+  document.getElementById('calTitlePreview').textContent = d ? d.titlePreview : 'Could not load preview.';
 }
 function refreshCalendarPreviewDebounced() { clearTimeout(calPreviewTimer); calPreviewTimer = setTimeout(refreshCalendarPreview, 400); }
 document.getElementById('calDescTemplate').addEventListener('input', (e) => {
   draft.calendarDescriptionTemplate = e.target.value;
+  saveDebounced();
+  refreshCalendarPreviewDebounced();
+});
+document.getElementById('calTitleTemplate').addEventListener('input', (e) => {
+  draft.calendarTitleTemplate = e.target.value;
   saveDebounced();
   refreshCalendarPreviewDebounced();
 });
@@ -1018,7 +1035,7 @@ async function saveNow() {
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
       notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders,
-      includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate,
+      includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate, calendarTitleTemplate: draft.calendarTitleTemplate,
     }),
   });
   document.getElementById('edSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -1198,10 +1215,12 @@ async function saveCalendarNow() {
 }
 
 let defaultCalendarDescriptionTemplate = '';
+let defaultCalendarTitleTemplate = '';
 async function init() {
   const r = await fetch('/api/scheduling/admin/event-types');
-  const { eventTypes, defaultCalendarDescriptionTemplate: defaultTemplate } = await r.json();
+  const { eventTypes, defaultCalendarDescriptionTemplate: defaultTemplate, defaultCalendarTitleTemplate: defaultTitleTemplate } = await r.json();
   defaultCalendarDescriptionTemplate = defaultTemplate || '';
+  defaultCalendarTitleTemplate = defaultTitleTemplate || '';
   draft = eventTypes.find(e => e.id === eventTypeId);
   if (!draft) { document.getElementById('edEventName').textContent = 'Event type not found'; return; }
   draft.branding = {
