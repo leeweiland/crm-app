@@ -235,6 +235,10 @@
                   <label>Batch size (max leads contacted per Start)</label>
                   <input type="number" id="fBatchSize" min="1" max="1000" step="1" value="25"/>
                 </div>
+                <div class="editor-row">
+                  <label>Cold open volume (# per hour)</label>
+                  <input type="number" id="fColdOpenPerHour" min="1" step="1" placeholder="Unlimited -- send the whole batch right away"/>
+                </div>
                 <button class="pra-btn" id="previewBatchBtn" type="button">Preview Batch</button>
                 <div class="preview-result" id="previewResult" style="display:none"></div>
                 <div style="margin-top:18px">
@@ -689,6 +693,7 @@ async function loadEditor() {
   const cfg = agent.activeConfig || {};
   renderSegmentCheckboxes(cfg.segmentIds || (cfg.segmentId ? [cfg.segmentId] : []));
   document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
+  document.getElementById('fColdOpenPerHour').value = cfg.coldOpenPerHour || '';
   document.getElementById('segmentCountLabel').textContent = '';
   updateSegmentSizeDisplay(false);
   const msgBuffer = cfg.messageBuffer || {};
@@ -1290,6 +1295,9 @@ function buildAgentPayload() {
     activeConfig: {
       segmentIds: getSelectedSegmentIds(),
       batchSize: Number(document.getElementById('fBatchSize').value) || 25,
+      // Blank/0 = unlimited (send the whole due batch every tick, the
+      // original behavior) -- see ai_active_backend.js's coldOpenCap.
+      coldOpenPerHour: Number(document.getElementById('fColdOpenPerHour').value) || null,
       emailSenderId: document.getElementById('fEmailSender').value || null,
       messageBuffer: {
         value: Number(document.getElementById('fMessageBuffer').value) || 0,
@@ -1365,7 +1373,7 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fBatchSize', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fName', 'fDescription', 'fSystemPrompt', 'fBatchSize', 'fColdOpenPerHour', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
     'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
     'fReengageSmsPrompt', 'fReengageEmailPrompt',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',

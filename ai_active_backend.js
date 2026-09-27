@@ -511,6 +511,20 @@ export async function processAiActiveBatches() {
     // one-off send itself.
     const sourceType = batch.isTestBatch ? "ai_active_test" : "ai_active";
 
+    // Cold-open volume cap (cfg.coldOpenPerHour, unset/0 = unlimited, same
+    // as before this existed) -- every "queued" state used to fire its
+    // first message the instant a batch started (see the batch-create loop
+    // below, which stamps nextActionAt: now for the whole frozen list), so
+    // a 200-lead batch sent 200 cold opens in the same tick. Counts actual
+    // sends via st.coldOpenSentAt (stamped only once, right when a cold
+    // open goes out below) in a rolling hour, across every batch this agent
+    // owns -- not just this one -- so the cap is a real per-agent ceiling,
+    // not one that resets per batch or per tick.
+    const coldOpenCap = Number(cfg.coldOpenPerHour) || 0;
+    let coldOpenBudget = coldOpenCap > 0
+      ? Math.max(0, coldOpenCap - states.filter((s) => s.agentId === agent.id && s.coldOpenSentAt && now - new Date(s.coldOpenSentAt).getTime() < 3600000).length)
+      : Infinity;
+
     const due = states.filter((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state) && (!s.nextActionAt || new Date(s.nextActionAt).getTime() <= now));
     touchedStates.push(...due);
     for (const st of due) {
@@ -545,6 +559,11 @@ export async function processAiActiveBatches() {
 
       try {
         if (st.state === "queued") {
+          // Over the volume cap for this hour -- leave it queued (still
+          // "due" as far as nextActionAt is concerned) rather than spending
+          // an AI generation call on it, and pick it back up next tick once
+          // the rolling hour has room again.
+          if (coldOpenBudget <= 0) continue;
           const opener = await generateColdOpen(agent, contact, cfg);
           if (opener.sendable) {
             // Hits every enabled/available channel for the first touch (see
@@ -555,6 +574,8 @@ export async function processAiActiveBatches() {
             }
             st.state = "waiting_reply";
             st.lastActionAt = new Date().toISOString();
+            st.coldOpenSentAt = st.lastActionAt;
+            coldOpenBudget--;
             st.nextActionAt = new Date(now + randomDelayMs(cfg.waitTimeRange)).toISOString();
           } else {
             st.state = "done"; // nothing sendable (e.g. neither channel enabled, or model judged no-go)
