@@ -252,16 +252,12 @@
                   </div>
                 </div>
                 <div class="editor-row">
-                  <label>Batch size (max leads contacted per Start)</label>
-                  <input type="number" id="fBatchSize" min="1" max="1000" step="1" value="25"/>
+                  <label>Enrollment cap (optional -- leave blank to keep enrolling everyone who matches, indefinitely)</label>
+                  <input type="number" id="fBatchSize" min="1" max="100000" step="1" placeholder="Unlimited"/>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                  <button class="pra-btn" id="previewBatchBtn" type="button">Preview Batch</button>
-                  <button class="pra-btn" id="startBatchBtn" type="button" style="opacity:.45;cursor:not-allowed" title="Run Preview Batch first">Start Batch</button>
-                </div>
-                <div class="preview-result" id="previewResult" style="display:none"></div>
+                <div class="active-section-sub" style="margin-top:8px">This agent runs continuously against the segment(s) above -- turning it Active is all it takes to start. New contacts that start matching later get picked up automatically (checked every few minutes), and nobody already enrolled is ever dropped or re-enrolled just because the segment changes. The real send-rate limiter is Timing's cold-open-per-hour cap, below.</div>
                 <div style="margin-top:18px">
-                  <div class="active-section-title" style="margin-bottom:10px">Running batches</div>
+                  <div class="active-section-title" style="margin-bottom:10px">Running</div>
                   <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
                 </div>
               </div>
@@ -508,13 +504,10 @@
             <div class="accordion-item" data-acc="coverage">
               <button type="button" class="accordion-header"><span>Coverage</span><span class="accordion-chev">▾</span></button>
               <div class="accordion-body" style="display:none">
-                <div class="active-section-sub">When one of these teammates switches to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first.</div>
+                <div class="active-section-sub">For a checked TEAMMATE: when they switch to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first. For "Unassigned": there's no human to go Away, so those leads' replies are covered all the time, not conditionally.</div>
                 <div class="editor-row" style="margin-bottom:0">
-                  <label>Cover for these teammates when they're Away</label>
-                  <div class="multiselect" id="msCoverUsers">
-                    <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
-                    <div class="multiselect-panel" id="fCoverUsers"></div>
-                  </div>
+                  <label>Cover replies for</label>
+                  <div id="fCoverUsers" style="display:flex;flex-wrap:wrap;gap:14px"></div>
                 </div>
               </div>
             </div>
@@ -594,11 +587,22 @@ function renderStatusCheckboxes(selected) {
   ).join('');
   updateMsSummary('msStatuses', 'Select status(es)…');
 }
+// Plain always-visible checkboxes, not a collapsible dropdown -- Coverage
+// sits at the very bottom of this page, and a multiselect's own panel
+// (position:absolute, opens downward) rendered almost entirely below the
+// viewport there with nowhere to go (confirmed live: its own bottom edge
+// fell ~120px past the viewport's bottom edge) -- looked completely
+// non-functional even though the underlying open/select/save logic was
+// fine. A short, static list has no such failure mode and never will,
+// regardless of how far down the page this section ends up.
+// "unassigned" is a synthetic option (no real user id) for leads with no
+// owner at all -- see ai_coverage_backend.js's maybeCoverInboundReply.
 function renderUserCheckboxes(selected) {
-  document.getElementById('fCoverUsers').innerHTML = allUsers.map(u =>
-    `<label><input type="checkbox" value="${u.id}" data-label="${escapeHtml(u.name || u.email)}" ${selected.includes(u.id) ? 'checked' : ''}/> ${escapeHtml(u.name || u.email)}</label>`
+  const label = (u) => u.first || u.last ? `${u.first || ''} ${u.last || ''}`.trim() : u.email;
+  const options = [{ id: 'unassigned', display: 'Unassigned (no owner)' }, ...allUsers.map(u => ({ id: u.id, display: label(u) }))];
+  document.getElementById('fCoverUsers').innerHTML = options.map((o) =>
+    `<label style="display:flex;align-items:center;gap:6px;font-size:.86rem;cursor:pointer"><input type="checkbox" value="${o.id}" ${selected.includes(o.id) ? 'checked' : ''}/> ${escapeHtml(o.display)}</label>`
   ).join('');
-  updateMsSummary('msCoverUsers', 'Select user(s)…');
 }
 // Only lets you pick a team member whose Gmail is actually connected --
 // ai_active_backend.js's sendViaChannel falls back to the org default
@@ -744,7 +748,7 @@ document.getElementById('saveNewSegmentBtn').addEventListener('click', async () 
   document.getElementById('newSegmentForm').style.display = 'none';
   document.getElementById('newSegmentName').value = '';
   showToast('Segment created and selected');
-  updateSegmentSizeDisplay(true);
+  updateSegmentSizeDisplay();
   scheduleAutosave();
 });
 
@@ -778,7 +782,6 @@ function initMultiselect(msId, placeholder) {
 }
 initMultiselect('msProgramTypes', 'Select lead type(s)…');
 initMultiselect('msStatuses', 'Select status(es)…');
-initMultiselect('msCoverUsers', 'Select user(s)…');
 initMultiselect('msSegments', 'Select a saved segment…');
 
 async function loadEditor() {
@@ -794,9 +797,9 @@ async function loadEditor() {
   document.getElementById('fSystemPrompt').value = agent.systemPrompt || '';
   const cfg = agent.activeConfig || {};
   renderSegmentCheckboxes(cfg.segmentIds || (cfg.segmentId ? [cfg.segmentId] : []));
-  document.getElementById('fBatchSize').value = String(cfg.batchSize || 25);
+  document.getElementById('fBatchSize').value = cfg.batchSize ? String(cfg.batchSize) : '';
   document.getElementById('segmentCountLabel').textContent = '';
-  updateSegmentSizeDisplay(false);
+  updateSegmentSizeDisplay();
   const msgBuffer = cfg.messageBuffer || {};
   document.getElementById('fMessageBuffer').value = msgBuffer.value ?? 90;
   document.getElementById('fMessageBufferUnit').value = msgBuffer.unit || 'seconds';
@@ -833,7 +836,6 @@ async function loadEditor() {
   updateSendWindowVisibility();
   document.getElementById('testSmsResult').style.display = 'none';
   document.getElementById('testEmailResult').style.display = 'none';
-  document.getElementById('previewResult').style.display = 'none';
   const bt = cfg.behavioralTrigger || {};
   setToggle('fBtToggle', bt.enabled);
   document.getElementById('btSourcePageVisit').checked = !!bt.sources?.page_visit;
@@ -1472,7 +1474,7 @@ function buildAgentPayload() {
     targeting: { programTypes, statuses, coverForUserIds },
     activeConfig: {
       segmentIds: getSelectedSegmentIds(),
-      batchSize: Number(document.getElementById('fBatchSize').value) || 25,
+      batchSize: Number(document.getElementById('fBatchSize').value) || null,
       emailSenderId: document.getElementById('fEmailSender').value || null,
       messageBuffer: {
         value: Number(document.getElementById('fMessageBuffer').value) || 0,
@@ -1569,24 +1571,24 @@ function wireAutosave() {
     document.getElementById(id).addEventListener('input', scheduleAutosave);
   });
   document.querySelectorAll('.multiselect-panel').forEach((panel) => panel.addEventListener('change', scheduleAutosave));
+  // fCoverUsers is a plain checkbox list now (see renderUserCheckboxes), not
+  // a .multiselect-panel, so it needs its own listener here instead.
+  document.getElementById('fCoverUsers').addEventListener('change', scheduleAutosave);
   document.getElementById('fReengageSmsToggle').addEventListener('click', () => { setToggle('fReengageSmsToggle', !getToggle('fReengageSmsToggle')); scheduleAutosave(); });
   document.getElementById('fReengageEmailToggle').addEventListener('click', () => { setToggle('fReengageEmailToggle', !getToggle('fReengageEmailToggle')); scheduleAutosave(); });
   document.getElementById('fBtToggle').addEventListener('click', () => { setToggle('fBtToggle', !getToggle('fBtToggle')); updateBtSectionVisibility(); scheduleAutosave(); });
   document.getElementById('btRevisitToggle').addEventListener('click', () => { setToggle('btRevisitToggle', !getToggle('btRevisitToggle')); scheduleAutosave(); });
 }
 
-// Live segment size -- batch size auto-fills to the number actually
-// contactable (matches segment + targeting, minus opt-outs/no-contact-
-// info/terminal status) whenever the segment changes, and can be reduced
-// but never typed above that ceiling. resetToMax is only true on an actual
-// segment change (a deliberate pick); reopening the editor or a targeting
-// tweak just refreshes the live count/ceiling without overwriting a
-// batch size you already dialed down.
-async function updateSegmentSizeDisplay(resetToMax) {
+// Live segment size -- just an informational count of who's currently
+// eligible (matches segment + targeting, minus opt-outs/no-contact-info/
+// terminal status), refreshed whenever the segment or targeting changes.
+// Purely a readout now -- nothing here gates or sizes anything, since the
+// continuous engine (see ai_active_backend.js) enrolls automatically.
+async function updateSegmentSizeDisplay() {
   const segmentIds = getSelectedSegmentIds();
   const label = document.getElementById('segmentCountLabel');
-  const batchSizeInput = document.getElementById('fBatchSize');
-  if (!segmentIds.length || !editingAgentId) { label.textContent = ''; batchSizeInput.removeAttribute('max'); return; }
+  if (!segmentIds.length || !editingAgentId) { label.textContent = ''; return; }
   label.textContent = 'Checking segment size…';
   try {
     const r = await fetch('/api/ai-active/preview', {
@@ -1595,99 +1597,19 @@ async function updateSegmentSizeDisplay(resetToMax) {
     });
     const data = await r.json();
     if (!r.ok) { label.textContent = 'Could not check segment size.'; return; }
-    const eligible = Math.max(1, data.willContact.length);
-    label.textContent = `${data.willContact.length} of ${data.totalMatchingSegment} eligible to contact (excludes opt-outs, no contact info, terminal status)`;
-    batchSizeInput.max = String(eligible);
-    if (resetToMax || !batchSizeInput.value || Number(batchSizeInput.value) > eligible) {
-      batchSizeInput.value = String(eligible);
-      scheduleAutosave();
-    }
+    label.textContent = `${data.willContact.length} of ${data.totalMatchingSegment} currently eligible to contact (excludes opt-outs, no contact info, terminal status)`;
   } catch {
     label.textContent = '';
   }
 }
 document.querySelectorAll('#fSegments').forEach((el) => {
-  el.addEventListener('change', (e) => { if (e.target.matches('input[type="checkbox"]')) updateSegmentSizeDisplay(true); });
-});
-document.getElementById('fBatchSize').addEventListener('input', () => {
-  const max = Number(document.getElementById('fBatchSize').max);
-  if (max && Number(document.getElementById('fBatchSize').value) > max) document.getElementById('fBatchSize').value = String(max);
+  el.addEventListener('change', (e) => { if (e.target.matches('input[type="checkbox"]')) updateSegmentSizeDisplay(); });
 });
 document.querySelectorAll('#msProgramTypes input, #fStatuses').forEach((el) => {
-  el.addEventListener('change', () => updateSegmentSizeDisplay(false));
+  el.addEventListener('change', () => updateSegmentSizeDisplay());
 });
 
-// ── AI Active: preview / start / monitor batches ─────────────────────────
-function currentActiveConfig() {
-  return {
-    segmentIds: getSelectedSegmentIds(),
-    batchSize: Number(document.getElementById('fBatchSize').value) || 25,
-  };
-}
-// Tracks the last successful Preview's own params -- Start Batch (a
-// persistent button next to Preview Batch, not one that only appears
-// after a preview) reuses these rather than re-deriving from the current
-// form state, same as the dropped-out inline button used to. Grayed out
-// (see setStartBatchEnabled) until a preview has actually run at least
-// once; clicking it in that state just says so instead of silently doing
-// nothing -- a real button (not the disabled attribute, which swallows
-// the click event entirely and couldn't show that message).
-let lastPreview = null;
-function setStartBatchEnabled(count) {
-  const btn = document.getElementById('startBatchBtn');
-  if (count == null) {
-    btn.style.opacity = '.45'; btn.style.cursor = 'not-allowed'; btn.title = 'Run Preview Batch first';
-    btn.textContent = 'Start Batch';
-  } else {
-    btn.style.opacity = ''; btn.style.cursor = ''; btn.title = '';
-    btn.textContent = `Start Batch (${count} leads)`;
-  }
-}
-async function previewBatch() {
-  const { segmentIds, batchSize } = currentActiveConfig();
-  const resultEl = document.getElementById('previewResult');
-  if (!segmentIds.length) { showToast('Select at least one segment first', true); return; }
-  lastPreview = null;
-  setStartBatchEnabled(null);
-  resultEl.style.display = 'block';
-  resultEl.textContent = 'Checking segment…';
-  try {
-    const r = await fetch('/api/ai-active/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentId: editingAgentId, segmentIds, batchSize }) });
-    const data = await r.json();
-    if (!r.ok) { resultEl.textContent = data.error || 'Preview failed.'; return; }
-    resultEl.innerHTML = `
-      <div><b>${data.willContact.length}</b> of <b>${data.totalMatchingSegment}</b> matching leads will be contacted${data.remainingAfterCap ? ` (${data.remainingAfterCap} more match but are past the batch size cap)` : ''}.</div>
-      <div class="pra-muted" style="margin-top:4px">${data.excludedCount} excluded (unsubscribed, no contact info, or already enrolled/terminal).</div>
-      <div class="preview-list">${data.willContact.map(c => `<div class="preview-list-row">${escapeHtml(c.name || '(no name)')} — ${escapeHtml(c.email || c.phone || 'no contact info')}</div>`).join('') || '<div class="preview-list-row pra-muted">Nobody left to contact.</div>'}</div>
-    `;
-    if (data.willContact.length) { lastPreview = { segmentIds, batchSize }; setStartBatchEnabled(data.willContact.length); }
-  } catch (err) {
-    resultEl.textContent = 'Preview failed: ' + err.message;
-  }
-}
-async function startBatch(segmentIds, batchSize, confirmOver100) {
-  if (!editingAgentId) return;
-  if (!segmentIds) { showToast('Run Preview Batch first', true); return; }
-  const r = await fetch('/api/ai-active/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agentId: editingAgentId, segmentIds, batchSize, confirmOver100: !!confirmOver100 }),
-  });
-  const data = await r.json();
-  if (!r.ok) { showToast(data.error || 'Could not start batch', true); return; }
-  if (data.needsConfirmation) {
-    if (confirm(`This will start messaging ${data.count} leads. Continue?`)) startBatch(segmentIds, batchSize, true);
-    return;
-  }
-  showToast('Batch started — leads will be contacted per the wait-time settings.');
-  document.getElementById('previewResult').style.display = 'none';
-  lastPreview = null;
-  setStartBatchEnabled(null);
-  loadBatchList(editingAgentId);
-}
-document.getElementById('startBatchBtn').addEventListener('click', () => {
-  if (!lastPreview) { showToast('Run Preview Batch first', true); return; }
-  startBatch(lastPreview.segmentIds, lastPreview.batchSize);
-});
+// ── AI Active: monitor the running continuous campaign ───────────────────
 function batchStatsLine(stats) {
   return `<b>${stats.total}</b> total · <b>${stats.sent}</b> sent · <b>${stats.waitingReply}</b> waiting on reply · <b>${stats.hotHandoff}</b> hot handoff · <b>${stats.escalated}</b> escalated · <b>${stats.humanTakeover}</b> human takeover · <b>${stats.optedOut}</b> opted out · <b>${stats.done}</b> done`;
 }
@@ -1700,7 +1622,7 @@ async function loadBatchList(agentId) {
     // replies get real automatic follow-ups -- see ai_agents_backend.js's
     // /test-send) aren't a real campaign and shouldn't clutter this list.
     const mine = (batches || []).filter(b => b.agentId === agentId && !b.isTestBatch);
-    if (!mine.length) { el.innerHTML = '<span class="pra-muted">No batches started yet.</span>'; return; }
+    if (!mine.length) { el.innerHTML = '<span class="pra-muted">Not running -- turn this agent Active with at least one segment selected above to start continuous coverage.</span>'; return; }
     el.innerHTML = mine.map(b => `
       <div class="batch-row">
         <div class="batch-row-head">
@@ -1874,8 +1796,6 @@ async function toggleBatchReview(batchId) {
     panel.innerHTML = '<span class="pra-muted">Could not load batch detail.</span>';
   }
 }
-document.getElementById('previewBatchBtn').addEventListener('click', previewBatch);
-
 async function testReengageOpen(channel, btn, resultElId) {
   if (!editingAgentId) return;
   const resultEl = document.getElementById(resultElId);

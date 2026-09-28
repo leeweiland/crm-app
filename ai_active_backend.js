@@ -17,19 +17,25 @@ import { resolveContactTimezone } from "./contact_timezone.js";
 // Assist -- the only real difference is that this sends automatically,
 // with no per-message human review.
 //
-// Everything here is deliberately conservative about blast radius:
-// - A batch is a FROZEN list of contactIds captured once at start time,
-//   never "the segment re-evaluated live" -- so it can never silently
-//   grow to the whole database just because more contacts later match
-//   the segment's filter.
-// - /preview never sends anything or creates any record -- it's pure
-//   read, so a closer can see exactly who's about to be contacted.
-// - Starting a batch over 100 leads requires an explicit second
-//   confirmation (confirmOver100), matching "review every conversation
-//   before expanding beyond 100 leads."
-// - Every send re-checks opt-out/terminal-status live at send time (not
-//   just at preview time), and stops permanently the moment a human
-//   sends this contact anything themselves.
+// As of the continuous engine (see topUpContinuousBatches below), there's
+// no manual Preview/Start step any more -- flipping an agent Active with
+// at least one segment picked in Targeting is enough. Exactly one
+// "continuous" batch (batch.continuous === true) exists per active agent,
+// auto-created and topped up on a timer (not every scheduler tick -- see
+// TOPUP_INTERVAL_MS) with whoever currently matches the segment(s) +
+// targeting and hasn't ever been enrolled under this batch before. It
+// never re-evaluates or drops someone who's already enrolled just because
+// they later fall out of the segment's filter, and it never re-enrolls
+// someone who already has a state row here (done, opted_out, etc.) even
+// if they start matching again later -- that's what "enrolled once" means.
+// Safety against silently working the whole database is now the agent's
+// own coldOpenPerHour rate cap (a real send-volume ceiling) plus an
+// optional activeConfig.batchSize total-enrollment cap (blank/0 = no cap,
+// i.e. genuinely-unlimited ongoing coverage of the segment, which is the
+// whole point of "continuous").
+// Every send still re-checks opt-out/terminal-status live at send time
+// (not just at enrollment time), and stops permanently the moment a human
+// sends this contact anything themselves.
 export const AI_ACTIVE_BATCHES_FILE = "crm_ai_active_batches.json";
 export const AI_ACTIVE_STATES_FILE = "crm_ai_active_states.json";
 
@@ -347,39 +353,6 @@ export async function handleAiActiveRequest(req, res, url) {
     });
   }
 
-  if (p === "/api/ai-active/start" && req.method === "POST") {
-    const { agentId, segmentId, segmentIds, batchSize, confirmOver100 } = await readJsonBody(req);
-    const ids = Array.isArray(segmentIds) && segmentIds.length ? segmentIds : (segmentId ? [segmentId] : []);
-    const agent = readJson(AI_AGENTS_FILE, []).find((a) => a.id === agentId);
-    if (!agent) return sendJson(res, 404, { error: "Agent not found" });
-    const allSegments = readJson(SEGMENTS_FILE, []);
-    const segments = ids.map((id) => allSegments.find((s) => s.id === id)).filter(Boolean);
-    if (!segments.length) return sendJson(res, 404, { error: "Segment not found" });
-    const size = Math.max(1, Math.min(1000, Number(batchSize) || 25));
-    const result = buildCandidateList(segments, size, agent.targeting);
-    if (!result.candidates.length) return sendJson(res, 400, { error: "No contacts left to message after exclusions" });
-    if (result.candidates.length > 100 && !confirmOver100) {
-      return sendJson(res, 200, { needsConfirmation: true, count: result.candidates.length });
-    }
-    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
-    const batch = {
-      id: randomUUID(), agentId, segmentIds: ids, segmentNames: segments.map((s) => s.name), batchSize: size,
-      contactIds: result.candidates.map((c) => c.id), // frozen -- never re-evaluated against the live segment
-      excludedCount: result.excludedCount,
-      status: "running",
-      createdAt: new Date().toISOString(), startedAt: new Date().toISOString(), createdBy: me.id,
-    };
-    batches.push(batch);
-    writeJson(AI_ACTIVE_BATCHES_FILE, batches);
-    const states = readJson(AI_ACTIVE_STATES_FILE, []);
-    const now = new Date().toISOString();
-    for (const c of result.candidates) {
-      states.push({ id: randomUUID(), batchId: batch.id, agentId, contactId: c.id, state: "queued", followUpCount: 0, nextActionAt: now, createdAt: now, updatedAt: now });
-    }
-    writeJson(AI_ACTIVE_STATES_FILE, states);
-    return sendJson(res, 200, { ok: true, batch });
-  }
-
   if (p === "/api/ai-active" && req.method === "GET") {
     const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
     const states = readJson(AI_ACTIVE_STATES_FILE, []);
@@ -475,7 +448,90 @@ function mergeSafeWrite(file, ours) {
   const merged = fresh.map((f) => oursById.get(f.id) || f);
   writeJson(file, merged);
 }
+
+// How often a continuous batch actually re-scans the segment for newly-
+// matching contacts. NOT every scheduler tick (30s) -- buildCandidateList
+// does a full readJson(CONTACTS_FILE) + per-contact segment match, and an
+// unconditional full-contacts load on every tick was already confirmed
+// live once as a direct cause of multi-second stalls (see the comment on
+// processAiActiveBatches' own contact lookups above). A new lead doesn't
+// need to be caught within 30 seconds; a few minutes is completely fine
+// for "continuous coverage" and keeps this a periodic scan, not a hot loop.
+const TOPUP_INTERVAL_MS = 5 * 60 * 1000;
+
+// Creates (once) and periodically tops up the one continuous batch each
+// active, segment-targeted agent owns -- see the file header comment for
+// the overall design. Runs as its own read-modify-write pass, separate
+// from (and before) the rest of processAiActiveBatches' own read, so that
+// function's existing logic just naturally picks up whatever this creates
+// or adds without needing any changes of its own.
+export async function topUpContinuousBatches() {
+  const agents = readJson(AI_AGENTS_FILE, []);
+  const activeTargeted = agents.filter((a) => a.active && Array.isArray(a.activeConfig?.segmentIds) && a.activeConfig.segmentIds.length);
+  if (!activeTargeted.length) return;
+
+  const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+  const states = readJson(AI_ACTIVE_STATES_FILE, []);
+  const allSegments = readJson(SEGMENTS_FILE, []);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  let batchesChanged = false, statesChanged = false;
+
+  for (const agent of activeTargeted) {
+    const cfg = agent.activeConfig || {};
+    const ids = cfg.segmentIds;
+    const segments = ids.map((id) => allSegments.find((s) => s.id === id)).filter(Boolean);
+    if (!segments.length) continue;
+
+    let batch = batches.find((b) => b.agentId === agent.id && b.continuous);
+    if (!batch) {
+      batch = {
+        id: randomUUID(), agentId: agent.id, continuous: true,
+        segmentIds: ids, segmentNames: segments.map((s) => s.name),
+        batchSize: Number(cfg.batchSize) || null, // null/0 = no total-enrollment cap
+        contactIds: [], excludedCount: 0,
+        status: "running", createdAt: nowIso, startedAt: nowIso,
+      };
+      batches.push(batch);
+      batchesChanged = true;
+    }
+    if (batch.status === "paused") continue;
+    if (batch.lastToppedUpAt && nowMs - new Date(batch.lastToppedUpAt).getTime() < TOPUP_INTERVAL_MS) continue;
+
+    // Segment/cap picks can change any time via autosave -- keep the batch's
+    // own record of them current so the "Running batches" list and next
+    // scan both reflect what's actually configured now, without needing to
+    // delete/recreate the campaign. Anyone already enrolled stays enrolled
+    // and keeps being worked regardless of a later segment change.
+    const cap = Number(cfg.batchSize) || Infinity;
+    if (JSON.stringify(batch.segmentIds) !== JSON.stringify(ids)) { batch.segmentIds = ids; batch.segmentNames = segments.map((s) => s.name); batchesChanged = true; }
+    if (batch.batchSize !== (Number(cfg.batchSize) || null)) { batch.batchSize = Number(cfg.batchSize) || null; batchesChanged = true; }
+
+    const enrolledIds = new Set(states.filter((s) => s.batchId === batch.id).map((s) => s.contactId));
+    batch.lastToppedUpAt = nowIso;
+    batchesChanged = true;
+    if (enrolledIds.size >= cap) continue;
+
+    const result = buildCandidateList(segments, Infinity, agent.targeting);
+    batch.excludedCount = result.excludedCount;
+    let room = cap - enrolledIds.size;
+    for (const c of result.candidates) {
+      if (room <= 0) break;
+      if (enrolledIds.has(c.id)) continue; // never re-enroll -- see file header comment
+      states.push({ id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId: c.id, state: "queued", followUpCount: 0, nextActionAt: nowIso, createdAt: nowIso, updatedAt: nowIso });
+      batch.contactIds.push(c.id);
+      enrolledIds.add(c.id);
+      room--;
+      statesChanged = true;
+    }
+  }
+
+  if (batchesChanged) writeJson(AI_ACTIVE_BATCHES_FILE, batches);
+  if (statesChanged) writeJson(AI_ACTIVE_STATES_FILE, states);
+}
+
 export async function processAiActiveBatches() {
+  await topUpContinuousBatches();
   const allBatches = readJson(AI_ACTIVE_BATCHES_FILE, []);
   if (!allBatches.length) return;
   const agents = readJson(AI_AGENTS_FILE, []);
@@ -731,8 +787,12 @@ export async function processAiActiveBatches() {
       changed = true;
     }
 
-    // Auto-complete a batch once nothing in it can still act.
-    const stillActive = states.some((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state));
+    // Auto-complete a batch once nothing in it can still act. Never for a
+    // continuous batch -- it staying "running" (not "completed") is what
+    // lets topUpContinuousBatches keep enrolling newly-matching contacts
+    // into it indefinitely; completing it the moment it's briefly empty
+    // would silently turn "continuous" back into a one-shot batch.
+    const stillActive = batch.continuous || states.some((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state));
     if (!stillActive) {
       const batches2 = readJson(AI_ACTIVE_BATCHES_FILE, []);
       const b2 = batches2.find((b) => b.id === batch.id);
