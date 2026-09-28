@@ -209,7 +209,7 @@
                 <div class="active-section-sub">Only leads matching BOTH the segment and the lead type/status below are ever contacted. As soon as AI Active is on and at least one segment is picked here, it runs -- no separate preview/start step.</div>
                 <div class="editor-row">
                   <label>Segment(s) -- a lead in ANY of these is eligible</label>
-                  <div id="fSegments" class="multiselect-panel" style="display:block;position:static;box-shadow:none"></div>
+                  <div class="search-multiselect" id="fSegments"></div>
                   <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newSegmentBtn" type="button" style="margin-top:6px">+ Create new segment</button>
                   <div id="newSegmentForm" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--pra-border);border-radius:8px">
                     <input class="pra-input" id="newSegmentName" placeholder="Segment name, e.g. New leads since today" style="margin-bottom:6px"/>
@@ -684,6 +684,7 @@ document.getElementById('fSendWindowTzAdmin').addEventListener('change', schedul
 document.getElementById('fSendWindowTzContact').addEventListener('change', scheduleAutosave);
 
 let allSegments = [];
+let selectedSegmentIds = [];
 async function loadSegments() {
   try {
     const r = await fetch('/api/segments');
@@ -692,12 +693,63 @@ async function loadSegments() {
   } catch { allSegments = []; }
 }
 function getSelectedSegmentIds() {
-  return Array.from(document.querySelectorAll('#fSegments input:checked')).map((cb) => cb.value);
+  return selectedSegmentIds;
 }
+// Chip picker (search + dropdown to add, blue removable pills for what's
+// picked) instead of listing every segment as a checkbox -- a checkbox per
+// segment doesn't scale (could be dozens), and it's the same widget
+// campaign-builder.html already uses for lists/tags (see
+// renderSearchableMultiSelect below, .search-multiselect/.tag-pill in
+// crm-design-system.css).
 function renderSegmentCheckboxes(selected) {
-  document.getElementById('fSegments').innerHTML = allSegments.map((s) =>
-    `<label><input type="checkbox" value="${s.id}" data-label="${escapeHtml(s.name)}" ${selected.includes(s.id) ? 'checked' : ''}/> ${escapeHtml(s.name)}</label>`
-  ).join('') || '<span class="pra-muted" style="padding:7px 8px;font-size:.82rem">No segments yet -- create one below.</span>';
+  // Mutates the existing array in place (never reassigns) -- the dropdown
+  // skeleton (built once, see renderSearchableMultiSelect's msInit guard)
+  // closes over this exact array object, so replacing it with a new one
+  // here would leave that closure looking at a stale, disconnected copy.
+  selectedSegmentIds.length = 0;
+  selectedSegmentIds.push(...selected);
+  renderSearchableMultiSelect('fSegments', allSegments, selectedSegmentIds, (id) => {
+    const idx = selectedSegmentIds.indexOf(id);
+    if (idx === -1) selectedSegmentIds.push(id); else selectedSegmentIds.splice(idx, 1);
+  });
+}
+// Adapted from campaign-builder.html's own copy of this widget (same CSS,
+// same shape) -- built once per container so mid-typed search text
+// survives a re-render, refreshed (chips + dropdown matches) on every call.
+function renderSearchableMultiSelect(containerId, items, selectedIds, onToggle) {
+  const el = document.getElementById(containerId);
+  if (!el.dataset.msInit) {
+    el.innerHTML = `<div class="ms-chips"></div><input class="pra-input ms-search" type="text" placeholder="Search…"/><div class="ms-dropdown"></div>`;
+    el.dataset.msInit = '1';
+    const searchEl = el.querySelector('.ms-search');
+    const dropdownEl = el.querySelector('.ms-dropdown');
+    const showMatches = () => {
+      const q = searchEl.value.trim().toLowerCase();
+      const matches = items.filter((i) => !selectedIds.includes(i.id) && i.name.toLowerCase().includes(q)).slice(0, 30);
+      dropdownEl.innerHTML = matches.length ? matches.map((i) => `<div class="ms-option" data-id="${i.id}">${escapeHtml(i.name)}</div>`).join('') : `<div class="ms-option-empty">${items.length ? 'No matches' : 'None yet'}</div>`;
+      dropdownEl.classList.add('open');
+      dropdownEl.querySelectorAll('.ms-option').forEach((opt) => opt.onclick = () => {
+        onToggle(opt.dataset.id);
+        searchEl.value = '';
+        renderSearchableMultiSelect(containerId, items, selectedIds, onToggle);
+        scheduleAutosave();
+        updateSegmentSizeDisplay();
+        showMatches();
+      });
+    };
+    searchEl.addEventListener('input', showMatches);
+    searchEl.addEventListener('focus', showMatches);
+    searchEl.addEventListener('blur', () => setTimeout(() => dropdownEl.classList.remove('open'), 150));
+  }
+  const chipsEl = el.querySelector('.ms-chips');
+  const selected = items.filter((i) => selectedIds.includes(i.id));
+  chipsEl.innerHTML = selected.map((i) => `<span class="tag-pill">${escapeHtml(i.name)}<button type="button" data-remove="${i.id}">&times;</button></span>`).join('');
+  chipsEl.querySelectorAll('[data-remove]').forEach((btn) => btn.onclick = () => {
+    onToggle(btn.dataset.remove);
+    renderSearchableMultiSelect(containerId, items, selectedIds, onToggle);
+    scheduleAutosave();
+    updateSegmentSizeDisplay();
+  });
 }
 // Fast path for the one case this came up for ("new leads since a date,
 // ongoing") -- builds a real segment via the same POST /api/segments the
@@ -1596,9 +1648,6 @@ async function updateSegmentSizeDisplay() {
     label.textContent = '';
   }
 }
-document.querySelectorAll('#fSegments').forEach((el) => {
-  el.addEventListener('change', (e) => { if (e.target.matches('input[type="checkbox"]')) updateSegmentSizeDisplay(); });
-});
 document.querySelectorAll('#msProgramTypes input, #fStatuses').forEach((el) => {
   el.addEventListener('change', () => updateSegmentSizeDisplay());
 });
