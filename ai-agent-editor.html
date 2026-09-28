@@ -209,10 +209,7 @@
                 <div class="active-section-sub">Only leads matching BOTH the segment and the lead type/status below are ever contacted. As soon as AI Active is on and at least one segment is picked here, it runs -- no separate preview/start step.</div>
                 <div class="editor-row">
                   <label>Segment(s) -- a lead in ANY of these is eligible</label>
-                  <div class="multiselect" id="msSegments">
-                    <button type="button" class="multiselect-btn"><span class="ms-summary"></span><span class="ms-chev">▾</span></button>
-                    <div class="multiselect-panel" id="fSegments"></div>
-                  </div>
+                  <div id="fSegments" class="multiselect-panel" style="display:block;position:static;box-shadow:none"></div>
                   <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newSegmentBtn" type="button" style="margin-top:6px">+ Create new segment</button>
                   <div id="newSegmentForm" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--pra-border);border-radius:8px">
                     <input class="pra-input" id="newSegmentName" placeholder="Segment name, e.g. New leads since today" style="margin-bottom:6px"/>
@@ -701,8 +698,7 @@ function getSelectedSegmentIds() {
 function renderSegmentCheckboxes(selected) {
   document.getElementById('fSegments').innerHTML = allSegments.map((s) =>
     `<label><input type="checkbox" value="${s.id}" data-label="${escapeHtml(s.name)}" ${selected.includes(s.id) ? 'checked' : ''}/> ${escapeHtml(s.name)}</label>`
-  ).join('');
-  updateMsSummary('msSegments', 'Select a saved segment…');
+  ).join('') || '<span class="pra-muted" style="padding:7px 8px;font-size:.82rem">No segments yet -- create one below.</span>';
 }
 // Fast path for the one case this came up for ("new leads since a date,
 // ongoing") -- builds a real segment via the same POST /api/segments the
@@ -782,7 +778,6 @@ function initMultiselect(msId, placeholder) {
 }
 initMultiselect('msProgramTypes', 'Select lead type(s)…');
 initMultiselect('msStatuses', 'Select status(es)…');
-initMultiselect('msSegments', 'Select a saved segment…');
 
 async function loadEditor() {
   const r = await fetch(`/api/ai-agents/${editingAgentId}`);
