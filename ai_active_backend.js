@@ -507,7 +507,16 @@ export async function topUpContinuousBatches() {
     if (JSON.stringify(batch.segmentIds) !== JSON.stringify(ids)) { batch.segmentIds = ids; batch.segmentNames = segments.map((s) => s.name); batchesChanged = true; }
     if (batch.batchSize !== (Number(cfg.batchSize) || null)) { batch.batchSize = Number(cfg.batchSize) || null; batchesChanged = true; }
 
-    const enrolledIds = new Set(states.filter((s) => s.batchId === batch.id).map((s) => s.contactId));
+    // Scoped to every batch this AGENT owns, not just this continuous one --
+    // an older, pre-continuous-engine batch (or a deleted-and-recreated
+    // continuous batch, e.g. via Fresh Start) can already be working some of
+    // these same contacts. Confirmed live: scoping this to just batch.id let
+    // a still-running legacy batch and a freshly (re)created continuous
+    // batch both enroll the same 97 contacts, which would have sent every
+    // one of them a duplicate cold-open. "Already enrolled" has to mean
+    // "already enrolled by this agent, ever, under any batch."
+    const agentBatchIds = new Set(batches.filter((b) => b.agentId === agent.id).map((b) => b.id));
+    const enrolledIds = new Set(states.filter((s) => agentBatchIds.has(s.batchId)).map((s) => s.contactId));
     batch.lastToppedUpAt = nowIso;
     batchesChanged = true;
     if (enrolledIds.size >= cap) continue;
