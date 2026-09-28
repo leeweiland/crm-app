@@ -1661,6 +1661,17 @@ document.querySelectorAll('#msProgramTypes input, #fStatuses').forEach((el) => {
 function batchStatsLine(stats) {
   return `<b>${stats.total}</b> total · <b>${stats.sent}</b> sent · <b>${stats.waitingReply}</b> waiting on reply · <b>${stats.hotHandoff}</b> hot handoff · <b>${stats.escalated}</b> escalated · <b>${stats.humanTakeover}</b> human takeover · <b>${stats.optedOut}</b> opted out · <b>${stats.done}</b> done`;
 }
+const STAT_KEYS = ['total', 'sent', 'waitingReply', 'hotHandoff', 'escalated', 'humanTakeover', 'optedOut', 'done'];
+// One agent now really is one ongoing engine tied to Targeting -- there's
+// no more Preview/Start workflow that would ever create a second,
+// separate batch going forward. But an agent can still be carrying
+// multiple batch records left over from before that removal (the old
+// manual-Start batches, or more than one continuous batch across a
+// Fresh Start), so this always aggregates every one of THIS agent's real
+// batches into a single card -- one set of totals, one Pause/Resume, one
+// Delete -- rather than a card per batch. Confirmed live this was the
+// expected mental model: "I should just see totals for everything, for
+// all targeting," not a list of internal batch objects.
 async function loadBatchList(agentId) {
   const el = document.getElementById('batchList');
   try {
@@ -1671,30 +1682,41 @@ async function loadBatchList(agentId) {
     // /test-send) aren't a real campaign and shouldn't clutter this list.
     const mine = (batches || []).filter(b => b.agentId === agentId && !b.isTestBatch);
     if (!mine.length) { el.innerHTML = '<span class="pra-muted">Not running -- turn this agent Active with at least one segment selected above to start continuous coverage.</span>'; return; }
-    el.innerHTML = mine.map(b => `
+    const stats = {};
+    for (const k of STAT_KEYS) stats[k] = mine.reduce((sum, b) => sum + (b.stats[k] || 0), 0);
+    const anyRunning = mine.some(b => b.status === 'running');
+    const anyPaused = mine.some(b => b.status === 'paused');
+    const overallStatus = anyRunning ? 'running' : anyPaused ? 'paused' : 'completed';
+    const ids = mine.map(b => b.id);
+    el.innerHTML = `
       <div class="batch-row">
         <div class="batch-row-head">
-          <span class="batch-name">${escapeHtml((b.segmentNames || (b.segmentName ? [b.segmentName] : [])).join(', ') || 'Batch')}</span>
-          <span class="batch-status-pill ${b.status}">${escapeHtml(b.status)}</span>
+          <span class="batch-status-pill ${overallStatus}">${escapeHtml(overallStatus)}</span>
         </div>
-        <div class="batch-stats">${batchStatsLine(b.stats)}</div>
+        <div class="batch-stats">${batchStatsLine(stats)}</div>
         <div style="display:flex;gap:8px">
-          <button class="pra-btn pra-btn-ghost pra-btn-sm" data-review="${b.id}" type="button">Review conversations</button>
-          ${b.status === 'running' ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-pause="${b.id}" type="button">Pause</button>` : ''}
-          ${b.status === 'paused' ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-resume="${b.id}" type="button">Resume</button>` : ''}
-          <button class="pra-btn pra-btn-danger pra-btn-sm" data-delete="${b.id}" type="button">Delete</button>
+          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="batchReviewBtn" type="button">Review conversations</button>
+          ${anyRunning ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="batchPauseBtn" type="button">Pause</button>` : ''}
+          ${anyPaused ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="batchResumeBtn" type="button">Resume</button>` : ''}
+          <button class="pra-btn pra-btn-danger pra-btn-sm" id="batchDeleteBtn" type="button">Delete</button>
         </div>
-        <div class="review-panel" id="review-${b.id}" style="display:none;margin-top:10px"></div>
+        <div class="review-panel" id="batchReviewPanel" style="display:none;margin-top:10px"></div>
       </div>
-    `).join('');
-    el.querySelectorAll('[data-pause]').forEach(btn => btn.addEventListener('click', async () => { await fetch(`/api/ai-active/${btn.dataset.pause}/pause`, { method: 'POST' }); loadBatchList(agentId); }));
-    el.querySelectorAll('[data-resume]').forEach(btn => btn.addEventListener('click', async () => { await fetch(`/api/ai-active/${btn.dataset.resume}/resume`, { method: 'POST' }); loadBatchList(agentId); }));
-    el.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', () => toggleBatchReview(btn.dataset.review)));
-    el.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('Delete this batch? Its own enrollment records are removed too -- this does not undo anything it already sent.')) return;
-      await fetch(`/api/ai-active/${btn.dataset.delete}`, { method: 'DELETE' });
+    `;
+    document.getElementById('batchPauseBtn')?.addEventListener('click', async () => {
+      await Promise.all(mine.filter(b => b.status === 'running').map(b => fetch(`/api/ai-active/${b.id}/pause`, { method: 'POST' })));
       loadBatchList(agentId);
-    }));
+    });
+    document.getElementById('batchResumeBtn')?.addEventListener('click', async () => {
+      await Promise.all(mine.filter(b => b.status === 'paused').map(b => fetch(`/api/ai-active/${b.id}/resume`, { method: 'POST' })));
+      loadBatchList(agentId);
+    });
+    document.getElementById('batchDeleteBtn').addEventListener('click', async () => {
+      if (!confirm('Delete this? Every enrollment record is removed too -- this does not undo anything already sent, and this agent will simply start fresh against whatever Targeting is still set.')) return;
+      await Promise.all(ids.map(id => fetch(`/api/ai-active/${id}`, { method: 'DELETE' })));
+      loadBatchList(agentId);
+    });
+    document.getElementById('batchReviewBtn').addEventListener('click', () => toggleBatchReview(ids));
   } catch {
     el.innerHTML = '<span class="pra-muted">Could not load batches.</span>';
   }
@@ -1835,23 +1857,23 @@ async function loadBtActivity(agentId) {
     el.innerHTML = '<span class="pra-muted">Could not load activity.</span>';
   }
 }
-async function toggleBatchReview(batchId) {
-  const panel = document.getElementById(`review-${batchId}`);
+async function toggleBatchReview(batchIds) {
+  const panel = document.getElementById('batchReviewPanel');
   if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
   panel.innerHTML = '<span class="pra-muted">Loading…</span>';
   try {
-    const r = await fetch(`/api/ai-active/${batchId}`);
-    const { states } = await r.json();
-    panel.innerHTML = (states || []).map(s => `
+    const results = await Promise.all(batchIds.map((id) => fetch(`/api/ai-active/${id}`).then((r) => r.json())));
+    const states = results.flatMap((d) => d.states || []);
+    panel.innerHTML = states.map(s => `
       <div class="review-row">
         <span class="review-state-pill ${s.state}">${escapeHtml(s.state.replace('_', ' '))}</span>
         <span style="flex:1">${escapeHtml(s.contactName)}</span>
         <a class="pra-muted" style="font-size:.76rem" href="/inbox.html?contactId=${s.contactId}" target="_blank">Open conversation →</a>
       </div>
-    `).join('') || '<span class="pra-muted">No leads in this batch.</span>';
+    `).join('') || '<span class="pra-muted">Nobody enrolled.</span>';
   } catch {
-    panel.innerHTML = '<span class="pra-muted">Could not load batch detail.</span>';
+    panel.innerHTML = '<span class="pra-muted">Could not load detail.</span>';
   }
 }
 async function testReengageOpen(channel, btn, resultElId) {
