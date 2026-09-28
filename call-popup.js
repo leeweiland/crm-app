@@ -4,7 +4,16 @@
 // Browser global, same convention as window.ConditionRowBuilder: loaded once,
 // used from wherever a phone number is rendered.
 window.CallPopup = (function () {
-  const VOICE_SDK_URL = "https://sdk.twilio.com/js/voice/releases/2.11.3/twilio.min.js";
+  // Twilio's own CDN (sdk.twilio.com/js/voice/releases/...) no longer
+  // serves this or any other version we tried (confirmed live: a 403
+  // "no such key" from the S3 bucket behind it, across half a dozen
+  // version numbers) -- their old CDN-hosted UMD bundle appears to have
+  // been retired. jsDelivr mirrors the same npm package (@twilio/voice-sdk)
+  // and its UMD build sets window.Twilio exactly the same way, so this is
+  // a drop-in swap, not a different SDK. Pinned to a real, confirmed-
+  // working version rather than "latest" so a future Twilio release can't
+  // silently break this again the same way.
+  const VOICE_SDK_URL = "https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2.18.5/dist/twilio.min.js";
 
   let cfg = null; // { personalPhoneConfigured, voiceConfigured, myIdentity }
   async function loadConfig() {
