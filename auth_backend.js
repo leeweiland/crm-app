@@ -377,6 +377,69 @@ export function readJson(file, fallback) {
 export function tmpPathFor(p) {
   return `${p}.tmp${process.pid}_${randomBytes(4).toString("hex")}`;
 }
+// Every read-modify-write-then-rename function below (writeJsonToDisk,
+// appendJsonRecordFast, appendToJsonObjectFast, appendJsonRecords,
+// updateJsonArrayRecordByField, updateAllJsonArrayRecordsByField,
+// removeValuesFromArrayField, updateJsonArrayRecordsByIds,
+// updateJsonArrayRecordsByIdSet) reads a SNAPSHOT of the file, computes a
+// change against that snapshot, then writes it back -- with nothing
+// serializing two calls against the SAME path, this is a lost-update race:
+// if writer A's read happens before writer B's rename lands, A's own
+// write (based on the pre-B snapshot) then overwrites B's change when A
+// renames, with no error anywhere. tmpPathFor's per-call-unique temp name
+// only ever prevented two writers corrupting the same physical temp file
+// (see its own comment) -- it does nothing about this.
+// Confirmed live: this exact gap silently dropped AWS SES "Open" webhook
+// updates for a large campaign send -- BACKGROUND_WORKER=1 runs webhook
+// processing on a separate OS thread from the main thread (a genuine
+// cross-thread race, not just interleaved async callbacks on one thread,
+// so an in-process JS lock like a Map of pending Promises -- invisible to
+// a different thread's own JS heap -- can't fix this; it needs an
+// OS-filesystem-level lock both threads actually see), and a big blast
+// produces a correspondingly large burst of near-simultaneous Open events
+// (mail clients fetch the tracking pixel within seconds of delivery) all
+// patching the SAME msg_by_source/campaign__<id>.json -- worse the bigger
+// the campaign, exactly the pattern observed (a small sibling send's open
+// rate was normal, the large one's wasn't).
+// The lock is a sibling ".lock" file's exclusive create (fails with EEXIST
+// if another writer already holds it) -- visible across threads/processes
+// because it's a real filesystem operation, unlike anything JS-level.
+// Atomics.wait actually blocks this thread for the retry interval (Node,
+// unlike browsers, allows this on the main thread too) instead of spinning
+// the CPU in a tight loop.
+const LOCK_RETRY_MS = 15;
+const LOCK_STALE_MS = 10000; // a lock this old means its holder crashed/died mid-write -- steal it rather than deadlock forever
+const LOCK_WAIT_TIMEOUT_MS = 20000;
+function acquireFileLock(p) {
+  const lockPath = `${p}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+  while (true) {
+    try {
+      closeSync(openSync(lockPath, "wx"));
+      return lockPath;
+    } catch (err) {
+      // POSIX (Railway/Linux) reliably reports EEXIST for an O_EXCL open
+      // against a file that's already there. Windows (confirmed testing
+      // locally) sometimes reports EPERM/EBUSY instead for the exact same
+      // "someone else holds it" case -- a transient quirk around another
+      // thread deleting and recreating this same lock filename in close
+      // succession, not a real permissions problem. Treat all three as
+      // "contended, keep retrying," and only let a genuinely unexpected
+      // error escape.
+      if (err.code !== "EEXIST" && err.code !== "EPERM" && err.code !== "EBUSY") throw err;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) { unlinkSync(lockPath); continue; }
+      } catch { /* lock file vanished between the failed open and this stat -- fine, loop and retry the open */ }
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for a file lock on ${p}`);
+      Atomics.wait(sleepBuf, 0, 0, LOCK_RETRY_MS);
+    }
+  }
+}
+function withFileLock(p, fn) {
+  const lockPath = acquireFileLock(p);
+  try { return fn(); } finally { try { unlinkSync(lockPath); } catch {} }
+}
 // Temp files orphaned by a crash/deploy mid-write (each can be ~200MB).
 // Only ones untouched for a while, so a write in progress in an overlapping
 // container is never deleted out from under it.
@@ -392,21 +455,23 @@ export function removeStaleTmpFiles(maxAgeMs = 15 * 60 * 1000) {
   if (removed) console.log(`[data] removed ${removed} stale temp file(s)`);
 }
 function writeJsonToDisk(p, data) {
-  const tmp = tmpPathFor(p);
-  if (!Array.isArray(data)) {
-    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  } else {
-    const fd = openSync(tmp, "w");
-    try {
-      writeSync(fd, "[");
-      data.forEach((item, i) => {
-        if (i > 0) writeSync(fd, ",");
-        writeSync(fd, JSON.stringify(item));
-      });
-      writeSync(fd, "]");
-    } finally { closeSync(fd); }
-  }
-  renameSync(tmp, p);
+  withFileLock(p, () => {
+    const tmp = tmpPathFor(p);
+    if (!Array.isArray(data)) {
+      writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+    } else {
+      const fd = openSync(tmp, "w");
+      try {
+        writeSync(fd, "[");
+        data.forEach((item, i) => {
+          if (i > 0) writeSync(fd, ",");
+          writeSync(fd, JSON.stringify(item));
+        });
+        writeSync(fd, "]");
+      } finally { closeSync(fd); }
+    }
+    renameSync(tmp, p);
+  });
 }
 export function writeJson(file, data) {
   // Temporary diagnostic: crm_users.json has been found wiped down to a
@@ -515,30 +580,32 @@ export function scanJsonArrayFieldSets(file, fieldNames) {
 export function appendJsonRecordFast(file, record) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) { writeJsonToDisk(p, [record]); return; }
-  const fd = openSync(p, "r+");
-  try {
-    const size = fstatSync(fd).size;
-    const tailLen = Math.min(size, 64);
-    const tailBuf = Buffer.alloc(tailLen);
-    readSync(fd, tailBuf, 0, tailLen, size - tailLen);
-    let end = tailLen - 1;
-    while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
-    if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecordFast: ${file} does not end with ']'`);
-    const bodyEnd = size - (tailLen - end);
+  withFileLock(p, () => {
+    const fd = openSync(p, "r+");
+    try {
+      const size = fstatSync(fd).size;
+      const tailLen = Math.min(size, 64);
+      const tailBuf = Buffer.alloc(tailLen);
+      readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+      let end = tailLen - 1;
+      while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecordFast: ${file} does not end with ']'`);
+      const bodyEnd = size - (tailLen - end);
 
-    const headLen = Math.min(size, 256);
-    const headBuf = Buffer.alloc(headLen);
-    readSync(fd, headBuf, 0, headLen, 0);
-    let hi = 0;
-    while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
-    hi++;
-    while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
-    const isEmpty = hi < headLen && headBuf[hi] === 0x5d;
+      const headLen = Math.min(size, 256);
+      const headBuf = Buffer.alloc(headLen);
+      readSync(fd, headBuf, 0, headLen, 0);
+      let hi = 0;
+      while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
+      hi++;
+      while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+      const isEmpty = hi < headLen && headBuf[hi] === 0x5d;
 
-    const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(record) + "]", "utf8");
-    ftruncateSync(fd, bodyEnd);
-    writeSync(fd, suffix, 0, suffix.length, bodyEnd);
-  } finally { closeSync(fd); }
+      const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(record) + "]", "utf8");
+      ftruncateSync(fd, bodyEnd);
+      writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+    } finally { closeSync(fd); }
+  });
   _mtimeCache.delete(file);
 }
 
@@ -549,30 +616,32 @@ export function appendJsonRecordFast(file, record) {
 export function appendToJsonObjectFast(file, key, value) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) { writeJsonToDisk(p, { [key]: value }); return; }
-  const fd = openSync(p, "r+");
-  try {
-    const size = fstatSync(fd).size;
-    const tailLen = Math.min(size, 64);
-    const tailBuf = Buffer.alloc(tailLen);
-    readSync(fd, tailBuf, 0, tailLen, size - tailLen);
-    let end = tailLen - 1;
-    while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
-    if (end < 0 || tailBuf[end] !== 0x7d) throw new Error(`appendToJsonObjectFast: ${file} does not end with '}'`);
-    const bodyEnd = size - (tailLen - end);
+  withFileLock(p, () => {
+    const fd = openSync(p, "r+");
+    try {
+      const size = fstatSync(fd).size;
+      const tailLen = Math.min(size, 64);
+      const tailBuf = Buffer.alloc(tailLen);
+      readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+      let end = tailLen - 1;
+      while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      if (end < 0 || tailBuf[end] !== 0x7d) throw new Error(`appendToJsonObjectFast: ${file} does not end with '}'`);
+      const bodyEnd = size - (tailLen - end);
 
-    const headLen = Math.min(size, 256);
-    const headBuf = Buffer.alloc(headLen);
-    readSync(fd, headBuf, 0, headLen, 0);
-    let hi = 0;
-    while (hi < headLen && headBuf[hi] !== 0x7b) hi++;
-    hi++;
-    while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
-    const isEmpty = hi < headLen && headBuf[hi] === 0x7d;
+      const headLen = Math.min(size, 256);
+      const headBuf = Buffer.alloc(headLen);
+      readSync(fd, headBuf, 0, headLen, 0);
+      let hi = 0;
+      while (hi < headLen && headBuf[hi] !== 0x7b) hi++;
+      hi++;
+      while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+      const isEmpty = hi < headLen && headBuf[hi] === 0x7d;
 
-    const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(key) + ":" + JSON.stringify(value) + "}", "utf8");
-    ftruncateSync(fd, bodyEnd);
-    writeSync(fd, suffix, 0, suffix.length, bodyEnd);
-  } finally { closeSync(fd); }
+      const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(key) + ":" + JSON.stringify(value) + "}", "utf8");
+      ftruncateSync(fd, bodyEnd);
+      writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+    } finally { closeSync(fd); }
+  });
   _mtimeCache.delete(file);
 }
 
@@ -580,51 +649,53 @@ export function appendJsonRecords(file, newRecords) {
   if (!newRecords || !newRecords.length) return;
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) { writeJsonToDisk(p, newRecords); return; }
-  const tmp = tmpPathFor(p);
-  const srcFd = openSync(p, "r");
-  let bodyEnd, isEmpty;
-  try {
-    const size = fstatSync(srcFd).size;
-    const tailLen = Math.min(size, 64);
-    const tailBuf = Buffer.alloc(tailLen);
-    readSync(srcFd, tailBuf, 0, tailLen, size - tailLen);
-    let end = tailLen - 1;
-    while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
-    if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecords: ${file} does not end with ']'`);
-    bodyEnd = size - (tailLen - end);
-
-    const headLen = Math.min(size, 256);
-    const headBuf = Buffer.alloc(headLen);
-    readSync(srcFd, headBuf, 0, headLen, 0);
-    let hi = 0;
-    while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
-    hi++;
-    while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
-    isEmpty = hi < headLen && headBuf[hi] === 0x5d;
-
-    // Windows (unlike POSIX/Linux) refuses to rename a file over a
-    // destination that still has an open handle pointing at it -- confirmed
-    // testing locally: renameSync threw EPERM until srcFd was closed first.
-    // Not an issue on Railway's Linux containers, but closing before the
-    // rename is correct and safe on both, so do it unconditionally.
-    const dstFd = openSync(tmp, "w");
+  withFileLock(p, () => {
+    const tmp = tmpPathFor(p);
+    const srcFd = openSync(p, "r");
+    let bodyEnd, isEmpty;
     try {
-      const CHUNK = 64 * 1024 * 1024;
-      const copyBuf = Buffer.alloc(Math.min(CHUNK, bodyEnd || 1));
-      let copied = 0;
-      while (copied < bodyEnd) {
-        const n = readSync(srcFd, copyBuf, 0, Math.min(copyBuf.length, bodyEnd - copied), copied);
-        writeSync(dstFd, copyBuf, 0, n);
-        copied += n;
-      }
-      newRecords.forEach((r, i) => {
-        if (!isEmpty || i > 0) writeSync(dstFd, ",");
-        writeSync(dstFd, JSON.stringify(r));
-      });
-      writeSync(dstFd, "]");
-    } finally { closeSync(dstFd); }
-  } finally { closeSync(srcFd); }
-  renameSync(tmp, p);
+      const size = fstatSync(srcFd).size;
+      const tailLen = Math.min(size, 64);
+      const tailBuf = Buffer.alloc(tailLen);
+      readSync(srcFd, tailBuf, 0, tailLen, size - tailLen);
+      let end = tailLen - 1;
+      while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecords: ${file} does not end with ']'`);
+      bodyEnd = size - (tailLen - end);
+
+      const headLen = Math.min(size, 256);
+      const headBuf = Buffer.alloc(headLen);
+      readSync(srcFd, headBuf, 0, headLen, 0);
+      let hi = 0;
+      while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
+      hi++;
+      while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+      isEmpty = hi < headLen && headBuf[hi] === 0x5d;
+
+      // Windows (unlike POSIX/Linux) refuses to rename a file over a
+      // destination that still has an open handle pointing at it -- confirmed
+      // testing locally: renameSync threw EPERM until srcFd was closed first.
+      // Not an issue on Railway's Linux containers, but closing before the
+      // rename is correct and safe on both, so do it unconditionally.
+      const dstFd = openSync(tmp, "w");
+      try {
+        const CHUNK = 64 * 1024 * 1024;
+        const copyBuf = Buffer.alloc(Math.min(CHUNK, bodyEnd || 1));
+        let copied = 0;
+        while (copied < bodyEnd) {
+          const n = readSync(srcFd, copyBuf, 0, Math.min(copyBuf.length, bodyEnd - copied), copied);
+          writeSync(dstFd, copyBuf, 0, n);
+          copied += n;
+        }
+        newRecords.forEach((r, i) => {
+          if (!isEmpty || i > 0) writeSync(dstFd, ",");
+          writeSync(dstFd, JSON.stringify(r));
+        });
+        writeSync(dstFd, "]");
+      } finally { closeSync(dstFd); }
+    } finally { closeSync(srcFd); }
+    renameSync(tmp, p);
+  });
   // This writes via raw fs calls, not writeJson, so it never refreshes
   // _mtimeCache the way writeJson does -- and confirmed live in testing,
   // two writes to the same file close enough together can land on the
@@ -651,46 +722,48 @@ export function appendJsonRecords(file, newRecords) {
 export function updateJsonArrayRecordByField(file, field, value, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return null;
-  // Two needles, not one -- a file that's only ever been through
-  // appendJsonRecordFast/this same function stays compact ("field":"value",
-  // no space), but one written even once via writeJson's JSON.stringify(d,
-  // null, 2) is pretty-printed ("field": "value", WITH a space). Matching
-  // only the compact form meant this silently returned "not found" against
-  // any file in the latter state -- confirmed live against crm_contacts.json,
-  // which is always writeJson-formatted end to end.
-  const needleCompact = Buffer.from(`"${field}":"${value}"`);
-  const needleSpaced = Buffer.from(`"${field}": "${value}"`);
-  let found = null;
-  const tmp = tmpPathFor(p);
-  const dstFd = openSync(tmp, "w");
-  let wroteAny = false;
-  try {
-    writeSync(dstFd, "[");
-    forEachJsonArrayElement(p, (buf, start, end) => {
-      let replaced = null;
-      if (!found) {
-        const view = buf.subarray(start, end);
-        const idx = view.indexOf(needleCompact) !== -1 ? 0 : view.indexOf(needleSpaced);
-        if (idx !== -1) {
-          let obj;
-          try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
-          if (obj && obj[field] === value) {
-            const updated = updater(obj);
-            found = updated || obj;
-            replaced = found;
+  return withFileLock(p, () => {
+    // Two needles, not one -- a file that's only ever been through
+    // appendJsonRecordFast/this same function stays compact ("field":"value",
+    // no space), but one written even once via writeJson's JSON.stringify(d,
+    // null, 2) is pretty-printed ("field": "value", WITH a space). Matching
+    // only the compact form meant this silently returned "not found" against
+    // any file in the latter state -- confirmed live against crm_contacts.json,
+    // which is always writeJson-formatted end to end.
+    const needleCompact = Buffer.from(`"${field}":"${value}"`);
+    const needleSpaced = Buffer.from(`"${field}": "${value}"`);
+    let found = null;
+    const tmp = tmpPathFor(p);
+    const dstFd = openSync(tmp, "w");
+    let wroteAny = false;
+    try {
+      writeSync(dstFd, "[");
+      forEachJsonArrayElement(p, (buf, start, end) => {
+        let replaced = null;
+        if (!found) {
+          const view = buf.subarray(start, end);
+          const idx = view.indexOf(needleCompact) !== -1 ? 0 : view.indexOf(needleSpaced);
+          if (idx !== -1) {
+            let obj;
+            try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+            if (obj && obj[field] === value) {
+              const updated = updater(obj);
+              found = updated || obj;
+              replaced = found;
+            }
           }
         }
-      }
-      if (wroteAny) writeSync(dstFd, ",");
-      if (replaced) writeSync(dstFd, JSON.stringify(replaced));
-      else writeSync(dstFd, buf, start, end - start);
-      wroteAny = true;
-    });
-    writeSync(dstFd, "]");
-  } finally { closeSync(dstFd); }
-  if (found) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
-  else { try { unlinkSync(tmp); } catch {} }
-  return found;
+        if (wroteAny) writeSync(dstFd, ",");
+        if (replaced) writeSync(dstFd, JSON.stringify(replaced));
+        else writeSync(dstFd, buf, start, end - start);
+        wroteAny = true;
+      });
+      writeSync(dstFd, "]");
+    } finally { closeSync(dstFd); }
+    if (found) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+    else { try { unlinkSync(tmp); } catch {} }
+    return found;
+  });
 }
 
 // Same byte-copy philosophy as updateJsonArrayRecordByField, but updates
@@ -706,36 +779,38 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
 export function updateAllJsonArrayRecordsByField(file, field, value, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return 0;
-  const needleCompact = Buffer.from(`"${field}":"${value}"`);
-  const needleSpaced = Buffer.from(`"${field}": "${value}"`);
-  let changedCount = 0;
-  const tmp = tmpPathFor(p);
-  const dstFd = openSync(tmp, "w");
-  let wroteAny = false;
-  try {
-    writeSync(dstFd, "[");
-    forEachJsonArrayElement(p, (buf, start, end) => {
-      const view = buf.subarray(start, end);
-      const candidate = view.indexOf(needleCompact) !== -1 || view.indexOf(needleSpaced) !== -1;
-      let toWrite = null;
-      if (candidate) {
-        let obj;
-        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
-        if (obj && obj[field] === value) {
-          toWrite = updater(obj) || obj;
-          changedCount++;
+  return withFileLock(p, () => {
+    const needleCompact = Buffer.from(`"${field}":"${value}"`);
+    const needleSpaced = Buffer.from(`"${field}": "${value}"`);
+    let changedCount = 0;
+    const tmp = tmpPathFor(p);
+    const dstFd = openSync(tmp, "w");
+    let wroteAny = false;
+    try {
+      writeSync(dstFd, "[");
+      forEachJsonArrayElement(p, (buf, start, end) => {
+        const view = buf.subarray(start, end);
+        const candidate = view.indexOf(needleCompact) !== -1 || view.indexOf(needleSpaced) !== -1;
+        let toWrite = null;
+        if (candidate) {
+          let obj;
+          try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+          if (obj && obj[field] === value) {
+            toWrite = updater(obj) || obj;
+            changedCount++;
+          }
         }
-      }
-      if (wroteAny) writeSync(dstFd, ",");
-      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
-      else writeSync(dstFd, buf, start, end - start);
-      wroteAny = true;
-    });
-    writeSync(dstFd, "]");
-  } finally { closeSync(dstFd); }
-  if (changedCount > 0) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
-  else { try { unlinkSync(tmp); } catch {} }
-  return changedCount;
+        if (wroteAny) writeSync(dstFd, ",");
+        if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+        else writeSync(dstFd, buf, start, end - start);
+        wroteAny = true;
+      });
+      writeSync(dstFd, "]");
+    } finally { closeSync(dstFd); }
+    if (changedCount > 0) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+    else { try { unlinkSync(tmp); } catch {} }
+    return changedCount;
+  });
 }
 
 // Same byte-copy philosophy, generalized to a bounded SET of ids (matched by
@@ -770,81 +845,85 @@ export function updateAllJsonArrayRecordsByField(file, field, value, updater) {
 export function removeValuesFromArrayField(file, fieldName, valuesToRemove) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !valuesToRemove || !valuesToRemove.length) return 0;
-  const valueSet = new Set(valuesToRemove);
-  const needles = valuesToRemove.map(v => Buffer.from(v));
-  let changedCount = 0;
-  const tmp = tmpPathFor(p);
-  const dstFd = openSync(tmp, "w");
-  let wroteAny = false;
-  try {
-    writeSync(dstFd, "[");
-    forEachJsonArrayElement(p, (buf, start, end) => {
-      const view = buf.subarray(start, end);
-      let candidate = false;
-      for (const needle of needles) { if (view.indexOf(needle) !== -1) { candidate = true; break; } }
-      let toWrite = null;
-      if (candidate) {
-        let obj;
-        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
-        if (obj && Array.isArray(obj[fieldName]) && obj[fieldName].some(v => valueSet.has(v))) {
-          obj[fieldName] = obj[fieldName].filter(v => !valueSet.has(v));
-          toWrite = obj;
-          changedCount++;
+  return withFileLock(p, () => {
+    const valueSet = new Set(valuesToRemove);
+    const needles = valuesToRemove.map(v => Buffer.from(v));
+    let changedCount = 0;
+    const tmp = tmpPathFor(p);
+    const dstFd = openSync(tmp, "w");
+    let wroteAny = false;
+    try {
+      writeSync(dstFd, "[");
+      forEachJsonArrayElement(p, (buf, start, end) => {
+        const view = buf.subarray(start, end);
+        let candidate = false;
+        for (const needle of needles) { if (view.indexOf(needle) !== -1) { candidate = true; break; } }
+        let toWrite = null;
+        if (candidate) {
+          let obj;
+          try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+          if (obj && Array.isArray(obj[fieldName]) && obj[fieldName].some(v => valueSet.has(v))) {
+            obj[fieldName] = obj[fieldName].filter(v => !valueSet.has(v));
+            toWrite = obj;
+            changedCount++;
+          }
         }
-      }
-      if (wroteAny) writeSync(dstFd, ",");
-      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
-      else writeSync(dstFd, buf, start, end - start);
-      wroteAny = true;
-    });
-    writeSync(dstFd, "]");
-  } finally { closeSync(dstFd); }
-  if (changedCount > 0) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
-  else { try { unlinkSync(tmp); } catch {} }
-  return changedCount;
+        if (wroteAny) writeSync(dstFd, ",");
+        if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+        else writeSync(dstFd, buf, start, end - start);
+        wroteAny = true;
+      });
+      writeSync(dstFd, "]");
+    } finally { closeSync(dstFd); }
+    if (changedCount > 0) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+    else { try { unlinkSync(tmp); } catch {} }
+    return changedCount;
+  });
 }
 
 export function updateJsonArrayRecordsByIds(file, ids, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !ids || !ids.length) return [];
-  const idSet = new Set(ids);
-  // Same compact-vs-pretty-printed gap as updateJsonArrayRecordByField above
-  // (see its comment) -- a bulk import written via writeJson/flushJsonCache
-  // (JSON.stringify(d, null, 2)) leaves "id": "value" WITH a space, which
-  // the compact-only needle never matched.
-  const needles = ids.flatMap(id => [Buffer.from(`"id":"${id}"`), Buffer.from(`"id": "${id}"`)]);
-  const updated = [];
-  let changed = false;
-  const tmp = tmpPathFor(p);
-  const dstFd = openSync(tmp, "w");
-  let wroteAny = false;
-  try {
-    writeSync(dstFd, "[");
-    forEachJsonArrayElement(p, (buf, start, end) => {
-      const view = buf.subarray(start, end);
-      let candidate = false;
-      for (const needle of needles) { if (view.indexOf(needle) !== -1) { candidate = true; break; } }
-      let dropped = false, toWrite = null;
-      if (candidate) {
-        let obj;
-        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
-        if (obj && idSet.has(obj.id)) {
-          const result = updater(obj);
-          if (result === null) { dropped = true; changed = true; }
-          else { toWrite = result || obj; updated.push(toWrite); changed = true; }
+  return withFileLock(p, () => {
+    const idSet = new Set(ids);
+    // Same compact-vs-pretty-printed gap as updateJsonArrayRecordByField above
+    // (see its comment) -- a bulk import written via writeJson/flushJsonCache
+    // (JSON.stringify(d, null, 2)) leaves "id": "value" WITH a space, which
+    // the compact-only needle never matched.
+    const needles = ids.flatMap(id => [Buffer.from(`"id":"${id}"`), Buffer.from(`"id": "${id}"`)]);
+    const updated = [];
+    let changed = false;
+    const tmp = tmpPathFor(p);
+    const dstFd = openSync(tmp, "w");
+    let wroteAny = false;
+    try {
+      writeSync(dstFd, "[");
+      forEachJsonArrayElement(p, (buf, start, end) => {
+        const view = buf.subarray(start, end);
+        let candidate = false;
+        for (const needle of needles) { if (view.indexOf(needle) !== -1) { candidate = true; break; } }
+        let dropped = false, toWrite = null;
+        if (candidate) {
+          let obj;
+          try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+          if (obj && idSet.has(obj.id)) {
+            const result = updater(obj);
+            if (result === null) { dropped = true; changed = true; }
+            else { toWrite = result || obj; updated.push(toWrite); changed = true; }
+          }
         }
-      }
-      if (dropped) return;
-      if (wroteAny) writeSync(dstFd, ",");
-      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
-      else writeSync(dstFd, buf, start, end - start);
-      wroteAny = true;
-    });
-    writeSync(dstFd, "]");
-  } finally { closeSync(dstFd); }
-  if (changed) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
-  else { try { unlinkSync(tmp); } catch {} }
-  return updated;
+        if (dropped) return;
+        if (wroteAny) writeSync(dstFd, ",");
+        if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+        else writeSync(dstFd, buf, start, end - start);
+        wroteAny = true;
+      });
+      writeSync(dstFd, "]");
+    } finally { closeSync(dstFd); }
+    if (changed) { renameSync(tmp, p); _mtimeCache.delete(file); } // see appendJsonRecords above for why
+    else { try { unlinkSync(tmp); } catch {} }
+    return updated;
+  });
 }
 
 // updateJsonArrayRecordsByIds above builds two byte needles PER id and tests
@@ -858,38 +937,40 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
 export function updateJsonArrayRecordsByIdSet(file, idSet, updater) {
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !idSet || !idSet.size) return [];
-  const updated = [];
-  let changed = false;
-  const tmp = tmpPathFor(p);
-  const dstFd = openSync(tmp, "w");
-  let wroteAny = false;
-  try {
-    writeSync(dstFd, "[");
-    forEachJsonArrayElement(p, (buf, start, end) => {
-      const view = buf.subarray(start, end);
-      const head = view.subarray(0, Math.min(view.length, 120)).toString("latin1");
-      const m = head.match(/^\s*\{\s*"id"\s*:\s*"([^"]+)"/);
-      let obj = null, toWrite = null;
-      if (m) {
-        if (idSet.has(m[1])) { try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; } }
-      } else {
-        try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
-        if (obj && !idSet.has(obj.id)) obj = null;
-      }
-      if (obj) {
-        const result = updater(obj);
-        if (result !== null) { toWrite = result || obj; updated.push(toWrite); changed = true; }
-      }
-      if (wroteAny) writeSync(dstFd, ",");
-      if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
-      else writeSync(dstFd, buf, start, end - start);
-      wroteAny = true;
-    });
-    writeSync(dstFd, "]");
-  } finally { closeSync(dstFd); }
-  if (changed) { renameSync(tmp, p); _mtimeCache.delete(file); }
-  else { try { unlinkSync(tmp); } catch {} }
-  return updated;
+  return withFileLock(p, () => {
+    const updated = [];
+    let changed = false;
+    const tmp = tmpPathFor(p);
+    const dstFd = openSync(tmp, "w");
+    let wroteAny = false;
+    try {
+      writeSync(dstFd, "[");
+      forEachJsonArrayElement(p, (buf, start, end) => {
+        const view = buf.subarray(start, end);
+        const head = view.subarray(0, Math.min(view.length, 120)).toString("latin1");
+        const m = head.match(/^\s*\{\s*"id"\s*:\s*"([^"]+)"/);
+        let obj = null, toWrite = null;
+        if (m) {
+          if (idSet.has(m[1])) { try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; } }
+        } else {
+          try { obj = JSON.parse(view.toString("utf8")); } catch { obj = null; }
+          if (obj && !idSet.has(obj.id)) obj = null;
+        }
+        if (obj) {
+          const result = updater(obj);
+          if (result !== null) { toWrite = result || obj; updated.push(toWrite); changed = true; }
+        }
+        if (wroteAny) writeSync(dstFd, ",");
+        if (toWrite) writeSync(dstFd, JSON.stringify(toWrite));
+        else writeSync(dstFd, buf, start, end - start);
+        wroteAny = true;
+      });
+      writeSync(dstFd, "]");
+    } finally { closeSync(dstFd); }
+    if (changed) { renameSync(tmp, p); _mtimeCache.delete(file); }
+    else { try { unlinkSync(tmp); } catch {} }
+    return updated;
+  });
 }
 
 export function readJsonBody(req) {
