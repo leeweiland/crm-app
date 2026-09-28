@@ -257,6 +257,15 @@
                   <div class="active-section-title" style="margin-bottom:10px">Running</div>
                   <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
                 </div>
+
+                <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--pra-border)">
+                  <div class="active-section-title" style="margin-bottom:6px">Coverage</div>
+                  <div class="active-section-sub">For a checked TEAMMATE: when they switch to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first. For "Unassigned": there's no human to go Away, so those leads' replies are covered all the time, not conditionally.</div>
+                  <div class="editor-row" style="margin-bottom:0">
+                    <label>Cover replies for</label>
+                    <div id="fCoverUsers" style="display:flex;flex-wrap:wrap;gap:14px"></div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -362,7 +371,7 @@
             </div>
 
             <div class="accordion-item" data-acc="reengage">
-              <button type="button" class="accordion-header"><span>Re-engagement</span><span class="accordion-chev">▾</span></button>
+              <button type="button" class="accordion-header"><span>Re-engagement &amp; Schedule</span><span class="accordion-chev">▾</span></button>
               <div class="accordion-body" style="display:none">
                 <div class="editor-row toggle-row" style="margin-bottom:10px">
                   <div class="toggle-item">
@@ -498,16 +507,6 @@
               </div>
             </div>
 
-            <div class="accordion-item" data-acc="coverage">
-              <button type="button" class="accordion-header"><span>Coverage</span><span class="accordion-chev">▾</span></button>
-              <div class="accordion-body" style="display:none">
-                <div class="active-section-sub">For a checked TEAMMATE: when they switch to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first. For "Unassigned": there's no human to go Away, so those leads' replies are covered all the time, not conditionally.</div>
-                <div class="editor-row" style="margin-bottom:0">
-                  <label>Cover replies for</label>
-                  <div id="fCoverUsers" style="display:flex;flex-wrap:wrap;gap:14px"></div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
 
