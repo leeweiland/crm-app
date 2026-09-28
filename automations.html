@@ -27,9 +27,12 @@
   .row-item button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1rem; line-height: 1; padding: 4px; }
   .row-item button:hover { color: var(--pra-red); }
   /* Tab bar -- copy-pasted per page in this app (scheduling.html has the
-     original), no shared .tab-btn class in crm-design-system.css yet. */
-  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+     original), no shared .tab-btn class in crm-design-system.css yet.
+     flex-wrap:nowrap + overflow-x:auto matches contacts.html/settings.html's
+     own tab bars -- without it a wide tab row pushes the whole page wider
+     than the viewport on mobile instead of scrolling on its own. */
+  .tabs { display: flex; flex-wrap: nowrap; gap: 8px; margin-bottom: 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tab-btn { background: transparent; border: 1px solid var(--pra-border); color: var(--pra-dim); font-family: var(--font-primary); font-weight: 700; font-size: .82rem; padding: 8px 16px; border-radius: 8px; cursor: pointer; flex-shrink: 0; white-space: nowrap; }
   .tab-btn.active { color: var(--pra-blue); border-color: var(--pra-blue); background: var(--pra-blue-dim); }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
