@@ -387,6 +387,21 @@ export async function handleAiActiveRequest(req, res, url) {
     writeJson(AI_ACTIVE_BATCHES_FILE, batches);
     return sendJson(res, 200, { ok: true });
   }
+  // Removes the batch record and every one of its own enrollment states --
+  // a "queued"/"waiting_reply" row left behind after deleting its parent
+  // batch would otherwise still be picked up by the next tick (nothing
+  // upstream checks that the batch it belongs to still exists), silently
+  // resuming exactly what deleting the batch was meant to stop.
+  const deleteMatch = p.match(/^\/api\/ai-active\/([^/]+)$/);
+  if (deleteMatch && req.method === "DELETE") {
+    const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+    const batch = batches.find((b) => b.id === deleteMatch[1]);
+    if (!batch) return sendJson(res, 404, { error: "Batch not found" });
+    writeJson(AI_ACTIVE_BATCHES_FILE, batches.filter((b) => b.id !== deleteMatch[1]));
+    const states = readJson(AI_ACTIVE_STATES_FILE, []);
+    writeJson(AI_ACTIVE_STATES_FILE, states.filter((s) => s.batchId !== deleteMatch[1]));
+    return sendJson(res, 200, { ok: true });
+  }
 
   return false;
 }

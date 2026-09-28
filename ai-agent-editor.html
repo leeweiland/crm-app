@@ -1609,6 +1609,7 @@ async function loadBatchList(agentId) {
           <button class="pra-btn pra-btn-ghost pra-btn-sm" data-review="${b.id}" type="button">Review conversations</button>
           ${b.status === 'running' ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-pause="${b.id}" type="button">Pause</button>` : ''}
           ${b.status === 'paused' ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-resume="${b.id}" type="button">Resume</button>` : ''}
+          <button class="pra-btn pra-btn-danger pra-btn-sm" data-delete="${b.id}" type="button">Delete</button>
         </div>
         <div class="review-panel" id="review-${b.id}" style="display:none;margin-top:10px"></div>
       </div>
@@ -1616,6 +1617,11 @@ async function loadBatchList(agentId) {
     el.querySelectorAll('[data-pause]').forEach(btn => btn.addEventListener('click', async () => { await fetch(`/api/ai-active/${btn.dataset.pause}/pause`, { method: 'POST' }); loadBatchList(agentId); }));
     el.querySelectorAll('[data-resume]').forEach(btn => btn.addEventListener('click', async () => { await fetch(`/api/ai-active/${btn.dataset.resume}/resume`, { method: 'POST' }); loadBatchList(agentId); }));
     el.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', () => toggleBatchReview(btn.dataset.review)));
+    el.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!confirm('Delete this batch? Its own enrollment records are removed too -- this does not undo anything it already sent.')) return;
+      await fetch(`/api/ai-active/${btn.dataset.delete}`, { method: 'DELETE' });
+      loadBatchList(agentId);
+    }));
   } catch {
     el.innerHTML = '<span class="pra-muted">Could not load batches.</span>';
   }
