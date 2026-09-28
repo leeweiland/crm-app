@@ -213,13 +213,19 @@ export function formatCustomerJourney(contact, journey) {
   return `\n\n### CUSTOMER JOURNEY — real history for this specific lead (${contact.first || ""} ${contact.last || ""}, ${contact.email || contact.phone || "no contact info"})\nStatus: ${contact.status || "unknown"} · Type: ${contact.programType || "unknown"} · Lead since: ${contact.firstSeenAt || contact.createdAt || "unknown"}\n\n${lines.join("\n") || "(no prior activity on record)"}`;
 }
 
+// topN trimmed from 6/8 to 3/4 -- confirmed live this grounding block was
+// the single biggest UNCACHED cost per call (~5,900 tokens, every call,
+// full price, since it's re-searched per-query and can't be prompt-
+// cached the way the static system prompt is). Relevance drops off fast
+// past the top few chunks anyway, so the top half keeps most of the real
+// value at roughly half the token cost.
 async function retrieveBoth(query) {
   const [salesChunks, writingChunks] = await Promise.all([
-    retrieveFromCache(SALES_CACHE_PATH, query, { topN: 6 }).catch((e) => {
+    retrieveFromCache(SALES_CACHE_PATH, query, { topN: 3 }).catch((e) => {
       console.error("sales cache retrieve failed:", e.message);
       return [];
     }),
-    retrieveFromCache(WRITING_CACHE_PATH, query, { topN: 8 }).catch((e) => {
+    retrieveFromCache(WRITING_CACHE_PATH, query, { topN: 4 }).catch((e) => {
       console.error("writing cache retrieve failed:", e.message);
       return [];
     }),
@@ -421,7 +427,19 @@ export function applyPricingMarker(text, agent) {
 // result matters. Returns { text, buyingSignal } on a normal reply,
 // { skip: true, reason } when no reply is needed, or { escalate: reason }
 // when this needs a human instead of a suggestion.
-export async function generateAgentReply(agent, contactId, userText, { autoSend = false, senderName = null } = {}) {
+// skipGrounding -- for a "the lead hasn't replied yet" no-reply follow-up
+// (see ai_active_backend.js), userText is a fixed generic nudge
+// instruction, not anything the lead actually said, so searching the
+// sales/writing archives against it doesn't retrieve anything genuinely
+// tailored to this moment -- it's the same generic search every time, for
+// every contact, on the single most frequent call this engine makes
+// (roughly 2 of every 3 sends, since a cold-open is followed by up to 2
+// follow-ups). Confirmed live: this grounding block was the biggest
+// uncached-every-call cost once the static system prompt got cached.
+// Skipping it here loses nothing contact-specific -- the real
+// conversation history (journeyBlock) and the cached few-shot examples
+// still fully ground the follow-up's tone/technique either way.
+export async function generateAgentReply(agent, contactId, userText, { autoSend = false, senderName = null, skipGrounding = false } = {}) {
   let journeyBlock = "";
   if (contactId) {
     const contacts = readJson(CONTACTS_FILE, []);
@@ -429,7 +447,7 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
     const journey = getContactMessages(contactId);
     journeyBlock = formatCustomerJourney(contact, journey);
   }
-  const grounding = await retrieveBoth(userText);
+  const grounding = skipGrounding ? "" : await retrieveBoth(userText);
   const { cached, dynamic } = buildAgentSystemPromptParts(agent, journeyBlock, autoSend, senderName);
 
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {

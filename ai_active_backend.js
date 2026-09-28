@@ -799,7 +799,7 @@ export async function processAiActiveBatches() {
             // MAX_FOLLOWUPS) so one channel exhausting its follow-ups never
             // stops the other from still following up on its own cadence.
             if ((st.followUpCount[channel] || 0) >= maxFollowUps) continue; // this channel is done; the other may not be
-            const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name });
+            const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name, skipGrounding: true });
             if (!result.skip && !result.escalate && result.text) {
               await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
               st.followUpCount[channel] = (st.followUpCount[channel] || 0) + 1;
