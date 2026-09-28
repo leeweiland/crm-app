@@ -236,7 +236,21 @@ async function retrieveBoth(query) {
 // field used to exist here but was actively misleading (it no longer
 // matched what either path actually did), so it's gone -- the truth is
 // which code path is asking, passed in explicitly.
-export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false, senderName = null) {
+// Returns { cached, dynamic } instead of one concatenated string --
+// `cached` is everything identical across every call for this exact
+// (agent, autoSend, senderName) combo (identity/voice, the pricing-
+// stripped system prompt, response-format rules, the playbook, the
+// few-shot examples -- confirmed ~15K tokens for Kai), `dynamic` is just
+// journeyBlock, which is different per contact/call. Callers pass `cached`
+// as a system content block with cache_control and `dynamic` (plus any
+// per-call retrieval grounding) as a second, uncached block -- see
+// generateAgentReply below. Confirmed live: with NO caching, Kai's AI
+// Active engine was re-paying full input-token price for this same ~15K
+// tokens on every single send, autonomous and high-volume by design, which
+// burned real Anthropic credit fast during a backlog catch-up. A caller
+// that doesn't care about caching (buildAgentSystemPromptText below) just
+// concatenates both halves back into one string, unchanged from before.
+export function buildAgentSystemPromptParts(agent, journeyBlock, autoSend = false, senderName = null) {
   const sendModeNote = autoSend
     ? "Your replies are sent directly to the real lead with no human review. Be certain before committing to a claim, price, or promise."
     : "Your replies are DRAFTS only -- a human reviews and approves before anything is sent to the real lead. Write as if sending directly; the review step is invisible to you.";
@@ -270,7 +284,7 @@ export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false, se
     /\[\[PRICING_SCRIPT_START\]\][\s\S]*?\[\[PRICING_SCRIPT_END\]\]/i,
     "(The exact pricing script is intentionally omitted here. When it's time to present pricing per the rules above, your ENTIRE response for that message must be exactly the marker [[SHOW_PRICING]] and nothing else -- no other words before or after it. Do not attempt to write out the pricing package, options, or numbers yourself; the real text is inserted automatically wherever that marker appears.)"
   );
-  return `You are "${agent.name}", an AI agent for Pacific Rim Athletics. ${agent.description || ""}
+  const cached = `You are "${agent.name}", an AI agent for Pacific Rim Athletics. ${agent.description || ""}
 
 ${sendModeNote}
 ${senderNote}
@@ -284,8 +298,15 @@ Below is supplementary grounding: real objection-handling phrasing/technique fro
 ${PLAYBOOK}
 
 ${FEW_SHOT_BLOCK}
-${journeyBlock}
 `;
+  return { cached, dynamic: `${journeyBlock}\n` };
+}
+// Plain-string form for callers that don't make their own Anthropic call
+// (or otherwise don't care about caching) -- same output as before this
+// was split.
+export function buildAgentSystemPrompt(agent, journeyBlock, autoSend = false, senderName = null) {
+  const { cached, dynamic } = buildAgentSystemPromptParts(agent, journeyBlock, autoSend, senderName);
+  return cached + dynamic;
 }
 
 export const AI_GENERATION_LOG_FILE = "crm_ai_generation_log.json";
@@ -409,7 +430,7 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
     journeyBlock = formatCustomerJourney(contact, journey);
   }
   const grounding = await retrieveBoth(userText);
-  const systemPrompt = buildAgentSystemPrompt(agent, journeyBlock, autoSend, senderName) + grounding;
+  const { cached, dynamic } = buildAgentSystemPromptParts(agent, journeyBlock, autoSend, senderName);
 
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -417,7 +438,17 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
     body: JSON.stringify({
       model: "claude-sonnet-5",
       max_tokens: 2000,
-      system: systemPrompt,
+      // Split so the ~15K-token static half (identity/prompt/playbook/
+      // few-shot -- identical across every call for this same agent +
+      // autoSend + senderName) is cached: full price the first time, then
+      // $0.20/MTok instead of $2/MTok on every call within 5 min of the
+      // last one -- which a high-volume engine like AI Active hits
+      // continuously. The per-call half (journey + retrieval grounding)
+      // is never cached since it's different every time anyway.
+      system: [
+        { type: "text", text: cached, cache_control: { type: "ephemeral" } },
+        { type: "text", text: dynamic + grounding },
+      ],
       messages: [{ role: "user", content: userText }],
     }),
   });
