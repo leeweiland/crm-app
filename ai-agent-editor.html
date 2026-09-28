@@ -31,6 +31,19 @@
   .active-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
   .active-toggle.on { background: var(--pra-blue); }
   .active-toggle.on::after { left: 20px; }
+  /* Cold-Open Schedule's per-day row -- copied verbatim from
+     scheduling-editor.html's .cal-week-row/.toggle-switch (Event Type
+     weekly availability), same UI pattern for the same underlying idea
+     (a day on/off pill + start/end time inputs), so it looks and behaves
+     identically instead of inventing a second version of this control. */
+  .cal-week-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--pra-border); font-size: .76rem; }
+  .cal-week-row:last-child { border-bottom: none; }
+  .cal-week-row .cal-week-day { width: 30px; flex-shrink: 0; color: var(--pra-dim); }
+  .cal-week-row input[type=time] { flex: 1; min-width: 0; padding: 4px 6px; font-size: .72rem; }
+  .toggle-switch { width: 34px; height: 20px; border-radius: 12px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); position: relative; cursor: pointer; flex-shrink: 0; }
+  .toggle-switch::after { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--pra-dim); top: 2px; left: 2px; transition: left .15s, background .15s; }
+  .toggle-switch.on { border-color: var(--pra-blue); }
+  .toggle-switch.on::after { left: 16px; background: var(--pra-blue); }
 
   /* Dropdown multi-selects (lead type / status / covering users) -- a
      button showing a summary of what's picked, opening a checkbox panel,
@@ -387,6 +400,27 @@
                   <label>Volume (# per hour)</label>
                   <input type="number" id="fColdOpenPerHour" min="1" step="1" placeholder="Unlimited -- send the whole due batch right away"/>
                 </div>
+
+                <div class="editor-row toggle-row" style="margin-bottom:10px">
+                  <div class="toggle-item">
+                    <button type="button" class="active-toggle" id="fSendWindowToggle"></button>
+                    <span class="toggle-label" id="fSendWindowLabel">Only send cold-opens during these hours</span>
+                  </div>
+                </div>
+                <div class="editor-row" id="fSendWindowSection" style="display:none">
+                  <label>Timezone</label>
+                  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;cursor:pointer">
+                      <input type="radio" name="sendWindowTzMode" id="fSendWindowTzAdmin" value="admin"/> My timezone (<span id="fSendWindowAdminTzPreview" class="pra-muted"></span>)
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;cursor:pointer">
+                      <input type="radio" name="sendWindowTzMode" id="fSendWindowTzContact" value="contact"/> Contact's own timezone
+                    </label>
+                  </div>
+                  <div class="pra-muted" style="font-size:.72rem;margin-bottom:10px">Contact's own timezone is guessed from their phone number's area code -- falls back to my timezone above when that can't be determined (no phone on file, non-US/Canada number, etc).</div>
+                  <label>Send window</label>
+                  <div id="sendWindowWeekEditor"></div>
+                </div>
               </div>
             </div>
 
@@ -600,6 +634,55 @@ document.getElementById('fAiAssistLabel').addEventListener('click', () => docume
 document.getElementById('fNotifyBuyingSignalToggle').addEventListener('click', () => { setToggle('fNotifyBuyingSignalToggle', !getToggle('fNotifyBuyingSignalToggle')); scheduleAutosave(); });
 document.getElementById('fNotifyBuyingSignalLabel').addEventListener('click', () => document.getElementById('fNotifyBuyingSignalToggle').click());
 
+// ── Cold-Open Schedule (Re-engagement accordion) -- restricts what hours
+// AI Active's initial cold-open sends (never replies/follow-ups, see
+// ai_active_backend.js's isWithinSendWindow) are allowed to go out.
+// Mirrors scheduling-editor.html's cal-week-row Event Type availability
+// editor exactly (same markup/classes), just keyed 0=Sun..6=Sat the same
+// way, and scoped to this one agent instead of a calendar.
+const SEND_WINDOW_DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+let sendWindowState = { weekly: {} };
+function renderSendWindowWeekEditor() {
+  const wrap = document.getElementById('sendWindowWeekEditor');
+  wrap.innerHTML = SEND_WINDOW_DAY_LABELS.map((label, i) => {
+    const rule = sendWindowState.weekly[String(i)];
+    const on = !!rule;
+    return `
+      <div class="cal-week-row">
+        <div class="cal-week-day">${label}</div>
+        <div class="toggle-switch ${on ? 'on' : ''}" data-sw-day="${i}"></div>
+        <input class="pra-input" type="time" data-sw-start="${i}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
+        <input class="pra-input" type="time" data-sw-end="${i}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
+      </div>
+    `;
+  }).join('');
+  wrap.querySelectorAll('[data-sw-day]').forEach(sw => sw.onclick = () => {
+    const isOn = sw.classList.toggle('on');
+    sendWindowState.weekly[sw.dataset.swDay] = isOn ? { start: '09:00', end: '17:00' } : null;
+    renderSendWindowWeekEditor();
+    scheduleAutosave();
+  });
+  wrap.querySelectorAll('[data-sw-start]').forEach(inp => inp.onchange = () => { sendWindowState.weekly[inp.dataset.swStart].start = inp.value; scheduleAutosave(); });
+  wrap.querySelectorAll('[data-sw-end]').forEach(inp => inp.onchange = () => { sendWindowState.weekly[inp.dataset.swEnd].end = inp.value; scheduleAutosave(); });
+}
+function updateSendWindowVisibility() { document.getElementById('fSendWindowSection').style.display = getToggle('fSendWindowToggle') ? 'block' : 'none'; }
+document.getElementById('fSendWindowToggle').addEventListener('click', () => {
+  const nowOn = !getToggle('fSendWindowToggle');
+  setToggle('fSendWindowToggle', nowOn);
+  // First time this is ever turned on for this agent (no days configured
+  // yet at all) -- seed a sensible Mon-Fri 9-5 default instead of an
+  // all-days-closed schedule nobody would ever see a cold-open from.
+  if (nowOn && !Object.values(sendWindowState.weekly).some(Boolean)) {
+    sendWindowState.weekly = { "1": { start: "09:00", end: "17:00" }, "2": { start: "09:00", end: "17:00" }, "3": { start: "09:00", end: "17:00" }, "4": { start: "09:00", end: "17:00" }, "5": { start: "09:00", end: "17:00" } };
+    renderSendWindowWeekEditor();
+  }
+  updateSendWindowVisibility();
+  scheduleAutosave();
+});
+document.getElementById('fSendWindowLabel').addEventListener('click', () => document.getElementById('fSendWindowToggle').click());
+document.getElementById('fSendWindowTzAdmin').addEventListener('change', scheduleAutosave);
+document.getElementById('fSendWindowTzContact').addEventListener('change', scheduleAutosave);
+
 let allSegments = [];
 async function loadSegments() {
   try {
@@ -737,6 +820,17 @@ async function loadEditor() {
   setToggle('fReengageEmailToggle', reengage.email?.enabled);
   document.getElementById('fReengageEmailPrompt').value = reengage.email?.prompt || '';
   document.getElementById('fColdOpenPerHour').value = cfg.coldOpenPerHour || '';
+  // Re-detected fresh on every load (not the last-saved value) -- "my
+  // timezone" means whoever's actually editing this right now, and the
+  // preview next to the radio option needs to show what it resolves to
+  // TODAY, not a possibly-stale value from whenever it was last saved.
+  const sw = reengage.sendWindow || {};
+  sendWindowState = { weekly: sw.weekly || {} };
+  setToggle('fSendWindowToggle', !!sw.enabled);
+  document.getElementById('fSendWindowAdminTzPreview').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  document.getElementById(sw.timezoneMode === 'contact' ? 'fSendWindowTzContact' : 'fSendWindowTzAdmin').checked = true;
+  renderSendWindowWeekEditor();
+  updateSendWindowVisibility();
   document.getElementById('testSmsResult').style.display = 'none';
   document.getElementById('testEmailResult').style.display = 'none';
   document.getElementById('previewResult').style.display = 'none';
@@ -1404,6 +1498,15 @@ function buildAgentPayload() {
       reengagement: {
         sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value },
         email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value },
+        // adminTimezone is re-detected fresh here too (not read back from
+        // any stored/displayed value) -- always whatever this save's own
+        // browser resolves to right now.
+        sendWindow: {
+          enabled: getToggle('fSendWindowToggle'),
+          timezoneMode: document.getElementById('fSendWindowTzContact').checked ? 'contact' : 'admin',
+          adminTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          weekly: sendWindowState.weekly,
+        },
       },
       // Blank/0 = unlimited (send the whole due batch every tick, the
       // original behavior) -- see ai_active_backend.js's coldOpenCap.

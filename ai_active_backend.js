@@ -7,6 +7,7 @@ import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
   generateAgentReply, contactMatchesTargeting, isExcludable,
 } from "./ai_agents_backend.js";
+import { resolveContactTimezone } from "./contact_timezone.js";
 
 // ── AI Active -- "works the selected lead batch and brings the human in
 // when needed", the counterpart to AI Assist ("helps the human work
@@ -99,6 +100,38 @@ function extractGifMarker(text) {
   const m = text.match(/\[\[GIF:\s*(\S+?)\s*\]\]/i);
   if (!m) return { text, gifUrl: null };
   return { text: text.replace(m[0], "").trim(), gifUrl: m[1] };
+}
+
+const SEND_WINDOW_DAY_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+// Cold-open only (never a reply/follow-up -- those go out whenever the lead
+// actually replies, this is purely about not cold-opening someone at 3am).
+// agent.activeConfig.reengagement.sendWindow -- see ai-agent-editor.html's
+// Cold-Open Schedule. Disabled (or unset, for an agent saved before this
+// existed) always returns true, i.e. today's original "anytime" behavior.
+export function isWithinSendWindow(agent, contact, now) {
+  const sw = agent?.activeConfig?.reengagement?.sendWindow;
+  if (!sw?.enabled) return true;
+  const tz = sw.timezoneMode === "contact"
+    ? (resolveContactTimezone(contact?.phone)?.tz || sw.adminTimezone || "America/Anchorage")
+    : (sw.adminTimezone || "America/Anchorage");
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(now));
+  } catch {
+    // An invalid/unrecognized tz string (shouldn't happen -- both sources
+    // above are either a real IANA zone from Intl itself or the hardcoded
+    // Anchorage fallback) falls back to always-allowed rather than a
+    // cold-open silently never going out at all.
+    return true;
+  }
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  const dayIdx = SEND_WINDOW_DAY_INDEX[get("weekday")];
+  const rule = sw.weekly?.[String(dayIdx)];
+  if (!rule) return false; // day not enabled at all
+  const nowMinutes = Number(get("hour")) * 60 + Number(get("minute"));
+  const [startH, startM] = String(rule.start || "00:00").split(":").map(Number);
+  const [endH, endM] = String(rule.end || "23:59").split(":").map(Number);
+  return nowMinutes >= startH * 60 + startM && nowMinutes < endH * 60 + endM;
 }
 
 // Shared by processAiActiveBatches' own "queued" branch and the
@@ -579,6 +612,14 @@ export async function processAiActiveBatches() {
           // an AI generation call on it, and pick it back up next tick once
           // the rolling hour has room again.
           if (coldOpenBudget <= 0) continue;
+          // Outside the configured Cold-Open Schedule window (see
+          // isWithinSendWindow) -- same "leave it queued, skip without
+          // spending an AI generation call" shape as the budget check right
+          // above. No new nextActionAt scheduling needed: it's still `due`
+          // (nextActionAt in the past) so the next tick just re-checks the
+          // window again in ~30s, same as it already does for every other
+          // still-queued contact.
+          if (!isWithinSendWindow(agent, contact, now)) continue;
           const opener = await generateColdOpen(agent, contact, cfg);
           if (opener.sendable) {
             // Hits every enabled/available channel for the first touch (see
