@@ -1695,12 +1695,10 @@ async function loadBatchList(agentId) {
         </div>
         <div class="batch-stats">${batchStatsLine(stats)}</div>
         <div style="display:flex;gap:8px">
-          <button class="pra-btn pra-btn-ghost pra-btn-sm" id="batchReviewBtn" type="button">Review conversations</button>
           ${anyRunning ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="batchPauseBtn" type="button">Pause</button>` : ''}
           ${anyPaused ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="batchResumeBtn" type="button">Resume</button>` : ''}
           <button class="pra-btn pra-btn-danger pra-btn-sm" id="batchDeleteBtn" type="button">Delete</button>
         </div>
-        <div class="review-panel" id="batchReviewPanel" style="display:none;margin-top:10px"></div>
       </div>
     `;
     document.getElementById('batchPauseBtn')?.addEventListener('click', async () => {
@@ -1716,7 +1714,6 @@ async function loadBatchList(agentId) {
       await Promise.all(ids.map(id => fetch(`/api/ai-active/${id}`, { method: 'DELETE' })));
       loadBatchList(agentId);
     });
-    document.getElementById('batchReviewBtn').addEventListener('click', () => toggleBatchReview(ids));
   } catch {
     el.innerHTML = '<span class="pra-muted">Could not load batches.</span>';
   }
@@ -1855,25 +1852,6 @@ async function loadBtActivity(agentId) {
     `;
   } catch {
     el.innerHTML = '<span class="pra-muted">Could not load activity.</span>';
-  }
-}
-async function toggleBatchReview(batchIds) {
-  const panel = document.getElementById('batchReviewPanel');
-  if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
-  panel.style.display = 'block';
-  panel.innerHTML = '<span class="pra-muted">Loading…</span>';
-  try {
-    const results = await Promise.all(batchIds.map((id) => fetch(`/api/ai-active/${id}`).then((r) => r.json())));
-    const states = results.flatMap((d) => d.states || []);
-    panel.innerHTML = states.map(s => `
-      <div class="review-row">
-        <span class="review-state-pill ${s.state}">${escapeHtml(s.state.replace('_', ' '))}</span>
-        <span style="flex:1">${escapeHtml(s.contactName)}</span>
-        <a class="pra-muted" style="font-size:.76rem" href="/inbox.html?contactId=${s.contactId}" target="_blank">Open conversation →</a>
-      </div>
-    `).join('') || '<span class="pra-muted">Nobody enrolled.</span>';
-  } catch {
-    panel.innerHTML = '<span class="pra-muted">Could not load detail.</span>';
   }
 }
 async function testReengageOpen(channel, btn, resultElId) {
