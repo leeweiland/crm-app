@@ -248,7 +248,7 @@ export function conversationKey(m) {
 // single combined `last` can't answer both questions at once, so each
 // channel that actually shows up in the sidebar keeps its own slim ref
 // alongside the combined one.
-export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", "meeting", "task_due"];
+export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", "meeting", "task_due", "buying_signal"];
 // Narrower than SIDEBAR_CHANNELS on purpose: SIDEBAR_CHANNELS controls what
 // renders in a conversation thread and what counts toward per-channel
 // preview text (lastByChannel below) -- activity/meeting logs belong there.
@@ -266,7 +266,12 @@ export const SIDEBAR_CHANNELS = ["email", "sms", "form", "booking", "activity", 
 // endpoint) so the two are never confused for the same kind of item -- this
 // is a NOTIFICATION that a task came due, not the task record itself, and
 // both can legitimately appear in the same contact's history at once.
-export const NOTIFY_CHANNELS = ["email", "sms", "form", "booking", "task_due"];
+// "buying_signal" is the same idea, for ai_agents_backend.js's
+// generateAgentReply -- a detected [[BUYING_SIGNAL]] on an autonomous send
+// (AI Active/Coverage/Behavioral Triggers), gated per-agent by
+// notifyOnBuyingSignal, off by default only if an admin explicitly turns it
+// off for that agent.
+export const NOTIFY_CHANNELS = ["email", "sms", "form", "booking", "task_due", "buying_signal"];
 function emptyGroup(key, contactId) {
   const g = { key, contactId: contactId || null, last: null, lastMine: null, lastInboundAt: null, unreadCount: 0, lastByChannel: {} };
   SIDEBAR_CHANNELS.forEach(c => { g.lastByChannel[c] = null; });

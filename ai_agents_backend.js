@@ -5,6 +5,7 @@ import { dirname, join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 import { getContactMessages, getSourceMessages, removeContactMessagesByIds, recomputeConversationSummary } from "./message_index.js";
+import { logMessage } from "./message_log.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
 import { BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
 
@@ -140,6 +141,11 @@ function newAgent({ name, description }) {
     // must deliberately turn each one on.
     active: false, // AI Active master switch -- also the kill-switch processAiActiveBatches() checks every tick
     aiAssist: false, // AI Assist -- icon-triggered draft generation in the Inbox, always human-reviewed
+    // Whether a detected [[BUYING_SIGNAL]] on an autonomous send (AI
+    // Active/Coverage/Behavioral Triggers -- never AI Assist, which already
+    // has its own immediate toast for this) also posts an Inbox-sidebar
+    // notification. Defaults on -- see notifyBuyingSignal below.
+    notifyOnBuyingSignal: true,
     targeting: {
       programTypes: [], // [] = all types (online/gym); non-empty = only these
       statuses: [],     // [] = all statuses; non-empty = only these
@@ -428,6 +434,21 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
   }
   const result = parseAgentOutput(textBlock?.text || "");
   if (result.text) result.text = applyPricingMarker(result.text, agent);
+  // Only for a genuinely autonomous send (AI Active/Coverage/Behavioral
+  // Triggers -- autoSend true) -- nobody's watching those live the way a
+  // human generating an AI Assist draft already is (that path has its own
+  // immediate toast, see conversation-panel.js). Gated per-agent by
+  // notifyOnBuyingSignal (default true) so this can be turned off.
+  if (result.buyingSignal && autoSend && contactId && agent?.notifyOnBuyingSignal !== false) {
+    logMessage({
+      channel: "buying_signal", direction: "inbound", contactId,
+      sourceType: "ai_agent", sourceId: agent.id,
+      subject: "Buying signal detected",
+      body: `${agent.name} detected a buying signal on this reply -- consider taking over.`,
+      bodyPreview: `${agent.name} detected a buying signal -- consider taking over.`,
+      status: "received",
+    });
+  }
   return result;
 }
 
@@ -1092,7 +1113,7 @@ async function handleAiAgentsCrud(req, res, url) {
     if (req.method === "PATCH") {
       if (!agent) return sendJson(res, 404, { error: "Agent not found" });
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "systemPrompt", "active", "aiAssist", "targeting", "activeConfig"]) {
+      for (const k of ["name", "description", "systemPrompt", "notifyOnBuyingSignal", "active", "aiAssist", "targeting", "activeConfig"]) {
         if (k in body) agent[k] = body[k];
       }
       agent.updatedAt = new Date().toISOString();

@@ -177,6 +177,12 @@
           <div class="accordion-item open" data-acc="prompt">
             <button type="button" class="accordion-header"><span>System Prompt</span><span class="accordion-chev">▾</span></button>
             <div class="accordion-body">
+              <div class="editor-row toggle-row" style="margin-bottom:12px">
+                <div class="toggle-item">
+                  <button type="button" class="active-toggle" id="fNotifyBuyingSignalToggle"></button>
+                  <span class="toggle-label" id="fNotifyBuyingSignalLabel">Notify Inbox sidebar on a detected buying signal</span>
+                </div>
+              </div>
               <div class="editor-row" style="margin-bottom:0">
                 <textarea id="fSystemPrompt"></textarea>
               </div>
@@ -236,7 +242,10 @@
                   <label>Batch size (max leads contacted per Start)</label>
                   <input type="number" id="fBatchSize" min="1" max="1000" step="1" value="25"/>
                 </div>
-                <button class="pra-btn" id="previewBatchBtn" type="button">Preview Batch</button>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button class="pra-btn" id="previewBatchBtn" type="button">Preview Batch</button>
+                  <button class="pra-btn" id="startBatchBtn" type="button" style="opacity:.45;cursor:not-allowed" title="Run Preview Batch first">Start Batch</button>
+                </div>
                 <div class="preview-result" id="previewResult" style="display:none"></div>
                 <div style="margin-top:18px">
                   <div class="active-section-title" style="margin-bottom:10px">Running batches</div>
@@ -588,6 +597,8 @@ document.getElementById('fActiveToggle').addEventListener('click', () => { setTo
 document.getElementById('fAiAssistToggle').addEventListener('click', () => { setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')); scheduleAutosave(); });
 document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
 document.getElementById('fAiAssistLabel').addEventListener('click', () => document.getElementById('fAiAssistToggle').click());
+document.getElementById('fNotifyBuyingSignalToggle').addEventListener('click', () => { setToggle('fNotifyBuyingSignalToggle', !getToggle('fNotifyBuyingSignalToggle')); scheduleAutosave(); });
+document.getElementById('fNotifyBuyingSignalLabel').addEventListener('click', () => document.getElementById('fNotifyBuyingSignalToggle').click());
 
 let allSegments = [];
 async function loadSegments() {
@@ -696,6 +707,7 @@ async function loadEditor() {
   document.getElementById('fDescription').value = agent.description || '';
   setToggle('fActiveToggle', agent.active);
   setToggle('fAiAssistToggle', agent.aiAssist);
+  setToggle('fNotifyBuyingSignalToggle', agent.notifyOnBuyingSignal !== false);
   document.getElementById('fSystemPrompt').value = agent.systemPrompt || '';
   const cfg = agent.activeConfig || {};
   renderSegmentCheckboxes(cfg.segmentIds || (cfg.segmentId ? [cfg.segmentId] : []));
@@ -946,6 +958,16 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
       if (full.includes('[[SHOW_PRICING]]')) {
         const m = document.getElementById('fSystemPrompt').value.match(/\[\[PRICING_SCRIPT_START\]\]([\s\S]*?)\[\[PRICING_SCRIPT_END\]\]/i);
         full = full.replaceAll('[[SHOW_PRICING]]', m ? m[1].trim() : '');
+        if (bubble) bubble.textContent = full;
+      }
+      // [[BUYING_SIGNAL]] (see ai_agents_backend.js's parseAgentOutput) --
+      // a real send never shows this, it's stripped server-side before the
+      // text is ever handed to sendViaChannel. This streaming preview never
+      // ran that same parsing, so the literal marker rendered as if it were
+      // part of the message -- strip it here too, purely cosmetic (nothing
+      // downstream reads it off `full`).
+      if (full.includes('[[BUYING_SIGNAL]]')) {
+        full = full.replace(/\n?\[\[BUYING_SIGNAL\]\]\s*$/i, '').trim();
         if (bubble) bubble.textContent = full;
       }
       // [[SPLIT]] (see ai_active_backend.js's sendViaChannel) sends as two
@@ -1351,6 +1373,7 @@ function buildAgentPayload() {
     description: document.getElementById('fDescription').value.trim(),
     active: getToggle('fActiveToggle'),
     aiAssist: getToggle('fAiAssistToggle'),
+    notifyOnBuyingSignal: getToggle('fNotifyBuyingSignalToggle'),
     systemPrompt: document.getElementById('fSystemPrompt').value,
     targeting: { programTypes, statuses, coverForUserIds },
     activeConfig: {
@@ -1498,10 +1521,31 @@ function currentActiveConfig() {
     batchSize: Number(document.getElementById('fBatchSize').value) || 25,
   };
 }
+// Tracks the last successful Preview's own params -- Start Batch (a
+// persistent button next to Preview Batch, not one that only appears
+// after a preview) reuses these rather than re-deriving from the current
+// form state, same as the dropped-out inline button used to. Grayed out
+// (see setStartBatchEnabled) until a preview has actually run at least
+// once; clicking it in that state just says so instead of silently doing
+// nothing -- a real button (not the disabled attribute, which swallows
+// the click event entirely and couldn't show that message).
+let lastPreview = null;
+function setStartBatchEnabled(count) {
+  const btn = document.getElementById('startBatchBtn');
+  if (count == null) {
+    btn.style.opacity = '.45'; btn.style.cursor = 'not-allowed'; btn.title = 'Run Preview Batch first';
+    btn.textContent = 'Start Batch';
+  } else {
+    btn.style.opacity = ''; btn.style.cursor = ''; btn.title = '';
+    btn.textContent = `Start Batch (${count} leads)`;
+  }
+}
 async function previewBatch() {
   const { segmentIds, batchSize } = currentActiveConfig();
   const resultEl = document.getElementById('previewResult');
   if (!segmentIds.length) { showToast('Select at least one segment first', true); return; }
+  lastPreview = null;
+  setStartBatchEnabled(null);
   resultEl.style.display = 'block';
   resultEl.textContent = 'Checking segment…';
   try {
@@ -1512,16 +1556,15 @@ async function previewBatch() {
       <div><b>${data.willContact.length}</b> of <b>${data.totalMatchingSegment}</b> matching leads will be contacted${data.remainingAfterCap ? ` (${data.remainingAfterCap} more match but are past the batch size cap)` : ''}.</div>
       <div class="pra-muted" style="margin-top:4px">${data.excludedCount} excluded (unsubscribed, no contact info, or already enrolled/terminal).</div>
       <div class="preview-list">${data.willContact.map(c => `<div class="preview-list-row">${escapeHtml(c.name || '(no name)')} — ${escapeHtml(c.email || c.phone || 'no contact info')}</div>`).join('') || '<div class="preview-list-row pra-muted">Nobody left to contact.</div>'}</div>
-      ${data.willContact.length ? `<button class="pra-btn" id="startBatchBtn" type="button" style="margin-top:8px">Start Batch (${data.willContact.length} leads)</button>` : ''}
     `;
-    const startBtn = document.getElementById('startBatchBtn');
-    if (startBtn) startBtn.addEventListener('click', () => startBatch(segmentIds, batchSize));
+    if (data.willContact.length) { lastPreview = { segmentIds, batchSize }; setStartBatchEnabled(data.willContact.length); }
   } catch (err) {
     resultEl.textContent = 'Preview failed: ' + err.message;
   }
 }
 async function startBatch(segmentIds, batchSize, confirmOver100) {
   if (!editingAgentId) return;
+  if (!segmentIds) { showToast('Run Preview Batch first', true); return; }
   const r = await fetch('/api/ai-active/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ agentId: editingAgentId, segmentIds, batchSize, confirmOver100: !!confirmOver100 }),
@@ -1534,8 +1577,14 @@ async function startBatch(segmentIds, batchSize, confirmOver100) {
   }
   showToast('Batch started — leads will be contacted per the wait-time settings.');
   document.getElementById('previewResult').style.display = 'none';
+  lastPreview = null;
+  setStartBatchEnabled(null);
   loadBatchList(editingAgentId);
 }
+document.getElementById('startBatchBtn').addEventListener('click', () => {
+  if (!lastPreview) { showToast('Run Preview Batch first', true); return; }
+  startBatch(lastPreview.segmentIds, lastPreview.batchSize);
+});
 function batchStatsLine(stats) {
   return `<b>${stats.total}</b> total · <b>${stats.sent}</b> sent · <b>${stats.waitingReply}</b> waiting on reply · <b>${stats.hotHandoff}</b> hot handoff · <b>${stats.escalated}</b> escalated · <b>${stats.humanTakeover}</b> human takeover · <b>${stats.optedOut}</b> opted out · <b>${stats.done}</b> done`;
 }
