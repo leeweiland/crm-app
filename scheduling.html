@@ -72,7 +72,11 @@
   .meet-email-sticky { position: sticky; top: var(--meet-header-h, 90px); z-index: 15; background: var(--pra-panel-2); margin: -18px -18px 14px; padding: 18px 18px 14px; border-radius: 10px 10px 0 0; }
   .ed-test-send-row { display: flex; gap: 8px; margin-top: 12px; }
   .ed-test-send-row input { flex: 1; }
-  .reminder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  /* flex-wrap:wrap -- the number input (80px) + unit select (130px) +
+     "before the meeting" label + delete button don't fit one line at
+     mobile widths and, without wrap, pushed the whole page wider than the
+     viewport instead of just breaking to a second line. Confirmed live. */
+  .reminder-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
   .reminder-row input[type=number] { width: 80px; flex-shrink: 0; }
   .reminder-row select { width: 130px; flex-shrink: 0; }
   .reminder-row span { font-size: .8rem; color: var(--pra-dim); white-space: nowrap; }
