@@ -49,25 +49,15 @@ window.CallPopup = (function () {
     popupEl.style.left = Math.min(x, window.innerWidth - 230) + "px";
     popupEl.style.top = Math.min(y, window.innerHeight - 90) + "px";
     popupEl.innerHTML = `
-      <button type="button" data-call-mode="personal"${c.personalPhoneConfigured ? "" : " disabled title=\"Add your personal phone in Settings > Team Users first\""}>Call From Personal Phone</button>
+      <a href="tel:${phone.replace(/[^+\d]/g, "")}" data-call-mode="personal">Call From My Phone</a>
       <button type="button" data-call-mode="crm"${c.voiceConfigured ? "" : " disabled title=\"An admin needs to click Set Up Voice Calling in Settings > Twilio first\""}>Call From CRM (and record)</button>
     `;
     document.body.appendChild(popupEl);
-    popupEl.querySelector('[data-call-mode="personal"]').onclick = () => { closePopup(); callFromPersonalPhone(contactId, phone); };
+    popupEl.querySelector('[data-call-mode="personal"]').addEventListener("click", closePopup);
     popupEl.querySelector('[data-call-mode="crm"]').onclick = () => { closePopup(); callFromCrm(contactId, phone); };
     // Deferred one tick so the click that OPENED the popup doesn't also
     // immediately close it via this same listener.
     setTimeout(() => document.addEventListener("mousedown", onOutsideClick, true), 0);
-  }
-
-  // ── "Call From Personal Phone" -- fire and forget; the phone ringing IS the feedback ──
-  async function callFromPersonalPhone(contactId, phone) {
-    toast("Calling your phone now…");
-    try {
-      const r = await fetch("/api/calls/click-to-call", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contactId, phone }) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) toast(d.error || "Could not place the call", true);
-    } catch { toast("Could not place the call", true); }
   }
 
   // ── "Call From CRM" -- browser (Twilio Voice SDK) call, recorded ────────

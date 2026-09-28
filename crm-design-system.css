@@ -903,8 +903,8 @@ body { margin: 0; }
    .context-menu (inbox.html), just global since call-popup.js is shared by
    contacts.html/contact-detail.html/inbox.html. */
 .call-popup { position: fixed; z-index: 650; min-width: 210px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); border-radius: 8px; padding: 5px; box-shadow: 0 8px 28px rgba(0,0,0,0.5); }
-.call-popup button { display: flex; align-items: center; width: 100%; padding: 8px 10px; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .83rem; text-align: left; border-radius: 5px; cursor: pointer; }
-.call-popup button:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
+.call-popup button, .call-popup a { display: flex; align-items: center; width: 100%; padding: 8px 10px; background: none; border: none; color: var(--pra-white); font-family: var(--font-primary); font-size: .83rem; text-align: left; border-radius: 5px; cursor: pointer; text-decoration: none; box-sizing: border-box; }
+.call-popup button:hover:not(:disabled), .call-popup a:hover { background: rgba(255,255,255,0.06); }
 .call-popup button:disabled { color: var(--pra-dim); cursor: default; }
 .call-bar { position: fixed; bottom: 20px; right: 20px; z-index: 810; background: var(--pra-panel-2); border: 1px solid var(--pra-blue); border-radius: 10px; padding: 12px 16px; box-shadow: 0 8px 28px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 12px; font-family: var(--font-primary); color: var(--pra-white); font-size: .85rem; }
 .call-bar-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex-shrink: 0; animation: call-bar-pulse 1.4s infinite; }
