@@ -425,6 +425,27 @@ export async function handleAiActiveRequest(req, res, url) {
 // sub-conversations below (see the waiting_reply rewrite's own comment for
 // why), so "what's the latest thing on THIS channel" has to be asked
 // separately from "what's the latest thing overall".
+// The agent's CURRENT Targeting (segments + lead-type/status) is the live,
+// standing answer to "is Kai still allowed to talk to this person" -- not
+// just a filter on who gets newly enrolled. Checked on every due state
+// (cold-open or follow-up) right alongside the opt-out/terminal-status
+// exclusion check, so removing a segment (or narrowing programTypes/
+// statuses) actually stops mid-conversation contacts who no longer match,
+// not just new ones. Confirmed live this was the expected behavior: a
+// contact kept getting follow-ups from a segment the admin had already
+// removed from Targeting, because until this existed, "already enrolled"
+// meant "keeps going regardless of later targeting changes" -- true for
+// WHICH BATCH owns a contact (see topUpContinuousBatches' own dedup), but
+// not for whether Kai should still be actively messaging them. No segments
+// configured at all means nothing currently matches -- an agent with an
+// empty Targeting picker isn't really targeting anyone.
+export function isStillTargeted(contact, agent, allSegments) {
+  const ids = agent.activeConfig?.segmentIds || [];
+  if (!ids.length) return false;
+  const segments = ids.map((id) => allSegments.find((s) => s.id === id)).filter(Boolean);
+  if (!segments.length) return false;
+  return segments.some((s) => matchesSegment(contact, s.filter)) && contactMatchesTargeting(contact, agent.targeting);
+}
 function latestOnChannel(journey, channel) {
   for (let i = journey.length - 1; i >= 0; i--) if (journey[i].channel === channel) return journey[i];
   return null;
@@ -545,6 +566,7 @@ export async function processAiActiveBatches() {
   if (!allBatches.length) return;
   const agents = readJson(AI_AGENTS_FILE, []);
   const states = readJson(AI_ACTIVE_STATES_FILE, []);
+  const allSegments = readJson(SEGMENTS_FILE, []);
   const now = Date.now();
   let changed = false;
 
@@ -646,6 +668,8 @@ export async function processAiActiveBatches() {
 
       const exclReason = isExcludable(contact);
       if (exclReason) { st.state = contact.status && TERMINAL_STATUSES.has(contact.status) ? "done" : "opted_out"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
+
+      if (!isStillTargeted(contact, agent, allSegments)) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
 
       const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 

@@ -257,7 +257,7 @@
                   <label>Enrollment cap (optional -- leave blank to keep enrolling everyone who matches, indefinitely)</label>
                   <input type="number" id="fBatchSize" min="1" max="100000" step="1" placeholder="Unlimited"/>
                 </div>
-                <div class="active-section-sub" style="margin-top:8px">This agent runs continuously against the segment(s) above -- turning it Active is all it takes to start. New contacts that start matching later get picked up automatically (checked every few minutes), and nobody already enrolled is ever dropped or re-enrolled just because the segment changes. The real send-rate limiter is Timing's cold-open-per-hour cap, below.</div>
+                <div class="active-section-sub" style="margin-top:8px">This agent runs continuously against the segment(s) above -- turning it Active is all it takes to start. New contacts that start matching later get picked up automatically (checked every few minutes), and the reverse is also live: removing a segment (or narrowing lead type/status) stops Kai mid-conversation with anyone who no longer matches, next time they're due for a message. The real send-rate limiter is Timing's cold-open-per-hour cap, below.</div>
                 <div style="margin-top:18px">
                   <div class="active-section-title" style="margin-bottom:10px">Running</div>
                   <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
@@ -1752,6 +1752,16 @@ async function loadActivityContacts(reset) {
     if (reset) listEl.innerHTML = '<div class="pra-muted" style="font-size:.8rem;padding:6px">Could not load.</div>';
   } finally {
     actLoading = false;
+    // The scroll listener below (see initActivityPanel) is the normal way
+    // more pages load, but it only ever fires once there's actually
+    // something to scroll -- 5 rows (ACTIVITY_PAGE_SIZE server-side) can
+    // easily fit inside the panel without producing a scrollbar at all,
+    // which silently stranded hasMore:true pages that a real scroll
+    // gesture would never trigger a fetch for. Confirmed live: "See all
+    // outbound activity" showing only 5 total sends when the batch stats
+    // said 29. Keep auto-loading until the list is actually tall enough to
+    // scroll, or there's nothing left.
+    if (actHasMore && listEl.scrollHeight <= listEl.clientHeight) loadActivityContacts(false);
   }
 }
 // Shared by the Activity panel's conversation pane and the "Test as a real
