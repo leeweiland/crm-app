@@ -72,13 +72,24 @@
   .meet-email-sticky { position: sticky; top: var(--meet-header-h, 90px); z-index: 15; background: var(--pra-panel-2); margin: -18px -18px 14px; padding: 18px 18px 14px; border-radius: 10px 10px 0 0; }
   .ed-test-send-row { display: flex; gap: 8px; margin-top: 12px; }
   .ed-test-send-row input { flex: 1; }
-  /* flex-wrap:wrap -- the number input (80px) + unit select (130px) +
-     "before the meeting" label + delete button don't fit one line at
-     mobile widths and, without wrap, pushed the whole page wider than the
-     viewport instead of just breaking to a second line. Confirmed live. */
+  /* flex-wrap:wrap alone let the row's 4 children (number, select, label,
+     delete) each wrap onto their OWN line at mobile widths -- "24" landing
+     above "hours" instead of next to it, confirmed live. .reminder-amount
+     groups the number+unit as one flex-shrink:0 unit so they only ever
+     wrap together, never split apart; the row then only breaks between
+     that group and the "before the meeting" label/delete button. */
   .reminder-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .reminder-amount { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .reminder-row input[type=number] { width: 80px; flex-shrink: 0; }
-  .reminder-row select { width: 130px; flex-shrink: 0; }
+  /* flex (not width) -- crm-nav.js's enhanceSelectForMobile swaps this
+     <select> for a button-styled replacement below ~768px and copies over
+     flex/min-width/max-width/margin from the original, but NOT width. A
+     plain width:130px here was silently dropped on that replacement,
+     which then rendered at its own intrinsic width and wrapped onto its
+     own line instead of sitting next to the number. flex:0 0 130px sets
+     an explicit flex-basis, which IS copied, so the replacement ends up
+     the same 130px either way. Confirmed live on a real narrow viewport. */
+  .reminder-row select { flex: 0 0 130px; }
   .reminder-row span { font-size: .8rem; color: var(--pra-dim); white-space: nowrap; }
   .reminder-del { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 2px 6px; flex-shrink: 0; }
   .reminder-del:hover { color: var(--pra-red); }
@@ -624,10 +635,12 @@ const MEETING_REMINDER_UNITS = ['minutes', 'hours', 'days'];
 function meetingReminderRowHtml(rem, i, prefix) {
   return `
     <div class="reminder-row">
-      <input class="pra-input" type="number" min="1" data-mrem-amount="${prefix}-${i}" value="${rem.amount}"/>
-      <select class="pra-select" data-mrem-unit="${prefix}-${i}">
-        ${MEETING_REMINDER_UNITS.map(u => `<option value="${u}" ${rem.unit === u ? 'selected' : ''}>${u}</option>`).join('')}
-      </select>
+      <div class="reminder-amount">
+        <input class="pra-input" type="number" min="1" data-mrem-amount="${prefix}-${i}" value="${rem.amount}"/>
+        <select class="pra-select" data-mrem-unit="${prefix}-${i}">
+          ${MEETING_REMINDER_UNITS.map(u => `<option value="${u}" ${rem.unit === u ? 'selected' : ''}>${u}</option>`).join('')}
+        </select>
+      </div>
       <span>before the meeting</span>
       <button class="reminder-del" data-mrem-del="${prefix}-${i}" title="Delete reminder">&times;</button>
     </div>
