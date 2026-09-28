@@ -1481,7 +1481,14 @@ async function selectConversation(c, skipFetch) {
   const isRealSwitch = selectedConvo?.key !== c.key;
   selectedConvo = c;
   document.querySelectorAll('.convo-row').forEach(r => r.classList.toggle('selected', r.dataset.convo === c.key));
-  document.getElementById('chatView').classList.add('thread-open'); // mobile: swap to the chat panel
+  // skipFetch means this call is loadConversations()'s own background resync
+  // of the CURRENTLY open conversation (a periodic refresh or the SSE
+  // new_message tick), not a real click -- only swap the mobile view to the
+  // chat panel on a genuine selection. Confirmed live: without this guard,
+  // that background resync (every ~5.5s, and again 400ms after any new
+  // message) kept forcing mobile back into the chat panel even after
+  // deliberately navigating back to the sidebar list.
+  if (!skipFetch) document.getElementById('chatView').classList.add('thread-open'); // mobile: swap to the chat panel
   if (!c.contactId) return;
   if (!chatPanelInstance) chatPanelInstance = ConversationPanel.init(document.getElementById('chatPanel'), getChatPanelConfig());
   // Only reset compose state (reply mode, Summary tab) on an actual contact
