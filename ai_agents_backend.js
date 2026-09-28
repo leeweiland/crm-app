@@ -1023,7 +1023,13 @@ async function handleAiAgentsCrud(req, res, url) {
     const mode = url.searchParams.get("mode") === "allOutbound" ? "allOutbound" : "perContact";
     const search = (url.searchParams.get("search") || "").trim().toLowerCase();
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
-    const sends = AGENT_SOURCE_TYPES.flatMap((st) => getSourceMessages(st, agentId)).filter((m) => m.contactId);
+    // ai_active_test rows (a one-off "Send real cold-open to this contact"
+    // test-send, not a real campaign) are deliberately excluded here, the
+    // same way the Running batch list already excludes isTestBatch --
+    // confirmed live: 122 stale test sends (all pointing at contacts long
+    // since deleted, hence "(unknown contact)") were drowning out this
+    // agent's real ~217 sends and defeating the whole point of this list.
+    const sends = AGENT_SOURCE_TYPES.filter((st) => st !== "ai_active_test").flatMap((st) => getSourceMessages(st, agentId)).filter((m) => m.contactId);
     const contacts = readJson(CONTACTS_FILE, []);
     const contactById = new Map(contacts.map((c) => [c.id, c]));
 
