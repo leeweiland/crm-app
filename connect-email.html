@@ -39,6 +39,7 @@
       <div class="pra-panel" style="padding:22px;max-width:620px;margin-top:20px;display:none" id="teamPanel">
         <div class="pra-h2" style="margin-bottom:6px">Team</div>
         <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, which address, and their own footer -- each person's own signature, editable right here.</div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addFooterBtn" style="margin-bottom:14px">+ Add Footer</button>
         <div id="teamCards"></div>
       </div>
     </div>
@@ -241,6 +242,20 @@ footerModalEl.addEventListener('click', (e) => {
 });
 
 document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
+// A standalone footer, not tied to (or auto-assigned to) any one person --
+// footers are really a shared library (see "Import from another footer"
+// above), not strictly one-per-teammate; this is how you grow that library
+// on purpose instead of only ever getting a new one as a side effect of a
+// teammate not having one yet. Opens straight into the editor so the real
+// name (not the placeholder) is the first thing set, same as any other
+// footer -- the Name field there already saves correctly on its own.
+document.getElementById('addFooterBtn').addEventListener('click', async () => {
+  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Footer' }) });
+  const d = await r.json();
+  if (!r.ok) { showToast('Could not create a new footer', true); return; }
+  await loadFooters();
+  openFooterEditor(d.template.id, '');
+});
 document.getElementById('gmailReconnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailDisconnectBtn').onclick = async () => {
   if (!confirm('Disconnect Gmail? Replies will stop showing up in the Inbox automatically.')) return;
