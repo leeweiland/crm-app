@@ -19,6 +19,7 @@
   .status-sending { background: rgba(0,155,255,0.15); color: var(--pra-blue); }
   .status-sent { background: rgba(57,255,20,0.15); color: var(--pra-green); }
   .status-send_error { background: rgba(255,59,48,0.15); color: #ff5c4d; }
+  .status-cancelled { background: rgba(255,255,255,0.08); color: var(--pra-dim); }
   .toolbar input { max-width: 320px; margin-right: 12px; }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--pra-white); }
@@ -135,10 +136,10 @@ function campaignSearchText(c) {
   const blockText = (c.blocks || []).map(b => b.html || b.text || '').join(' ');
   return `${c.name} ${c.subject || ''} ${blockText}`.replace(/<[^>]+>/g, ' ').toLowerCase();
 }
-// "sent"/"send_error" show as-is; "sending" shows live progress ("SENDING
-// 12/230") once sendProgress exists -- large campaigns send one recipient
-// at a time in the background (see sendCampaignNow), so this is the only
-// feedback of whether it's actually moving or stuck.
+// "sent"/"send_error"/"cancelled" show as-is; "sending" shows live progress
+// ("SENDING 12/230") once sendProgress exists -- a large campaign sends in
+// concurrent batches in the background (see sendCampaignNow), so this is
+// the only feedback of whether it's actually moving or stuck.
 function statusLabel(c) {
   if (c.status === 'sending' && c.sendProgress) return `sending ${c.sendProgress.sent}/${c.sendProgress.total}`;
   if (c.status === 'send_error') return 'error';
@@ -195,6 +196,7 @@ function renderCampaignsTable() {
       <td style="white-space:nowrap">
         <button class="tpl-expand-btn" data-expand="${idx}" onclick="event.stopPropagation()">Preview</button>
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/campaign-report.html?id=${c.id}" onclick="event.stopPropagation()">View Report</a>
+        ${c.status === 'sending' ? `<button class="pra-btn pra-btn-sm pra-btn-danger" data-cancel="${c.id}">Cancel</button>` : ''}
         <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${c.id}">Copy</button>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${c.id}">Delete</button>
       </td>
@@ -216,6 +218,13 @@ function renderCampaignsTable() {
       const d = r.ok ? await r.json() : null;
       iframe.srcdoc = d?.html || `<p style="font-family:sans-serif;color:#888;padding:16px">${escapeHtml(d?.note || 'No preview available.')}</p>`;
     }
+  });
+  document.querySelectorAll('[data-cancel]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm('Stop this send? Everyone already emailed stays sent -- you can resend later to pick up whoever\'s left.')) return;
+    const r = await fetch(`/api/campaigns/${btn.dataset.cancel}/cancel`, { method: 'POST' });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Could not cancel.'); return; }
+    loadCampaigns();
   });
   document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async (e) => {
     e.stopPropagation();

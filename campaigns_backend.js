@@ -86,6 +86,17 @@ function alreadyContactedIds(campaignId) {
   return new Set(getMessagesForSource("campaign", campaignId).map(m => m.contactId).filter(Boolean));
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Confirmed live via SES's own GetAccount API: this account's real
+// MaxSendRate is 14/sec (Max24HourSend 50,000). SENDING_CONCURRENCY stays
+// safely under that rather than right up against it -- SES throttles (and
+// can pause sending entirely) an account that consistently exceeds its own
+// quoted rate, and a few seconds of headroom costs nothing at this account's
+// size. This is the real ceiling on how fast ANY sender using this SES
+// account can go -- it's not something more code/concurrency can push past.
+const SENDING_CONCURRENCY = 10;
+const SES_MAX_SEND_RATE = 14;
+
 export function sendCampaignNow(campaignId) {
   const campaigns = readJson(CAMPAIGNS_FILE, []);
   const campaign = campaigns.find(c => c.id === campaignId);
@@ -105,31 +116,61 @@ export function sendCampaignNow(campaignId) {
   (async () => {
     try {
       let sentThisRun = 0;
-      for (const contact of remaining) {
-        await sendEmail({
-          to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
-          footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
-          sourceType: "campaign", sourceId: campaign.id,
-        });
-        sentThisRun++;
-        // Every 10th (and the last one) rather than every single send --
-        // this loop can run thousands of times and each write here is a
-        // full CAMPAIGNS_FILE readJson+writeJson (small file, but no
-        // reason to do it 20,000 times when the badge only needs to be
-        // roughly live, not per-email-exact).
-        if (sentThisRun % 10 === 0 || sentThisRun === remaining.length) {
-          const latest = readJson(CAMPAIGNS_FILE, []);
-          const c = latest.find(x => x.id === campaignId);
-          if (c) {
-            c.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length + sentThisRun };
-            c.updatedAt = new Date().toISOString();
-            writeJson(CAMPAIGNS_FILE, latest);
-          }
+      // SENDING_CONCURRENCY recipients in flight at once instead of one at
+      // a time -- confirmed live this was the actual reason a send to
+      // thousands of contacts took hours instead of minutes: each
+      // sendEmail is a real network round-trip, and awaiting them fully
+      // sequentially meant total time scaled linearly with recipient
+      // count, nowhere close to what this SES account can actually sustain.
+      for (let i = 0; i < remaining.length; i += SENDING_CONCURRENCY) {
+        // Re-read fresh every batch (not just trust the in-memory
+        // `campaign` from when this run started) -- this is how Cancel
+        // actually stops an in-flight send: flipping status away from
+        // "sending" (see the /cancel route below) is picked up here within
+        // one batch, instead of the loop having no way to know and running
+        // to completion regardless.
+        const liveCampaigns = readJson(CAMPAIGNS_FILE, []);
+        const live = liveCampaigns.find(c => c.id === campaignId);
+        if (!live || live.status !== "sending") {
+          console.log(`[campaign send] ${campaignId} stopping -- status is now "${live?.status ?? "(deleted)"}", not "sending"`);
+          return;
         }
+        const batch = remaining.slice(i, i + SENDING_CONCURRENCY);
+        const batchStartedAt = Date.now();
+        // Caught per-send (not left to reject the whole batch/run) --
+        // before this, ANY single failure (a bad address, a transient SES
+        // error) killed the entire remaining send via the outer catch;
+        // that's tolerable at one-at-a-time speed but would waste a huge
+        // amount of an already-in-flight batch at real concurrency.
+        await Promise.all(batch.map((contact) =>
+          sendEmail({
+            to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
+            footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
+            sourceType: "campaign", sourceId: campaign.id,
+          }).catch((e) => console.error(`[campaign send] ${campaignId} contact ${contact.id} failed:`, e.message))
+        ));
+        sentThisRun += batch.length;
+        const latest = readJson(CAMPAIGNS_FILE, []);
+        const c = latest.find(x => x.id === campaignId);
+        if (c) {
+          c.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length + sentThisRun };
+          c.updatedAt = new Date().toISOString();
+          writeJson(CAMPAIGNS_FILE, latest);
+        }
+        // Pad this batch's own wall-clock time up to what SENDING_CONCURRENCY
+        // sends should minimally take at the account's real rate limit,
+        // rather than assuming SES call latency alone keeps us under it --
+        // a fast batch (SES responding quickly, little else contending)
+        // could otherwise exceed 14/sec and get throttled.
+        const minBatchMs = (batch.length / SES_MAX_SEND_RATE) * 1000;
+        const elapsed = Date.now() - batchStartedAt;
+        if (elapsed < minBatchMs) await sleep(minBatchMs - elapsed);
       }
       const finalCampaigns = readJson(CAMPAIGNS_FILE, []);
       const finalCampaign = finalCampaigns.find(c => c.id === campaignId);
-      if (finalCampaign) {
+      // Still "sending" (not cancelled out from under us mid-loop) --
+      // the cancel check above already returns early otherwise.
+      if (finalCampaign && finalCampaign.status === "sending") {
         finalCampaign.status = "sent";
         finalCampaign.sentAt = finalCampaign.sentAt || new Date().toISOString();
         finalCampaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length };
@@ -320,6 +361,23 @@ export async function handleCampaignsRequest(req, res, url) {
     // an open request for a large send.
     const result = sendCampaignNow(campaign.id);
     return sendJson(res, 200, result);
+  }
+
+  // Stops an in-flight send within one batch (see sendCampaignNow's own
+  // fresh-status re-read each iteration) -- everyone already sent to stays
+  // sent, tracked exactly the same way a resumed/re-sent campaign already
+  // skips them (alreadyContactedIds). Re-sending later (POST .../send
+  // again) picks up only whoever's left, same as resuming after a crash.
+  const cancelMatch = p.match(/^\/api\/campaigns\/([^/]+)\/cancel$/);
+  if (cancelMatch && req.method === "POST") {
+    const campaigns = readJson(CAMPAIGNS_FILE, []);
+    const campaign = campaigns.find(c => c.id === cancelMatch[1]);
+    if (!campaign) return sendJson(res, 404, { error: "Not found" });
+    if (campaign.status !== "sending") return sendJson(res, 400, { error: "Not currently sending" });
+    campaign.status = "cancelled";
+    campaign.updatedAt = new Date().toISOString();
+    writeJson(CAMPAIGNS_FILE, campaigns);
+    return sendJson(res, 200, { ok: true, campaign });
   }
 
   const scheduleMatch = p.match(/^\/api\/campaigns\/([^/]+)\/schedule$/);
