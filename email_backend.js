@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast, USERS_FILE } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
@@ -560,6 +560,9 @@ export async function handleEmailRequest(req, res, url) {
       return sendJson(res, 200, { ok: true, template });
     }
     if (req.method === "DELETE") {
+      if (!template) return sendJson(res, 404, { error: "Not found" });
+      const activeFor = readJson(USERS_FILE, []).find(u => u.footerTemplateId === footerMatch[1]);
+      if (activeFor) return sendJson(res, 400, { error: `${activeFor.first} ${activeFor.last} is currently using this as their active footer -- switch them to a different one first.` });
       writeJson(FOOTER_TEMPLATES_FILE, templates.filter(t => t.id !== footerMatch[1]));
       return sendJson(res, 200, { ok: true });
     }
