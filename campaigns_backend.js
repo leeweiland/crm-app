@@ -6,6 +6,7 @@ import { getMessagesForSource } from "./message_log.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
+import { getBackgroundWorker } from "./background_worker_handle.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
@@ -106,25 +107,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SENDING_CONCURRENCY = 12;
 const SES_MAX_SEND_RATE = 13;
 
-export function sendCampaignNow(campaignId) {
+// Split from sendCampaignNow so the actual per-recipient work can run on
+// the background worker thread instead of inline on whichever thread
+// kicked it off -- see background_worker.js's own header comment: this
+// exact "bulk send + resulting webhook flood pins the main thread" pattern
+// is what that worker was built for, but the campaign /send route never
+// actually got wired to hand off to it (only the SES/Twilio webhook routes
+// did) -- confirmed live: manually re-triggering a send via the API,
+// versus letting the scheduler's own stuck-campaign resume pick it back
+// up, was the difference between the whole CRM hanging and not. Re-derives
+// recipients/remaining fresh rather than taking them as arguments -- this
+// can run on a different thread than whatever called sendCampaignNow, so
+// nothing from that call's closure is safe to rely on here.
+export async function runCampaignSendLoop(campaignId) {
   const campaigns = readJson(CAMPAIGNS_FILE, []);
   const campaign = campaigns.find(c => c.id === campaignId);
-  if (!campaign) return { ok: false, reason: "not_found" };
+  if (!campaign) return;
   const allRecipients = resolveRecipients(campaign.recipients || {});
   const contacted = alreadyContactedIds(campaignId);
   const remaining = allRecipients.filter(c => !contacted.has(c.id));
-  campaign.status = "sending";
-  campaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length };
-  // Set immediately (not just at each progress checkpoint below) so the
-  // scheduler's stuck-campaign check -- which looks at how long updatedAt
-  // has been stale -- doesn't see a JUST-(re)started send as already stale
-  // and try to resume it a second time in parallel.
-  campaign.updatedAt = new Date().toISOString();
-  writeJson(CAMPAIGNS_FILE, campaigns);
 
-  (async () => {
-    try {
-      let sentThisRun = 0;
+  try {
+    let sentThisRun = 0;
       // SENDING_CONCURRENCY recipients in flight at once instead of one at
       // a time -- confirmed live this was the actual reason a send to
       // thousands of contacts took hours instead of minutes: each
@@ -186,13 +190,44 @@ export function sendCampaignNow(campaignId) {
         finalCampaign.stats = rollupStats(campaignId);
         writeJson(CAMPAIGNS_FILE, finalCampaigns);
       }
-    } catch (e) {
-      console.error(`[campaign send] ${campaignId} failed:`, e.message);
-      const errCampaigns = readJson(CAMPAIGNS_FILE, []);
-      const errCampaign = errCampaigns.find(c => c.id === campaignId);
-      if (errCampaign) { errCampaign.status = "send_error"; errCampaign.sendError = e.message; writeJson(CAMPAIGNS_FILE, errCampaigns); }
-    }
-  })();
+  } catch (e) {
+    console.error(`[campaign send] ${campaignId} failed:`, e.message);
+    const errCampaigns = readJson(CAMPAIGNS_FILE, []);
+    const errCampaign = errCampaigns.find(c => c.id === campaignId);
+    if (errCampaign) { errCampaign.status = "send_error"; errCampaign.sendError = e.message; writeJson(CAMPAIGNS_FILE, errCampaigns); }
+  }
+}
+
+// Sets up (marks "sending", captures the initial progress numbers the
+// caller's HTTP response needs) then hands the actual work to
+// runCampaignSendLoop -- on the background worker thread when one's
+// available (see background_worker.js), inline otherwise (no
+// BACKGROUND_WORKER configured, e.g. local dev). getBackgroundWorker()
+// only ever returns non-null on the MAIN thread (that's the only thread
+// server.js's setBackgroundWorker call runs on) -- so when the SCHEDULER's
+// own tick (which already runs ON the worker thread once BACKGROUND_WORKER
+// is set) calls this for a due/stuck campaign, it correctly falls through
+// to running the loop directly right there instead of trying to hand off
+// to itself.
+export function sendCampaignNow(campaignId) {
+  const campaigns = readJson(CAMPAIGNS_FILE, []);
+  const campaign = campaigns.find(c => c.id === campaignId);
+  if (!campaign) return { ok: false, reason: "not_found" };
+  const allRecipients = resolveRecipients(campaign.recipients || {});
+  const contacted = alreadyContactedIds(campaignId);
+  const remaining = allRecipients.filter(c => !contacted.has(c.id));
+  campaign.status = "sending";
+  campaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length };
+  // Set immediately (not just at each progress checkpoint below) so the
+  // scheduler's stuck-campaign check -- which looks at how long updatedAt
+  // has been stale -- doesn't see a JUST-(re)started send as already stale
+  // and try to resume it a second time in parallel.
+  campaign.updatedAt = new Date().toISOString();
+  writeJson(CAMPAIGNS_FILE, campaigns);
+
+  const worker = getBackgroundWorker();
+  if (worker) worker.postMessage({ type: "send_campaign", campaignId });
+  else runCampaignSendLoop(campaignId);
 
   return { ok: true, recipientCount: remaining.length, totalRecipients: allRecipients.length };
 }

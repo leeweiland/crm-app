@@ -33,6 +33,7 @@ import { guardedTick } from "./scheduler.js";
 import { processTwilioStatusUpdate } from "./sms_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { computeAndCacheAllCounts } from "./contacts_backend.js";
+import { runCampaignSendLoop } from "./campaigns_backend.js";
 
 const TICK_MS = 30 * 1000;
 setInterval(guardedTick, TICK_MS);
@@ -43,6 +44,11 @@ parentPort.on("message", (msg) => {
     if (msg?.type === "twilio_status") processTwilioStatusUpdate(msg.sid, msg.status);
     else if (msg?.type === "ses_notification") processSesNotificationMessage(msg.raw);
     else if (msg?.type === "recompute_counts") computeAndCacheAllCounts();
+    // Fire-and-forget -- runCampaignSendLoop tracks its own progress/status
+    // by writing crm_campaigns.json directly (see campaigns_backend.js), so
+    // there's nothing to report back to the main thread here, same as
+    // ses_notification/twilio_status above.
+    else if (msg?.type === "send_campaign") runCampaignSendLoop(msg.campaignId).catch((e) => console.error("[background-worker] campaign send failed", msg.campaignId, e.message));
     else console.error("[background-worker] unknown message type", msg?.type);
   } catch (e) {
     // One bad webhook payload should never take this thread down -- it's
