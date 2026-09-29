@@ -376,13 +376,54 @@ export function processSesNotificationMessage(raw) {
   } catch (e) { console.error("[SES webhook] parse failed", e.message); }
 }
 
+// Aborts and destroys the connection the instant the body exceeds
+// maxBytes, instead of readJsonBody's unconditional accumulate-everything
+// -- see the /api/webhooks/ses handler below for why this exists. Returns
+// the parsed object, or null if the body was oversized or unparseable.
+function readJsonBodyCapped(req, maxBytes) {
+  return new Promise((resolve) => {
+    let body = "";
+    let bytes = 0;
+    let done = false;
+    req.on("data", (d) => {
+      if (done) return;
+      bytes += d.length;
+      if (bytes > maxBytes) {
+        done = true;
+        req.destroy();
+        resolve(null);
+        return;
+      }
+      body += d;
+    });
+    req.on("end", () => {
+      if (done) return;
+      done = true;
+      try { resolve(JSON.parse(body || "{}")); } catch { resolve(null); }
+    });
+    req.on("error", () => { if (!done) { done = true; resolve(null); } });
+  });
+}
+
 export async function handleEmailRequest(req, res, url) {
   const p = url.pathname;
 
   // ── Public routes (no auth) -- SES itself and a recipient's own browser
   // hit these directly, they can't carry a session cookie. ─────────────
   if (p === "/api/webhooks/ses" && req.method === "POST") {
-    const body = await readJsonBody(req);
+    // Size-capped, not the shared readJsonBody -- confirmed live a flood of
+    // these requests carried a body 5.7+ MILLION characters long (a real
+    // single SES notification envelope is a few KB at most), and buffering
+    // + JSON.parse-ing a string that size, repeatedly, on the MAIN thread
+    // pinned the whole event loop hard enough that even a static file
+    // request took 13+ seconds. Whatever's producing an oversized body
+    // here (SNS retry storm, a malformed delivery, request smuggling under
+    // load -- still unconfirmed), the fix that matters right now is never
+    // buffering past a sane size: destroy the connection instead of
+    // reading further, so this can never choke the main thread again
+    // regardless of the root cause.
+    const body = await readJsonBodyCapped(req, 256 * 1024);
+    if (body === null) { res.writeHead(413).end(); return true; }
     // SNS subscription confirmation handshake -- one-time, required before
     // SNS will actually start delivering real notifications.
     if (body.Type === "SubscriptionConfirmation" && body.SubscribeURL) {
