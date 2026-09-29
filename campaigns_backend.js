@@ -88,14 +88,21 @@ function alreadyContactedIds(campaignId) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Confirmed live via SES's own GetAccount API: this account's real
-// MaxSendRate is 14/sec (Max24HourSend 50,000). SENDING_CONCURRENCY stays
-// safely under that rather than right up against it -- SES throttles (and
-// can pause sending entirely) an account that consistently exceeds its own
-// quoted rate, and a few seconds of headroom costs nothing at this account's
-// size. This is the real ceiling on how fast ANY sender using this SES
-// account can go -- it's not something more code/concurrency can push past.
-const SENDING_CONCURRENCY = 10;
-const SES_MAX_SEND_RATE = 14;
+// MaxSendRate is 14/sec (Max24HourSend 50,000) -- the actual ceiling on
+// how fast ANY sender using this account can go. Targeted at 13/sec (a
+// hair under, not right up against it -- SES throttles/can pause sending
+// entirely for an account that consistently exceeds its own quoted rate).
+// SENDING_CONCURRENCY is sized well above the target rate, not equal to
+// it -- confirmed live at concurrency=10 (batch size 10, ~1.7s per batch
+// from real SES round-trip + local logging latency) actual throughput was
+// only ~5-6/sec, because batch WALL TIME is set by the slowest single
+// request in it, not the count -- more concurrent requests in flight is
+// the only way to raise throughput against that same fixed latency, this
+// isn't just "12 in the target formula's numerator." The per-batch pad
+// below is what actually enforces 13/sec once concurrency stops being the
+// bottleneck.
+const SENDING_CONCURRENCY = 20;
+const SES_MAX_SEND_RATE = 13;
 
 export function sendCampaignNow(campaignId) {
   const campaigns = readJson(CAMPAIGNS_FILE, []);
