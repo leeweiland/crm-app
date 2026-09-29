@@ -493,12 +493,12 @@ export async function handleEmailRequest(req, res, url) {
     return sendJson(res, 200, { templates: readJson(FOOTER_TEMPLATES_FILE, []) });
   }
   if (p === "/api/footer-templates" && req.method === "POST") {
-    const { name, blocks, theme, unsubscribeLinkText, physicalAddress, socialLinks } = await readJsonBody(req);
+    const { name, blocks, theme, unsubscribeLinkText, physicalAddress, socialLinks, ownerUserId } = await readJsonBody(req);
     if (!name) return sendJson(res, 400, { error: "name is required" });
     const templates = readJson(FOOTER_TEMPLATES_FILE, []);
     const template = {
       id: randomUUID(), name, blocks: blocks || [], theme: theme || {}, unsubscribeLinkText: unsubscribeLinkText || "Unsubscribe",
-      physicalAddress: physicalAddress || "", socialLinks: socialLinks || [],
+      physicalAddress: physicalAddress || "", socialLinks: socialLinks || [], ownerUserId: ownerUserId || null,
       isDefault: templates.length === 0, // first one created becomes the default automatically
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };

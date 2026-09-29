@@ -11,6 +11,9 @@
   .team-member-card-row { display: flex; gap: 8px; font-size: .82rem; padding: 3px 0; }
   .team-member-card-row .label { color: var(--pra-dim); flex-shrink: 0; width: 110px; }
   .team-member-card-footer-name { font-size: .78rem; color: var(--pra-dim); margin-top: 10px; }
+  .team-footer-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .8rem; padding: 5px 0; border-top: 1px solid var(--pra-border); }
+  .team-footer-row:first-child { border-top: none; }
+  .team-footer-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -38,8 +41,7 @@
 
       <div class="pra-panel" style="padding:22px;max-width:620px;margin-top:20px;display:none" id="teamPanel">
         <div class="pra-h2" style="margin-bottom:6px">Team</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, which address, and their own footer -- each person's own signature, editable right here.</div>
-        <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addFooterBtn" style="margin-bottom:14px">+ Add Footer</button>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:14px">Who on the team has connected Gmail, which address, and their own footer(s) -- each person's own signatures, editable right here.</div>
         <div id="teamCards"></div>
       </div>
     </div>
@@ -120,12 +122,20 @@ function footerNameFor(footerTemplateId) {
   return f ? f.name : '(no footer set up yet)';
 }
 
+// Footers "belong" to a user two ways: tagged with ownerUserId at creation
+// (the normal case going forward), or -- for footers created before that
+// field existed -- just being the one currently assigned via
+// user.footerTemplateId. Union of both so nothing legacy disappears.
+function footersForUser(u) {
+  return allFooters.filter(f => f.ownerUserId === u.id || f.id === u.footerTemplateId);
+}
+
 async function ensureOwnFooter() {
   // Legacy accounts created before every new user auto-got one via
   // createFooterForUser -- self-provision on first visit instead of leaving
   // them stuck with nothing to edit.
   if (currentUser.footerTemplateId) return currentUser.footerTemplateId;
-  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${currentUser.first} ${currentUser.last} Footer` }) });
+  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${currentUser.first} ${currentUser.last} Footer`, ownerUserId: currentUser.id }) });
   const d = await r.json();
   if (!r.ok) { showToast('Could not set up your footer', true); return null; }
   await fetch(`/api/auth/users/${currentUser.id}/footer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ footerTemplateId: d.template.id }) });
@@ -134,9 +144,13 @@ async function ensureOwnFooter() {
   return d.template.id;
 }
 
+function refreshMyFooterLine() {
+  document.getElementById('myFooterName').textContent = currentUser.footerTemplateId ? `Footer: ${footerNameFor(currentUser.footerTemplateId)}` : 'No footer set up yet.';
+}
+
 async function loadMyFooter() {
   await loadFooters();
-  document.getElementById('myFooterName').textContent = currentUser.footerTemplateId ? `Footer: ${footerNameFor(currentUser.footerTemplateId)}` : 'No footer set up yet.';
+  refreshMyFooterLine();
   const btn = document.getElementById('editMyFooterBtn');
   btn.disabled = false;
   btn.onclick = async () => {
@@ -150,29 +164,76 @@ async function loadTeamStatus() {
   if (!r.ok) return; // not an admin -- panel stays hidden
   const { team } = await r.json();
   document.getElementById('teamPanel').style.display = 'block';
-  document.getElementById('teamCards').innerHTML = team.map(u => `
+  document.getElementById('teamCards').innerHTML = team.map(u => {
+    const name = `${escapeHtml(u.first)} ${escapeHtml(u.last)}`;
+    const footers = footersForUser(u);
+    const footersHtml = footers.length
+      ? footers.map(f => `
+          <div class="team-footer-row">
+            <span>${escapeHtml(f.name)}${f.id === u.footerTemplateId ? ' <span class="pra-muted" style="font-size:.72rem">(active)</span>' : ''}</span>
+            <span class="team-footer-row-actions">
+              ${f.id !== u.footerTemplateId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-use-footer="${f.id}" data-use-user="${u.id}">Use</button>` : ''}
+              <button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit-footer-id="${f.id}" data-name="${name}">Edit</button>
+            </span>
+          </div>
+        `).join('')
+      : '<div class="pra-muted" style="font-size:.78rem">No footers yet.</div>';
+    return `
     <div class="team-member-card">
-      <div class="team-member-card-name">${escapeHtml(u.first)} ${escapeHtml(u.last)}</div>
+      <div class="team-member-card-name">${name}</div>
       <div class="team-member-card-row"><span class="label">Login Email</span><span>${escapeHtml(u.email)}</span></div>
       <div class="team-member-card-row"><span class="label">Gmail</span><span>${u.connected ? escapeHtml(u.gmailEmail || 'Connected') : '<span class="pra-muted">Not connected</span>'}</span></div>
       <div class="team-member-card-row"><span class="label">Can Send</span><span>${!u.connected ? '<span class="pra-muted">—</span>' : u.canSend ? 'Yes' : '<span class="pra-muted">No -- needs to reconnect</span>'}</span></div>
-      <div class="team-member-card-footer-name">${u.footerTemplateId ? `Footer: ${escapeHtml(footerNameFor(u.footerTemplateId))}` : 'No footer set up yet.'}</div>
-      <button class="pra-btn pra-btn-sm" style="margin-top:10px" data-edit-footer="${u.id}" data-footer-id="${u.footerTemplateId || ''}" data-name="${escapeHtml(u.first)} ${escapeHtml(u.last)}">Edit Footer</button>
-    </div>
-  `).join('');
+      <div class="team-footer-list" style="margin-top:10px">${footersHtml}</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="pra-btn pra-btn-sm" data-edit-footer="${u.id}" data-footer-id="${u.footerTemplateId || ''}" data-name="${name}">Edit Footer</button>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-add-footer="${u.id}" data-name="${name}">+ Add</button>
+      </div>
+    </div>`;
+  }).join('');
   document.querySelectorAll('[data-edit-footer]').forEach(btn => btn.onclick = async () => {
     let id = btn.dataset.footerId;
     if (!id) {
       // Same self-provisioning as ensureOwnFooter, just targeting the
       // teammate being edited instead of the logged-in admin.
-      const r2 = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${btn.dataset.name} Footer` }) });
+      const r2 = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${btn.dataset.name} Footer`, ownerUserId: btn.dataset.editFooter }) });
       const d2 = await r2.json();
       if (!r2.ok) { showToast('Could not set up a footer for them', true); return; }
       await fetch(`/api/auth/users/${btn.dataset.editFooter}/footer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ footerTemplateId: d2.template.id }) });
+      if (currentUser && btn.dataset.editFooter === currentUser.id) { currentUser.footerTemplateId = d2.template.id; refreshMyFooterLine(); }
       await loadFooters();
       id = d2.template.id;
     }
     openFooterEditor(id, `(${btn.dataset.name})`);
+  });
+  document.querySelectorAll('[data-edit-footer-id]').forEach(btn => btn.onclick = () => {
+    openFooterEditor(btn.dataset.editFooterId, `(${btn.dataset.name})`);
+  });
+  // + Add: grows this person's list of footers. If they had none active yet,
+  // the new one becomes active immediately (nothing else for "Edit Footer"
+  // to point at); otherwise it's just added to the list, picked up later
+  // with "Use".
+  document.querySelectorAll('[data-add-footer]').forEach(btn => btn.onclick = async () => {
+    const userId = btn.dataset.addFooter;
+    const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${btn.dataset.name} Footer`, ownerUserId: userId }) });
+    const d = await r.json();
+    if (!r.ok) { showToast('Could not create a new footer', true); return; }
+    const u = team.find(x => x.id === userId);
+    if (u && !u.footerTemplateId) {
+      await fetch(`/api/auth/users/${userId}/footer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ footerTemplateId: d.template.id }) });
+      if (currentUser && userId === currentUser.id) { currentUser.footerTemplateId = d.template.id; refreshMyFooterLine(); }
+    }
+    await loadFooters();
+    await loadTeamStatus();
+    openFooterEditor(d.template.id, `(${btn.dataset.name})`);
+  });
+  document.querySelectorAll('[data-use-footer]').forEach(btn => btn.onclick = async () => {
+    const userId = btn.dataset.useUser;
+    const r = await fetch(`/api/auth/users/${userId}/footer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ footerTemplateId: btn.dataset.useFooter }) });
+    if (!r.ok) { showToast('Could not switch their active footer', true); return; }
+    if (currentUser && userId === currentUser.id) { currentUser.footerTemplateId = btn.dataset.useFooter; refreshMyFooterLine(); }
+    showToast('Active footer updated');
+    loadTeamStatus();
   });
 }
 
@@ -224,7 +285,7 @@ async function saveFooter() {
   if (!r.ok) { showToast('Could not save', true); return; }
   showToast('Saved');
   await loadFooters();
-  document.getElementById('myFooterName').textContent = currentUser.footerTemplateId ? `Footer: ${footerNameFor(currentUser.footerTemplateId)}` : 'No footer set up yet.';
+  refreshMyFooterLine();
   loadTeamStatus();
 }
 document.getElementById('saveFooterBtn').onclick = saveFooter;
@@ -242,20 +303,6 @@ footerModalEl.addEventListener('click', (e) => {
 });
 
 document.getElementById('gmailConnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
-// A standalone footer, not tied to (or auto-assigned to) any one person --
-// footers are really a shared library (see "Import from another footer"
-// above), not strictly one-per-teammate; this is how you grow that library
-// on purpose instead of only ever getting a new one as a side effect of a
-// teammate not having one yet. Opens straight into the editor so the real
-// name (not the placeholder) is the first thing set, same as any other
-// footer -- the Name field there already saves correctly on its own.
-document.getElementById('addFooterBtn').addEventListener('click', async () => {
-  const r = await fetch('/api/footer-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New Footer' }) });
-  const d = await r.json();
-  if (!r.ok) { showToast('Could not create a new footer', true); return; }
-  await loadFooters();
-  openFooterEditor(d.template.id, '');
-});
 document.getElementById('gmailReconnectBtn').onclick = () => { location.href = '/api/auth/gmail/connect'; };
 document.getElementById('gmailDisconnectBtn').onclick = async () => {
   if (!confirm('Disconnect Gmail? Replies will stop showing up in the Inbox automatically.')) return;
