@@ -11,6 +11,8 @@
      using the full window instead of forcing an internal horizontal scroll
      on perfectly ordinary desktop widths. */
   .app-main { max-width: none; }
+  .rename-inline-target { cursor: text; }
+  .rename-inline-target:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
   /* Belt-and-suspenders: if the table ever overflows anyway, only its own
      panel should grow a scrollbar (it already has overflow-x:auto) -- the
      whole page must never scroll horizontally and drag the sidebar off the
@@ -759,6 +761,44 @@ function renderManagedTable(kind, barId) {
     });
   });
   if (cfg.hasEdit) body.querySelectorAll('[data-edit]').forEach(btn => btn.onclick = () => openEditSegment(items.find(i => i.id === btn.dataset.edit)));
+  // Click straight into a segment's name to rename it in place, no modal --
+  // unlike the double-click-to-rename convention on other list pages
+  // (forms/scheduling/campaigns/etc, see rename-inline.js), a plain click
+  // here has nothing else to disambiguate against (this cell has never
+  // navigated anywhere -- Edit is its own separate button), so there's no
+  // reason to require two clicks or delay a single one.
+  body.querySelectorAll('[data-rename-segment]').forEach(el => el.addEventListener('click', () => {
+    const id = el.dataset.renameSegment;
+    const current = el.textContent;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'rename-inline-input';
+    input.value = current;
+    el.replaceChildren(input);
+    input.focus();
+    input.select();
+    let settled = false;
+    function revert() { if (settled) return; settled = true; el.textContent = current; }
+    async function commit() {
+      if (settled) return;
+      const next = input.value.trim();
+      if (!next || next === current) { revert(); return; }
+      settled = true;
+      el.textContent = next;
+      try {
+        const r = await fetch(`/api/segments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: next }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); el.textContent = current; showToast(d.error || 'Could not rename.', true); return; }
+        const seg = allSegments.find(s => s.id === id);
+        if (seg) seg.name = next;
+      } catch { el.textContent = current; showToast('Could not rename.', true); }
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); revert(); input.blur(); }
+    });
+    input.addEventListener('click', (e) => e.stopPropagation());
+  }));
   if (cfg.hasAddTo) {
     body.querySelectorAll('[data-addto]').forEach(btn => btn.onclick = () => {
       const item = items.find(i => i.id === btn.dataset.addto);
@@ -859,7 +899,7 @@ const describeFilter = (filter) => window.ConditionRowBuilder.describeFilter(fil
 async function loadSegments() {
   const r = await fetch('/api/segments');
   allSegments = (await r.json()).segments;
-  await loadAndRenderKind('segment', allSegments, 'segmentsBulkBar', item => `<div>${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
+  await loadAndRenderKind('segment', allSegments, 'segmentsBulkBar', item => `<div class="rename-inline-target" data-rename-segment="${item.id}">${escapeHtml(item.name)}</div><div class="pra-muted" style="font-size:.76rem">${describeFilter(item.filter)}</div>`);
 }
 
 // ── Edit Segment ─────────────────────────────────────────────────────────
