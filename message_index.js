@@ -1,6 +1,6 @@
 import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, readJson, writeJson, appendJsonRecords, updateJsonArrayRecordByField } from "./auth_backend.js";
+import { DATA_DIR, readJson, writeJson, appendJsonRecords, appendJsonRecordFast, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
 import { CONTACTS_FILE } from "./segments_shared.js";
 
@@ -85,7 +85,18 @@ export function getSourceMessages(sourceType, sourceId) {
 export function appendSourceMessage(message) {
   if (!message.sourceType || !message.sourceId) return;
   ensureSourceDir();
-  appendJsonRecords(sourceFile(message.sourceType, message.sourceId), [slimSourceMessage(message)]);
+  // appendJsonRecords copies the ENTIRE existing file to append even one
+  // record (see logMessage's own comment in message_log.js, which already
+  // moved the main 12GB log off this same pattern for the same reason) --
+  // fine for bulk imports, fatal for a per-send call against a file that
+  // grows across a single large campaign. Confirmed live: a 5,190-
+  // recipient send's real throughput dropped as this per-campaign file
+  // grew past ~1,300 entries, and a real per-batch lock (withFileLock)
+  // meant every OTHER concurrent send in the same batch queued up behind
+  // whichever one was mid-copy. appendJsonRecordFast is a true in-place
+  // append (seeks to the tail, never touches existing bytes) -- O(1)
+  // regardless of how large this file has grown.
+  appendJsonRecordFast(sourceFile(message.sourceType, message.sourceId), slimSourceMessage(message));
 }
 export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
   if (!sourceType || !sourceId) return;

@@ -90,18 +90,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Confirmed live via SES's own GetAccount API: this account's real
 // MaxSendRate is 14/sec (Max24HourSend 50,000) -- the actual ceiling on
 // how fast ANY sender using this account can go. Targeted at 13/sec (a
-// hair under, not right up against it -- SES throttles/can pause sending
-// entirely for an account that consistently exceeds its own quoted rate).
-// SENDING_CONCURRENCY is sized well above the target rate, not equal to
-// it -- confirmed live at concurrency=10 (batch size 10, ~1.7s per batch
-// from real SES round-trip + local logging latency) actual throughput was
-// only ~5-6/sec, because batch WALL TIME is set by the slowest single
-// request in it, not the count -- more concurrent requests in flight is
-// the only way to raise throughput against that same fixed latency, this
-// isn't just "12 in the target formula's numerator." The per-batch pad
-// below is what actually enforces 13/sec once concurrency stops being the
-// bottleneck.
-const SENDING_CONCURRENCY = 20;
+// hair under, not right up against it).
+// SENDING_CONCURRENCY is NOT "raise this and throughput goes up" --
+// confirmed live raising it 10 -> 20 made real throughput WORSE (5.8/sec
+// -> 4.5/sec), because every send in the same campaign appends to the
+// SAME shared file (msg_by_source/campaign__<id>.json, see
+// appendSourceMessage), lock-protected (withFileLock in auth_backend.js)
+// against concurrent writers. More concurrent sends just means more of
+// them queued up contending for that one lock, not more real parallelism
+// -- the actual bottleneck is that shared serialized write, not SES's own
+// round-trip latency. Left at a moderate 12 (close to the target rate
+// itself) rather than over-provisioning against a bottleneck concurrency
+// can't fix; the per-batch pad below is what enforces 13/sec once a batch
+// completes faster than its fair share of a second.
+const SENDING_CONCURRENCY = 12;
 const SES_MAX_SEND_RATE = 13;
 
 export function sendCampaignNow(campaignId) {
