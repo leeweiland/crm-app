@@ -174,7 +174,7 @@ async function loadTeamStatus() {
             <span class="team-footer-row-actions">
               ${f.id !== u.footerTemplateId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-use-footer="${f.id}" data-use-user="${u.id}">Use</button>` : ''}
               <button class="pra-btn pra-btn-ghost pra-btn-sm" data-edit-footer-id="${f.id}" data-name="${name}">Edit</button>
-              <button class="pra-btn pra-btn-ghost pra-btn-sm" data-delete-footer="${f.id}" data-name="${escapeHtml(f.name)}">Delete</button>
+              <button class="pra-btn pra-btn-danger pra-btn-sm" data-delete-footer="${f.id}" data-name="${escapeHtml(f.name)}">Delete</button>
             </span>
           </div>
         `).join('')
