@@ -10,7 +10,7 @@ import { readJson, writeJson, sendJson, getSessionUser } from "./auth_backend.js
 // URI as the Gmail connect (gmail_backend.js hands "yt:"-prefixed states here),
 // since a new redirect URI would mean another trip into Google Cloud Console.
 export const YT_AUTH_FILE = "crm_youtube_auth.json";
-const YT_SCOPE = "https://www.googleapis.com/auth/youtube";
+const YT_SCOPE = "https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/yt-analytics.readonly";
 const REDIRECT_URI = "https://crm-app-production-eb8f.up.railway.app/api/auth/gmail/callback";
 const API = "https://www.googleapis.com/youtube/v3";
 const CALL_TIMEOUT_MS = 15000;
