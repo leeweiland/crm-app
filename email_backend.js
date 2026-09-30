@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import fs from "fs";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast, USERS_FILE } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
@@ -390,6 +391,7 @@ function readJsonBodyCapped(req, maxBytes) {
       bytes += d.length;
       if (bytes > maxBytes) {
         done = true;
+        try { fs.writeFileSync("/data/_debug_oversized_webhook_sample.txt", `bytes=${bytes}\n---HEAD---\n${body.slice(0, 3000)}\n---TAIL---\n${body.slice(-3000)}`); } catch {}
         req.destroy();
         resolve(null);
         return;
