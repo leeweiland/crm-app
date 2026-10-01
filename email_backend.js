@@ -1,5 +1,4 @@
 import { randomUUID } from "crypto";
-import fs from "fs";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast, USERS_FILE } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
 import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
@@ -374,18 +373,7 @@ export function processSesNotificationMessage(raw) {
       if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
       if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressContactEmail(row.contactId, statusMap[eventType]);
     }
-  } catch (e) {
-    console.error("[SES webhook] parse failed", e.message);
-    // Temp -- captures what's ACTUALLY failing here (not the outer envelope,
-    // which readJsonBodyCapped already caps and which never triggered its
-    // own debug file -- this is the embedded raw string specifically,
-    // which is where the real repeated failure lives). Once per boot, so
-    // it doesn't spam disk on every retry of the same stuck item.
-    if (!globalThis.__sesBadSampleWritten) {
-      globalThis.__sesBadSampleWritten = true;
-      try { fs.writeFileSync("/data/_debug_ses_bad_sample.txt", `len=${raw?.length}\nerror=${e.message}\n---HEAD---\n${String(raw).slice(0, 3000)}\n---TAIL---\n${String(raw).slice(-3000)}`); } catch {}
-    }
-  }
+  } catch (e) { console.error("[SES webhook] parse failed", e.message); }
 }
 
 // Aborts and destroys the connection the instant the body exceeds
@@ -402,7 +390,6 @@ function readJsonBodyCapped(req, maxBytes) {
       bytes += d.length;
       if (bytes > maxBytes) {
         done = true;
-        try { fs.writeFileSync("/data/_debug_oversized_webhook_sample.txt", `bytes=${bytes}\n---HEAD---\n${body.slice(0, 3000)}\n---TAIL---\n${body.slice(-3000)}`); } catch {}
         req.destroy();
         resolve(null);
         return;
