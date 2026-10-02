@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import twilio from "twilio";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { checkConversionGoal } from "./workflows_backend.js";
@@ -79,10 +79,10 @@ export const FOREIGN_NANP_AREA_CODES = new Set([
   "242", "246", "264", "268", "284", "345", "441", "473", "649", "658",
   "664", "721", "758", "767", "784", "809", "829", "849", "868", "869", "876",
 ]);
-function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
+function getContact(id) { return getContactById(id); }
 function findContactByPhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "").slice(-10);
-  return readJson(CONTACTS_FILE, []).find(c =>
+  return getAllContacts().find(c =>
     String(c.phone || "").replace(/\D/g, "").slice(-10) === digits ||
     (c.altPhones || []).some(p => String(p || "").replace(/\D/g, "").slice(-10) === digits) ||
     (c.hyrosPhones || []).some(p => String(p || "").replace(/\D/g, "").slice(-10) === digits)

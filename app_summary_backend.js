@@ -20,7 +20,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getContactById } from "./contacts_db.js";
 import { CUSTOM_FIELDS_FILE } from "./contacts_backend.js";
 import { getContactMessages } from "./message_index.js";
 import { formatCustomerJourney } from "./ai_agents_backend.js";
@@ -194,8 +194,7 @@ export async function handleAppSummaryRequest(req, res, url) {
     if (!process.env.ANTHROPIC_API_KEY) return sendJson(res, 400, { error: "ANTHROPIC_API_KEY isn't set" });
     if (!process.env.OPENAI_API_KEY) return sendJson(res, 400, { error: "OPENAI_API_KEY isn't set" });
     const contactId = genMatch[1];
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find((c) => c.id === contactId);
+    const contact = getContactById(contactId);
     if (!contact) return sendJson(res, 404, { error: "Contact not found" });
 
     const fieldDefs = readJson(CUSTOM_FIELDS_FILE, []);

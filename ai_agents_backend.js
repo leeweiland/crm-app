@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 import { getContactMessages, getSourceMessages, removeContactMessagesByIds, recomputeConversationSummary } from "./message_index.js";
 import { logMessage } from "./message_log.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
@@ -442,8 +442,7 @@ export function applyPricingMarker(text, agent) {
 export async function generateAgentReply(agent, contactId, userText, { autoSend = false, senderName = null, skipGrounding = false } = {}) {
   let journeyBlock = "";
   if (contactId) {
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find((c) => c.id === contactId);
+    const contact = getContactById(contactId);
     const journey = getContactMessages(contactId);
     journeyBlock = formatCustomerJourney(contact, journey);
   }
@@ -578,7 +577,7 @@ export async function handleAiAgentsRequest(req, res, url) {
     const programTypeParam = url.searchParams.get("programType");
     const contact = (statusParam !== null && programTypeParam !== null)
       ? { status: statusParam, programType: programTypeParam }
-      : readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+      : getContactById(contactId);
     if (!contact) return sendJson(res, 200, { match: false });
     const agents = readJson(AI_AGENTS_FILE, []);
     const match = agents.some((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
@@ -593,7 +592,7 @@ export async function handleAiAgentsRequest(req, res, url) {
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const { contactId, channel } = await readJsonBody(req);
     if (!contactId || !["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "contactId and channel ('email'|'sms') are required" });
-    const contact = readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+    const contact = getContactById(contactId);
     if (!contact) return sendJson(res, 404, { error: "Contact not found" });
     const agents = readJson(AI_AGENTS_FILE, []);
     const agent = agents.find((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
@@ -635,7 +634,7 @@ export async function handleAiAgentsRequest(req, res, url) {
     if (!me) return sendJson(res, 401, { error: "Not logged in" });
     const { contactId } = await readJsonBody(req);
     if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
-    const contact = readJson(CONTACTS_FILE, []).find((c) => c.id === contactId);
+    const contact = getContactById(contactId);
     if (!contact) return sendJson(res, 404, { error: "Contact not found" });
     const agents = readJson(AI_AGENTS_FILE, []);
     const agent = agents.find((a) => a.aiAssist && contactMatchesTargeting(contact, a.targeting));
@@ -741,8 +740,7 @@ TAKEOVER: <yes or no> - <short reason>`;
 
       let journeyBlock = "";
       if (contactId) {
-        const contacts = readJson(CONTACTS_FILE, []);
-        const contact = contacts.find((c) => c.id === contactId);
+        const contact = getContactById(contactId);
         const journey = getContactMessages(contactId);
         journeyBlock = formatCustomerJourney(contact, journey);
       }
@@ -868,8 +866,7 @@ async function handleAiAgentsCrud(req, res, url) {
     if (!savedAgent) return sendJson(res, 404, { error: "Agent not found" });
     const { agentDraft, contactId, channel } = await readJsonBody(req);
     if (!contactId) return sendJson(res, 400, { error: "contactId is required" });
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find((c) => c.id === contactId);
+    const contact = getContactById(contactId);
     if (!contact) return sendJson(res, 404, { error: "Contact not found" });
     // Reflects whatever's currently in the form, same as /chat -- lets you
     // real-send-test an unsaved prompt tweak without saving first.
@@ -1048,7 +1045,7 @@ async function handleAiAgentsCrud(req, res, url) {
     // since deleted, hence "(unknown contact)") were drowning out this
     // agent's real ~217 sends and defeating the whole point of this list.
     const sends = AGENT_SOURCE_TYPES.filter((st) => st !== "ai_active_test").flatMap((st) => getSourceMessages(st, agentId)).filter((m) => m.contactId);
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const contactById = new Map(contacts.map((c) => [c.id, c]));
 
     if (mode === "allOutbound") {

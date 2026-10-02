@@ -4,7 +4,7 @@ import { getDailyStatsInRange, getContactMessages } from "./message_index.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { AUTOMATIONS_FILE } from "./automations_backend.js";
 import { WORKFLOWS_FILE } from "./workflows_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts } from "./contacts_db.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
@@ -83,7 +83,7 @@ function excludeTestContacts(messages) {
   // Falls back to computing live only on a cold start, before the
   // scheduler's first tick has populated that cache yet.
   const cached = getCachedTestContactIds();
-  const testIds = new Set(cached ?? readJson(CONTACTS_FILE, []).filter(c => c.testContact).map(c => c.id));
+  const testIds = new Set(cached ?? getAllContacts().filter(c => c.testContact).map(c => c.id));
   return messages.filter(m => !testIds.has(m.contactId));
 }
 
@@ -220,7 +220,7 @@ export function computeAttribution(startMs, endMs) {
   // report's own numbers would otherwise get real click/opt-in counts
   // muddied by whoever's own test contact (e.g. sending themselves test
   // links while building/verifying this exact feature).
-  const contacts = readJson(CONTACTS_FILE, []).filter(c => !c.testContact);
+  const contacts = getAllContacts().filter(c => !c.testContact);
   const contactsById = new Map(contacts.map(c => [c.id, c]));
   const visits = readJson(PAGE_VISITS_FILE, []);
   const bookedContactIds = new Set(readJson(BOOKINGS_FILE, []).map(b => b.contactId));
@@ -686,7 +686,7 @@ export async function handleReportingRequest(req, res, url) {
     const { startMs, endMs } = parseRangeParams(url);
     const OWNED_CONTACT_SCAN_CAP = 300;
     const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
-    const allContacts = readJson(CONTACTS_FILE, []).filter((c) => !c.testContact);
+    const allContacts = getAllContacts().filter((c) => !c.testContact);
     const rows = users.map((u) => {
       const contacts = allContacts
         .filter((c) => c.ownerId === u.id)
@@ -779,7 +779,7 @@ export async function handleReportingRequest(req, res, url) {
     if (!ids.length) return sendJson(res, 200, { contacts: [] });
     // A Hyros source tag can hold thousands of contacts -- list the first 500 and say how many there are.
     const need = new Set(ids.slice(0, 500));
-    const list = readJson(CONTACTS_FILE, []).filter(c => need.has(c.id));
+    const list = getAllContacts().filter(c => need.has(c.id));
     return sendJson(res, 200, { contacts: list, total: ids.length, truncated: ids.length > list.length });
   }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, updateAllJsonArrayRecordsByField } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById, updateContactByField, deleteContact } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
 import { CONVERSATION_META_FILE } from "./conversation_meta.js";
@@ -37,7 +37,7 @@ function visitSignals(contactId, visits) {
 // first, falling back to the fuzzy name+IP/location signal only when
 // neither email nor phone already ties the pair together.
 export function scanForPossibleDuplicates() {
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const visits = readJson(PAGE_VISITS_FILE, []);
   const existing = readJson(POSSIBLE_DUPLICATES_FILE, []);
   const alreadyFlagged = new Set(existing.map(d => [d.contactAId, d.contactBId].sort().join("|")));
@@ -111,7 +111,7 @@ export const POSSIBLE_VISITOR_MATCHES_FILE = "crm_possible_visitor_matches.json"
 // pass over the visits log builds ip/location -> contactIds indexes, and
 // looks each orphan's own signals up in O(1) against those instead.
 export function scanForPossibleVisitorMatches() {
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const contactsById = new Map(contacts.map(c => [c.id, c]));
   const visits = readJson(PAGE_VISITS_FILE, []);
   const existing = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []);
@@ -179,21 +179,23 @@ export function runScheduledDuplicateScan() {
 // so nothing about the underlying history is lost, just consolidated onto
 // one contact.
 export function mergeContacts(keepId, mergeId) {
-  const contacts = readJson(CONTACTS_FILE, []);
-  const keep = contacts.find(c => c.id === keepId);
-  const merge = contacts.find(c => c.id === mergeId);
-  if (!keep || !merge) return { ok: false, reason: "Contact not found" };
+  const keepExists = getContactById(keepId);
+  const merge = getContactById(mergeId);
+  if (!keepExists || !merge) return { ok: false, reason: "Contact not found" };
 
-  if (!keep.email && merge.email) keep.email = merge.email;
-  if (!keep.phone && merge.phone) keep.phone = merge.phone;
-  keep.customFields = { ...merge.customFields, ...keep.customFields };
-  keep.tags = [...new Set([...(keep.tags || []), ...(merge.tags || [])])];
-  keep.listIds = [...new Set([...(keep.listIds || []), ...(merge.listIds || [])])];
-  if (!keep.externalIds?.acContactId && merge.externalIds?.acContactId) keep.externalIds.acContactId = merge.externalIds.acContactId;
-  if (!keep.externalIds?.closeLeadId && merge.externalIds?.closeLeadId) keep.externalIds.closeLeadId = merge.externalIds.closeLeadId;
-  if (merge.firstSeenAt && (!keep.firstSeenAt || new Date(merge.firstSeenAt) < new Date(keep.firstSeenAt))) keep.firstSeenAt = merge.firstSeenAt;
-  keep.updatedAt = new Date().toISOString();
-  writeJson(CONTACTS_FILE, contacts.filter(c => c.id !== mergeId));
+  const keep = updateContactByField("id", keepId, (keep) => {
+    if (!keep.email && merge.email) keep.email = merge.email;
+    if (!keep.phone && merge.phone) keep.phone = merge.phone;
+    keep.customFields = { ...merge.customFields, ...keep.customFields };
+    keep.tags = [...new Set([...(keep.tags || []), ...(merge.tags || [])])];
+    keep.listIds = [...new Set([...(keep.listIds || []), ...(merge.listIds || [])])];
+    if (!keep.externalIds?.acContactId && merge.externalIds?.acContactId) keep.externalIds.acContactId = merge.externalIds.acContactId;
+    if (!keep.externalIds?.closeLeadId && merge.externalIds?.closeLeadId) keep.externalIds.closeLeadId = merge.externalIds.closeLeadId;
+    if (merge.firstSeenAt && (!keep.firstSeenAt || new Date(merge.firstSeenAt) < new Date(keep.firstSeenAt))) keep.firstSeenAt = merge.firstSeenAt;
+    keep.updatedAt = new Date().toISOString();
+    return keep;
+  });
+  deleteContact(mergeId);
 
   // Byte-scanned in place instead of readJson+forEach+writeJson -- the
   // message log alone reached 12GB+ and a full parse/rewrite of it hung the

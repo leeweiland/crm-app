@@ -37,7 +37,7 @@ import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { loadContactsCache, getAllContacts } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
 import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 import { seedKickoffForms } from "./seed_kickoff_forms.js";
@@ -114,7 +114,7 @@ setInterval(() => {
 function warmCaches() {
   const t0 = Date.now();
   try {
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     sqliteInboxAvailable();
     // One-time bulk populate for contacts_idx (the Contacts page/single-
     // contact-lookup fast path, see contacts_backend.js and sqlite_inbox.js's
@@ -143,6 +143,13 @@ function warmCaches() {
     console.error("[warmup] failed (non-fatal, first real request will just pay the cost instead):", e.message);
   }
 }
+// Contacts now read from this in-memory cache (contacts_db.js), sourced
+// from Postgres -- must finish before warmCaches() and everything below it
+// runs, since all of them (and every request once the server is live) read
+// contacts synchronously against this cache, not the JSON file directly.
+// Fatal if this fails -- unlike the try/catch'd steps below, there's no
+// safe fallback behavior for "contacts never loaded."
+await loadContactsCache();
 warmCaches();
 try { runRecentInternationalPhoneFix(); runRecentInternationalPhoneFix("2026-09-19-v2"); } catch (e) { console.error("[phone-fix] failed (non-fatal, will retry next boot):", e.message); }
 try { runInferredAttributionBackfill(); } catch (e) { console.error("[attribution-inference] failed (non-fatal):", e.message); }

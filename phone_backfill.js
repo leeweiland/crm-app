@@ -12,8 +12,8 @@
 // no-op on every later boot.
 import { existsSync, writeFileSync } from "fs";
 import { join } from "path";
-import { readJson, writeJson, updateJsonArrayRecordsByIds, DATA_DIR } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { readJson, writeJson, DATA_DIR } from "./auth_backend.js";
+import { getAllContacts, updateContactsByIds } from "./contacts_db.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { upsertContactIndex, syncContactFields } from "./sqlite_inbox.js";
 import { normalizePhoneForCapture, countryFromName } from "./phone_util.js";
@@ -31,7 +31,7 @@ export function runRecentInternationalPhoneFix(tag = "2026-09-18") {
   if (existsSync(PHONE_FIX_MARKER)) return;
   const includePlus = tag !== "2026-09-18";
   const t0 = Date.now();
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const candidates = contacts.filter(c => (c.createdAt >= PHONE_FIX_SINCE || c.updatedAt >= PHONE_FIX_SINCE) && String(c.phone || "").trim() && (includePlus || !String(c.phone).trim().startsWith("+")) && !/^1?[2-9]\d{2}[2-9]\d{6}$/.test(String(c.phone).replace(/\D/g, "")));
   if (!candidates.length) { writeFileSync(PHONE_FIX_MARKER, new Date().toISOString()); return; }
 
@@ -57,7 +57,7 @@ export function runRecentInternationalPhoneFix(tag = "2026-09-18") {
   const byId = new Map(changes.map(ch => [ch.id, ch.to]));
   if (byId.size) {
     const now = new Date().toISOString();
-    const updated = updateJsonArrayRecordsByIds(CONTACTS_FILE, [...byId.keys()], c => { c.phone = byId.get(c.id); c.updatedAt = now; return c; });
+    const updated = updateContactsByIds([...byId.keys()], c => { c.phone = byId.get(c.id); c.updatedAt = now; return c; });
     for (const c of updated) {
       try { upsertContactIndex(c); } catch (e) { console.error("[phone-fix] contacts_idx update failed:", e.message); }
       try { syncContactFields(c.id, c); } catch (e) { console.error("[phone-fix] inbox sync failed:", e.message); }

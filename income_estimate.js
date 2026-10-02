@@ -1,6 +1,6 @@
-import { readJson, writeJson, updateJsonArrayRecordsByIdSet } from "./auth_backend.js";
+import { readJson, writeJson } from "./auth_backend.js";
 import { randomUUID } from "crypto";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { updateContactsByIdSet } from "./contacts_db.js";
 import { syncContactFieldsBatch, patchContactIndexRawBatch } from "./sqlite_inbox.js";
 import { labelIdMap, applicationSnapshot, estimateIncomeBatch } from "./income_estimate_core.js";
 
@@ -51,7 +51,7 @@ export function storedIncomeValues(r) {
 export function applyIncomeEstimates(results) {
   const { incomeId, basisId } = ensureIncomeFields();
   const byId = new Map(results.map(r => [r.id, r]));
-  const updated = updateJsonArrayRecordsByIdSet(CONTACTS_FILE, new Set(byId.keys()), c => {
+  const updated = updateContactsByIdSet(new Set(byId.keys()), c => {
     const v = storedIncomeValues(byId.get(c.id));
     c.customFields = c.customFields || {};
     if (v.income) c.customFields[incomeId] = v.income; else delete c.customFields[incomeId];

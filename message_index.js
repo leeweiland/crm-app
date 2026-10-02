@@ -2,7 +2,7 @@ import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson, writeJson, appendJsonRecords, appendJsonRecordFast, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getContactById } from "./contacts_db.js";
 
 // The Inbox's two hottest reads -- "everything said with contact X" and
 // "one summary row per contact, most-recently-active first" -- both used to
@@ -145,7 +145,7 @@ function applyDailyDelta(bucket, row, status, delta) {
 // the aggregate daily-stats delta.
 function isTestContact(contactId) {
   if (!contactId) return false;
-  const c = readJson(CONTACTS_FILE, []).find(x => x.id === contactId);
+  const c = getContactById(contactId);
   return !!c?.testContact;
 }
 export function recordDailyStatsNew(row) {

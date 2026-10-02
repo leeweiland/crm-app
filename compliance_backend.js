@@ -1,5 +1,4 @@
-import { readJson, writeJson } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getContactById, updateContactByField } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import { getComplianceSettings } from "./integrations_backend.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
@@ -65,12 +64,13 @@ export function recheckStopStatus(contactId) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
   if (!latestInbound || !isStopKeyword(latestInbound.body || latestInbound.bodyPreview, settings.stopKeywords)) return false;
 
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contact = contacts.find(c => c.id === contactId);
+  const contact = getContactById(contactId);
   if (!contact || contact.smsOptOut) return false;
-  contact.smsOptOut = true;
-  contact.updatedAt = new Date().toISOString();
-  writeJson(CONTACTS_FILE, contacts);
+  updateContactByField("id", contactId, c => {
+    c.smsOptOut = true;
+    c.updatedAt = new Date().toISOString();
+    return c;
+  });
   // A suppressed contact has nothing left to action in the Inbox -- get
   // their thread out of the main list the same way a real STOP reply
   // would in any texting platform. Hidden (not archived): STOP is
@@ -100,13 +100,14 @@ export function maybeAutoOptOutOnFailedSend(contactId, channel) {
   const field = channel === "email" ? "emailOptOut" : "smsOptOut";
   if (channel === "email" && !settings.autoOptOutFailedEmail) return;
   if (channel === "sms" && !settings.autoOptOutFailedSms) return;
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contact = contacts.find(c => c.id === contactId);
+  const contact = getContactById(contactId);
   if (!contact || contact[field]) return;
-  contact[field] = true;
-  contact.updatedAt = new Date().toISOString();
-  writeJson(CONTACTS_FILE, contacts);
-  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[compliance] sqlite sync failed:", e.message); }
+  const updated = updateContactByField("id", contactId, c => {
+    c[field] = true;
+    c.updatedAt = new Date().toISOString();
+    return c;
+  });
+  try { syncContactFields(updated.id, updated); } catch (e) { console.error("[compliance] sqlite sync failed:", e.message); }
 }
 
 // The exact status label used across the app for the permanent-opt-out
@@ -218,23 +219,24 @@ export function checkAutoTriggers(contactId) {
   const body = latestInbound.body || latestInbound.bodyPreview;
   const isBlacklistTrigger = !!(settings.triggerKeywordsEnabled && settings.triggerKeywords.length && containsTriggerWord(body, settings.triggerKeywords));
 
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contact = contacts.find(c => c.id === contactId);
+  const contact = getContactById(contactId);
   if (!contact) return;
 
   if (isBlacklistTrigger) {
     if (contact.status !== BLACKLIST_STATUS_LABEL) {
-      contact.status = BLACKLIST_STATUS_LABEL;
-      contact.updatedAt = new Date().toISOString();
-      applyStatusOptOut(contact);
-      writeJson(CONTACTS_FILE, contacts);
+      const updated = updateContactByField("id", contactId, c => {
+        c.status = BLACKLIST_STATUS_LABEL;
+        c.updatedAt = new Date().toISOString();
+        applyStatusOptOut(c);
+        return c;
+      });
       // Status changed but this doesn't go through contacts_backend.js's
       // PATCH handler (the usual place that syncs a status change to the
       // sidebar's SQLite snapshot) -- without this, the Blacklist filter
       // tab and every other view keeps showing the OLD status until
       // something else happens to touch this contact. Confirmed live:
       // this was silently missing and the filter tab stayed empty.
-      try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+      try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
     }
     return;
   }

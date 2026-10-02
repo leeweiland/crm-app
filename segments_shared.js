@@ -6,6 +6,7 @@
 // cycle. Pure data/functions only, no side effects, safe for anything to
 // import.
 import { readJson } from "./auth_backend.js";
+import { getAllContacts } from "./contacts_db.js";
 
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
@@ -307,10 +308,10 @@ export function resolveBulkContactIds(body) {
     const segments = readJson(SEGMENTS_FILE, []);
     const segment = segments.find(s => s.id === body.segmentId);
     if (!segment) return [];
-    return readJson(CONTACTS_FILE, []).filter(c => matchesSegment(c, segment.filter)).map(c => c.id);
+    return getAllContacts().filter(c => matchesSegment(c, segment.filter)).map(c => c.id);
   }
   if (body.tagId) {
-    return readJson(CONTACTS_FILE, []).filter(c => (c.tags || []).includes(body.tagId)).map(c => c.id);
+    return getAllContacts().filter(c => (c.tags || []).includes(body.tagId)).map(c => c.id);
   }
   return [];
 }

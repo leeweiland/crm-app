@@ -4,7 +4,8 @@ import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 import { markContactVisitedPage } from "./contacts_backend.js";
 import { queueBehavioralTrigger, parseVisitContext } from "./behavioral_triggers_backend.js";
-import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { findContactMatch } from "./segments_shared.js";
+import { getAllContacts } from "./contacts_db.js";
 
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
 const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
@@ -292,7 +293,7 @@ export async function handleTrackingRequest(req, res, url) {
     const phone = parsed.phone ? String(parsed.phone).trim() : "";
     if (vid && (email || phone)) {
       recordVisitorIdentity(vid, email, phone, sanitizeClickIds(parsed.clickIds), sanitizeAdParams(parsed.adParams));
-      const contacts = readJson(CONTACTS_FILE, []);
+      const contacts = getAllContacts();
       const match = findContactMatch(contacts, email, phone);
       if (match) claimVisitorHistory(vid, match.id);
     }

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, matchesSegment, SEGMENTS_FILE } from "./segments_shared.js";
+import { matchesSegment, SEGMENTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
@@ -83,8 +84,7 @@ function lastBehavioralSend(contactId, agentId) {
 // whether/when a later scheduler tick should.
 export function queueBehavioralTrigger({ contactId, source, context }) {
   if (!contactId || !source) return;
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contact = contacts.find((c) => c.id === contactId);
+  const contact = getContactById(contactId);
   if (!contact) return;
   if (isExcludable(contact)) return;
 
@@ -155,7 +155,7 @@ export async function processBehavioralTriggers() {
   if (!due.length) return;
 
   const agents = readJson(AI_AGENTS_FILE, []);
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   let changed = false;
 
   for (const trigger of due) {
@@ -233,7 +233,7 @@ export async function handleBehavioralTriggersRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
   const agentId = url.searchParams.get("agentId");
   const triggers = readJson(BEHAVIOR_TRIGGERS_FILE, []).filter((t) => !agentId || t.agentId === agentId);
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const byStatus = {};
   for (const t of triggers) byStatus[t.status] = (byStatus[t.status] || 0) + 1;
   const recent = [...triggers]

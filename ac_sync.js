@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { readJson, writeJson, appendToJsonObjectFast, DATA_DIR } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
 import { acConfigured, fetchAcOneToOneCampaigns, fetchAcContactActivities, acCampaignName, AC_BASE } from "./import_backend.js";
@@ -158,7 +158,7 @@ async function getOneToOneCampaigns() {
 // minute once something looped it across a real batch of contacts.
 export async function syncAcEngagementForContact(contactId, preloadedContact) {
   if (!acConfigured() || !contactId) return;
-  const contact = preloadedContact !== undefined ? preloadedContact : readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+  const contact = preloadedContact !== undefined ? preloadedContact : getContactById(contactId);
   const acContactId = contact?.externalIds?.acContactId;
   if (!acContactId || !contact.email) return;
   const email = contact.email.toLowerCase();
@@ -354,7 +354,7 @@ export async function processAcNightlySyncBatch() {
   if (!inProgress && (acNightlySyncLocalHour() !== AC_NIGHTLY_SYNC_HOUR || state.lastCompletedDate === today)) return;
 
   if (!inProgress || !_nightlySyncTargetsCache) {
-    _nightlySyncTargetsCache = readJson(CONTACTS_FILE, []).filter(c => c.externalIds?.acContactId);
+    _nightlySyncTargetsCache = getAllContacts().filter(c => c.externalIds?.acContactId);
   }
   const targets = _nightlySyncTargetsCache;
   if (state.nextIndex >= targets.length) {
@@ -548,7 +548,7 @@ export async function processAcRefFillBatch() {
   // Rebuilt every batch (not persisted across batches) -- cheap (readJson
   // is mtime-cached) and always reflects the current contacts file rather
   // than a snapshot that could go stale across a run spanning many ticks.
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const acContactIdByContactId = new Map(contacts.map(c => [c.id, c.externalIds?.acContactId]).filter(([, v]) => v));
   // Per-CAMPAIGN counts (not per-file), so a campaign spanning multiple
   // files in this same batch (the overwhelmingly common case -- one
@@ -638,7 +638,7 @@ export async function pollAcEngagementIfDue() {
   if (!startingNewPass && !(state.nextIndex > 0)) return; // not due, and no in-progress pass to resume
 
   if (!_engagementCandidatesCache) {
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     _engagementCandidatesCache = contacts.filter((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked));
   }
   const candidates = _engagementCandidatesCache;

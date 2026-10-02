@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, updateJsonArrayRecordByField, appendJsonRecordFast, USERS_FILE, isAdmin } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch } from "./segments_shared.js";
+import { findContactMatch } from "./segments_shared.js";
+import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE, logMessage } from "./message_log.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
@@ -85,7 +86,7 @@ export async function sendDueScheduledMessages() {
   const all = readJson(SCHEDULED_MESSAGES_FILE, []);
   const due = all.filter(m => m.status === "scheduled" && new Date(m.scheduledAt).getTime() <= Date.now());
   if (!due.length) return;
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const teamUsers = readJson(USERS_FILE, []);
   for (const m of due) {
     const contact = contacts.find(c => c.id === m.contactId);
@@ -250,7 +251,7 @@ export async function handleInboxRequest(req, res, url) {
     // of messages the user never scrolls to.
     const PAGE_SIZE = 30;
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
-    const allContacts = readJson(CONTACTS_FILE, []);
+    const allContacts = getAllContacts();
     const ownedContacts = allContacts
       .filter((c) => c.ownerId === userId)
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
@@ -417,7 +418,7 @@ export async function handleInboxRequest(req, res, url) {
     }
     if (bucket === "everyContact") return sendJson(res, 200, { conversations: [], total: 0, hasMore: false }); // sqlite unavailable -- no JSON-fold fallback for this bucket (would mean folding all ~176k contacts in JS on every request)
     const _t0 = Date.now();
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     // Reads the persisted per-contact summary index (kept incrementally up
     // to date by message_index.js on every send/receive) instead of folding
     // the whole message log on every request -- that fold was memory-safe
@@ -753,7 +754,7 @@ export async function handleInboxRequest(req, res, url) {
     const tab = url.searchParams.get("tab") || "primary";
     // view: 'new' (default, not yet handled) | 'past' (marked done) | 'all'
     const view = url.searchParams.get("view") || "new";
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
 
@@ -866,13 +867,14 @@ export async function handleInboxRequest(req, res, url) {
     const phone = row.channel === "sms" ? theirAddress : null;
     const email = row.channel === "email" ? theirAddress : null;
 
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     // Same person can show up as TWO separate Potential Contacts rows (one
     // per channel -- an unmatched SMS row and an unmatched email row),
     // confirmed minutes apart. Without this check each confirm created its
     // own new contact instead of recognizing the other channel's contact
     // already exists, silently producing duplicates every time.
     let contact = findContactMatch(contacts, email, phone);
+    let isNewContact = false;
     if (contact) {
       if (!contact.email && email) contact.email = email.toLowerCase();
       if (!contact.phone && phone) contact.phone = phone;
@@ -886,9 +888,10 @@ export async function handleInboxRequest(req, res, url) {
         externalIds: { acContactId: null, closeLeadId: null },
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
-      contacts.push(contact);
+      isNewContact = true;
     }
-    writeJson(CONTACTS_FILE, contacts);
+    if (isNewContact) createContact(contact);
+    else updateContactByField("id", contact.id, c => Object.assign(c, contact));
     // Without this, the real name/email/phone just entered here doesn't
     // reach the Inbox sidebar's SQLite snapshot until something else
     // happens to touch this contact -- same gap forms_backend.js/
@@ -917,7 +920,7 @@ export async function handleInboxRequest(req, res, url) {
   }
 
   if (p === "/api/calls" && req.method === "GET") {
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const calls = readJson(CALLS_FILE, []).map(c => withContact(c, contacts)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     return sendJson(res, 200, { calls });
   }
@@ -936,7 +939,7 @@ export async function handleInboxRequest(req, res, url) {
   }
 
   if (p === "/api/tasks" && req.method === "GET") {
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const tasks = readJson(TASKS_FILE, []).map(t => withContact(t, contacts)).sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
     return sendJson(res, 200, { tasks });
   }

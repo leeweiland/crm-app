@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getContactById } from "./contacts_db.js";
 import { INTEGRATIONS_FILE } from "./integrations_backend.js";
 
 // Server-side conversion push to Meta (Conversions API) and Google Ads
@@ -75,7 +75,7 @@ function hashPII(value) {
   return v ? createHash("sha256").update(v).digest("hex") : null;
 }
 function getContact(id) {
-  return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null;
+  return getContactById(id);
 }
 
 async function pushMetaConversion(eventDef, { email, phone, programType }) {

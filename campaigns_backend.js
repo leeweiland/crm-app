@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { matchesSegment, CONTACTS_FILE, SEGMENTS_FILE } from "./contacts_backend.js";
+import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
+import { getAllContacts } from "./contacts_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { getMessagesForSource } from "./message_log.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
@@ -29,7 +30,7 @@ function campaignSnapshotFields(campaign) {
 // (doesn't restrict), so leaving Tags blank while using Lists+Segment still
 // works as expected.
 function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const segment = segmentId ? readJson(SEGMENTS_FILE, []).find(s => s.id === segmentId) : null;
   const hasFilters = (listIds?.length) || (tagIds?.length) || segment;
   return contacts.filter(c => {

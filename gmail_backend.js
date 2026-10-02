@@ -1,5 +1,5 @@
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
@@ -435,7 +435,7 @@ function getContactIdByEmail(email) {
   }
   if (!contactsByEmailCache || Date.now() - contactsByEmailCacheBuiltAt > CONTACTS_EMAIL_CACHE_TTL_MS) {
     contactsByEmailCache = new Map();
-    for (const c of readJson(CONTACTS_FILE, [])) {
+    for (const c of getAllContacts()) {
       if (c.email) contactsByEmailCache.set(c.email.toLowerCase(), c.id);
       for (const alt of c.altEmails || []) contactsByEmailCache.set(alt.toLowerCase(), c.id);
     }
@@ -543,7 +543,7 @@ async function fetchAndProcessGmailQuery(user, accessToken, q) {
 // diff might have missed (a paused poller, a capped backlog -- see
 // MAX_MESSAGES_PER_TICK) at the moment someone would actually notice a gap.
 export async function reconcileRecentGmailForContact(contactId, windowDays = 14) {
-  const contact = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+  const contact = getContactById(contactId);
   const emails = [contact?.email, ...(contact?.altEmails || [])].filter(Boolean);
   if (!emails.length) return;
   const users = readJson(USERS_FILE, []).filter(u => u.gmailRefreshToken);

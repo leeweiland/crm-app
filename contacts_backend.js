@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordByField, updateJsonArrayRecordsByIds, updateJsonArrayRecordsByIdSet, removeValuesFromArrayField, appendJsonRecordFast, isAdmin, USERS_FILE } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
+import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact } from "./contacts_db.js";
 import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -44,7 +45,7 @@ const COUNTS_CACHE_TTL_MS = 3 * 60 * 1000;
 // single cache refresh never reads this file more than once.
 function computeAllCounts() {
   let contacts = null;
-  const getContacts = () => contacts || (contacts = readJson(CONTACTS_FILE, []));
+  const getContacts = () => contacts || (contacts = getAllContacts());
   const tags = tagCountsSqlite() || (() => {
     const counts = {};
     for (const c of getContacts()) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
@@ -130,7 +131,7 @@ const BULK_ASSIGN_MAX = 1000;
 export function markContactEmailEngagement(contactId, kind, atISO) { // kind: "opened" | "clicked"
   if (!contactId) return;
   const at = atISO && !isNaN(new Date(atISO)) ? new Date(atISO).toISOString() : new Date().toISOString();
-  const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+  const updated = updateContactByField("id", contactId, c => {
     c.emailEngagement = c.emailEngagement || {};
     c.emailEngagement[kind] = true;
     const prev = c.emailEngagement[`${kind}At`];
@@ -154,7 +155,7 @@ export function markContactEmailEngagement(contactId, kind, atISO) { // kind: "o
 // repeatedly mailing a bounced address is what damages sender reputation.
 export function suppressContactEmail(contactId, reason) { // reason: "bounced" | "complained"
   if (!contactId) return;
-  const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+  const updated = updateContactByField("id", contactId, c => {
     c.emailOptOut = true;
     c.emailSuppressedReason = reason;
     c.emailSuppressedAt = new Date().toISOString();
@@ -164,7 +165,7 @@ export function suppressContactEmail(contactId, reason) { // reason: "bounced" |
 }
 export function markContactVisitedPage(contactId, path) {
   if (!contactId || !path) return;
-  const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+  const updated = updateContactByField("id", contactId, c => {
     c.visitedPaths = c.visitedPaths || [];
     if (!c.visitedPaths.includes(path)) c.visitedPaths.push(path);
     return c;
@@ -288,10 +289,7 @@ export async function handleContactsRequest(req, res, url) {
   }
   if (p === "/api/contacts/admin/fix-blacklist-status" && req.method === "GET") {
     if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
-    const contacts = readJson(CONTACTS_FILE, []);
-    const affected = contacts.filter(c => c.status === "BAD FIT / BLACKLIST");
-    for (const c of affected) { c.status = "BLACKLIST"; c.updatedAt = new Date().toISOString(); }
-    if (affected.length) writeJson(CONTACTS_FILE, contacts);
+    const affected = updateAllContactsByField("status", "BAD FIT / BLACKLIST", c => { c.status = "BLACKLIST"; c.updatedAt = new Date().toISOString(); return c; });
     let synced = 0;
     for (const c of affected) { try { syncContactFields(c.id, c); synced++; } catch {} }
     return sendJson(res, 200, { ok: true, updated: affected.length, synced });
@@ -318,7 +316,7 @@ export async function handleContactsRequest(req, res, url) {
     if (!ids.length) return sendJson(res, 200, { ok: true, assigned: 0 });
     if (ids.length > BULK_ASSIGN_MAX) return sendJson(res, 400, { error: `That's ${ids.length} contacts -- assign at most ${BULK_ASSIGN_MAX} at a time (narrow the segment or select fewer).` });
     const now = new Date().toISOString();
-    const updated = updateJsonArrayRecordsByIdSet(CONTACTS_FILE, new Set(ids), c => { c.ownerId = ownerId; c.updatedAt = now; return c; });
+    const updated = updateContactsByIdSet(new Set(ids), c => { c.ownerId = ownerId; c.updatedAt = now; return c; });
     try { syncContactFieldsBatch(updated); } catch (e) { console.error("[sqlite_inbox] bulk assign sync failed:", e.message); }
     return sendJson(res, 200, { ok: true, assigned: updated.length });
   }
@@ -328,7 +326,7 @@ export async function handleContactsRequest(req, res, url) {
   const estimateMatch = p.match(/^\/api\/contacts\/([^/]+)\/estimate-income$/);
   if (estimateMatch && req.method === "POST") {
     const contactId = estimateMatch[1];
-    const contact = getContactByIdSqlite(contactId) || readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    const contact = getContactByIdSqlite(contactId) || getContactById(contactId);
     if (!contact) return sendJson(res, 404, { error: "Contact not found" });
     try {
       const r = await estimateIncomeForContact(contact);
@@ -353,7 +351,7 @@ export async function handleContactsRequest(req, res, url) {
     if (unique.some(id => typeof id !== "string" || !/^[\w-]{1,64}$/.test(id))) return sendJson(res, 400, { error: "invalid contact id" });
     if (unique.length > 100) return sendJson(res, 400, { error: "Delete at most 100 contacts per request" });
     const deleted = [];
-    updateJsonArrayRecordsByIds(CONTACTS_FILE, unique, c => { deleted.push(c.id); return null; });
+    updateContactsByIds(unique, c => { deleted.push(c.id); return null; });
     // Same orphan cleanup as the single DELETE below.
     for (const id of deleted) {
       removeConversationSummary(id);
@@ -408,7 +406,7 @@ export async function handleContactsRequest(req, res, url) {
     // pressure. See git history around this date for the attempted fix and
     // its revert. Still the only path for advancedFilter, and the fallback
     // if the sqlite index isn't available for some reason.
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     let filtered = contacts;
     if (q) filtered = filtered.filter(c =>
       `${c.first} ${c.last}`.toLowerCase().includes(q) ||
@@ -453,7 +451,7 @@ export async function handleContactsRequest(req, res, url) {
     // own comment below) -- creating one new contact doesn't need the
     // other 176k rewritten just to append/patch one, so this now uses the
     // same streaming append/in-place-patch primitives PATCH already does.
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     // Same "email or phone already means the same person" rule every other
     // creation path in this app follows (forms, bookings, imports) --
     // manual "+ Add Contact" was the one place that didn't, so typing in an
@@ -462,7 +460,7 @@ export async function handleContactsRequest(req, res, url) {
     let record = findContactMatch(contacts, body.email, body.phone);
     if (record) {
       const contactId = record.id;
-      record = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, (contact) => {
+      record = updateContactByField("id", contactId, (contact) => {
         for (const k of ["first", "last", "accountName", "status"]) if (body[k]) contact[k] = body[k];
         if (body.email) contact.email = String(body.email).toLowerCase();
         if (body.phone) contact.phone = body.phone;
@@ -473,7 +471,7 @@ export async function handleContactsRequest(req, res, url) {
       try { syncContactFields(record.id, record); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
     } else {
       record = newContactRecord(body);
-      appendJsonRecordFast(CONTACTS_FILE, record);
+      createContact(record);
       try { syncContactFields(record.id, record); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
     }
     record.listIds.forEach(listId => { fireTrigger("list_subscribe", { contactId: record.id, listId }); fireWorkflowTrigger("list_subscribe", { contactId: record.id, listId }); });
@@ -505,7 +503,7 @@ export async function handleContactsRequest(req, res, url) {
       }
       const allowed = ["type", "programType", "accountName", "first", "last", "email", "phone", "status", "tags", "listIds", "customFields", "ownerId", "emailOptOut", "smsOptOut", "testContact"];
       let prevListIds, prevTags, prevStatus;
-      const updated = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactMatch[1], (contact) => {
+      const updated = updateContactByField("id", contactMatch[1], (contact) => {
         prevListIds = [...contact.listIds]; prevTags = [...contact.tags]; prevStatus = contact.status;
         for (const k of allowed) if (k in body && !(k === "ownerId" && !isAdmin(me))) contact[k] = body[k]; // (guard above already refuses a real reassignment; this makes it hold even against a stale owner lookup)
         // customFieldsPatch: merge just these fields into what is stored NOW, so a
@@ -579,16 +577,14 @@ export async function handleContactsRequest(req, res, url) {
       // best-effort cache to be the only source of truth).
       const fast = getContactByIdSqlite(contactMatch[1]);
       if (fast !== null && fast !== undefined) return sendJson(res, 200, { contact: publicContact(fast) });
-      const contacts = readJson(CONTACTS_FILE, []);
-      const contact = contacts.find(c => c.id === contactMatch[1]);
+      const contact = getContactById(contactMatch[1]);
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
       return sendJson(res, 200, { contact: publicContact(contact) });
     }
     if (req.method === "DELETE") {
-      const contacts = readJson(CONTACTS_FILE, []);
-      const contact = contacts.find(c => c.id === contactMatch[1]);
+      const contact = getContactById(contactMatch[1]);
       if (!contact) return sendJson(res, 404, { error: "Contact not found" });
-      writeJson(CONTACTS_FILE, contacts.filter(c => c.id !== contactMatch[1]));
+      deleteContact(contactMatch[1]);
       // Deleting the contact record alone left its conversation summary
       // (crm_conversation_index.json + the SQLite sidebar snapshot) and per-
       // contact message file behind as orphans -- confirmed live: a deleted
@@ -650,7 +646,7 @@ export async function handleContactsRequest(req, res, url) {
     const idSet = new Set(ids);
     const lists = readJson(LISTS_FILE, []);
     writeJson(LISTS_FILE, lists.filter(l => !idSet.has(l.id)));
-    removeValuesFromArrayField(CONTACTS_FILE, "listIds", ids);
+    removeValuesFromContactsArrayField("listIds", ids);
     return sendJson(res, 200, { ok: true });
   }
   // Same one-pass bulk-count fix as /api/tags/counts below, extended to
@@ -671,7 +667,7 @@ export async function handleContactsRequest(req, res, url) {
     if (cached?.lists) return sendJson(res, 200, { counts: cached.lists });
     const fast = listCountsSqlite();
     if (fast) return sendJson(res, 200, { counts: fast });
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const counts = {};
     for (const c of contacts) {
       for (const listId of c.listIds || []) {
@@ -689,7 +685,7 @@ export async function handleContactsRequest(req, res, url) {
     // Deleting the list record alone left every contact that had it holding
     // a dead id in listIds forever (nothing else in the app ever reads a
     // list's own record to know it's gone).
-    removeValuesFromArrayField(CONTACTS_FILE, "listIds", [listMatch[1]]);
+    removeValuesFromContactsArrayField("listIds", [listMatch[1]]);
     return sendJson(res, 200, { ok: true });
   }
   // Removes just this one contact's membership (not the whole list) --
@@ -698,7 +694,7 @@ export async function handleContactsRequest(req, res, url) {
   const listContactMatch = p.match(/^\/api\/lists\/([^/]+)\/contacts\/([^/]+)$/);
   if (listContactMatch && req.method === "DELETE") {
     const [, listId, contactId] = listContactMatch;
-    const found = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+    const found = updateContactByField("id", contactId, c => {
       c.listIds = (c.listIds || []).filter(id => id !== listId);
       c.updatedAt = new Date().toISOString();
       return c;
@@ -726,7 +722,7 @@ export async function handleContactsRequest(req, res, url) {
     if (cached?.tags) return sendJson(res, 200, { counts: cached.tags });
     const fast = tagCountsSqlite();
     if (fast) return sendJson(res, 200, { counts: fast });
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const counts = {};
     for (const c of contacts) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
     return sendJson(res, 200, { counts });
@@ -747,7 +743,7 @@ export async function handleContactsRequest(req, res, url) {
     const idSet = new Set(ids);
     const tags = readJson(TAGS_FILE, []);
     writeJson(TAGS_FILE, tags.filter(t => !idSet.has(t.id)));
-    removeValuesFromArrayField(CONTACTS_FILE, "tags", ids);
+    removeValuesFromContactsArrayField("tags", ids);
     return sendJson(res, 200, { ok: true });
   }
   const tagMatch = p.match(/^\/api\/tags\/([^/]+)$/);
@@ -755,13 +751,13 @@ export async function handleContactsRequest(req, res, url) {
     const tags = readJson(TAGS_FILE, []);
     writeJson(TAGS_FILE, tags.filter(t => t.id !== tagMatch[1]));
     // Same orphaned-id cleanup as list deletion above.
-    removeValuesFromArrayField(CONTACTS_FILE, "tags", [tagMatch[1]]);
+    removeValuesFromContactsArrayField("tags", [tagMatch[1]]);
     return sendJson(res, 200, { ok: true });
   }
   const tagContactMatch = p.match(/^\/api\/tags\/([^/]+)\/contacts\/([^/]+)$/);
   if (tagContactMatch && req.method === "DELETE") {
     const [, tagId, contactId] = tagContactMatch;
-    const found = updateJsonArrayRecordByField(CONTACTS_FILE, "id", contactId, c => {
+    const found = updateContactByField("id", contactId, c => {
       c.tags = (c.tags || []).filter(id => id !== tagId);
       c.updatedAt = new Date().toISOString();
       return c;
@@ -819,7 +815,7 @@ export async function handleContactsRequest(req, res, url) {
     const cached = readJson(COUNTS_CACHE_FILE, null);
     if (cached?.segments) return sendJson(res, 200, { counts: cached.segments });
     const segments = readJson(SEGMENTS_FILE, []);
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const counts = {};
     for (const s of segments) counts[s.id] = 0;
     for (const c of contacts) for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++;
@@ -869,7 +865,7 @@ export async function handleContactsRequest(req, res, url) {
     const segments = readJson(SEGMENTS_FILE, []);
     const segment = segments.find(s => s.id === segmentContactsMatch[1]);
     if (!segment) return sendJson(res, 404, { error: "Segment not found" });
-    const contacts = readJson(CONTACTS_FILE, []).filter(c => matchesSegment(c, segment.filter));
+    const contacts = getAllContacts().filter(c => matchesSegment(c, segment.filter));
     return sendJson(res, 200, { contacts, total: contacts.length });
   }
 

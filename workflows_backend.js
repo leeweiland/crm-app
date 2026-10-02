@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, resolveBulkContactIds } from "./segments_shared.js";
+import { resolveBulkContactIds } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
@@ -43,7 +44,7 @@ const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_cli
 // source, same as the others.
 export const CONVERSION_GOAL_TYPES = ["incoming_email", "incoming_sms", "incoming_call", "meeting_booked", "lead_status_change", "outcome_met"];
 
-function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
+function getContact(id) { return getContactById(id); }
 
 // ── IANA-timezone-aware "which day/time is this step due" math, same
 // toLocaleString round-trip trick used elsewhere in this business's other
@@ -467,7 +468,7 @@ export async function handleWorkflowsRequest(req, res, url) {
   const wfEnrollmentsMatch = p.match(/^\/api\/workflows\/([^/]+)\/enrollments$/);
   if (wfEnrollmentsMatch && req.method === "GET") {
     const enrollments = readJson(WF_ENROLLMENTS_FILE, []).filter(e => e.workflowId === wfEnrollmentsMatch[1]);
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     return sendJson(res, 200, { enrollments: enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null })) });
   }
 

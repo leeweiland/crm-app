@@ -23,7 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getAllContacts, getContactById } from "./contacts_db.js";
 
 // Declared locally rather than imported from scheduling_backend.js, which
 // already imports syncContactFields from THIS file -- that import would be
@@ -214,7 +214,7 @@ export function syncMessageFields(g) {
   const exists = db.prepare("SELECT 1 FROM conversations WHERE key = ?").get(g.key);
   let contact = null;
   if (!exists && g.contactId) {
-    contact = readJson(CONTACTS_FILE, []).find(c => c.id === g.contactId) || null;
+    contact = getContactById(g.contactId);
   }
   const displayName = contact ? `${contact.first || ""} ${contact.last || ""}`.trim() || displayNameFallback : (exists ? undefined : displayNameFallback);
   db.prepare(`
@@ -564,7 +564,7 @@ function resyncRowsWithStaleStatus(staleLabels, logTag, includeNull) {
   const nullClause = includeNull ? " OR status IS NULL" : "";
   const staleRows = db.prepare(`SELECT contact_id FROM conversations WHERE status IN (${placeholders})${nullClause} LIMIT ${STALE_ROW_REPAIR_LIMIT}`).all(...staleLabels);
   if (!staleRows.length) return; // the common case forever after this repair actually finishes
-  const contactsById = new Map(readJson(CONTACTS_FILE, []).map(c => [c.id, c]));
+  const contactsById = new Map(getAllContacts().map(c => [c.id, c]));
   const t0 = Date.now();
   let fixed = 0, missing = 0;
   for (const row of staleRows) {
@@ -871,7 +871,7 @@ export function getContactRawByEmail(email) {
 // environment-safety, not as a real expected path.
 export function getContactByIdFast(id) {
   if (sqliteInboxAvailable()) return getContactByIdSqlite(id);
-  return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null;
+  return getContactById(id);
 }
 
 // For a caller that needs MANY specific contacts at once (a whole review
@@ -892,7 +892,7 @@ export function getContactsByIdsFast(ids) {
   const result = new Map();
   if (!uniqueIds.length) return result;
   if (!sqliteInboxAvailable()) {
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const idSet = new Set(uniqueIds);
     for (const c of contacts) if (idSet.has(c.id)) result.set(c.id, c);
     return result;

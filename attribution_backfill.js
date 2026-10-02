@@ -24,8 +24,8 @@
 import { existsSync, writeFileSync, copyFileSync } from "fs";
 import { join } from "path";
 import { readJson, writeJson, DATA_DIR } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
+import { getAllContacts } from "./contacts_db.js";
 import { FLOWS_FILE, RUNS_FILE } from "./flows_backend.js";
 
 const FROM_MS = Date.parse("2026-09-02T00:00:00Z"), TO_MS = Date.parse("2026-09-16T08:00:00Z"); // through the Sep 15 Anchorage day
@@ -84,7 +84,7 @@ function runPass(name) {
   const findFlowId = (needle) => flows.find(f => (f.name || "").toUpperCase().includes(needle))?.id || null;
   const programByFlow = new Map([[findFlowId("ONLINE LEAD"), "online"], [findFlowId("GYM LEAD"), "gym"]].filter(([id]) => id));
   const visits = readJson(PAGE_VISITS_FILE, []);
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const contactsById = new Map(contacts.filter(c => !c.testContact).map(c => [c.id, c]));
 
   const byVid = new Map(), vidOwner = new Map(), trackedContacts = new Set();

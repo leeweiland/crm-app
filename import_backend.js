@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, scanJsonArrayFieldSets, appendJsonRecords } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch, markFirstSeen } from "./segments_shared.js";
+import { findContactMatch, markFirstSeen } from "./segments_shared.js";
+import { getAllContacts, getContactById, createContact, updateContactByField, writeAllContacts } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE, NOTES_FILE } from "./inbox_backend.js";
 import { recheckStopStatus, isStopKeyword, BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
@@ -315,7 +316,7 @@ export async function processCloseAltBackfillBatch() {
   const state = readJson(CLOSE_ALT_BACKFILL_STATE_FILE, { nextIndex: 0, processed: 0, updated: 0, errors: 0, done: false });
   if (state.done) return;
 
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const targets = contacts.filter(c => c.externalIds?.closeLeadId);
   if (state.nextIndex >= targets.length) {
     state.done = true;
@@ -339,7 +340,7 @@ export async function processCloseAltBackfillBatch() {
     await new Promise(res => setTimeout(res, CLOSE_ALT_BACKFILL_DELAY_MS));
   }
   state.nextIndex = i;
-  if (contactsChanged) writeJson(CONTACTS_FILE, contacts);
+  if (contactsChanged) writeAllContacts(contacts);
   writeJson(CLOSE_ALT_BACKFILL_STATE_FILE, state);
   console.log(`[close-alt-backfill] ${state.nextIndex}/${targets.length} processed (+${i - startIndex} this tick), ${state.updated} updated so far`);
 }
@@ -382,7 +383,7 @@ export async function processStopStatusRecoveryBatch() {
   const state = readJson(STOP_STATUS_RECOVERY_STATE_FILE, { results: {}, applied: false });
   if (state.applied) return;
 
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const targets = contacts.filter(c => c.status === "STOP" && c.externalIds?.closeLeadId);
   const todo = targets.filter(c => !(c.id in state.results));
 
@@ -399,7 +400,7 @@ export async function processStopStatusRecoveryBatch() {
       }
     }
     if (changed) {
-      writeJson(CONTACTS_FILE, contacts);
+      writeAllContacts(contacts);
       for (const c of contacts) {
         const r = state.results[c.id];
         if (r?.prevStatus && r.prevStatus !== "STOP") {
@@ -450,11 +451,8 @@ async function searchCloseLeadByIdentity(email, phone) {
 // straight to disk since the in-memory `contact` object may be a stale
 // snapshot from an earlier readJson call by this point in the loop.
 function persistContact(contact) {
-  const contacts = readJson(CONTACTS_FILE, []);
-  const stored = contacts.find(c => c.id === contact.id);
+  const stored = updateContactByField("id", contact.id, c => Object.assign(c, contact));
   if (stored) {
-    Object.assign(stored, contact);
-    writeJson(CONTACTS_FILE, contacts);
     try { syncContactFields(stored.id, stored); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   }
 }
@@ -718,7 +716,7 @@ export async function mergeAcContactActivities(contact, acContactId, existingIds
 // exists from a Framer form submission or manual entry, so importing
 // doesn't create a second copy of someone already in the system).
 export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const email = (acContact.email || "").toLowerCase();
   let contact = contacts.find(c => c.externalIds?.acContactId === acContact.id) || findContactMatch(contacts, email, acContact.phone);
   if (contact) {
@@ -740,7 +738,7 @@ export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
     contacts.push(contact);
   }
   if (tagMap && listMap) await enrichAcContact(contact, acContact.id, tagMap, listMap);
-  writeJson(CONTACTS_FILE, contacts);
+  writeAllContacts(contacts);
   try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }
@@ -759,7 +757,7 @@ export function formatCloseAddress(addr) {
   return [addr.address_1, addr.address_2, addr.city, addr.state, addr.zipcode, addr.country].filter(Boolean).join(", ");
 }
 export function upsertFromCloseLead(lead, defaultStatus) {
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const nested = lead.contacts?.length ? lead.contacts : [{ name: lead.display_name, emails: [], phones: [] }];
   const leadAddress = (lead.addresses || []).map(formatCloseAddress).filter(Boolean).join(" | ");
   let count = 0;
@@ -800,7 +798,7 @@ export function upsertFromCloseLead(lead, defaultStatus) {
     count++;
     touched.push(contact);
   });
-  writeJson(CONTACTS_FILE, contacts);
+  writeAllContacts(contacts);
   for (const c of touched) { try { syncContactFields(c.id, c); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
   return { count, contacts: touched };
 }
@@ -1122,15 +1120,14 @@ export async function importCloseSegment(query, limit) {
       const acContact = await fetchAcContactByEmail(contact.email);
       if (acContact) {
         if (!oneToOneCampaigns) oneToOneCampaigns = await fetchAcOneToOneCampaigns();
-        const all = readJson(CONTACTS_FILE, []);
-        const stored = all.find(c => c.id === contact.id);
+        const stored = getContactById(contact.id);
         if (stored) {
           stored.externalIds.acContactId = acContact.id;
           stored.first = stored.first || acContact.firstName || "";
           stored.last = stored.last || acContact.lastName || "";
           markFirstSeen(stored, acContact.cdate);
           await enrichAcContact(stored, acContact.id, tagMap, listMap);
-          writeJson(CONTACTS_FILE, all);
+          updateContactByField("id", stored.id, c => Object.assign(c, stored));
           try { syncContactFields(stored.id, stored); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
           mergeAcCampaigns(stored, oneToOneCampaigns);
           await mergeAcContactActivities(stored, acContact.id);
@@ -1139,8 +1136,7 @@ export async function importCloseSegment(query, limit) {
 
       const hyrosLead = await searchHyrosLeadByIdentity(contact.email, contact.phone);
       if (hyrosLead) {
-        const all = readJson(CONTACTS_FILE, []);
-        const stored = all.find(c => c.id === contact.id);
+        const stored = getContactById(contact.id);
         if (stored) {
           stored.externalIds.hyrosLeadId = hyrosLead.id;
           markFirstSeen(stored, hyrosLead.creationDate);
@@ -1148,7 +1144,7 @@ export async function importCloseSegment(query, limit) {
             const tag = getOrCreateTag(name);
             if (tag && !stored.tags.includes(tag.id)) stored.tags.push(tag.id);
           });
-          writeJson(CONTACTS_FILE, all);
+          updateContactByField("id", stored.id, c => Object.assign(c, stored));
           try { syncContactFields(stored.id, stored); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
           mergeHyrosActivity(stored, hyrosLead);
         }
@@ -1194,7 +1190,7 @@ export async function handleImportRequest(req, res, url) {
   // lead existed yet.
   if (p === "/api/import/backfill-status" && req.method === "POST") {
     if (!closeConfigured()) return sendJson(res, 400, { error: "CLOSE_API_KEY isn't set yet." });
-    const all = readJson(CONTACTS_FILE, []);
+    const all = getAllContacts();
     const statusTargets = all.filter(c => ["ac_import", "hyros_import"].includes(c.source) && (!c.status || (!c.first && !c.last)));
     let statusUpdated = 0;
     for (const contact of statusTargets) {
@@ -1206,7 +1202,7 @@ export async function handleImportRequest(req, res, url) {
     // covers every Close-linked contact regardless of source, including
     // ones the status pass above just linked and ones already linked
     // before this feature existed.
-    const fieldTargets = readJson(CONTACTS_FILE, []).filter(c => c.externalIds?.closeLeadId);
+    const fieldTargets = getAllContacts().filter(c => c.externalIds?.closeLeadId);
     let fieldsUpdated = 0;
     for (const contact of fieldTargets) {
       const lead = await fetchCloseLeadById(contact.externalIds.closeLeadId);
@@ -1348,7 +1344,7 @@ export async function handleImportRequest(req, res, url) {
   // the Inbox) rather than as a background catch-up job.
   if (p === "/api/import/close-history" && req.method === "POST") {
     const { contactId } = await readJsonBody(req);
-    const contact = readJson(CONTACTS_FILE, []).find(c => c.id === contactId);
+    const contact = getContactById(contactId);
     if (!contact) return sendJson(res, 404, { error: "Contact not found" });
     try {
       const result = await pullCloseHistoryForContact(contact);
@@ -1366,7 +1362,7 @@ export async function handleImportRequest(req, res, url) {
   if (p === "/api/import/manual" && req.method === "POST") {
     const { records, defaultStatus } = await readJsonBody(req);
     if (!Array.isArray(records) || !records.length) return sendJson(res, 400, { error: "No records to import" });
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     let imported = 0, skipped = 0;
     const errors = [];
     const touched = [];
@@ -1399,7 +1395,7 @@ export async function handleImportRequest(req, res, url) {
         imported++;
       } catch (e) { errors.push({ row: i, message: e.message }); }
     });
-    writeJson(CONTACTS_FILE, contacts);
+    writeAllContacts(contacts);
     for (const c of touched) { try { syncContactFields(c.id, c); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
     return sendJson(res, 200, { ok: true, imported, skipped, errors });
   }

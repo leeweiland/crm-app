@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
+import { matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
+import { getAllContacts, getContactById, updateContactByField } from "./contacts_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
@@ -52,11 +53,9 @@ function automationSnapshotFields(automation) {
 export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created"];
 export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal"];
 
-function getContact(id) { return readJson(CONTACTS_FILE, []).find(c => c.id === id) || null; }
+function getContact(id) { return getContactById(id); }
 function saveContact(contact) {
-  const contacts = readJson(CONTACTS_FILE, []);
-  const idx = contacts.findIndex(c => c.id === contact.id);
-  if (idx >= 0) { contacts[idx] = contact; writeJson(CONTACTS_FILE, contacts); }
+  updateContactByField("id", contact.id, c => Object.assign(c, contact));
 }
 function saveEnrollment(enrollment) {
   const enrollments = readJson(ENROLLMENTS_FILE, []);
@@ -629,7 +628,7 @@ export async function handleAutomationsRequest(req, res, url) {
   const enrollmentsMatch = p.match(/^\/api\/automations\/([^/]+)\/enrollments$/);
   if (enrollmentsMatch && req.method === "GET") {
     const enrollments = readJson(ENROLLMENTS_FILE, []).filter(e => e.automationId === enrollmentsMatch[1]);
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const withContacts = enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null }));
     return sendJson(res, 200, { enrollments: withContacts });
   }

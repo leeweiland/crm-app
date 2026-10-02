@@ -34,6 +34,16 @@ import { processTwilioStatusUpdate } from "./sms_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { computeAndCacheAllCounts } from "./contacts_backend.js";
 import { runCampaignSendLoop } from "./campaigns_backend.js";
+import { loadContactsCache } from "./contacts_db.js";
+
+// worker_threads gives this file its own V8 heap and its own module
+// registry entirely separate from the main thread's -- contacts_db.js's
+// in-memory cache is a per-module-instance variable, so this thread has its
+// OWN empty copy that the main thread's own loadContactsCache() call never
+// populates. Every one of the 17 scheduler phases (and the webhook
+// processing below) reads contacts through that cache, so it must be loaded
+// here too, independently, before any of them run.
+await loadContactsCache();
 
 const TICK_MS = 30 * 1000;
 setInterval(guardedTick, TICK_MS);

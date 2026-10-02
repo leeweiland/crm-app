@@ -12,9 +12,9 @@ import { setConvoMeta } from "./conversation_meta.js";
 import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
+import { getContactById, updateContactByField } from "./contacts_db.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
-export const CONTACTS_FILE = "crm_contacts.json";
 
 // Resolves a clicked tracked link back to the source block that produced it
 // (matched by exact destination URL, same source campaign/automation-step the
@@ -36,14 +36,16 @@ function executeLinkClickAction(row, destUrl) {
   const block = blocks.find(b => (b.type === "image" || b.type === "button") && b.link === destUrl);
   if (!block?.linkAction || block.linkAction.type !== "add_tag" || !block.linkAction.tagId) return;
 
-  const contacts = readJson(CONTACTS_FILE, []);
-  const contact = contacts.find(c => c.id === row.contactId);
+  const contact = getContactById(row.contactId);
   if (!contact) return;
   if (!contact.tags) contact.tags = [];
   if (!contact.tags.includes(block.linkAction.tagId)) {
-    contact.tags.push(block.linkAction.tagId);
-    contact.updatedAt = new Date().toISOString();
-    writeJson(CONTACTS_FILE, contacts);
+    updateContactByField("id", contact.id, c => {
+      c.tags = c.tags || [];
+      if (!c.tags.includes(block.linkAction.tagId)) c.tags.push(block.linkAction.tagId);
+      c.updatedAt = new Date().toISOString();
+      return c;
+    });
     fireTrigger("tag_added", { contactId: contact.id, tagId: block.linkAction.tagId });
     fireWorkflowTrigger("tag_added", { contactId: contact.id, tagId: block.linkAction.tagId });
   }
@@ -485,15 +487,16 @@ export async function handleEmailRequest(req, res, url) {
 
   if (p === "/api/email/unsubscribe" && req.method === "GET") {
     const contactId = url.searchParams.get("c");
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find(c => c.id === contactId);
+    const contact = getContactById(contactId);
     if (contact) {
       // Only emailOptOut -- never contact.status. Same reasoning as
       // recheckStopStatus (compliance_backend.js): a genuinely ENROLLED or
       // BOOKED contact clicking an unsubscribe link must stop receiving
       // marketing email without their real pipeline stage being erased.
-      contact.emailOptOut = true; contact.updatedAt = new Date().toISOString();
-      writeJson(CONTACTS_FILE, contacts);
+      updateContactByField("id", contact.id, c => {
+        c.emailOptOut = true; c.updatedAt = new Date().toISOString();
+        return c;
+      });
       setConvoMeta(contact.id, { archived: true });
     }
     // Settings > Opt Out's "Unsubscribe Redirect" -- "" (the default) falls

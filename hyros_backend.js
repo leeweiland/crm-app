@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch, markFirstSeen, digitsOnly } from "./segments_shared.js";
+import { findContactMatch, markFirstSeen, digitsOnly } from "./segments_shared.js";
+import { getAllContacts, writeAllContacts } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { getOrCreateTag } from "./contacts_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
@@ -47,7 +48,7 @@ export async function searchHyrosLeadByIdentity(email, phone) {
 // duplicate), falling back to email/phone -- same identity-merge rule
 // every other importer in this app follows.
 export function upsertFromHyros(hyrosLead, defaultStatus) {
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   const email = (hyrosLead.email || "").toLowerCase();
   const phone = (hyrosLead.phoneNumbers || [])[0] || "";
   let contact = contacts.find(c => c.externalIds?.hyrosLeadId === hyrosLead.id) || findContactMatch(contacts, email, phone);
@@ -98,7 +99,7 @@ export function upsertFromHyros(hyrosLead, defaultStatus) {
       phoneNumbers: hyrosLead.originLead.phoneNumbers || [],
     };
   }
-  writeJson(CONTACTS_FILE, contacts);
+  writeAllContacts(contacts);
   try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }

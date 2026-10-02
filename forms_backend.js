@@ -3,7 +3,8 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
+import { findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
+import { getAllContacts, writeAllContacts } from "./contacts_db.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
@@ -420,7 +421,7 @@ function upsertContactFromSubmission(form, answers, bookedIdentity) {
   const [bookedFirst, ...bookedRest] = String(bookedIdentity?.name || "").trim().split(/\s+/);
   const bookedLast = bookedRest.join(" ");
 
-  const contacts = readJson(CONTACTS_FILE, []);
+  const contacts = getAllContacts();
   let contact = findContactMatch(contacts, email, phone);
   const prevTags = contact ? [...contact.tags] : [];
   const prevListIds = contact ? [...contact.listIds] : [];
@@ -480,7 +481,7 @@ function upsertContactFromSubmission(form, answers, bookedIdentity) {
   (form.settings.addTagIds || []).forEach(tagId => { if (!contact.tags.includes(tagId)) contact.tags.push(tagId); });
   (form.settings.addListIds || []).forEach(listId => { if (!contact.listIds.includes(listId)) contact.listIds.push(listId); });
   contact.updatedAt = new Date().toISOString();
-  writeJson(CONTACTS_FILE, contacts);
+  writeAllContacts(contacts);
   // Without this, a form-created (or form-updated) contact's real status/
   // name/etc. never reaches the Inbox sidebar's SQLite snapshot until
   // something else happens to touch this contact -- confirmed live: a
@@ -753,7 +754,7 @@ export async function handleFormsRequest(req, res, url) {
   const responsesMatch = p.match(/^\/api\/forms\/([^/]+)\/responses$/);
   if (responsesMatch && req.method === "GET") {
     const responses = readJson(RESPONSES_FILE, []).filter(r => r.formId === responsesMatch[1]);
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const withContact = responses.map(r => ({ ...r, contact: contacts.find(c => c.id === r.contactId) ? { first: contacts.find(c => c.id === r.contactId).first, last: contacts.find(c => c.id === r.contactId).last, email: contacts.find(c => c.id === r.contactId).email } : null }));
     withContact.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
     return sendJson(res, 200, { responses: withContact });

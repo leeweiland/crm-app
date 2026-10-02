@@ -1,6 +1,7 @@
 import { randomUUID, randomBytes } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE, matchesSegment, findContactMatch } from "./segments_shared.js";
+import { matchesSegment, findContactMatch } from "./segments_shared.js";
+import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
@@ -64,15 +65,14 @@ function withTimeout(promise, ms, label) {
 // is the same indexed lookup already used elsewhere for exactly this.
 function getContact(id) { return getContactByIdFast(id); }
 function saveContact(contact) {
-  const contacts = readJson(CONTACTS_FILE, []);
-  const idx = contacts.findIndex(c => c.id === contact.id);
-  if (idx >= 0) {
-    contact.updatedAt = new Date().toISOString(); contacts[idx] = contact; writeJson(CONTACTS_FILE, contacts);
+  contact.updatedAt = new Date().toISOString();
+  const updated = updateContactByField("id", contact.id, c => Object.assign(c, contact));
+  if (updated) {
     // Every step below (add_tag/change_status/add_update_contact/etc) used
     // to skip this -- confirmed live the sidebar's SQLite snapshot just
     // silently never picked up a status/name/email change made by a flow
     // step until something else happened to re-sync that contact.
-    try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+    try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   }
 }
 
@@ -408,7 +408,7 @@ async function advanceFlowRun(run, flow) {
       if (!workingContact) {
         const resolvedEmail = cfg.email ? resolveTemplate(cfg.email, ctx).toLowerCase() : "";
         const resolvedPhone = cfg.phone ? resolveTemplate(cfg.phone, ctx) : "";
-        const contacts = readJson(CONTACTS_FILE, []);
+        const contacts = getAllContacts();
         workingContact = findContactMatch(contacts, resolvedEmail, resolvedPhone);
         if (!workingContact) {
           workingContact = {
@@ -418,8 +418,7 @@ async function advanceFlowRun(run, flow) {
             emailOptOut: false, smsOptOut: false, externalIds: { acContactId: null, closeLeadId: null },
             createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
           };
-          contacts.push(workingContact);
-          writeJson(CONTACTS_FILE, contacts);
+          createContact(workingContact);
         }
         run.contactId = workingContact.id;
         // Claims whatever vid a client-side submit beacon already reported
@@ -982,6 +981,43 @@ export async function handleFlowsRequest(req, res, url) {
       // saving the trigger silently deletes whatever Pull Sample Data had
       // captured.
       const oldSamples = flow.trigger?.type === "webhook" ? flow.trigger.config?.samples : undefined;
+      // A Delay step's own waitUntil is a snapshot computed once, when a
+      // run first reaches that step, from whatever amount/unit it had at
+      // that moment (see the "delay" branch that advances runs forward).
+      // Editing the step afterward silently did nothing for anyone already
+      // parked there -- only new arrivals would see the new duration, which
+      // reads as the edit not working. automations_backend.js and
+      // workflows_backend.js's own PATCH handlers already fix this exact
+      // gap for their own Wait steps (confirmed live for both: changing a
+      // 10,000-day placeholder down to 1 day left already-enrolled contacts
+      // waiting on their original due date) -- Flows never got the same
+      // fix. Detect a changed Delay step's amount/unit here (matched by
+      // step id, stable across saves) and re-anchor every run currently
+      // sitting at that step to now + the new duration.
+      if ("steps" in body && body.steps && typeof body.steps === "object") {
+        const oldSteps = flow.steps || {};
+        const newSteps = body.steps;
+        const changedDelayStepIds = Object.keys(newSteps).filter(id => {
+          const oldStep = oldSteps[id], newStep = newSteps[id];
+          return oldStep?.type === "delay" && newStep?.type === "delay" &&
+            (oldStep.config?.amount !== newStep.config?.amount || oldStep.config?.unit !== newStep.config?.unit);
+        });
+        if (changedDelayStepIds.length) {
+          const runs = readJson(RUNS_FILE, []);
+          let touched = false;
+          for (const run of runs) {
+            if (run.flowId === flow.id && run.status === "active" && run.waitUntil && changedDelayStepIds.includes(run.currentStepId)) {
+              const step = newSteps[run.currentStepId];
+              const ms = step.config.unit === "days" ? step.config.amount * 86400000
+                : step.config.unit === "hours" ? step.config.amount * 3600000
+                : step.config.amount * 60000;
+              run.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
+              touched = true;
+            }
+          }
+          if (touched) writeJson(RUNS_FILE, runs);
+        }
+      }
       for (const k of ["name", "trigger", "steps", "startStepId", "active"]) if (k in body) flow[k] = body[k];
       // Lazily mint the webhook's URL token the first time a flow's trigger
       // becomes "webhook" -- the client never invents this itself so the
@@ -1044,7 +1080,7 @@ export async function handleFlowsRequest(req, res, url) {
   const runsMatch = p.match(/^\/api\/flows\/([^/]+)\/runs$/);
   if (runsMatch && req.method === "GET") {
     const runs = readJson(RUNS_FILE, []).filter(r => r.flowId === runsMatch[1]).sort((a, b) => new Date(b.enteredAt) - new Date(a.enteredAt)).slice(0, 100);
-    const contacts = readJson(CONTACTS_FILE, []);
+    const contacts = getAllContacts();
     const withContact = runs.map(r => {
       const c = contacts.find(c => c.id === r.contactId);
       return { ...r, contact: c ? { first: c.first, last: c.last, email: c.email } : null };

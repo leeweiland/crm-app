@@ -1,5 +1,5 @@
 import { readJson, USERS_FILE } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
+import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
@@ -42,8 +42,7 @@ function findCoveringAgent(agents, ownerId) {
 // message-logging path it's hooked onto).
 export async function maybeCoverInboundReply(contactId) {
   try {
-    const contacts = readJson(CONTACTS_FILE, []);
-    const contact = contacts.find((c) => c.id === contactId);
+    const contact = getContactById(contactId);
     if (!contact) return;
 
     const agents = readJson(AI_AGENTS_FILE, []);

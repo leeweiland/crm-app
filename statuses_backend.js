@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { CONTACTS_FILE } from "./segments_shared.js";
 import { renameStatusInSqlite } from "./sqlite_inbox.js";
+import { updateAllContactsByField } from "./contacts_db.js";
 
 export const STATUSES_FILE = "crm_statuses.json";
 
@@ -39,14 +39,9 @@ function getStatuses() {
 // COPY of a status's label, not a foreign key, so moving contacts off the
 // old label is the caller's job, not something that happens for free.
 function cascadeStatusLabel(oldLabel, newLabel) {
-  const contacts = readJson(CONTACTS_FILE, []);
-  let changed = 0;
-  for (const c of contacts) {
-    if (c.status === oldLabel) { c.status = newLabel; c.updatedAt = new Date().toISOString(); changed++; }
-  }
-  if (changed) writeJson(CONTACTS_FILE, contacts);
+  const changed = updateAllContactsByField("status", oldLabel, c => { c.status = newLabel; c.updatedAt = new Date().toISOString(); return c; });
   try { renameStatusInSqlite(oldLabel, newLabel); } catch (e) { console.error("[sqlite_inbox] status cascade sync failed:", e.message); }
-  return changed;
+  return changed.length;
 }
 
 export async function handleStatusesRequest(req, res, url) {
