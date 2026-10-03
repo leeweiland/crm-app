@@ -257,7 +257,7 @@ function renderCampaignsTable() {
 }
 let sendPollTimer = null;
 let refsLoaded = false;
-async function loadCampaigns() {
+async function loadCampaigns(isPoll = false) {
   const requests = [fetch('/api/campaigns')];
   if (!refsLoaded) requests.push(fetch('/api/lists'), fetch('/api/segments'));
   const [r, listsRes, segmentsRes] = await Promise.all(requests);
@@ -275,14 +275,25 @@ async function loadCampaigns() {
   // campaign's stats live and cheaply (getMessagesForSource is a bounded
   // per-source scan, not a full-log read) -- fine to call once per SENT
   // campaign here, since that's a naturally small, bounded set.
-  const sentCampaigns = allCampaigns.filter(c => c.status === 'sent');
-  const liveStats = await Promise.all(sentCampaigns.map(c => fetch(`/api/reporting/campaigns/${c.id}`).then(res => res.ok ? res.json() : null).catch(() => null)));
-  sentCampaigns.forEach((c, i) => { if (liveStats[i]) c.stats = liveStats[i].stats; });
+  //
+  // On a recurring poll (while something is mid-send), only refresh the
+  // campaign(s) actually sending -- not every historical sent campaign.
+  // Confirmed live: with dozens of past campaigns, re-fetching all of
+  // their stats every 3s for the entire duration of a long send competed
+  // for real CPU/disk with the send loop itself on the same
+  // CPU-constrained container, measurably slowing the send down. The
+  // reporting endpoint already computes live stats for an in-progress
+  // campaign too (it rolls up from that campaign's own source file,
+  // independent of the cached stats snapshot above), so this loses
+  // nothing for the one that matters during a poll.
+  const statsTargets = isPoll ? allCampaigns.filter(c => c.status === 'sending') : allCampaigns.filter(c => c.status === 'sent');
+  const liveStats = await Promise.all(statsTargets.map(c => fetch(`/api/reporting/campaigns/${c.id}`).then(res => res.ok ? res.json() : null).catch(() => null)));
+  statsTargets.forEach((c, i) => { if (liveStats[i]) c.stats = liveStats[i].stats; });
   renderCampaignsTable();
   // Re-poll every 3s only while something is actually mid-send -- avoids
   // polling forever on a normal, idle campaigns list.
   clearTimeout(sendPollTimer);
-  if (allCampaigns.some(c => c.status === 'sending')) sendPollTimer = setTimeout(loadCampaigns, 3000);
+  if (allCampaigns.some(c => c.status === 'sending')) sendPollTimer = setTimeout(() => loadCampaigns(true), 3000);
 }
 document.getElementById('campaignSearch').addEventListener('input', () => { clearTimeout(window._cst); window._cst = setTimeout(() => { campaignsPage = 1; renderCampaignsTable(); }, 200); });
 // Sort choice persists per-user (server-side) so it survives navigation,
