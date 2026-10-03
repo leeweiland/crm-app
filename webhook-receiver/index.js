@@ -73,7 +73,7 @@ function signRelayBody(rawBody) {
 }
 
 async function relayOne(row) {
-  const rawBody = JSON.stringify(row.payload);
+  const rawBody = JSON.stringify({ type: row.type, ...row.payload });
   const { timestamp, signature } = signRelayBody(rawBody);
   const res = await fetch(`${CRM_APP_URL}/internal/webhook-relay`, {
     method: "POST",
