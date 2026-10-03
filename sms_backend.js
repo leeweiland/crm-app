@@ -138,9 +138,18 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId, media
     // (see below), but was never actually being told about, so every
     // outbound SMS sat at "queued" forever in our own records no matter
     // what actually happened on the wire.
+    //
+    // Points at the standalone crm-webhook-receiver service (its own
+    // durable queue + retry) rather than this app directly when
+    // WEBHOOK_RECEIVER_URL is set, so a status callback survives this app
+    // being mid-redeploy instead of just 502ing. Falls back to this app's
+    // own /api/webhooks/twilio/status (unchanged, still fully functional)
+    // when it isn't -- ships inert until the var is actually set.
     const msg = await client.messages.create({
       to: toFormatted, from: twilioSettings.fromNumber, body,
-      statusCallback: `${getPublicBaseUrl()}/api/webhooks/twilio/status`,
+      statusCallback: process.env.WEBHOOK_RECEIVER_URL
+        ? `${process.env.WEBHOOK_RECEIVER_URL}/webhooks/twilio/status`
+        : `${getPublicBaseUrl()}/api/webhooks/twilio/status`,
       // Optional MMS attachment (e.g. an AI agent's [[GIF: <url>]] marker --
       // see ai_active_backend.js's sendViaChannel). Twilio's SDK wants an
       // array even for a single media item.
