@@ -1,0 +1,13 @@
+{
+  "name": "crm-webhook-receiver",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "twilio": "^5.3.4"
+  }
+}
