@@ -168,6 +168,32 @@ export function processTwilioStatusUpdate(messageSid, status) {
   updateMessageStatusByProviderId(messageSid, status);
 }
 
+// Split out of the webhook handler for the same reason as
+// processTwilioStatusUpdate above, AND so the webhook-receiver service's
+// internal relay endpoint (server.js's /internal/webhook-relay) can run
+// this exact same logic for an inbound message it already ack'd to Twilio
+// on its own. Signature validation stays with whichever process actually
+// received the raw HTTP request (it needs the raw headers) -- this is only
+// the part that touches contacts/message_log.
+export function processTwilioInboundMessage(from, body) {
+  const twilioSettings = getTwilioSettings();
+  const contact = findContactByPhone(from);
+  if (contact) {
+    // AI Assist drafts are generated on demand (when a human opens this
+    // contact's conversation in the Inbox), not reactively here -- see
+    // ai_agents_backend.js's maybeGenerateAiAssistDraft.
+    logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
+    checkConversionGoal("incoming_sms", contact.id);
+    recheckStopStatus(contact.id);
+    checkAutoTriggers(contact.id);
+    maybeCoverInboundReply(contact.id); // no-op unless this lead's owner is Away and an agent covers for them
+  } else {
+    // Message from a number with no matching contact -- still logged
+    // (contactId: null) so it's visible in the Inbox, just unattributed.
+    logMessage({ channel: "sms", direction: "inbound", contactId: null, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
+  }
+}
+
 function readRawBody(req) {
   return new Promise((resolve) => {
     let body = "";
@@ -193,22 +219,7 @@ export async function handleSmsRequest(req, res, url) {
     if (twilioConfigured() && !twilio.validateRequest(twilioSettings.authToken, signature, fullUrl, params)) {
       res.writeHead(403); res.end(); return true;
     }
-    const from = params.From, body = params.Body || "";
-    const contact = findContactByPhone(from);
-    if (contact) {
-      // AI Assist drafts are generated on demand (when a human opens this
-      // contact's conversation in the Inbox), not reactively here -- see
-      // ai_agents_backend.js's maybeGenerateAiAssistDraft.
-      logMessage({ channel: "sms", direction: "inbound", contactId: contact.id, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
-      checkConversionGoal("incoming_sms", contact.id);
-      recheckStopStatus(contact.id);
-      checkAutoTriggers(contact.id);
-      maybeCoverInboundReply(contact.id); // no-op unless this lead's owner is Away and an agent covers for them
-    } else {
-      // Message from a number with no matching contact -- still logged
-      // (contactId: null) so it's visible in the Inbox, just unattributed.
-      logMessage({ channel: "sms", direction: "inbound", contactId: null, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
-    }
+    processTwilioInboundMessage(params.From, params.Body || "");
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>"); // empty TwiML -- no auto-reply
     return true;
