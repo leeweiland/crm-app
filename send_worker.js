@@ -24,8 +24,9 @@
 // access, unlike a separate service would), just isolated onto a thread
 // that only ever does this one thing.
 import { parentPort } from "worker_threads";
-import { runCampaignSendLoop } from "./campaigns_backend.js";
+import { runCampaignSendLoop, sendCampaignNow, CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
+import { readJson } from "./auth_backend.js";
 
 // Same reasoning as background_worker.js's own loadContactsCache() call --
 // worker_threads get their own independent module registry, so this
@@ -33,6 +34,42 @@ import { loadContactsCache } from "./contacts_db.js";
 // thread's load never populates. runCampaignSendLoop resolves recipients
 // via getAllContacts(), so this must happen before any send can run here.
 await loadContactsCache();
+
+// Self-sufficient due/stuck-campaign check -- NOT delegated to
+// scheduler.js's tick (which deliberately skips this when SEND_WORKER=1;
+// see its own comment). Confirmed live (2026-10-04) why it can't stay
+// there: that phase runs on the background-worker thread, and
+// sendCampaignNow's getSendWorker()/getBackgroundWorker() lookups resolve
+// to null when called from a DIFFERENT thread than the one that holds the
+// real references (only server.js, on the main thread, ever calls
+// setSendWorker/setBackgroundWorker -- worker_threads have separate module
+// registries). The silent fallback was running the send loop INLINE on
+// the background-worker thread -- the exact thread this file exists to
+// keep sends off of. Called from HERE instead, that same fallback
+// resolves correctly: both lookups still return null (this thread never
+// sets them either), but null-both IS correct in this one spot, since
+// falling through to a plain, local runCampaignSendLoop call is exactly
+// where the dedicated send thread wants this to run anyway.
+const STUCK_SEND_THRESHOLD_MS = 3 * 60 * 1000;
+const CAMPAIGN_CHECK_MS = 30 * 1000;
+function checkCampaigns() {
+  try {
+    const campaigns = readJson(CAMPAIGNS_FILE, []);
+    const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
+    for (const campaign of due) {
+      console.log(`[send-worker] sending due campaign ${campaign.id} (${campaign.name})`);
+      try { sendCampaignNow(campaign.id); } catch (e) { console.error("[send-worker] campaign send failed", campaign.id, e.message); }
+    }
+    const stuck = campaigns.filter(c => c.status === "sending" && c.updatedAt && Date.now() - new Date(c.updatedAt).getTime() > STUCK_SEND_THRESHOLD_MS);
+    for (const campaign of stuck) {
+      console.log(`[send-worker] resuming stuck campaign ${campaign.id} (${campaign.name}), progress was ${campaign.sendProgress?.sent}/${campaign.sendProgress?.total}`);
+      try { sendCampaignNow(campaign.id); } catch (e) { console.error("[send-worker] campaign resume failed", campaign.id, e.message); }
+    }
+  } catch (e) {
+    console.error("[send-worker] checkCampaigns failed", e.message);
+  }
+}
+setInterval(checkCampaigns, CAMPAIGN_CHECK_MS);
 
 parentPort.on("message", (msg) => {
   try {

@@ -45,6 +45,21 @@ async function timedPhase(name, fn) {
 async function tick() {
   try {
     await timedPhase("campaigns", async () => {
+      // Skipped entirely when SEND_WORKER=1 -- see send_worker.js's own
+      // checkCampaigns, which does this exact same due/stuck scan
+      // independently. Confirmed live (2026-10-04) why this can't just stay
+      // here: this phase runs ON the background-worker thread, and
+      // sendCampaignNow's own getSendWorker()/getBackgroundWorker() lookups
+      // resolve to null when called FROM that thread -- worker_threads have
+      // separate module registries, so send_worker_handle.js's workerRef
+      // here was never set (only server.js, on the MAIN thread, calls
+      // setSendWorker). The silent fallback is runCampaignSendLoop INLINE,
+      // on the background-worker thread, which is exactly the thread
+      // SEND_WORKER=1 exists to keep sends off of -- a 23k-recipient
+      // campaign kept stalling for minutes at a time because every resume
+      // landed back on the same thread as the webhook flood it was meant
+      // to be isolated from.
+      if (process.env.SEND_WORKER === "1") return;
       const campaigns = readJson(CAMPAIGNS_FILE, []);
       const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
       for (const campaign of due) {
