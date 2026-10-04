@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
-import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact, queueContactEngagementUpdate } from "./contacts_db.js";
+import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact, queueContactEngagementUpdate, onEngagementFlush } from "./contacts_db.js";
 import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -132,17 +132,22 @@ export function markContactEmailEngagement(contactId, kind, atISO) { // kind: "o
   if (!contactId) return;
   // Batched write (see contacts_db.js's own comment on queueContactEngagementUpdate
   // for the full reasoning) -- updates the in-memory contact immediately
-  // (so the SQLite sync right below, and every other reader, sees it with
-  // zero delay), defers only the expensive full-file JSON write.
-  const updated = queueContactEngagementUpdate(contactId, kind, atISO);
-  // Without this, the SQLite mirror (contacts_idx) silently drifts from
-  // the real file the moment an open/click lands -- confirmed live: caught
-  // getContactByIdFast (sqlite_inbox.js) returning a stale emailEngagement
-  // for a contact that had opened an email minutes earlier. Best-effort,
-  // same reasoning as the PATCH /api/contacts/:id handler's own sync call
-  // below -- a sync bug here shouldn't block the actual contact save.
-  if (updated) { try { syncContactFields(contactId, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
+  // (every reader, including getContactByIdFast below, sees it with zero
+  // delay), defers only the expensive full-file JSON write AND the SQLite
+  // sync (see the onEngagementFlush registration below) to the same batch.
+  queueContactEngagementUpdate(contactId, kind, atISO);
 }
+// Registered once at module load, not per call -- the SQLite mirror
+// (contacts_idx) needs the exact same batching the JSON write just got.
+// sqlite_inbox.js's own syncContactFieldsBatch comment documents this
+// precise bug already happening once before at this scale ("1,600
+// contacts froze the whole server for ~140s, 2026-09-21") from calling
+// the unbatched, autocommitted syncContactFields once per contact instead
+// of one transaction for all of them -- markContactEmailEngagement was
+// doing exactly that, once per open/click webhook, until this.
+onEngagementFlush((contacts) => {
+  try { syncContactFieldsBatch(contacts); } catch (e) { console.error("[sqlite_inbox] engagement batch sync failed:", e.message); }
+});
 // A hard bounce or spam complaint (SES webhook, see email_backend.js) is
 // treated the same as an explicit unsubscribe -- reuses the exact same
 // emailOptOut flag sendEmail() already checks before every send, so a

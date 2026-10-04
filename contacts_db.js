@@ -350,12 +350,27 @@ export function queueContactEngagementUpdate(contactId, kind, atISO) {
   return existing ? { ...existing } : null;
 }
 
+// Listener hook, not a direct import of sqlite_inbox.js -- that file
+// already imports FROM this one (getAllContacts/getContactById), so
+// importing it back here would be circular. contacts_backend.js (which
+// already imports both modules independently) wires syncContactFieldsBatch
+// in as a listener once at startup instead. Confirmed live history behind
+// why this needs to be batched too, not just the JSON write: sqlite_inbox.js's
+// own syncContactFieldsBatch comment documents the EXACT same shape of bug
+// here before -- "1,600 contacts froze the whole server for ~140s
+// (2026-09-21)" from calling the unbatched, autocommitted syncContactFields
+// once per contact instead of one transaction for all of them. Calling it
+// once per engagement event (as markContactEmailEngagement used to) was
+// exactly that same mistake, just not yet caught for this call site.
+const _engagementFlushListeners = [];
+export function onEngagementFlush(fn) { _engagementFlushListeners.push(fn); }
+
 function flushEngagementUpdates() {
   _engagementFlushTimer = null;
   if (!_pendingEngagement.size) return;
   const pending = new Map(_pendingEngagement);
   _pendingEngagement.clear();
-  updateContactsByIdSet(new Set(pending.keys()), (c) => {
+  const results = updateContactsByIdSet(new Set(pending.keys()), (c) => {
     const p = pending.get(c.id);
     if (!p) return c;
     c.emailEngagement = c.emailEngagement || {};
@@ -369,6 +384,7 @@ function flushEngagementUpdates() {
     }
     return c;
   });
+  for (const fn of _engagementFlushListeners) { try { fn(results); } catch (e) { console.error("[contacts_db] engagement flush listener failed:", e.message); } }
 }
 // Equivalent of updateAllJsonArrayRecordsByField(CONTACTS_FILE, field, value, updater)
 // -- every record where contact[field] === value, not just the first.
