@@ -83,8 +83,20 @@ async function relayOne(row) {
   if (!res.ok) throw new Error(`crm-app returned ${res.status}`);
 }
 
+// Guards against overlapping passes -- setInterval fires on a fixed
+// schedule regardless of whether the previous call finished, and a batch
+// of up to 25 rows relayed one at a time can take longer than
+// RELAY_INTERVAL_MS to drain (confirmed live: catching up on over an
+// hour of backlog after a pause). Without this, multiple passes run
+// concurrently, each sending its own relay calls, piling concurrent
+// requests onto crm-app's single background-worker thread at once --
+// same class of bug as scheduler.js's own "previous tick still running"
+// guard on the crm-app side, just in this service instead.
+let relayLoopRunning = false;
 async function runRelayLoop() {
   if (!CRM_APP_URL || !RELAY_SECRET) return;
+  if (relayLoopRunning) return;
+  relayLoopRunning = true;
   try {
     // Oldest-first, skip anything attempted in the last 10s (lets a fresh
     // failure's own imminent retry own the row instead of double-firing).
@@ -102,6 +114,8 @@ async function runRelayLoop() {
     }
   } catch (e) {
     console.error("[webhook-receiver] relay loop error:", e.message);
+  } finally {
+    relayLoopRunning = false;
   }
 }
 

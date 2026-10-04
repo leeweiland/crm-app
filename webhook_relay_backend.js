@@ -39,7 +39,7 @@ import { processSesNotificationMessage } from "./email_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
-const WORKER_REPLY_TIMEOUT_MS = 15_000;
+const WORKER_REPLY_TIMEOUT_MS = 45_000;
 
 function readRawBody(req) {
   return new Promise((resolve) => {
