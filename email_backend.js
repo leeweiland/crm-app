@@ -421,8 +421,30 @@ export function processSesNotificationMessage(raw) {
     const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
     if (providerMessageId && statusMap[eventType]) {
       const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
-      if (row?.contactId && statusMap[eventType] === "opened") { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
-      if (row?.contactId && statusMap[eventType] === "clicked") { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
+      // Skip the whole block (contact write + both trigger systems) when
+      // THIS SPECIFIC MESSAGE was already marked opened/clicked before this
+      // call -- confirmed live (2026-10-04) as a major, previously-unnoticed
+      // cost: email clients send repeat Open pings for one human open
+      // (Apple Mail's privacy proxy famously pre-fetches every image,
+      // including tracking pixels, on receipt, independent of whether
+      // anyone reads the email), so most of a large campaign's Open-event
+      // volume is pure duplicates for the same send. Each one still paid
+      // markContactEmailEngagement's full streaming copy of
+      // crm_contacts.json (194MB, under the same cross-thread file lock the
+      // send loop also needs) AND re-fired both trigger systems AND
+      // re-queued a behavioral trigger, all for a value that was not going
+      // to change.
+      // Scoped to THIS message's own statusHistory, not
+      // contact.emailEngagement (which is a lifetime, contact-level flag,
+      // not per-send) -- a contact's FIRST open of a brand new campaign
+      // must still fire every time, even though they opened some other
+      // email months ago. statusHistory already gets an entry pushed on
+      // every call, duplicate or not (see updateMessageStatusByProviderId),
+      // so a 2nd+ entry of the same status on THIS row is the correct,
+      // precise signal that this exact notification is a repeat.
+      const isRepeatForThisMessage = row?.statusHistory?.filter(h => h.status === statusMap[eventType]).length > 1;
+      if (row?.contactId && statusMap[eventType] === "opened" && !isRepeatForThisMessage) { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
+      if (row?.contactId && statusMap[eventType] === "clicked" && !isRepeatForThisMessage) { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
       if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressContactEmail(row.contactId, statusMap[eventType]);
     }
   } catch (e) { console.error("[SES webhook] parse failed", e.message); }
