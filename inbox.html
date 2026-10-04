@@ -86,7 +86,7 @@
      does NOT fill the avatar itself neon green anymore (Lee: the green
      unread-count badge and time already say "needs a reply", the circle
      stays normal) -- only the status-colored outer glow remains. */
-  .convo-avatar { border: none; box-shadow: 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s; }
+  .convo-avatar { border: none; color: var(--status-glow, var(--pra-blue)); box-shadow: 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s, background .15s, color .15s; }
   #chatStatusSelect, .convo-status-select { box-shadow: 0 0 0 2px var(--status-glow, transparent), 0 0 9px 2px var(--status-glow-soft, transparent); transition: box-shadow .15s; }
   /* No flex-shrink:0 here (unlike the type badge/date below), but a real
      fixed width now (not just max-width, and no more per-row inline
