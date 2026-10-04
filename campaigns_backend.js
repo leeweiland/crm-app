@@ -85,8 +85,42 @@ function rollupStats(campaignId) {
 // with 1035 of 1640 recipients never contacted and nothing surfacing the
 // failure. See scheduler.js's own auto-resume job, which calls this
 // exact function again on anything stuck.
+//
+// ONE exception to "any status counts as contacted": a row logged "failed"
+// with NO providerMessageId never reached SES at all -- the request itself
+// failed or timed out before SES accepted it (email_backend.js's SES client
+// now has hard timeouts, so a hung connection surfaces exactly this way).
+// Confirmed live (2026-10-04): 23 such rows, 0 with a providerMessageId,
+// in two tight ~1-minute clusters of 12 and 11 -- two whole batches whose
+// connections hung, not 23 bad addresses. Treating those as "contacted"
+// silently and permanently dropped them from every resume. A row WITH a
+// providerMessageId (SES accepted it, even if it later bounced/failed) is
+// still skipped -- re-sending that person would be a real duplicate. The
+// residual risk: a send SES accepted whose response was lost in transit
+// has no id here and would be retried once -- narrow, and far better than
+// guaranteeing those recipients are never reached.
 function alreadyContactedIds(campaignId) {
-  return new Set(getMessagesForSource("campaign", campaignId).map(m => m.contactId).filter(Boolean));
+  return new Set(getMessagesForSource("campaign", campaignId)
+    .filter(m => !(m.status === "failed" && !m.providerMessageId))
+    .map(m => m.contactId).filter(Boolean));
+}
+
+// sendProgress the UI can trust. `sent` is the count of this campaign's
+// messages SES actually accepted (rows with a providerMessageId) -- it is
+// monotonic and does not depend on who matches the audience right now.
+// `total` is everyone already reached plus everyone this run still has to
+// reach. Previously `sent` was recomputed on every resume as
+// allRecipients.length - remaining.length, i.e. "how many of the people
+// who match the segment RIGHT NOW are already contacted". For a rolling
+// segment ("Opened last 30 days") contacted people age out of the
+// audience between resumes and silently drop out of the count. Confirmed
+// live (2026-10-04): the badge read 947 while message_log held 1,353
+// SES-accepted sends for the same campaign, and it had visibly gone DOWN
+// across resumes (1227 -> 911 -> 947). Nothing was lost; the number was
+// measuring the wrong thing.
+function progressSnapshot(campaignId, remainingUnsent) {
+  const accepted = getMessagesForSource("campaign", campaignId).filter(m => m.providerMessageId).length;
+  return { total: accepted + Math.max(0, remainingUnsent), sent: accepted };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -168,7 +202,7 @@ export async function runCampaignSendLoop(campaignId) {
         const latest = readJson(CAMPAIGNS_FILE, []);
         const c = latest.find(x => x.id === campaignId);
         if (c) {
-          c.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length + sentThisRun };
+          c.sendProgress = progressSnapshot(campaignId, remaining.length - (i + batch.length));
           c.updatedAt = new Date().toISOString();
           writeJson(CAMPAIGNS_FILE, latest);
         }
@@ -188,7 +222,7 @@ export async function runCampaignSendLoop(campaignId) {
       if (finalCampaign && finalCampaign.status === "sending") {
         finalCampaign.status = "sent";
         finalCampaign.sentAt = finalCampaign.sentAt || new Date().toISOString();
-        finalCampaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length };
+        finalCampaign.sendProgress = progressSnapshot(campaignId, 0);
         finalCampaign.stats = rollupStats(campaignId);
         writeJson(CAMPAIGNS_FILE, finalCampaigns);
       }
@@ -219,7 +253,7 @@ export function sendCampaignNow(campaignId) {
   const contacted = alreadyContactedIds(campaignId);
   const remaining = allRecipients.filter(c => !contacted.has(c.id));
   campaign.status = "sending";
-  campaign.sendProgress = { total: allRecipients.length, sent: allRecipients.length - remaining.length };
+  campaign.sendProgress = progressSnapshot(campaignId, remaining.length);
   // Set immediately (not just at each progress checkpoint below) so the
   // scheduler's stuck-campaign check -- which looks at how long updatedAt
   // has been stale -- doesn't see a JUST-(re)started send as already stale

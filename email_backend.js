@@ -386,7 +386,11 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     logMessage({ ...baseRow, status: "sent", providerMessageId: result.MessageId });
     return { ok: true, messageId: result.MessageId };
   } catch (e) {
-    logMessage({ ...baseRow, status: "failed" });
+    // failReason stored, same as sms_backend.js's sendSms -- previously the
+    // SES error was returned to the caller and dropped on the floor there,
+    // so a failed email was undiagnosable after the fact. Confirmed live
+    // (2026-10-04): 23 failed sends with no recorded cause anywhere.
+    logMessage({ ...baseRow, status: "failed", failReason: e.message });
     return { ok: false, reason: e.message };
   }
 }
