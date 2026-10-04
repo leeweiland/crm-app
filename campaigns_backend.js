@@ -155,7 +155,29 @@ const SES_MAX_SEND_RATE = 13;
 // recipients/remaining fresh rather than taking them as arguments -- this
 // can run on a different thread than whatever called sendCampaignNow, so
 // nothing from that call's closure is safe to rely on here.
+// Guards against two concurrent invocations of the SAME campaign on this
+// thread. Confirmed live (2026-10-04) as the actual cause of 225 contacts
+// receiving ONLINE sundown 2-4 times each: scheduler.js's stuck-campaign
+// rescue calls sendCampaignNow -> runCampaignSendLoop again after
+// STUCK_SEND_THRESHOLD_MS of no progress, but a loop stalled on a hung
+// batch (see email_backend.js's SES timeout fix) is still ALIVE, just
+// slow -- it was never killed or signaled, so the rescue's new invocation
+// ran CONCURRENTLY with it on the same thread. Both independently
+// resolved "who's already contacted" before either had logged its own
+// sends, both sent to the same people, and both then shared one SES rate
+// budget, each also paying its own resolveRecipients() (a full clone of
+// the whole contact list). This Set is per-thread, which is exactly
+// right: sendCampaignNow always calls this function on a single specific
+// thread for a given run (the dedicated send worker when SEND_WORKER=1,
+// otherwise the background worker), never both.
+const activeSendLoops = new Set();
 export async function runCampaignSendLoop(campaignId) {
+  if (activeSendLoops.has(campaignId)) {
+    console.log(`[campaign send] ${campaignId} already running on this thread -- skipping duplicate invocation`);
+    return;
+  }
+  activeSendLoops.add(campaignId);
+  try {
   const campaigns = readJson(CAMPAIGNS_FILE, []);
   const campaign = campaigns.find(c => c.id === campaignId);
   if (!campaign) return;
@@ -231,6 +253,9 @@ export async function runCampaignSendLoop(campaignId) {
     const errCampaigns = readJson(CAMPAIGNS_FILE, []);
     const errCampaign = errCampaigns.find(c => c.id === campaignId);
     if (errCampaign) { errCampaign.status = "send_error"; errCampaign.sendError = e.message; writeJson(CAMPAIGNS_FILE, errCampaigns); }
+  }
+  } finally {
+    activeSendLoops.delete(campaignId);
   }
 }
 

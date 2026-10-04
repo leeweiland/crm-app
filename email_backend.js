@@ -71,8 +71,21 @@ async function loadSesSdk() {
 // against a 13/sec target. Failing fast turns that one hung send into a
 // logged per-recipient failure (already caught per-send in
 // runCampaignSendLoop) and lets the batch and loop keep moving.
+//
+// throwOnRequestTimeout IS REQUIRED. Read @smithy/node-http-handler's own
+// set-request-timeout.js (v4.12.0, installed): without it, hitting
+// requestTimeout only LOGS A WARNING and the request is left to hang --
+// the timeout number alone does nothing. Confirmed this was silently
+// inert for the first several hours of tonight's incident: the
+// connectionTimeout below (TCP handshake) does genuinely reject on its
+// own, which is why the timeout appeared to "work" in isolated testing,
+// but a connection that succeeds and then stalls mid-request was never
+// actually cut off. socketTimeout is a second, independent backstop (idle
+// socket, no bytes either direction) -- also unset before this, also
+// silent until given a value.
 const SES_CONNECT_TIMEOUT_MS = 10_000;
 const SES_REQUEST_TIMEOUT_MS = 30_000;
+const SES_SOCKET_TIMEOUT_MS = 30_000;
 
 // Graceful "not configured yet" path -- Lee is creating the AWS account
 // separately, so every send call below degrades to a logged failure
@@ -104,7 +117,7 @@ async function getSesClient() {
   _sesClient = new SESv2Client({
     region,
     credentials: { accessKeyId: s.accessKeyId, secretAccessKey: s.secretAccessKey },
-    requestHandler: new NodeHttpHandler({ connectionTimeout: SES_CONNECT_TIMEOUT_MS, requestTimeout: SES_REQUEST_TIMEOUT_MS }),
+    requestHandler: new NodeHttpHandler({ connectionTimeout: SES_CONNECT_TIMEOUT_MS, requestTimeout: SES_REQUEST_TIMEOUT_MS, socketTimeout: SES_SOCKET_TIMEOUT_MS, throwOnRequestTimeout: true }),
   });
   _sesClientKey = key;
   return _sesClient;
