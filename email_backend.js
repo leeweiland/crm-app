@@ -51,13 +51,28 @@ function executeLinkClickAction(row, destUrl) {
   }
 }
 
-let SESv2Client, SendEmailCommand;
+let SESv2Client, SendEmailCommand, NodeHttpHandler;
 async function loadSesSdk() {
   if (SESv2Client) return;
   const mod = await import("@aws-sdk/client-sesv2");
   SESv2Client = mod.SESv2Client;
   SendEmailCommand = mod.SendEmailCommand;
+  NodeHttpHandler = (await import("@smithy/node-http-handler")).NodeHttpHandler;
 }
+
+// Hard timeouts on every SES call. The SDK's default handler has NO request
+// timeout -- a single hung connection to SES waits forever. Confirmed live
+// (2026-10-04) on a 19k-recipient campaign: the send loop awaits each
+// batch of SENDING_CONCURRENCY sends via Promise.all, so ONE hung call
+// stalls the entire batch indefinitely. A hung promise never rejects, so
+// nothing logged and nothing caught -- the loop just went silent every few
+// minutes until the scheduler's 3-minute stuck-campaign rescue restarted
+// it, giving a stall/wait/burst/stall cycle that averaged ~0.5 sends/sec
+// against a 13/sec target. Failing fast turns that one hung send into a
+// logged per-recipient failure (already caught per-send in
+// runCampaignSendLoop) and lets the batch and loop keep moving.
+const SES_CONNECT_TIMEOUT_MS = 10_000;
+const SES_REQUEST_TIMEOUT_MS = 30_000;
 
 // Graceful "not configured yet" path -- Lee is creating the AWS account
 // separately, so every send call below degrades to a logged failure
@@ -74,6 +89,7 @@ async function getSesClient() {
   return new SESv2Client({
     region: s.region || "us-east-2",
     credentials: { accessKeyId: s.accessKeyId, secretAccessKey: s.secretAccessKey },
+    requestHandler: new NodeHttpHandler({ connectionTimeout: SES_CONNECT_TIMEOUT_MS, requestTimeout: SES_REQUEST_TIMEOUT_MS }),
   });
 }
 
