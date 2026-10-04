@@ -287,6 +287,89 @@ export function updateContactsByIdSet(idSet, updater) {
   return results;
 }
 
+// Batched write path specifically for email-open/click engagement flags
+// (2026-10-04). Confirmed live on a 23k-recipient campaign send: every
+// genuine Open/Click webhook called updateContactByField, which does ONE
+// full streaming read+write pass over the ENTIRE crm_contacts.json (194MB
+// on disk) under withFileLock -- the same lock the send loop's own writes
+// need -- regardless of which single contact changed. With hundreds of
+// real opens/clicks landing concurrently with an active send, this was
+// the dominant cost behind throughput sitting near 0.5-1/sec against a
+// 13/sec design target, confirmed by direct code trace plus file-size
+// measurement (not inferred).
+//
+// queueContactEngagementUpdate updates the in-memory cache IMMEDIATELY
+// (every read -- getContactById, segment matching, ac_sync.js's own
+// emailEngagement check -- sees the change with zero delay, identical to
+// before this existed) but defers the on-disk write, coalescing up to
+// ENGAGEMENT_FLUSH_DELAY_MS worth of DISTINCT CONTACTS' updates into one
+// updateContactsByIdSet call -- the exact same already-proven,
+// already-in-production batch-by-id-set primitive used elsewhere in this
+// file, not new low-level file-scanning logic. One streaming pass over
+// the file now amortizes across however many contacts opened/clicked in
+// that window, instead of one full pass per contact. Same debounced-batch
+// shape as message_index.js's flushConversationIndex.
+//
+// Bounded, accepted risk: if the process crashes/redeploys between
+// queuing and the next flush, a pending engagement flag for a handful of
+// contacts is lost on disk (though it was already visible to every
+// in-process read before the crash). emailEngagement is non-critical,
+// best-effort analytics/segment data, never used for compliance,
+// financial, or irreversible-action logic -- an acceptable tradeoff
+// against the alternative of permanently capping throughput at a
+// fraction of the account's real send rate. Postgres (already
+// fire-and-forget/eventually-consistent for every write in this file)
+// is unaffected -- the flush persists to it exactly like any other write
+// here, just batched the same as the JSON side.
+const _pendingEngagement = new Map(); // contactId -> { opened?, openedAt?, clicked?, clickedAt? }
+let _engagementFlushTimer = null;
+const ENGAGEMENT_FLUSH_DELAY_MS = 5000;
+
+export function queueContactEngagementUpdate(contactId, kind, atISO) {
+  if (!contactId) return null;
+  syncFromJsonIfChanged();
+  const at = atISO && !isNaN(new Date(atISO)) ? new Date(atISO).toISOString() : new Date().toISOString();
+  const atKey = `${kind}At`;
+
+  const existing = _byId.get(contactId);
+  if (existing) {
+    existing.emailEngagement = existing.emailEngagement || {};
+    existing.emailEngagement[kind] = true;
+    if (!existing.emailEngagement[atKey] || new Date(at) > new Date(existing.emailEngagement[atKey])) existing.emailEngagement[atKey] = at;
+  }
+
+  const pending = _pendingEngagement.get(contactId) || {};
+  pending[kind] = true;
+  if (!pending[atKey] || new Date(at) > new Date(pending[atKey])) pending[atKey] = at;
+  _pendingEngagement.set(contactId, pending);
+
+  if (!_engagementFlushTimer) {
+    _engagementFlushTimer = setTimeout(flushEngagementUpdates, ENGAGEMENT_FLUSH_DELAY_MS);
+    if (_engagementFlushTimer.unref) _engagementFlushTimer.unref();
+  }
+  return existing ? { ...existing } : null;
+}
+
+function flushEngagementUpdates() {
+  _engagementFlushTimer = null;
+  if (!_pendingEngagement.size) return;
+  const pending = new Map(_pendingEngagement);
+  _pendingEngagement.clear();
+  updateContactsByIdSet(new Set(pending.keys()), (c) => {
+    const p = pending.get(c.id);
+    if (!p) return c;
+    c.emailEngagement = c.emailEngagement || {};
+    if (p.opened) {
+      c.emailEngagement.opened = true;
+      if (!c.emailEngagement.openedAt || new Date(p.openedAt) > new Date(c.emailEngagement.openedAt)) c.emailEngagement.openedAt = p.openedAt;
+    }
+    if (p.clicked) {
+      c.emailEngagement.clicked = true;
+      if (!c.emailEngagement.clickedAt || new Date(p.clickedAt) > new Date(c.emailEngagement.clickedAt)) c.emailEngagement.clickedAt = p.clickedAt;
+    }
+    return c;
+  });
+}
 // Equivalent of updateAllJsonArrayRecordsByField(CONTACTS_FILE, field, value, updater)
 // -- every record where contact[field] === value, not just the first.
 // Returns the array of updated records (not just a count) so callers that

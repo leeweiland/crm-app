@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
-import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact } from "./contacts_db.js";
+import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact, queueContactEngagementUpdate } from "./contacts_db.js";
 import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -130,14 +130,11 @@ const BULK_ASSIGN_MAX = 1000;
 // "now" (a live SES webhook). A known time never moves the stored one earlier.
 export function markContactEmailEngagement(contactId, kind, atISO) { // kind: "opened" | "clicked"
   if (!contactId) return;
-  const at = atISO && !isNaN(new Date(atISO)) ? new Date(atISO).toISOString() : new Date().toISOString();
-  const updated = updateContactByField("id", contactId, c => {
-    c.emailEngagement = c.emailEngagement || {};
-    c.emailEngagement[kind] = true;
-    const prev = c.emailEngagement[`${kind}At`];
-    if (!prev || new Date(at) > new Date(prev)) c.emailEngagement[`${kind}At`] = at;
-    return c;
-  });
+  // Batched write (see contacts_db.js's own comment on queueContactEngagementUpdate
+  // for the full reasoning) -- updates the in-memory contact immediately
+  // (so the SQLite sync right below, and every other reader, sees it with
+  // zero delay), defers only the expensive full-file JSON write.
+  const updated = queueContactEngagementUpdate(contactId, kind, atISO);
   // Without this, the SQLite mirror (contacts_idx) silently drifts from
   // the real file the moment an open/click lands -- confirmed live: caught
   // getContactByIdFast (sqlite_inbox.js) returning a stale emailEngagement
