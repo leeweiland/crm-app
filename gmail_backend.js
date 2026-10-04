@@ -606,11 +606,25 @@ export async function checkGmailInbox() {
   // exactly what froze the app.
   let usersChanged = false;
 
-  for (const user of users) {
+  // Connected accounts polled in PARALLEL, not one after another -- each
+  // user's own 10s-per-call timeout (see GMAIL_FETCH_TIMEOUT_MS above)
+  // bounds a single slow call, but did nothing for the total: 4 accounts
+  // run sequentially, each with its own backlog of up to
+  // MAX_MESSAGES_PER_TICK messages, could still add up to minutes of
+  // real wall-clock time on this one shared scheduler tick. Confirmed
+  // live: a real campaign send stalled in lockstep with this phase
+  // taking 2+ minutes on a single tick. The 4 accounts are fully
+  // independent (own token, own historyId, own messages) so there's
+  // nothing to serialize here -- same reasoning as campaigns_backend.js's
+  // own SENDING_CONCURRENCY batch, applied to a handful of users instead
+  // of thousands of recipients. Message processing WITHIN one account
+  // stays sequential (unchanged) -- that's writing to shared JSON files
+  // and isn't the thing that was actually slow across accounts.
+  await Promise.all(users.map(async (user) => {
     try {
       const accessToken = await getAccessToken(user.gmailRefreshToken);
       const auth = { Authorization: `Bearer ${accessToken}` };
-      if (!user.gmailHistoryId) continue; // shouldn't happen post-connect, but nothing to diff against
+      if (!user.gmailHistoryId) return; // shouldn't happen post-connect, but nothing to diff against
 
       // No &labelId=INBOX filter -- confirmed live that a message archived
       // shortly after arriving still surfaces fine either way (Gmail's
@@ -635,7 +649,7 @@ export async function checkGmailInbox() {
         } else {
           console.error(`[gmail] history fetch failed for ${user.gmailEmail}:`, hist.error?.message);
         }
-        continue;
+        return;
       }
 
       const messageIds = new Set();
@@ -692,6 +706,6 @@ export async function checkGmailInbox() {
     } catch (e) {
       console.error(`[gmail] poll failed for ${user.gmailEmail || user.id}:`, e.message);
     }
-  }
+  }));
   if (usersChanged) writeJson(USERS_FILE, allUsers);
 }
