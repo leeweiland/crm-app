@@ -30,7 +30,7 @@
 // the file open" case.
 import { parentPort } from "worker_threads";
 import { guardedTick } from "./scheduler.js";
-import { processTwilioStatusUpdate } from "./sms_backend.js";
+import { processTwilioStatusUpdate, processTwilioInboundMessage } from "./sms_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { computeAndCacheAllCounts } from "./contacts_backend.js";
 import { runCampaignSendLoop } from "./campaigns_backend.js";
@@ -49,10 +49,19 @@ const TICK_MS = 30 * 1000;
 setInterval(guardedTick, TICK_MS);
 console.log(`[background-worker] started, ticking every ${TICK_MS / 1000}s`);
 
+// replyId is present only for calls that need a result reported back (see
+// webhook_relay_backend.js -- the receiver service's retry logic needs to
+// know whether processing actually succeeded, unlike Twilio/SES calling
+// the direct /api/webhooks/* routes above, which never waited on a result
+// either). Every other message type stays pure fire-and-forget.
+function reply(msg, err) {
+  if (msg?.replyId) parentPort.postMessage({ type: "relay_result", replyId: msg.replyId, ok: !err, error: err?.message });
+}
 parentPort.on("message", (msg) => {
   try {
-    if (msg?.type === "twilio_status") processTwilioStatusUpdate(msg.sid, msg.status);
-    else if (msg?.type === "ses_notification") processSesNotificationMessage(msg.raw);
+    if (msg?.type === "twilio_status") { processTwilioStatusUpdate(msg.sid, msg.status); reply(msg); }
+    else if (msg?.type === "twilio_inbound") { processTwilioInboundMessage(msg.from, msg.body || ""); reply(msg); }
+    else if (msg?.type === "ses_notification") { processSesNotificationMessage(msg.raw); reply(msg); }
     else if (msg?.type === "recompute_counts") computeAndCacheAllCounts();
     // Fire-and-forget -- runCampaignSendLoop tracks its own progress/status
     // by writing crm_campaigns.json directly (see campaigns_backend.js), so
@@ -65,6 +74,7 @@ parentPort.on("message", (msg) => {
     // the same isolation guarantee guardedTick's own try/catch already
     // gives the scheduler side.
     console.error("[background-worker] message handling failed", e.message);
+    reply(msg, e);
   }
 });
 
