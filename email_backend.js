@@ -82,15 +82,32 @@ function sesConfigured() {
   const s = getSesSettings();
   return !!(s.accessKeyId && s.secretAccessKey && s.fromAddress);
 }
+// One shared client, not one per send. Previously this returned a brand-new
+// SESv2Client on EVERY sendEmail() call -- a fresh connection pool and a
+// full TCP+TLS handshake to AWS per email, with zero keep-alive reuse
+// across the SENDING_CONCURRENCY sends in a batch or across batches.
+// Confirmed live (2026-10-04): with the scheduler tick measured near-idle
+// (~3s total over 3.7 minutes), a 19k-recipient campaign still took ~17s
+// per batch of 12 against a ~1s design floor -- each "concurrent" send was
+// paying its own cold connection setup, and the batch runs as slow as its
+// slowest one. Keyed on the credential tuple + region so a change in
+// Settings > SES invalidates it instead of sending from stale keys.
+let _sesClient = null;
+let _sesClientKey = null;
 async function getSesClient() {
   const s = getSesSettings();
   if (!sesConfigured()) return null;
   await loadSesSdk();
-  return new SESv2Client({
-    region: s.region || "us-east-2",
+  const region = s.region || "us-east-2";
+  const key = `${region}|${s.accessKeyId}|${s.secretAccessKey}`;
+  if (_sesClient && _sesClientKey === key) return _sesClient;
+  _sesClient = new SESv2Client({
+    region,
     credentials: { accessKeyId: s.accessKeyId, secretAccessKey: s.secretAccessKey },
     requestHandler: new NodeHttpHandler({ connectionTimeout: SES_CONNECT_TIMEOUT_MS, requestTimeout: SES_REQUEST_TIMEOUT_MS }),
   });
+  _sesClientKey = key;
+  return _sesClient;
 }
 
 // getContactByIdFast (sqlite_inbox.js) instead of the full readJson
