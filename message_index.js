@@ -399,7 +399,26 @@ function flushConversationIndex() {
   for (const key of removes) byKey.delete(key);
   writeJson(CONVERSATION_INDEX_FILE, [...byKey.values()]);
 }
+// Interim kill switch (2026-10-04, off by default -- set
+// SKIP_CONVERSATION_INDEX_FLUSH=1 to enable). Confirmed live: this file is
+// read ONLY by inbox_backend.js's explicit ?_sqlite=0 fallback/recovery
+// path -- queryConversationsSqlite (SQLite) is the actual live path for
+// every normal Inbox load, confirmed by reading that file directly. During
+// a high-volume campaign send, EVERY send and EVERY delivery/open/click
+// webhook calls into here, and the flush this schedules does a full
+// synchronous read+write of a 285MB+ file at a measured ~10-12s each (see
+// flushConversationIndex's own history comment above) -- sustained traffic
+// means the flush is effectively always "due," permanently starving
+// whatever thread it runs on. Since nothing user-facing depends on this
+// file staying fresh in real time, skipping the schedule (not the
+// recovery capability itself -- flushConversationIndex and the file are
+// both untouched, just not auto-triggered) costs nothing live and removes
+// the single largest confirmed bottleneck. Revert by unsetting the var;
+// nothing about this is destructive or hard to undo.
+function conversationFlushEnabled() { return process.env.SKIP_CONVERSATION_INDEX_FLUSH !== "1"; }
+
 export function upsertConversationSummary(m) {
+  if (!conversationFlushEnabled()) return;
   if (!SIDEBAR_CHANNELS.includes(m.channel)) return;
   const key = conversationKey(m);
   if (!_pendingUpsertMessages.has(key)) _pendingUpsertMessages.set(key, []);
@@ -414,10 +433,12 @@ export function upsertConversationSummary(m) {
 // per-contact message file (itself written synchronously) whenever the
 // batched flush actually runs, not whatever was current when called.
 export function recomputeConversationSummary(contactId) {
+  if (!conversationFlushEnabled()) return;
   _pendingRecomputeIds.add(contactId);
   scheduleConversationFlush();
 }
 export function removeConversationSummary(key) {
+  if (!conversationFlushEnabled()) return;
   _pendingRemoveKeys.add(key);
   scheduleConversationFlush();
 }
