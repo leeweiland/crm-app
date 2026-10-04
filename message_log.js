@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
-import { appendJsonRecordFast, appendToJsonObjectFast, readJson } from "./auth_backend.js";
+import { statSync } from "fs";
+import { join } from "path";
+import { appendJsonRecordFast, appendToJsonObjectFast, readJson, DATA_DIR } from "./auth_backend.js";
 import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
@@ -137,9 +139,34 @@ function notifyFailedSend(contactId, channel) {
 // getMessagesForSource below, which used to read stale status straight off
 // it -- that staleness is exactly what routing status updates through the
 // per-source file here fixes, not just the speed).
+// mtime-cached read of the provider-id index (confirmed on disk at ~9MB
+// and growing) -- updateMessageStatusByProviderId previously did a full
+// readJson (parse the whole file) on EVERY delivery/open/click/bounce
+// webhook. Confirmed live during a 23k-recipient campaign send as a real,
+// if smaller, contributor alongside the much larger crm_contacts.json
+// cost already fixed separately. Same exact staleness-detection shape as
+// contacts_db.js's own syncFromJsonIfChanged: one cheap statSync, reload
+// only if the file's mtime moved since this thread last saw it -- correct
+// across threads (logMessage appends new entries from the send-worker
+// thread; this cache lives on whichever thread calls
+// updateMessageStatusByProviderId, i.e. background-worker, and picks up
+// those appends the next time its own mtime check notices).
+const PROVIDER_INDEX_PATH = join(DATA_DIR, PROVIDER_ID_INDEX_FILE);
+let _providerIndexCache = null;
+let _providerIndexMtimeMs = null;
+function getProviderIndexCached() {
+  let mtimeMs = null;
+  try { mtimeMs = statSync(PROVIDER_INDEX_PATH).mtimeMs; } catch { /* file not created yet */ }
+  if (_providerIndexCache === null || mtimeMs !== _providerIndexMtimeMs) {
+    _providerIndexCache = readJson(PROVIDER_ID_INDEX_FILE, {});
+    _providerIndexMtimeMs = mtimeMs;
+  }
+  return _providerIndexCache;
+}
+
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
   if (!providerMessageId) return null;
-  const entry = readJson(PROVIDER_ID_INDEX_FILE, {})[providerMessageId];
+  const entry = getProviderIndexCached()[providerMessageId];
   if (!entry) return null;
   let oldStatus = null;
   const found = updateContactMessage(entry.contactId, "id", entry.id, row => {
