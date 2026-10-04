@@ -117,7 +117,26 @@ async function getSesClient() {
   _sesClient = new SESv2Client({
     region,
     credentials: { accessKeyId: s.accessKeyId, secretAccessKey: s.secretAccessKey },
-    requestHandler: new NodeHttpHandler({ connectionTimeout: SES_CONNECT_TIMEOUT_MS, requestTimeout: SES_REQUEST_TIMEOUT_MS, socketTimeout: SES_SOCKET_TIMEOUT_MS, throwOnRequestTimeout: true }),
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: SES_CONNECT_TIMEOUT_MS, requestTimeout: SES_REQUEST_TIMEOUT_MS, socketTimeout: SES_SOCKET_TIMEOUT_MS, throwOnRequestTimeout: true,
+      // Read node-http-handler.js's own source directly: maxSockets
+      // defaults to a hardcoded 50, and connectionTimeout's own timer (see
+      // set-connection-timeout.js) starts the instant a request is made,
+      // clearing only once a socket is actually assigned AND connected --
+      // a request queued waiting for a free pool slot pays that same
+      // timer with no real network activity happening at all. Confirmed
+      // live (2026-10-04): hundreds of real failures during a 23k-send
+      // campaign all carrying the exact message "the request socket did
+      // not establish a connection... within the configured timeout of
+      // 10000 ms" -- not a real AWS-side problem (GetAccount confirmed
+      // the account HEALTHY, 11,235 of 50,000 daily quota used, nowhere
+      // near any real limit) -- these were queued behind pool exhaustion,
+      // not actually failing to connect. SENDING_CONCURRENCY batches run
+      // continuously back-to-back during a large send, and 50 sockets is
+      // tight once keep-alive connections from recent batches haven't all
+      // cycled back yet.
+      httpsAgent: { maxSockets: 200 },
+    }),
   });
   _sesClientKey = key;
   return _sesClient;
