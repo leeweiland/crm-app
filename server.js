@@ -37,6 +37,7 @@ import { handleYoutubeRequest } from "./youtube_backend.js";
 import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
+import { setSendWorker } from "./send_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
 import { loadContactsCache, getAllContacts } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
@@ -262,6 +263,33 @@ if (process.env.BACKGROUND_WORKER === "1") {
   console.log("[server] BACKGROUND_WORKER=1 -- scheduler tick and webhook processing running off the main thread");
 } else {
   startScheduler();
+}
+
+// SEND_WORKER (2026-10-04, off by default): runs campaign/SMS sends on
+// their OWN dedicated thread, separate from background_worker.js's
+// scheduler-tick thread -- see send_worker.js's own comment for why
+// (a slow scheduler phase, like Gmail polling backlog, stalling an
+// in-flight send just because they happened to share a thread). Same
+// opt-in-and-verify-before-cutover pattern as BACKGROUND_WORKER itself:
+// campaigns_backend.js's sendCampaignNow only routes to this worker when
+// it's actually running, and falls back to the existing background
+// worker (or inline) otherwise -- so this can ship and be verified
+// before anything real sends through it.
+if (process.env.SEND_WORKER === "1") {
+  let consecutiveSendWorkerCrashes = 0;
+  function spawnSendWorker() {
+    const worker = new Worker(join(__dirname, "send_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[send-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[send-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveSendWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveSendWorkerCrashes + 1 : 0;
+      setTimeout(spawnSendWorker, Math.min(30000, 1000 * 2 ** consecutiveSendWorkerCrashes));
+    });
+    setSendWorker(worker);
+  }
+  spawnSendWorker();
+  console.log("[server] SEND_WORKER=1 -- campaign/SMS sends running on their own dedicated thread");
 }
 
 // Warms the SQLite DB file's OS page cache on its own thread -- see

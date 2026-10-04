@@ -8,6 +8,7 @@ import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_share
 import { getEmailTheme } from "./integrations_backend.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
+import { getSendWorker } from "./send_worker_handle.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
@@ -226,8 +227,17 @@ export function sendCampaignNow(campaignId) {
   campaign.updatedAt = new Date().toISOString();
   writeJson(CAMPAIGNS_FILE, campaigns);
 
+  // Prefers the dedicated send worker (see send_worker.js) when it's
+  // running, so a send never shares a thread with Gmail polling,
+  // automations, or any other scheduler phase -- falls back to the
+  // existing background worker, then fully inline, exactly as before
+  // SEND_WORKER existed. Same reasoning as BACKGROUND_WORKER's own
+  // opt-in rollout: nothing about this changes until SEND_WORKER=1 is
+  // actually set.
+  const sendWorker = getSendWorker();
   const worker = getBackgroundWorker();
-  if (worker) worker.postMessage({ type: "send_campaign", campaignId });
+  if (sendWorker) sendWorker.postMessage({ type: "send_campaign", campaignId });
+  else if (worker) worker.postMessage({ type: "send_campaign", campaignId });
   else runCampaignSendLoop(campaignId);
 
   return { ok: true, recipientCount: remaining.length, totalRecipients: allRecipients.length };
