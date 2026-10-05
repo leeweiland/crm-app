@@ -125,8 +125,27 @@ async function runRelayLoop() {
     // more urgent than bulk open/click analytics -- rank them explicitly
     // instead of relying on which type happens to have less volume at any
     // given moment.
+    // Raised from 25 to 500 (2026-10-05) to actually drain the 59k+
+    // ses_notification backlog (campaign open/click/delivery analytics) in
+    // a reasonable time instead of ~6-7 hours. Safe to raise now in a way
+    // it wasn't a few hours earlier tonight: twilio_inbound/twilio_status
+    // dispatch to their own dedicated sms-worker thread, ses_notification
+    // dispatches to the send-worker, and neither path can trigger an LLM
+    // call anymore regardless of volume (Kai's Behavioral Outbound toggle
+    // is off, so queueBehavioralTrigger finds zero eligible agents and
+    // does nothing) -- so a much bigger batch of pure-file-I/O SES
+    // analytics can't block a live reply OR rack up API cost, the two
+    // failure modes a bigger batch would have hit earlier tonight. Still
+    // sequential, not concurrent -- that part stays exactly as reverted
+    // (95c8870): concurrency didn't help throughput before (everything
+    // still serialized on the one destination thread either way) and
+    // only created a pile of simultaneous requests crm-app had to hold
+    // open at once. A bigger sequential batch increases real throughput
+    // without that risk -- relayLoopRunning above already lets a pass
+    // longer than RELAY_INTERVAL_MS run back-to-back into the next one
+    // instead of waiting out the full 10s, so this scales cleanly.
     const { rows } = await pool.query(
-      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 25`
+      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 500`
     );
     // REVERTED same day (2026-10-05) -- tried Promise.all here on the
     // theory that each row's relay call was independent, but every one of
