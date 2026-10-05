@@ -76,17 +76,9 @@ function ensureReplyListener(worker) {
 }
 
 function dispatchToWorker(worker, payload) {
-  // Temporary diagnostic (2026-10-05) -- paired with background_worker.js's
-  // own timing log. If the worker's log shows a small handled+replied
-  // duration but THIS gap (postMessage sent -> relay_result received) is
-  // large, the delay is in thread scheduling/IPC, not in the actual
-  // message processing -- e.g. the worker thread busy with something else
-  // (a scheduler tick phase) and not even reaching this handler promptly.
-  // Remove once the real cause is found.
-  const _t0 = Date.now();
   return new Promise((resolve) => {
     const replyId = randomUUID();
-    pendingReplies.set(replyId, (msg) => { console.log(`[webhook-relay] dispatch round-trip for ${payload.type}: ${Date.now() - _t0}ms`); resolve(msg); });
+    pendingReplies.set(replyId, resolve);
     setTimeout(() => {
       if (pendingReplies.has(replyId)) { pendingReplies.delete(replyId); resolve({ ok: false, error: "background worker did not respond in time" }); }
     }, WORKER_REPLY_TIMEOUT_MS);

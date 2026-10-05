@@ -96,7 +96,21 @@ async function tick() {
     await timedPhase("pollYoutubeFlows", pollYoutubeFlows);
     await timedPhase("runScheduledDuplicateScan", async () => runScheduledDuplicateScan());
     await timedPhase("syncWritingCacheIfDue", syncWritingCacheIfDue);
-    await timedPhase("processAiActiveBatches", processAiActiveBatches);
+    await timedPhase("processAiActiveBatches", async () => {
+      // Skipped entirely when SEND_WORKER=1 -- see send_worker.js's own
+      // interval, same exact split as campaigns' send loop above. Confirmed
+      // live (2026-10-05): this phase processing a backlog of queued AI
+      // Active cold-opens (each a real LLM call) ran for minutes straight,
+      // and because it shares this thread with webhook relay dispatch
+      // (background_worker.js), every inbound SMS/email webhook -- including
+      // a live back-and-forth with an AI Coverage agent -- sat queued behind
+      // it the whole time, reading as random 20-100+ second reply lag with
+      // no obvious cause. AI Active's own bulk LLM-bound work doesn't belong
+      // sharing a thread with anything latency-sensitive, for the identical
+      // reason campaign sends were already moved off it.
+      if (process.env.SEND_WORKER === "1") return;
+      await processAiActiveBatches();
+    });
     await timedPhase("checkMeetingReminders", checkMeetingReminders);
     await timedPhase("sendDueBookingReminders", sendDueBookingReminders);
     await timedPhase("sendDueScheduledMessages", sendDueScheduledMessages);
