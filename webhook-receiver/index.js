@@ -114,18 +114,23 @@ async function runRelayLoop() {
     const { rows } = await pool.query(
       `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 25`
     );
-    // Concurrent, not sequential -- confirmed live (2026-10-05): a single
-    // slow row (crm-app's background-worker thread taking a while to finish
-    // processing one inbound SMS, including a real LLM call for an AI
-    // reply) blocked every row behind it in the SAME batch from even being
-    // attempted, since this used to be a plain for-of with an awaited
-    // relayOne() each time. A real back-and-forth conversation compounded
-    // that into a growing delay (one text's reply took 4s, the next 23s,
-    // then 106s, then 195s) as faster new messages kept queuing up behind
-    // whichever older one happened to be slow. Each row's own crm-app call
-    // and status update are independent of every other row's, so nothing
-    // here needs them serialized.
-    await Promise.all(rows.map(async (row) => {
+    // REVERTED same day (2026-10-05) -- tried Promise.all here on the
+    // theory that each row's relay call was independent, but every one of
+    // them funnels through crm-app's SAME single background-worker thread
+    // (one thread, processing inbound SMS one at a time, including a real
+    // LLM call per reply). Firing all 25 at once didn't parallelize
+    // anything real -- it just piled 25+ concurrent /internal/webhook-relay
+    // requests onto crm-app at once, confirmed live via its own watchdog
+    // log showing the stuck-request count climbing every single cycle
+    // (#133 up to #157 and still growing) as each new batch added 25 more
+    // on top of the previous batch's still-unresolved ones. The real
+    // bottleneck is the single-threaded worker on crm-app's side, not
+    // anything sequential here -- fixing that (if it's even worth fixing,
+    // given a real conversational back-and-forth is bursty, not sustained)
+    // needs to happen there, not by hiding it behind more concurrent
+    // requests that the same one thread still has to process in order
+    // anyway.
+    for (const row of rows) {
       try {
         await relayOne(row);
         await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now(), last_attempt_at=now() WHERE id=$1`, [row.id]);
@@ -133,7 +138,7 @@ async function runRelayLoop() {
         await pool.query(`UPDATE webhook_queue SET status='failed', attempts=attempts+1, last_error=$2, last_attempt_at=now() WHERE id=$1`, [row.id, e.message]);
         console.error(`[webhook-receiver] relay failed for ${row.id} (attempt ${row.attempts + 1}):`, e.message);
       }
-    }));
+    }
   } catch (e) {
     console.error("[webhook-receiver] relay loop error:", e.message);
   } finally {
