@@ -72,6 +72,19 @@ function signRelayBody(rawBody) {
   return { timestamp, signature };
 }
 
+// RELAY_FETCH_TIMEOUT_MS > crm-app's own 45s WORKER_REPLY_TIMEOUT_MS
+// (webhook_relay_backend.js) -- a legitimately slow-but-real response
+// should never get aborted out from under crm-app before IT would have
+// given up on its own. Confirmed live (2026-10-05) why this can't be left
+// unbounded, though: this fetch had no timeout at all, and runRelayLoop's
+// relayLoopRunning guard only resets in a finally block AFTER every row's
+// relayOne() call settles -- a single request that hangs forever (a TCP
+// connection accepted mid-redeploy, then the container torn down without
+// ever actually closing it) never settles, so relayLoopRunning stays true
+// forever and every future 10s tick just returns immediately, same shape
+// as scheduler.js's own _tickRunning bug on the crm-app side. Only a
+// manual restart (clearing the in-memory flag) got it moving again.
+const RELAY_FETCH_TIMEOUT_MS = 60_000;
 async function relayOne(row) {
   const rawBody = JSON.stringify({ type: row.type, ...row.payload });
   const { timestamp, signature } = signRelayBody(rawBody);
@@ -79,6 +92,7 @@ async function relayOne(row) {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-relay-timestamp": String(timestamp), "x-relay-signature": signature },
     body: rawBody,
+    signal: AbortSignal.timeout(RELAY_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`crm-app returned ${res.status}`);
 }
