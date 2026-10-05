@@ -58,9 +58,22 @@ function reply(msg, err) {
   if (msg?.replyId) parentPort.postMessage({ type: "relay_result", replyId: msg.replyId, ok: !err, error: err?.message });
 }
 parentPort.on("message", (msg) => {
+  // Temporary diagnostic (2026-10-05) -- a real chat with Kai showed
+  // /internal/webhook-relay taking 20-25+ seconds per request even with
+  // the receiver relaying strictly one row at a time (so it isn't
+  // concurrent pile-up). reply(msg) fires synchronously right after this
+  // handler starts processTwilioInboundMessage (not awaited, a plain sync
+  // function) -- on paper this should be near-instant regardless of how
+  // long maybeCoverInboundReply's own LLM call takes. This logs the gap
+  // between the postMessage actually arriving and reply() actually firing,
+  // to see whether the delay is inside this handler at all, or happens
+  // before this thread's event loop even gets to it (something else
+  // blocking it) or after reply() posts back (main-thread side). Remove
+  // once the real cause is found.
+  const _t0 = (msg?.type === "twilio_inbound") ? Date.now() : null;
   try {
     if (msg?.type === "twilio_status") { processTwilioStatusUpdate(msg.sid, msg.status); reply(msg); }
-    else if (msg?.type === "twilio_inbound") { processTwilioInboundMessage(msg.from, msg.body || ""); reply(msg); }
+    else if (msg?.type === "twilio_inbound") { processTwilioInboundMessage(msg.from, msg.body || ""); reply(msg); console.log(`[background-worker] twilio_inbound handled+replied in ${Date.now() - _t0}ms`); }
     else if (msg?.type === "ses_notification") { processSesNotificationMessage(msg.raw); reply(msg); }
     else if (msg?.type === "recompute_counts") computeAndCacheAllCounts();
     // Fire-and-forget -- runCampaignSendLoop tracks its own progress/status
