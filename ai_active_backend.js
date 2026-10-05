@@ -295,7 +295,15 @@ export async function sendViaChannel(contact, channel, rawText, agentId, subject
     // "subject: quick follow up on your application" as its own first line.
     // Text has no subject line at all, so strip it defensively rather than
     // texting it to the lead.
-    const smsText = text.replace(/^\s*subject:\s*.*\n+(?:body:\s*)?/i, "");
+    // Confirmed live again (2026-10-05), a different variant: the model
+    // prefixed a reply with a bare "SMS: " channel label instead, on a
+    // single line with no newline at all -- the subject/body regex above
+    // requires \n+ after the label, so it doesn't match this shape, and the
+    // label has no separate "value" to discard (unlike subject:, where the
+    // whole first line is a fake subject to throw away) -- the real message
+    // starts right after the colon on the same line, so only the label
+    // itself gets stripped here, not the rest of the line.
+    const smsText = text.replace(/^\s*subject:\s*.*\n+(?:body:\s*)?/i, "").replace(/^\s*(?:sms|text):\s*/i, "");
     // A reply can be split into two short back-to-back texts instead of
     // one long one (see the per-agent MESSAGE FORMAT prompt rule) --
     // [[SPLIT]] is the model's own signal for that boundary. Sent as two
