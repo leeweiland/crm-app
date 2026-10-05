@@ -353,6 +353,30 @@ export function sentCategoryForSourceType(sourceType) {
 }
 export const SENT_CATEGORIES = ["human", "ai_agent", "sms_sequence", "email_automation", "email_campaign", "legacy_import", "other"];
 
+// A real person personally sent this -- either from the Inbox panel
+// directly (sentCategoryForSourceType's own "human" bucket: "inbox"/
+// "manual") or from their own connected Gmail outside the CRM entirely,
+// reconciled in afterward ("gmail_sent" -- categorized as "other" by
+// sentCategoryForSourceType above for Activity-feed/reporting reasons
+// unrelated to this, but still a real person actually engaging with the
+// lead). Shared by every autonomous system that needs to stand down the
+// moment a human takes over a conversation (AI Active, AI Coverage,
+// behavioral triggers) -- each used to keep its OWN ad-hoc blocklist of
+// "which sourceTypes aren't me," and every one of those lists quietly
+// went stale the moment workflow_step was added elsewhere in the app and
+// nobody remembered to add it to all three -- confirmed live (2026-10-05):
+// any lead who got an automated workflow text before replying looked like
+// a human had already taken over, so none of the three ever replied to
+// them. An allowlist of what DOES count as human can't go stale the same
+// way -- a new automated sourceType just isn't on it, by default, until
+// someone deliberately decides otherwise.
+export function isHumanOutbound(sourceType) {
+  return sentCategoryForSourceType(sourceType) === "human" || sourceType === "gmail_sent";
+}
+export function findLastHumanOutbound(journey) {
+  return [...journey].reverse().find((m) => m.direction === "outbound" && isHumanOutbound(m.sourceType));
+}
+
 // A human personally sent the last outbound message (not the AI) within
 // this window -- they're actively on this lead, don't suggest anything.
 const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;

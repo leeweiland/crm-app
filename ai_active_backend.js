@@ -6,7 +6,7 @@ import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, isExcludable,
+  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound,
 } from "./ai_agents_backend.js";
 import { resolveContactTimezone } from "./contact_timezone.js";
 
@@ -689,7 +689,7 @@ export async function processAiActiveBatches() {
       // human_takeover. Old campaign history has no bearing on whether
       // AI Active should send its own first message.
       if (st.state === "waiting_reply") {
-        const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_active" && m.sourceType !== "ai_active_test");
+        const lastHumanOutbound = findLastHumanOutbound(journey);
         if (lastHumanOutbound && st.lastActionAt && new Date(lastHumanOutbound.createdAt).getTime() > new Date(st.lastActionAt).getTime()) {
           st.state = "human_takeover"; st.updatedAt = new Date().toISOString(); changed = true; continue;
         }

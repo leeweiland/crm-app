@@ -5,7 +5,7 @@ import { getAllContacts, getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, formatCustomerJourney, isExcludable,
+  generateAgentReply, contactMatchesTargeting, formatCustomerJourney, isExcludable, findLastHumanOutbound,
 } from "./ai_agents_backend.js";
 import { sendViaChannel, WAIT_UNIT_MS } from "./ai_active_backend.js";
 
@@ -178,7 +178,7 @@ export async function processBehavioralTriggers() {
     // Human takeover -- someone already personally on this lead takes
     // priority over an automated behavioral nudge.
     const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== SOURCE_TYPE && m.sourceType !== "ai_active");
+    const lastHumanOutbound = findLastHumanOutbound(journey);
     if (lastHumanOutbound && new Date(lastHumanOutbound.createdAt).getTime() > new Date(trigger.createdAt).getTime()) {
       trigger.status = "cancelled"; trigger.updatedAt = new Date().toISOString(); changed = true; continue;
     }

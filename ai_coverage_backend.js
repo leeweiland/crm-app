@@ -3,7 +3,7 @@ import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, formatCustomerJourney, isExcludable,
+  generateAgentReply, formatCustomerJourney, isExcludable, findLastHumanOutbound,
 } from "./ai_agents_backend.js";
 import { sendViaChannel } from "./ai_active_backend.js";
 
@@ -74,7 +74,7 @@ export async function maybeCoverInboundReply(contactId) {
     // phone) or anyone else has personally messaged this lead more
     // recently than this engine's own last covering reply, stand down.
     const lastCoverageSend = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType === SOURCE_TYPE);
-    const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && !["ai_active", "ai_coverage", "behavioral_trigger"].includes(m.sourceType));
+    const lastHumanOutbound = findLastHumanOutbound(journey);
     if (lastHumanOutbound && (!lastCoverageSend || new Date(lastHumanOutbound.createdAt).getTime() > new Date(lastCoverageSend.createdAt).getTime())) return;
 
     const journeyBlock = formatCustomerJourney(contact, journey);
