@@ -13,6 +13,7 @@ import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
+import { recordSendTiming } from "./send_timing.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 
@@ -401,6 +402,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     return { ok: false, reason: "ses_not_configured" };
   }
 
+  const _t0 = Date.now();
   try {
     const cmd = new SendEmailCommand({
       FromEmailAddress: fromAddress,
@@ -409,6 +411,10 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
       ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
     });
     const result = await client.send(cmd);
+    // $metadata.attempts/totalRetryDelay come straight from the AWS SDK's
+    // own retry middleware -- the only way to see whether THIS call got
+    // silently throttled-and-retried internally (see send_timing.js).
+    recordSendTiming({ channel: "email", ok: true, durationMs: Date.now() - _t0, attempts: result.$metadata?.attempts ?? null, retryDelayMs: result.$metadata?.totalRetryDelay ?? null, sourceType, sourceId });
     // Logged once with the FINAL status/providerMessageId already known,
     // rather than logging a placeholder row first and patching it after --
     // that follow-up patch used to mean a full pass over the whole message
@@ -418,6 +424,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     logMessage({ ...baseRow, status: "sent", providerMessageId: result.MessageId });
     return { ok: true, messageId: result.MessageId };
   } catch (e) {
+    recordSendTiming({ channel: "email", ok: false, durationMs: Date.now() - _t0, attempts: e.$metadata?.attempts ?? null, retryDelayMs: e.$metadata?.totalRetryDelay ?? null, error: e.message, sourceType, sourceId });
     // failReason stored, same as sms_backend.js's sendSms -- previously the
     // SES error was returned to the caller and dropped on the floor there,
     // so a failed email was undiagnosable after the fact. Confirmed live

@@ -8,6 +8,7 @@ import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
 import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
+import { recordSendTiming } from "./send_timing.js";
 
 export const SMS_TEMPLATES_FILE = "crm_sms_templates.json";
 
@@ -132,6 +133,7 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId, media
 
   if (!client) { logMessage({ ...baseRow, status: "failed", failReason: "twilio_not_configured" }); return { ok: false, reason: "twilio_not_configured" }; }
 
+  const _t0 = Date.now();
   try {
     // Without this, Twilio has no per-message destination for delivery
     // status -- /api/webhooks/twilio/status exists and is fully wired
@@ -155,11 +157,17 @@ export async function sendSms({ to, body, contactId, sourceType, sourceId, media
       // array even for a single media item.
       ...(mediaUrl ? { mediaUrl: [mediaUrl] } : {}),
     });
+    // Twilio's SDK (unlike AWS's) doesn't auto-retry or expose an attempt
+    // count -- duration alone is still the thing that matters for the same
+    // question send_timing.js exists for (is this call itself slow, same
+    // as the SES side, or is SMS throughput actually fine).
+    recordSendTiming({ channel: "sms", ok: true, durationMs: Date.now() - _t0, sourceType, sourceId });
     // Logged once with the final status/sid already known, same reasoning
     // as email_backend.js's sendEmail -- see message_log.js's comment.
     logMessage({ ...baseRow, status: msg.status || "sent", providerMessageId: msg.sid });
     return { ok: true, sid: msg.sid };
   } catch (e) {
+    recordSendTiming({ channel: "sms", ok: false, durationMs: Date.now() - _t0, error: e.message, sourceType, sourceId });
     // e.message from Twilio's SDK already includes their error code/text
     // (e.g. "The 'To' number ... is not a valid phone number." or a geo-
     // permissions message for international sends) -- stored now instead
