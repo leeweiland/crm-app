@@ -4,6 +4,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { getAllContacts, getContactById } from "./contacts_db.js";
 import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
+import { getSmsWorker } from "./sms_worker_handle.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
@@ -236,7 +237,14 @@ export async function handleSmsRequest(req, res, url) {
     if (twilioConfigured() && !twilio.validateRequest(twilioSettings.authToken, signature, fullUrl, params)) {
       res.writeHead(403); res.end(); return true;
     }
-    processTwilioInboundMessage(params.From, params.Body || "");
+    // Dedicated sms-worker thread, same as the relayed copy of this same
+    // event (webhook_relay_backend.js) -- this direct path is normally
+    // dormant (Twilio's own number config points at the receiver, not
+    // here) but kept isolated too rather than left running inline on
+    // whichever thread handles it if that ever changes.
+    const worker = getSmsWorker() || getBackgroundWorker();
+    if (worker) worker.postMessage({ type: "twilio_inbound", from: params.From, body: params.Body || "" });
+    else processTwilioInboundMessage(params.From, params.Body || "");
     res.writeHead(200, { "Content-Type": "text/xml" });
     res.end("<Response></Response>"); // empty TwiML -- no auto-reply
     return true;
@@ -256,7 +264,11 @@ export async function handleSmsRequest(req, res, url) {
     }
     const statusMap = { queued: "queued", sent: "sent", delivered: "delivered", undelivered: "failed", failed: "failed" };
     if (params.MessageSid && statusMap[params.MessageStatus]) {
-      const worker = getBackgroundWorker();
+      // Dedicated sms-worker thread first, same as the relayed copy of
+      // this same event type (webhook_relay_backend.js) -- this direct
+      // path exists in parallel with the receiver's relay for the same
+      // reason the SES one did, and was just as easy to miss fixing.
+      const worker = getSmsWorker() || getBackgroundWorker();
       if (worker) worker.postMessage({ type: "twilio_status", sid: params.MessageSid, status: statusMap[params.MessageStatus] });
       else processTwilioStatusUpdate(params.MessageSid, statusMap[params.MessageStatus]);
     }

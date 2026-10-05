@@ -38,6 +38,7 @@ import { processTwilioStatusUpdate, processTwilioInboundMessage } from "./sms_ba
 import { processSesNotificationMessage } from "./email_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
+import { getSmsWorker } from "./sms_worker_handle.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const WORKER_REPLY_TIMEOUT_MS = 45_000;
@@ -110,23 +111,23 @@ export async function handleWebhookRelayRequest(req, res, url) {
     (body.type === "ses_notification" && body.raw);
   if (!validPayload) return sendJson(res, 400, { ok: false, error: "unknown or incomplete event" });
 
-  // ses_notification prefers the dedicated send-worker thread, not the
-  // background-worker -- confirmed live (2026-10-05): a real backlog of
-  // 60k+ queued SES notification events (opens/clicks/deliveries from
-  // tonight's campaigns) relayed through background_worker.js the same
-  // way twilio_inbound does, and because that thread processes dispatches
-  // one at a time regardless of which type arrives when, an individual
-  // slow SES-notification call left a correctly-prioritized, newly
-  // arrived twilio_inbound message (a live reply to an AI Coverage agent)
-  // stuck waiting its turn behind it anyway -- the receiver's own
-  // oldest/type-priority ordering only controls what it sends NEXT, not
-  // what order an already-dispatched backlog finishes processing on the
-  // one thread receiving it. Same reasoning as moving AI Active's batch
-  // processing there earlier: bulk, non-latency-sensitive work doesn't
-  // belong sharing a thread with anything a real person is waiting on.
-  // Falls back to the background-worker if the send-worker isn't up
+  // Four real channels, not two -- confirmed live (2026-10-05) that even
+  // "ses_notification gets its own thread" wasn't enough: twilio_inbound/
+  // twilio_status were STILL sharing the background-worker thread with
+  // the scheduler's full 17-phase tick (Gmail polling, automations,
+  // AI Active's own re-check, duplicate scans, etc.), so a live reply to
+  // an AI Coverage agent could still stall minutes behind whatever
+  // scheduler phase happened to be running at the time -- fixing the one
+  // specific competitor that caused any ONE incident never fixed the
+  // actual problem, which was the sharing itself. twilio_inbound/
+  // twilio_status now go to their own dedicated sms-worker thread (see
+  // sms_worker.js) that does nothing else at all, ever. Each falls back
+  // to the background-worker if its preferred dedicated worker isn't up
   // (SEND_WORKER unset) rather than refusing the event outright.
-  const worker = (body.type === "ses_notification" && getSendWorker()) || getBackgroundWorker();
+  const worker =
+    (body.type === "ses_notification" && getSendWorker()) ||
+    ((body.type === "twilio_inbound" || body.type === "twilio_status") && getSmsWorker()) ||
+    getBackgroundWorker();
   if (worker) {
     ensureReplyListener(worker);
     const result = await dispatchToWorker(worker, body);

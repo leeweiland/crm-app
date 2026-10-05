@@ -38,6 +38,7 @@ import { handleAppSummaryRequest } from "./app_summary_backend.js";
 import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
 import { setSendWorker } from "./send_worker_handle.js";
+import { setSmsWorker } from "./sms_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
 import { loadContactsCache, getAllContacts } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
@@ -290,6 +291,32 @@ if (process.env.SEND_WORKER === "1") {
   }
   spawnSendWorker();
   console.log("[server] SEND_WORKER=1 -- campaign/SMS sends running on their own dedicated thread");
+
+  // SMS_WORKER rides the same opt-in flag as SEND_WORKER -- both are part
+  // of the same "real dedicated-thread topology" cutover, not two
+  // independent features, so there's no reason to make this a second env
+  // var the user has to separately remember to set. Dedicated OS thread
+  // for Twilio webhook processing ONLY (inbound SMS + status callbacks) --
+  // see sms_worker.js's own comment for why this needed to be fully
+  // isolated, not just moved to whichever other thread happened to be
+  // least busy at the time. webhook_relay_backend.js/sms_backend.js route
+  // to this worker when it's up, falling back to the background worker
+  // otherwise, same opt-in-and-verify-before-cutover pattern as every
+  // other worker here.
+  let consecutiveSmsWorkerCrashes = 0;
+  function spawnSmsWorker() {
+    const worker = new Worker(join(__dirname, "sms_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[sms-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[sms-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveSmsWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveSmsWorkerCrashes + 1 : 0;
+      setTimeout(spawnSmsWorker, Math.min(30000, 1000 * 2 ** consecutiveSmsWorkerCrashes));
+    });
+    setSmsWorker(worker);
+  }
+  spawnSmsWorker();
+  console.log("[server] SEND_WORKER=1 -- Twilio webhook processing also running on its own dedicated thread");
 }
 
 // Warms the SQLite DB file's OS page cache on its own thread -- see
