@@ -98,21 +98,21 @@ async function runRelayLoop() {
   if (relayLoopRunning) return;
   relayLoopRunning = true;
   try {
-    // twilio_inbound/twilio_status first, oldest-first within each group,
-    // ses_notification last -- confirmed live (2026-10-05): a strict
-    // oldest-first order treats a real inbound reply or a compliance "Stop"
-    // exactly the same as a bulk SES open/click/delivery event. Those two
-    // things are not remotely equal in urgency, and a big campaign's SES
-    // event volume (tens of thousands of opens/clicks) can bury a Stop
-    // behind hours of pure analytics with nothing special about it other
-    // than being older. ses_notification still drains in the background at
-    // its own pace -- `(type = 'ses_notification')` is false (0) for the
-    // two SMS types and true (1) for SES, so ASC puts SMS rows first
-    // without ever fully starving the SES backlog once the SMS queue is
-    // caught up. Skips anything attempted in the last 10s (lets a fresh
-    // failure's own imminent retry own the row instead of double-firing).
+    // Three real priority tiers, oldest-first within each -- a simple
+    // "SMS before SES" split (first version of this fix, same day) wasn't
+    // enough: twilio_status (delivery confirmations) sat in the same tier
+    // as twilio_inbound (actual replies and compliance opt-outs like
+    // "Stop"), and confirmed live, a steady trickle of real-time status
+    // callbacks from an active send kept replenishing that tier just as
+    // fast as it drained -- a "Stop" sitting at 0 attempts a full minute
+    // after ses_notification stopped being the problem, still starved by
+    // twilio_status rows that happened to be older. A reply or an opt-out
+    // is categorically more urgent than a delivery receipt, which is itself
+    // more urgent than bulk open/click analytics -- rank them explicitly
+    // instead of relying on which type happens to have less volume at any
+    // given moment.
     const { rows } = await pool.query(
-      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (type = 'ses_notification') ASC, created_at ASC LIMIT 25`
+      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 25`
     );
     for (const row of rows) {
       try {
