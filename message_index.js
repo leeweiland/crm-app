@@ -385,6 +385,16 @@ function flushConversationIndex() {
   }
   for (const key of removes) safeSqliteSync(() => deleteConversationRow(key));
 
+  // Everything SQLite-facing (the real, live Inbox path) is already done
+  // above -- only the legacy 285MB JSON file's own read+write is left,
+  // which is the actual expensive part SKIP_CONVERSATION_INDEX_FLUSH=1
+  // exists to skip. Checked here, not just at each exported function's
+  // entry, because upserts are never queued while the switch is on (see
+  // upsertConversationSummary's own redirect), but a flush triggered by
+  // recomputes/removes ALONE would otherwise still reach this unconditionally
+  // and pay the full cost on every single one regardless.
+  if (!conversationFlushEnabled()) return;
+
   const rows = readJson(CONVERSATION_INDEX_FILE, []);
   const byKey = new Map(rows.map(r => [r.key, r]));
 
@@ -418,8 +428,23 @@ function flushConversationIndex() {
 function conversationFlushEnabled() { return process.env.SKIP_CONVERSATION_INDEX_FLUSH !== "1"; }
 
 export function upsertConversationSummary(m) {
-  if (!conversationFlushEnabled()) return;
   if (!SIDEBAR_CHANNELS.includes(m.channel)) return;
+  if (!conversationFlushEnabled()) {
+    // The legacy 285MB JSON path stays off (the actual expensive part
+    // this kill switch exists for -- see its own comment above), but the
+    // REAL, live Inbox table (SQLite, via queryConversationsSqlite) still
+    // needs this contact's row kept current. recomputeConversationSummary
+    // already does exactly that cheaply, from this contact's own small
+    // per-contact message file, with zero dependency on the giant shared
+    // JSON index -- confirmed live (2026-10-05): without this redirect, a
+    // brand-new conversation started while the switch was on was
+    // permanently invisible to Inbox search, because syncMessageFields
+    // (the only thing that writes the SQLite row the live Inbox actually
+    // reads) only ever ran from inside the SAME gated flush this function
+    // used to just return out of.
+    if (m.contactId) recomputeConversationSummary(m.contactId);
+    return;
+  }
   const key = conversationKey(m);
   if (!_pendingUpsertMessages.has(key)) _pendingUpsertMessages.set(key, []);
   _pendingUpsertMessages.get(key).push(m);
@@ -432,13 +457,16 @@ export function upsertConversationSummary(m) {
 // to batch/collapse repeats because it always reads the CURRENT
 // per-contact message file (itself written synchronously) whenever the
 // batched flush actually runs, not whatever was current when called.
+// No conversationFlushEnabled() guard here (or on removeConversationSummary
+// below) -- unlike upsertConversationSummary's legacy-JSON path, both of
+// these only ever touch SQLite directly (see flushConversationIndex's own
+// early-return before the slow legacy block), so they stay unconditional
+// regardless of the kill switch.
 export function recomputeConversationSummary(contactId) {
-  if (!conversationFlushEnabled()) return;
   _pendingRecomputeIds.add(contactId);
   scheduleConversationFlush();
 }
 export function removeConversationSummary(key) {
-  if (!conversationFlushEnabled()) return;
   _pendingRemoveKeys.add(key);
   scheduleConversationFlush();
 }
