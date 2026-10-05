@@ -26,6 +26,7 @@
 import { parentPort } from "worker_threads";
 import { runCampaignSendLoop, sendCampaignNow, CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { processAiActiveBatches } from "./ai_active_backend.js";
+import { processSesNotificationMessage } from "./email_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
 import { readJson } from "./auth_backend.js";
 
@@ -94,6 +95,18 @@ async function runAiActiveBatches() {
 }
 setInterval(runAiActiveBatches, AI_ACTIVE_CHECK_MS);
 
+// replyId handling mirrors background_worker.js's own reply() exactly --
+// webhook_relay_backend.js's dispatchToWorker() round-trips a correlated
+// reply regardless of which worker it dispatched to, so ses_notification
+// needs the identical ack shape now that it's routed here instead (see
+// that file's own comment on why: a 60k+ SES notification backlog was
+// sharing the background-worker thread with live inbound SMS processing,
+// and one thread processing dispatches one at a time meant a slow SES
+// notification call could still stall a newer, correctly-prioritized
+// twilio_inbound message behind it).
+function reply(msg, err) {
+  if (msg?.replyId) parentPort.postMessage({ type: "relay_result", replyId: msg.replyId, ok: !err, error: err?.message });
+}
 parentPort.on("message", (msg) => {
   try {
     if (msg?.type === "send_campaign") {
@@ -101,11 +114,15 @@ parentPort.on("message", (msg) => {
       // this message type -- runCampaignSendLoop tracks its own progress
       // by writing crm_campaigns.json directly, nothing to report back.
       runCampaignSendLoop(msg.campaignId).catch((e) => console.error("[send-worker] campaign send failed", msg.campaignId, e.message));
+    } else if (msg?.type === "ses_notification") {
+      processSesNotificationMessage(msg.raw);
+      reply(msg);
     } else {
       console.error("[send-worker] unknown message type", msg?.type);
     }
   } catch (e) {
     console.error("[send-worker] message handling failed", e.message);
+    reply(msg, e);
   }
 });
 

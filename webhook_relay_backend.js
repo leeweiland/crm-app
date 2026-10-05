@@ -37,6 +37,7 @@ import { sendJson } from "./auth_backend.js";
 import { processTwilioStatusUpdate, processTwilioInboundMessage } from "./sms_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
+import { getSendWorker } from "./send_worker_handle.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const WORKER_REPLY_TIMEOUT_MS = 45_000;
@@ -59,20 +60,25 @@ function validSignature(secret, timestamp, rawBody, provided) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-// One listener per worker instance (the worker itself is respawned on
-// crash -- see server.js -- so this re-attaches naturally the next time
-// getBackgroundWorker() returns a freshly spawned one).
+// One listener per worker INSTANCE, not just one overall -- ses_notification
+// now dispatches to the send-worker while twilio_inbound/twilio_status stay
+// on the background-worker (see handleWebhookRelayRequest below), so this
+// needs to track attachment per-worker, not a single "the one worker"
+// reference. Each worker is respawned on crash (see server.js) -- a Set
+// keyed by the live worker object re-attaches naturally the next time
+// getBackgroundWorker()/getSendWorker() returns a freshly spawned one,
+// since a dead worker's object reference is simply never seen again.
 const pendingReplies = new Map();
-let listenerAttachedTo = null;
+const listenersAttached = new Set();
 function ensureReplyListener(worker) {
-  if (listenerAttachedTo === worker) return;
+  if (listenersAttached.has(worker)) return;
   worker.on("message", (msg) => {
     if (msg?.type !== "relay_result" || !pendingReplies.has(msg.replyId)) return;
     const resolve = pendingReplies.get(msg.replyId);
     pendingReplies.delete(msg.replyId);
     resolve(msg);
   });
-  listenerAttachedTo = worker;
+  listenersAttached.add(worker);
 }
 
 function dispatchToWorker(worker, payload) {
@@ -104,7 +110,23 @@ export async function handleWebhookRelayRequest(req, res, url) {
     (body.type === "ses_notification" && body.raw);
   if (!validPayload) return sendJson(res, 400, { ok: false, error: "unknown or incomplete event" });
 
-  const worker = getBackgroundWorker();
+  // ses_notification prefers the dedicated send-worker thread, not the
+  // background-worker -- confirmed live (2026-10-05): a real backlog of
+  // 60k+ queued SES notification events (opens/clicks/deliveries from
+  // tonight's campaigns) relayed through background_worker.js the same
+  // way twilio_inbound does, and because that thread processes dispatches
+  // one at a time regardless of which type arrives when, an individual
+  // slow SES-notification call left a correctly-prioritized, newly
+  // arrived twilio_inbound message (a live reply to an AI Coverage agent)
+  // stuck waiting its turn behind it anyway -- the receiver's own
+  // oldest/type-priority ordering only controls what it sends NEXT, not
+  // what order an already-dispatched backlog finishes processing on the
+  // one thread receiving it. Same reasoning as moving AI Active's batch
+  // processing there earlier: bulk, non-latency-sensitive work doesn't
+  // belong sharing a thread with anything a real person is waiting on.
+  // Falls back to the background-worker if the send-worker isn't up
+  // (SEND_WORKER unset) rather than refusing the event outright.
+  const worker = (body.type === "ses_notification" && getSendWorker()) || getBackgroundWorker();
   if (worker) {
     ensureReplyListener(worker);
     const result = await dispatchToWorker(worker, body);
