@@ -3,7 +3,7 @@ import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, formatCustomerJourney, isExcludable, findLastHumanOutbound,
+  generateAgentReply, isExcludable, findLastHumanOutbound,
 } from "./ai_agents_backend.js";
 import { sendViaChannel } from "./ai_active_backend.js";
 
@@ -77,8 +77,18 @@ export async function maybeCoverInboundReply(contactId) {
     const lastHumanOutbound = findLastHumanOutbound(journey);
     if (lastHumanOutbound && (!lastCoverageSend || new Date(lastHumanOutbound.createdAt).getTime() > new Date(lastCoverageSend.createdAt).getTime())) return;
 
-    const journeyBlock = formatCustomerJourney(contact, journey);
-    const promptText = introLine + journeyBlock;
+    // Just the lead's literal latest message, not the whole journey
+    // re-rendered into the user turn -- matches ai_active_backend.js's own
+    // pattern (its inbound-reply call passes only lastInbound.body/
+    // bodyPreview). Confirmed live (2026-10-05): this used to duplicate the
+    // ENTIRE conversation history into the user turn on top of what
+    // generateAgentReply ALREADY builds into the system prompt (its own
+    // journeyBlock/grounding), and a real reply that skipped straight to
+    // booking instead of following the system prompt's own objective
+    // sequence came out of exactly this path. The system prompt (same for
+    // every autonomous mode) already carries full conversation context;
+    // the user turn only needs to be the one thing to actually respond to.
+    const promptText = introLine + "\n\n" + (lastMsg.body || lastMsg.bodyPreview || "");
     const channel = lastMsg.channel === "sms" ? "sms" : "email";
     const channelInstruction = channel === "email"
       ? "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)"

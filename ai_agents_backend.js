@@ -199,9 +199,18 @@ function plainJourneyText(s) {
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/\s+/g, " ").trim();
 }
-export function formatCustomerJourney(contact, journey) {
-  if (!contact) return "";
-  const lines = journey
+// Split out of formatCustomerJourney (2026-10-05) so generateAgentReply can
+// cache everything except the newest message instead of re-sending (and
+// re-billing, at full uncached price) this lead's ENTIRE history on every
+// single reply -- confirmed live a real multi-turn conversation's cost
+// climbed with every reply as the journey grew, since none of it was ever
+// cached, only the static identity/playbook half was. Behavior for every
+// OTHER existing caller (ai_coverage/ai_active/behavioral_triggers'/
+// app_summary's own promptText construction) is unchanged -- same header,
+// same lines, same 60-event cap, just now assembled from two pieces
+// instead of inlined in one function.
+function formatJourneyLines(journey) {
+  return journey
     .slice(-60) // most recent 60 events is plenty of context; keeps the prompt bounded
     .map((m) => {
       const dir = m.direction === "inbound" ? "FROM LEAD" : m.direction === "outbound" ? "TO LEAD" : m.direction || "";
@@ -210,7 +219,14 @@ export function formatCustomerJourney(contact, journey) {
       const body = plainJourneyText(m.bodyPreview || m.body || "").slice(0, 300);
       return `[${when}] ${m.channel}${dir ? " " + dir : ""} — ${label}${body ? ": " + body : ""}`;
     });
-  return `\n\n### CUSTOMER JOURNEY — real history for this specific lead (${contact.first || ""} ${contact.last || ""}, ${contact.email || contact.phone || "no contact info"})\nStatus: ${contact.status || "unknown"} · Type: ${contact.programType || "unknown"} · Lead since: ${contact.firstSeenAt || contact.createdAt || "unknown"}\n\n${lines.join("\n") || "(no prior activity on record)"}`;
+}
+function formatJourneyHeader(contact) {
+  return `\n\n### CUSTOMER JOURNEY — real history for this specific lead (${contact.first || ""} ${contact.last || ""}, ${contact.email || contact.phone || "no contact info"})\nStatus: ${contact.status || "unknown"} · Type: ${contact.programType || "unknown"} · Lead since: ${contact.firstSeenAt || contact.createdAt || "unknown"}\n\n`;
+}
+export function formatCustomerJourney(contact, journey) {
+  if (!contact) return "";
+  const lines = formatJourneyLines(journey);
+  return formatJourneyHeader(contact) + (lines.join("\n") || "(no prior activity on record)");
 }
 
 // topN trimmed from 6/8 to 3/4 -- confirmed live this grounding block was
@@ -464,14 +480,35 @@ export function applyPricingMarker(text, agent) {
 // conversation history (journeyBlock) and the cached few-shot examples
 // still fully ground the follow-up's tone/technique either way.
 export async function generateAgentReply(agent, contactId, userText, { autoSend = false, senderName = null, skipGrounding = false } = {}) {
-  let journeyBlock = "";
+  // Everything in the journey except the newest event, cached as its OWN
+  // breakpoint -- confirmed live (2026-10-05) a real multi-turn
+  // conversation's cost climbed with every single reply, because the
+  // WHOLE journey (previously just one uncached blob) grows every turn
+  // and was re-sent, re-billed at full uncached price, from scratch every
+  // time. On the next call, this prefix is almost always an exact-or-
+  // longer match of what was cached last time (the old "latest" line
+  // just became part of the prefix) -- Anthropic's cache matches on the
+  // longest common prefix per breakpoint, so most of a long-running
+  // conversation now only pays full price for the ONE new line each
+  // reply folds in, not the entire history again.
+  let journeyPrefixCached = "", journeyLatestUncached = "";
   if (contactId) {
     const contact = getContactById(contactId);
     const journey = getContactMessages(contactId);
-    journeyBlock = formatCustomerJourney(contact, journey);
+    const lines = formatJourneyLines(journey);
+    if (lines.length > 1) {
+      journeyPrefixCached = formatJourneyHeader(contact) + lines.slice(0, -1).join("\n");
+      journeyLatestUncached = lines.at(-1);
+    } else {
+      journeyPrefixCached = formatJourneyHeader(contact);
+      journeyLatestUncached = lines.join("\n") || "(no prior activity on record)";
+    }
   }
   const grounding = skipGrounding ? "" : await retrieveBoth(userText);
-  const { cached, dynamic } = buildAgentSystemPromptParts(agent, journeyBlock, autoSend, senderName);
+  // journeyBlock passed as "" here -- its own cache_control breakpoint
+  // (journeyPrefixCached) replaces what buildAgentSystemPromptParts' own
+  // `dynamic` return used to carry; see the system array below.
+  const { cached } = buildAgentSystemPromptParts(agent, "", autoSend, senderName);
 
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -479,16 +516,20 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
     body: JSON.stringify({
       model: "claude-sonnet-5",
       max_tokens: 2000,
-      // Split so the ~15K-token static half (identity/prompt/playbook/
-      // few-shot -- identical across every call for this same agent +
-      // autoSend + senderName) is cached: full price the first time, then
-      // $0.20/MTok instead of $2/MTok on every call within 5 min of the
-      // last one -- which a high-volume engine like AI Active hits
-      // continuously. The per-call half (journey + retrieval grounding)
-      // is never cached since it's different every time anyway.
+      // Three breakpoints: the ~15K-token static identity/prompt/
+      // playbook/few-shot half (identical across every call for this
+      // same agent + autoSend + senderName), then the journey-minus-
+      // newest block (grows but shares a stable prefix call-to-call, see
+      // above), then only the newest journey line + this call's fresh
+      // retrieval grounding stays fully uncached, since that's genuinely
+      // different every time.
       system: [
         { type: "text", text: cached, cache_control: { type: "ephemeral" } },
-        { type: "text", text: dynamic + grounding },
+        // Falls back to a non-empty placeholder when there's no contactId
+        // at all (journeyPrefixCached would otherwise be a truly empty
+        // string) -- Anthropic's API rejects an empty text content block.
+        { type: "text", text: journeyPrefixCached || "(no contact)", cache_control: { type: "ephemeral" } },
+        { type: "text", text: journeyLatestUncached + "\n" + grounding },
       ],
       messages: [{ role: "user", content: userText }],
     }),

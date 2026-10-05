@@ -5,7 +5,7 @@ import { getAllContacts, getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, formatCustomerJourney, isExcludable, findLastHumanOutbound,
+  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound,
 } from "./ai_agents_backend.js";
 import { sendViaChannel, WAIT_UNIT_MS } from "./ai_active_backend.js";
 
@@ -184,12 +184,17 @@ export async function processBehavioralTriggers() {
     }
 
     try {
-      const journeyBlock = formatCustomerJourney(contact, journey);
+      // No journeyBlock appended here anymore -- confirmed live
+      // (2026-10-05) the exact same redundancy existed here as in
+      // ai_coverage_backend.js: the full conversation history, re-rendered
+      // into the user turn, duplicating what generateAgentReply already
+      // builds into the system prompt. See that file's own fix for the
+      // full reasoning; same cause, same fix, here too.
       const daysSinceFirstSeen = contact.firstSeenAt ? Math.round((Date.now() - new Date(contact.firstSeenAt).getTime()) / (24 * 60 * 60 * 1000)) : null;
       const promptText = `(This is a real-time behavioral trigger, not a normal reply -- the lead just ${describeSource(trigger)}.
 ${daysSinceFirstSeen != null ? `They've been a lead for about ${daysSinceFirstSeen} day(s).` : ""}
 ${contact.visitedPaths?.length ? `Pages they've visited over time: ${contact.visitedPaths.join(", ")}.` : ""}
-Write a short, specific, contextual outbound message referencing what they just did and their real history/application below -- NOT a generic "just checking in." Get them talking about why they haven't moved forward, or acknowledge what they were looking at. Keep it very short and casual for SMS, or short and warm for email.)${journeyBlock}`;
+Write a short, specific, contextual outbound message referencing what they just did and their real history/application -- NOT a generic "just checking in." Get them talking about why they haven't moved forward, or acknowledge what they were looking at. Keep it very short and casual for SMS, or short and warm for email.)`;
 
       const channel = contact.email ? "email" : "sms";
       const channelInstruction = channel === "email"
