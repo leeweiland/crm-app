@@ -98,10 +98,21 @@ async function runRelayLoop() {
   if (relayLoopRunning) return;
   relayLoopRunning = true;
   try {
-    // Oldest-first, skip anything attempted in the last 10s (lets a fresh
+    // twilio_inbound/twilio_status first, oldest-first within each group,
+    // ses_notification last -- confirmed live (2026-10-05): a strict
+    // oldest-first order treats a real inbound reply or a compliance "Stop"
+    // exactly the same as a bulk SES open/click/delivery event. Those two
+    // things are not remotely equal in urgency, and a big campaign's SES
+    // event volume (tens of thousands of opens/clicks) can bury a Stop
+    // behind hours of pure analytics with nothing special about it other
+    // than being older. ses_notification still drains in the background at
+    // its own pace -- `(type = 'ses_notification')` is false (0) for the
+    // two SMS types and true (1) for SES, so ASC puts SMS rows first
+    // without ever fully starving the SES backlog once the SMS queue is
+    // caught up. Skips anything attempted in the last 10s (lets a fresh
     // failure's own imminent retry own the row instead of double-firing).
     const { rows } = await pool.query(
-      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY created_at ASC LIMIT 25`
+      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (type = 'ses_notification') ASC, created_at ASC LIMIT 25`
     );
     for (const row of rows) {
       try {
