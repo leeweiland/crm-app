@@ -3,7 +3,7 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
 import { getAllContacts } from "./contacts_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
-import { getMessagesForSource } from "./message_log.js";
+import { getMessagesForSource, logMessagesBatch } from "./message_log.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
@@ -208,6 +208,16 @@ export async function runCampaignSendLoop(campaignId) {
         }
         const batch = remaining.slice(i, i + SENDING_CONCURRENCY);
         const batchStartedAt = Date.now();
+        // Collected here instead of each sendEmail() call logging itself
+        // immediately -- confirmed live via /proc/pressure/io that the
+        // production disk is under sustained I/O pressure, and
+        // SENDING_CONCURRENCY concurrent sends each separately writing to
+        // the SAME two shared files (the global message log, this
+        // campaign's own per-source log) serialized through
+        // acquireFileLock's blocking retry wait, one at a time, for no
+        // reason other than each insisting on its own lock cycle. Flushed
+        // once below, right after the batch settles, via logMessagesBatch.
+        const batchLog = [];
         // Caught per-send (not left to reject the whole batch/run) --
         // before this, ANY single failure (a bad address, a transient SES
         // error) killed the entire remaining send via the outer catch;
@@ -217,9 +227,10 @@ export async function runCampaignSendLoop(campaignId) {
           sendEmail({
             to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
             footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
-            sourceType: "campaign", sourceId: campaign.id,
+            sourceType: "campaign", sourceId: campaign.id, batchLog,
           }).catch((e) => console.error(`[campaign send] ${campaignId} contact ${contact.id} failed:`, e.message))
         ));
+        logMessagesBatch(batchLog);
         sentThisRun += batch.length;
         const latest = readJson(CAMPAIGNS_FILE, []);
         const c = latest.find(x => x.id === campaignId);

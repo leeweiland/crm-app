@@ -609,6 +609,51 @@ export function appendJsonRecordFast(file, record) {
   _mtimeCache.delete(file);
 }
 
+// Same in-place trick as appendJsonRecordFast, but for N records in ONE
+// lock-acquire/open/write/close cycle instead of N -- built for
+// campaigns_backend.js's send loop (2026-10-06): a batch of
+// SENDING_CONCURRENCY concurrent sends each calling appendJsonRecordFast
+// against the SAME shared file (the campaign's own per-source message log,
+// or the global message log) serialized through acquireFileLock's blocking
+// retry wait, and confirmed live via /proc/pressure/io that this disk is
+// under sustained I/O pressure -- fewer, larger lock cycles instead of many
+// tiny ones is the lever that's actually ours to pull. Callers collect a
+// batch's records in memory and flush once, right after the batch's
+// Promise.all resolves, rather than letting each send's own write race the
+// others for this same file's lock.
+export function appendJsonRecordsFast(file, records) {
+  if (!records || !records.length) return;
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) { writeJsonToDisk(p, records); return; }
+  withFileLock(p, () => {
+    const fd = openSync(p, "r+");
+    try {
+      const size = fstatSync(fd).size;
+      const tailLen = Math.min(size, 64);
+      const tailBuf = Buffer.alloc(tailLen);
+      readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+      let end = tailLen - 1;
+      while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecordsFast: ${file} does not end with ']'`);
+      const bodyEnd = size - (tailLen - end);
+
+      const headLen = Math.min(size, 256);
+      const headBuf = Buffer.alloc(headLen);
+      readSync(fd, headBuf, 0, headLen, 0);
+      let hi = 0;
+      while (hi < headLen && headBuf[hi] !== 0x5b) hi++;
+      hi++;
+      while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+      const isEmpty = hi < headLen && headBuf[hi] === 0x5d;
+
+      const suffix = Buffer.from((isEmpty ? "" : ",") + records.map(r => JSON.stringify(r)).join(",") + "]", "utf8");
+      ftruncateSync(fd, bodyEnd);
+      writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+    } finally { closeSync(fd); }
+  });
+  _mtimeCache.delete(file);
+}
+
 // Same in-place trick as appendJsonRecordFast, for a JSON OBJECT (keyed
 // lookup) instead of an array -- used for small persisted indexes like
 // providerMessageId -> {id, contactId}, where a webhook needs to find one

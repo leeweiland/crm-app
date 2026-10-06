@@ -337,7 +337,13 @@ function wrapLinksForClickTracking(html, rowId) {
 // Requires the sending domain (not just one address) to be SES-verified;
 // SES rejects an unverified individual address the same way it already
 // degrades when nothing is configured at all -- see the catch below.
-export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from, trailingHtml }) {
+// batchLog: optional array -- when passed (campaigns_backend.js's send
+// loop, 2026-10-06), the row that would otherwise be logged immediately is
+// pushed here instead, and the CALLER is responsible for flushing it via
+// logMessagesBatch once the whole batch's sends have settled. Every other
+// caller (automations, Inbox replies, AI agents, etc.) omits this and keeps
+// logging immediately via logMessage, exactly as before.
+export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from, trailingHtml, batchLog }) {
   const client = await getSesClient();
   const ses = getSesSettings();
   const contact = contactId ? getContact(contactId) : null;
@@ -400,7 +406,8 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   };
 
   if (!client) {
-    logMessage({ ...baseRow, status: "failed" });
+    if (batchLog) batchLog.push({ ...baseRow, status: "failed" });
+    else logMessage({ ...baseRow, status: "failed" });
     return { ok: false, reason: "ses_not_configured" };
   }
 
@@ -423,7 +430,8 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     // log to find our own row again by id, which at 12GB+ hung every send
     // for 30-100+ seconds. One log call per send, either way it ends up,
     // still guarantees a row exists even when the send fails.
-    logMessage({ ...baseRow, status: "sent", providerMessageId: result.MessageId });
+    if (batchLog) batchLog.push({ ...baseRow, status: "sent", providerMessageId: result.MessageId });
+    else logMessage({ ...baseRow, status: "sent", providerMessageId: result.MessageId });
     return { ok: true, messageId: result.MessageId };
   } catch (e) {
     recordSendTiming({ channel: "email", ok: false, durationMs: Date.now() - _t0, attempts: e.$metadata?.attempts ?? null, retryDelayMs: e.$metadata?.totalRetryDelay ?? null, error: e.message, sourceType, sourceId });
@@ -431,7 +439,8 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     // SES error was returned to the caller and dropped on the floor there,
     // so a failed email was undiagnosable after the fact. Confirmed live
     // (2026-10-04): 23 failed sends with no recorded cause anywhere.
-    logMessage({ ...baseRow, status: "failed", failReason: e.message });
+    if (batchLog) batchLog.push({ ...baseRow, status: "failed", failReason: e.message });
+    else logMessage({ ...baseRow, status: "failed", failReason: e.message });
     return { ok: false, reason: e.message };
   }
 }

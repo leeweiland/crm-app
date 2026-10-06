@@ -1,6 +1,6 @@
 import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, readJson, writeJson, appendJsonRecords, appendJsonRecordFast, updateJsonArrayRecordByField } from "./auth_backend.js";
+import { DATA_DIR, readJson, writeJson, appendJsonRecords, appendJsonRecordFast, appendJsonRecordsFast, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
 import { getContactById } from "./contacts_db.js";
 
@@ -97,6 +97,29 @@ export function appendSourceMessage(message) {
   // append (seeks to the tail, never touches existing bytes) -- O(1)
   // regardless of how large this file has grown.
   appendJsonRecordFast(sourceFile(message.sourceType, message.sourceId), slimSourceMessage(message));
+}
+// Batched sibling of appendSourceMessage -- one lock cycle for the whole
+// group instead of one per message (see logMessagesBatch in message_log.js,
+// the actual caller: a campaign send batch's own sends all share the SAME
+// sourceType/sourceId, so they'd otherwise all serialize through
+// acquireFileLock's blocking retry wait against this one file, one at a
+// time, for no reason other than each insisting on its own lock cycle).
+// Still grouped by (sourceType, sourceId) rather than assuming the whole
+// array shares one, since callers outside the campaign send loop could
+// pass a mixed batch.
+export function appendSourceMessagesBatch(messages) {
+  const groups = new Map();
+  for (const m of messages) {
+    if (!m.sourceType || !m.sourceId) continue;
+    const key = `${m.sourceType}\u0000${m.sourceId}`;
+    if (!groups.has(key)) groups.set(key, { sourceType: m.sourceType, sourceId: m.sourceId, rows: [] });
+    groups.get(key).rows.push(slimSourceMessage(m));
+  }
+  if (!groups.size) return;
+  ensureSourceDir();
+  for (const { sourceType, sourceId, rows } of groups.values()) {
+    appendJsonRecordsFast(sourceFile(sourceType, sourceId), rows);
+  }
 }
 export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
   if (!sourceType || !sourceId) return;

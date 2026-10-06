@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { statSync } from "fs";
 import { join } from "path";
-import { appendJsonRecordFast, appendToJsonObjectFast, readJson, DATA_DIR } from "./auth_backend.js";
-import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
+import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, readJson, DATA_DIR } from "./auth_backend.js";
+import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
@@ -39,7 +39,12 @@ export const MESSAGE_ID_INDEX_FILE = "crm_message_id_index.json";
 // anywhere in the file) -- see email_backend.js/sms_backend.js, which no
 // longer call updateMessageById at all for their own just-created row on
 // the send path, logging once with the final status instead.
-export function logMessage({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, mediaUrl, status, failReason, createdAt, extra }) {
+// Pure row construction, no I/O -- split out of logMessage (2026-10-06) so
+// logMessagesBatch below can build N rows up front and flush the two
+// contended writes (MESSAGE_LOG_FILE, the per-source file) ONCE for the
+// whole batch instead of once per row, while every other row still gets
+// built exactly the same way logMessage always built it.
+function buildMessageRow({ id, channel, direction, contactId, sourceType, sourceId, providerMessageId, to, from, subject, body, bodyPreview, mediaUrl, status, failReason, createdAt, extra }) {
   const row = {
     // Accepts a pre-generated id -- email_backend.js's click-tracking link
     // wrapping needs the row's id baked into the email body BEFORE the send
@@ -77,9 +82,15 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
     // logMessage's core shape to know about every one of them.
     ...(extra || {}),
   };
-  appendJsonRecordFast(MESSAGE_LOG_FILE, row);
+  return row;
+}
+// Everything logMessage does to a row AFTER the two writes that
+// logMessagesBatch now does once for the whole batch (MESSAGE_LOG_FILE,
+// the per-source file) -- split out so both logMessage and
+// logMessagesBatch call the exact same side effects per row, rather than
+// maintaining two copies that could drift.
+function persistRowSideEffects(row) {
   appendContactMessage(row);
-  appendSourceMessage(row);
   recordDailyStatsNew(row);
   upsertConversationSummary(row);
   // Which team member (if any) this message puts in conversation with the
@@ -113,7 +124,31 @@ export function logMessage({ id, channel, direction, contactId, sourceType, sour
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
   appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
   if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
+}
+export function logMessage(fields) {
+  const row = buildMessageRow(fields);
+  appendJsonRecordFast(MESSAGE_LOG_FILE, row);
+  appendSourceMessage(row);
+  persistRowSideEffects(row);
   return row;
+}
+// Built for campaigns_backend.js's send loop (2026-10-06): confirmed live
+// via /proc/pressure/io that the production disk is under sustained I/O
+// pressure, and SENDING_CONCURRENCY sends in a batch each calling
+// logMessage separately meant each one's MESSAGE_LOG_FILE and per-source
+// writes serialized through acquireFileLock's blocking retry wait against
+// the SAME two files, one at a time. Collects the batch's rows and flushes
+// those two writes ONCE for the whole batch instead of once per row --
+// everything else each row needs (contact file, daily stats, conversation
+// summary, the two lookup indexes, etc.) still happens per row via
+// persistRowSideEffects, unchanged from what logMessage always did.
+export function logMessagesBatch(fieldsList) {
+  if (!fieldsList || !fieldsList.length) return [];
+  const rows = fieldsList.map(buildMessageRow);
+  appendJsonRecordsFast(MESSAGE_LOG_FILE, rows);
+  appendSourceMessagesBatch(rows);
+  for (const row of rows) persistRowSideEffects(row);
+  return rows;
 }
 // compliance_backend.js already imports logMessage (for its own
 // blacklist-sheet activity-log entry) -- a static top-level import back
