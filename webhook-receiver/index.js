@@ -151,8 +151,19 @@ async function runRelayLoop() {
     // without that risk -- relayLoopRunning above already lets a pass
     // longer than RELAY_INTERVAL_MS run back-to-back into the next one
     // instead of waiting out the full 10s, so this scales cleanly.
+    // PAUSE_SES_NOTIFICATIONS (2026-10-06) -- real emergency valve, not a
+    // tuning knob: confirmed live that a large active campaign's own
+    // Delivery/Open/Click notification volume was enough on its own to
+    // saturate the disk crm-app's worker threads share, well past
+    // anything a timeout/query tweak could paper over. Twilio rows are
+    // UNAFFECTED (a real reply or a compliance "Stop" must never wait on
+    // this) -- only ses_notification is held back, and nothing here
+    // deletes or drops a row, they just sit as 'pending' until this is
+    // unset, same as the manual paused_disk_pressure sweep this replaces.
+    const PAUSE_SES_NOTIFICATIONS = process.env.PAUSE_SES_NOTIFICATIONS === "1";
     const { rows } = await pool.query(
-      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 500`
+      `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') AND ($1::boolean IS FALSE OR type <> 'ses_notification') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 500`,
+      [PAUSE_SES_NOTIFICATIONS]
     );
     // REVERTED same day (2026-10-05) -- tried Promise.all here on the
     // theory that each row's relay call was independent, but every one of
