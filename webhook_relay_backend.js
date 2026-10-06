@@ -39,6 +39,7 @@ import { processSesNotificationMessage } from "./email_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSmsWorker } from "./sms_worker_handle.js";
+import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const WORKER_REPLY_TIMEOUT_MS = 45_000;
@@ -111,22 +112,28 @@ export async function handleWebhookRelayRequest(req, res, url) {
     (body.type === "ses_notification" && body.raw);
   if (!validPayload) return sendJson(res, 400, { ok: false, error: "unknown or incomplete event" });
 
-  // Four real channels, not two -- confirmed live (2026-10-05) that even
-  // "ses_notification gets its own thread" wasn't enough: twilio_inbound/
-  // twilio_status were STILL sharing the background-worker thread with
-  // the scheduler's full 17-phase tick (Gmail polling, automations,
-  // AI Active's own re-check, duplicate scans, etc.), so a live reply to
-  // an AI Coverage agent could still stall minutes behind whatever
-  // scheduler phase happened to be running at the time -- fixing the one
-  // specific competitor that caused any ONE incident never fixed the
-  // actual problem, which was the sharing itself. twilio_inbound/
-  // twilio_status now go to their own dedicated sms-worker thread (see
-  // sms_worker.js) that does nothing else at all, ever. Each falls back
-  // to the background-worker if its preferred dedicated worker isn't up
-  // (SEND_WORKER unset) rather than refusing the event outright.
+  // Five real channels now, not two, not four -- confirmed live
+  // (2026-10-06) that even "ses_notification gets its own thread" (moved
+  // onto send_worker.js earlier the same night) wasn't actually separating
+  // it from anything: that thread is where campaign/SMS sends themselves
+  // run, so email SENDING and email WEBHOOK PROCESSING ended up sharing a
+  // thread -- the exact same mistake already fixed for SMS, just not
+  // caught here at the time. A real campaign's send calls showed a
+  // near-zero AWS retry delay but 20-66+ second total call times, with a
+  // whole batch of concurrent sends all resolving within the same ~100ms
+  // window after a stall -- the event loop being starved by the SES-
+  // notification flood on that same thread, not the sends being slow
+  // themselves. ses_notification now gets its own dedicated thread (see
+  // ses_notification_worker.js), fully separate from send_worker.js.
+  // twilio_inbound/twilio_status already have their own (sms_worker.js,
+  // fixed earlier the same night for the identical reason, just one
+  // channel over). Each falls back down the chain (dedicated worker ->
+  // send/background worker) if its preferred one isn't up, rather than
+  // refusing the event outright.
   const worker =
-    (body.type === "ses_notification" && getSendWorker()) ||
+    (body.type === "ses_notification" && getSesNotificationWorker()) ||
     ((body.type === "twilio_inbound" || body.type === "twilio_status") && getSmsWorker()) ||
+    getSendWorker() ||
     getBackgroundWorker();
   if (worker) {
     ensureReplyListener(worker);

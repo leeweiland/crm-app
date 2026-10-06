@@ -39,6 +39,7 @@ import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
 import { setSendWorker } from "./send_worker_handle.js";
 import { setSmsWorker } from "./sms_worker_handle.js";
+import { setSesNotificationWorker } from "./ses_notification_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
 import { loadContactsCache, getAllContacts } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
@@ -317,6 +318,35 @@ if (process.env.SEND_WORKER === "1") {
   }
   spawnSmsWorker();
   console.log("[server] SEND_WORKER=1 -- Twilio webhook processing also running on its own dedicated thread");
+
+  // Same flag, same reasoning as sms-worker above. Confirmed live
+  // (2026-10-06) why this needs splitting OFF send_worker.js, not just
+  // onto it: a real campaign showed send calls with a near-zero AWS retry
+  // delay still taking 20-66+ seconds end to end, with a whole batch of
+  // concurrent sends all resolving within the same ~100ms window after a
+  // stall -- the event loop being starved by something ELSE on that
+  // thread, not the sends themselves being slow. SES notification
+  // processing (moved onto send_worker.js earlier the same night, to get
+  // it off the sms-worker thread) was that something -- its relay batch
+  // size was separately raised to 500 the same night, enough synchronous
+  // back-to-back work to delay an already-answered send from actually
+  // resolving. Giving it its own thread means a send call's resolution is
+  // never waiting behind anything but other send calls on its own thread,
+  // the same guarantee SMS already has.
+  let consecutiveSesNotificationWorkerCrashes = 0;
+  function spawnSesNotificationWorker() {
+    const worker = new Worker(join(__dirname, "ses_notification_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[ses-notification-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[ses-notification-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveSesNotificationWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveSesNotificationWorkerCrashes + 1 : 0;
+      setTimeout(spawnSesNotificationWorker, Math.min(30000, 1000 * 2 ** consecutiveSesNotificationWorkerCrashes));
+    });
+    setSesNotificationWorker(worker);
+  }
+  spawnSesNotificationWorker();
+  console.log("[server] SEND_WORKER=1 -- SES notification processing also running on its own dedicated thread, separate from campaign/SMS sends");
 }
 
 // Warms the SQLite DB file's OS page cache on its own thread -- see

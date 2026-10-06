@@ -12,6 +12,7 @@ import { setConvoMeta } from "./conversation_meta.js";
 import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
+import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
@@ -532,16 +533,15 @@ export async function handleEmailRequest(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
     if (body.Type === "Notification") {
-      // Prefer the send-worker, same as webhook_relay_backend.js's own
-      // routing for the relayed copy of this same event -- SES has TWO
-      // parallel SNS subscriptions right now (direct here, and via the
-      // webhook-receiver's relay), and fixing only the relayed path left
-      // this direct one still dispatching straight to the background-worker
-      // thread, still contending with live inbound SMS processing there.
-      // Confirmed live (2026-10-05): a flood of these direct requests kept
-      // arriving even after the relay-side fix, because it's a completely
-      // separate delivery channel that was never touched by it.
-      const worker = getSendWorker() || getBackgroundWorker();
+      // Prefer the dedicated ses-notification worker, same as
+      // webhook_relay_backend.js's own routing for the relayed copy of
+      // this same event -- SES has TWO parallel SNS subscriptions right
+      // now (direct here, and via the webhook-receiver's relay), and this
+      // direct path needs the same routing fix as that one any time it
+      // changes, since it's a completely separate delivery channel. Falls
+      // through send-worker -> background-worker if the dedicated one
+      // isn't up.
+      const worker = getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
       if (worker) worker.postMessage({ type: "ses_notification", raw: body.Message });
       else processSesNotificationMessage(body.Message);
     }
