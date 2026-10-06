@@ -347,6 +347,31 @@ if (process.env.SEND_WORKER === "1") {
   }
   spawnSesNotificationWorker();
   console.log("[server] SEND_WORKER=1 -- SES notification processing also running on its own dedicated thread, separate from campaign/SMS sends");
+
+  // Same flag, same reasoning as every other worker above. Confirmed live
+  // (2026-10-06): AI Active's own 30s batch check was sharing send_worker.js
+  // with the actual campaign send loop -- it ended up there purely because
+  // "that's where sends happen," never because it needed to be on that
+  // SPECIFIC thread the way checkCampaigns does (see send_worker.js's own
+  // comment on why that one stays). A real campaign showed send calls
+  // with near-zero AWS retry delay still taking 10-29+ seconds in
+  // recurring clusters roughly every 20-30 seconds -- the exact cadence
+  // of this interval sharing that thread. No handle/setter needed --
+  // nothing ever dispatches a message TO this worker, it's purely
+  // self-driven, so there's nothing for another file to look up.
+  let consecutiveAiActiveWorkerCrashes = 0;
+  function spawnAiActiveWorker() {
+    const worker = new Worker(join(__dirname, "ai_active_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[ai-active-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[ai-active-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveAiActiveWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveAiActiveWorkerCrashes + 1 : 0;
+      setTimeout(spawnAiActiveWorker, Math.min(30000, 1000 * 2 ** consecutiveAiActiveWorkerCrashes));
+    });
+  }
+  spawnAiActiveWorker();
+  console.log("[server] SEND_WORKER=1 -- AI Active's batch check also running on its own dedicated thread, separate from campaign/SMS sends");
 }
 
 // Warms the SQLite DB file's OS page cache on its own thread -- see

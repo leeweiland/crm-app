@@ -25,7 +25,6 @@
 // that only ever does this one thing.
 import { parentPort } from "worker_threads";
 import { runCampaignSendLoop, sendCampaignNow, CAMPAIGNS_FILE } from "./campaigns_backend.js";
-import { processAiActiveBatches } from "./ai_active_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
 import { readJson } from "./auth_backend.js";
@@ -73,27 +72,19 @@ function checkCampaigns() {
 }
 setInterval(checkCampaigns, CAMPAIGN_CHECK_MS);
 
-// Moved here from scheduler.js's tick (which deliberately skips it when
-// SEND_WORKER=1; see its own comment) for the identical reason campaign
-// sends already live on this thread instead of background_worker.js's:
-// confirmed live (2026-10-05), a backlog of queued AI Active cold-opens
-// (each a real LLM call, processed one at a time) kept this phase running
-// for minutes at a stretch on the background-worker thread, and because
-// that thread ALSO handles every webhook relay dispatch
-// (background_worker.js), a live inbound SMS reply -- including a real
-// back-and-forth with an AI Coverage agent -- sat queued behind it the
-// whole time. Same guard shape as checkCampaigns' own interval: an
-// overlap guard since one pass can legitimately take longer than
-// AI_ACTIVE_CHECK_MS under a real backlog, same reasoning as scheduler.js's
-// own _tickRunning.
-const AI_ACTIVE_CHECK_MS = 30 * 1000;
-let aiActiveRunning = false;
-async function runAiActiveBatches() {
-  if (aiActiveRunning) return;
-  aiActiveRunning = true;
-  try { await processAiActiveBatches(); } catch (e) { console.error("[send-worker] processAiActiveBatches failed", e.message); } finally { aiActiveRunning = false; }
-}
-setInterval(runAiActiveBatches, AI_ACTIVE_CHECK_MS);
+// AI Active's own 30s batch check moved OUT to ai_active_worker.js
+// (2026-10-06) -- it was here briefly (added 2026-10-05 to get it off the
+// background-worker thread, see that commit) purely because "this is
+// where sends happen," but it never actually needed to share THIS thread
+// specifically the way checkCampaigns above does (checkCampaigns relies on
+// running on the SAME thread as the send loop for its getSendWorker()/
+// getBackgroundWorker() null-fallback to resolve correctly -- see its own
+// comment). processAiActiveBatches has no such requirement; it just calls
+// sendEmail/sendSms like any other caller. Confirmed live on a real
+// campaign ("ALL STUDENTS test this"): send calls with near-zero AWS
+// retry delay still took 10-29+ seconds in recurring clusters roughly
+// every 20-30 seconds -- the exact cadence of a 30-second interval
+// sharing this thread with the sends themselves.
 
 // replyId handling mirrors background_worker.js's own reply() exactly --
 // webhook_relay_backend.js's dispatchToWorker() round-trips a correlated
