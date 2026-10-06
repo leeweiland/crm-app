@@ -53,7 +53,20 @@ await loadContactsCache();
 // where the dedicated send thread wants this to run anyway.
 const STUCK_SEND_THRESHOLD_MS = 3 * 60 * 1000;
 const CAMPAIGN_CHECK_MS = 30 * 1000;
+// Temporary diagnostic (2026-10-06) -- a real campaign showed send calls
+// with near-zero AWS retry delay still taking 10-29+ seconds, in recurring
+// clusters landing roughly every 30 seconds, matching this function's own
+// interval (confirmed after moving AI Active's batch check to its own
+// thread didn't fix it). send_timing.js's duration measurement only wraps
+// the raw client.send(cmd) call, before any file writes -- so whatever's
+// causing the delay is happening DURING that AWS call specifically, most
+// likely this thread's event loop being too busy with something else to
+// get back to an already-answered response. Logs how long this function
+// itself actually takes each run, to find out directly instead of
+// guessing again. Remove once the real cause is confirmed.
 function checkCampaigns() {
+  const _t0 = Date.now();
+  console.log(`[send-worker] checkCampaigns starting at ${new Date(_t0).toISOString()}`);
   try {
     const campaigns = readJson(CAMPAIGNS_FILE, []);
     const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
@@ -68,6 +81,9 @@ function checkCampaigns() {
     }
   } catch (e) {
     console.error("[send-worker] checkCampaigns failed", e.message);
+  } finally {
+    const elapsed = Date.now() - _t0;
+    console.log(`[send-worker] checkCampaigns took ${elapsed}ms`);
   }
 }
 setInterval(checkCampaigns, CAMPAIGN_CHECK_MS);
