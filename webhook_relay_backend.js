@@ -42,7 +42,18 @@ import { getSmsWorker } from "./sms_worker_handle.js";
 import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
-const WORKER_REPLY_TIMEOUT_MS = 45_000;
+// Raised from 45s (2026-10-06) -- confirmed live during a real disk-
+// pressure spike that calls were completing right around 45-46s, just
+// past the old ceiling, not hanging indefinitely. A timeout here doesn't
+// cancel the in-flight work on the worker thread -- postMessage has no
+// way to abort what it already started -- so a call that times out right
+// before finishing keeps running to completion ANYWAY, uselessly, while
+// the receiver's retry logic ALSO re-dispatches the same event as a new
+// attempt. Every near-miss timeout was doubling real load on an already
+// -saturated disk instead of just waiting the extra few seconds for the
+// original attempt to land. Still bounded (a genuinely hung worker still
+// times out, just later), not removed.
+const WORKER_REPLY_TIMEOUT_MS = 90_000;
 
 function readRawBody(req) {
   return new Promise((resolve) => {

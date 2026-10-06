@@ -72,19 +72,26 @@ function signRelayBody(rawBody) {
   return { timestamp, signature };
 }
 
-// RELAY_FETCH_TIMEOUT_MS > crm-app's own 45s WORKER_REPLY_TIMEOUT_MS
+// RELAY_FETCH_TIMEOUT_MS > crm-app's own WORKER_REPLY_TIMEOUT_MS
 // (webhook_relay_backend.js) -- a legitimately slow-but-real response
 // should never get aborted out from under crm-app before IT would have
-// given up on its own. Confirmed live (2026-10-05) why this can't be left
-// unbounded, though: this fetch had no timeout at all, and runRelayLoop's
-// relayLoopRunning guard only resets in a finally block AFTER every row's
-// relayOne() call settles -- a single request that hangs forever (a TCP
-// connection accepted mid-redeploy, then the container torn down without
-// ever actually closing it) never settles, so relayLoopRunning stays true
-// forever and every future 10s tick just returns immediately, same shape
-// as scheduler.js's own _tickRunning bug on the crm-app side. Only a
-// manual restart (clearing the in-memory flag) got it moving again.
-const RELAY_FETCH_TIMEOUT_MS = 60_000;
+// given up on its own. Raised from 60s to 100s (2026-10-06) alongside
+// crm-app's own timeout going 45s->90s -- confirmed live during a real
+// disk-pressure spike that calls were completing right around 45-46s,
+// just past the OLD ceiling on both sides; every near-miss was wasted
+// work (the worker thread keeps running after the caller gives up, then
+// the retry re-dispatches the same event on top of it) instead of just
+// waiting the extra few seconds. Confirmed live (2026-10-05) why this
+// can't be left unbounded, though: this fetch had no timeout at all, and
+// runRelayLoop's relayLoopRunning guard only resets in a finally block
+// AFTER every row's relayOne() call settles -- a single request that
+// hangs forever (a TCP connection accepted mid-redeploy, then the
+// container torn down without ever actually closing it) never settles,
+// so relayLoopRunning stays true forever and every future 10s tick just
+// returns immediately, same shape as scheduler.js's own _tickRunning bug
+// on the crm-app side. Only a manual restart (clearing the in-memory
+// flag) got it moving again.
+const RELAY_FETCH_TIMEOUT_MS = 100_000;
 async function relayOne(row) {
   const rawBody = JSON.stringify({ type: row.type, ...row.payload });
   const { timestamp, signature } = signRelayBody(rawBody);
