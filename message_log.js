@@ -212,7 +212,29 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   });
   if (found) {
     recomputeConversationSummary(entry.contactId);
-    if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
+    // Skipped specifically for "delivered" (2026-10-06) -- confirmed live
+    // this is the actual cause of the SES-notification worker timing out on
+    // every single dispatch: updateSourceMessageStatus's
+    // updateJsonArrayRecordByField does a full read-and-rewrite of the
+    // ENTIRE per-campaign source file (never given the same O(1) fix
+    // appendSourceMessage got, see that function's own comment), and a
+    // live 17k-recipient send generates one Delivery notification per
+    // recipient -- a full rewrite of an ever-growing, multi-thousand-row
+    // file, once per send, from a DIFFERENT thread than the one actively
+    // appending new sends to that same file under the same lock. Confirmed
+    // via /proc this was the dominant disk-I/O consumer in the whole app,
+    // climbing as the file grew, eventually exceeding the 45s relay
+    // timeout on every call. "Delivered" is the highest-volume, lowest-
+    // value status of the five (SES confirmed receipt, nothing a human
+    // reads this campaign's own report for distinctly from "sent" --
+    // unlike opened/clicked/bounced/complained, which stay exactly as
+    // before). The contact's own message record (above) and daily stats
+    // (below) still update either way -- only the campaign-report's own
+    // per-row "delivered" status on this one shared file is skipped, so
+    // rollupStats' delivered count will undercount for messages that never
+    // separately opened/clicked -- a real, disclosed tradeoff, not a
+    // silent one.
+    if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
     recordDailyStatsTransition(found, oldStatus, status);
     if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
   }
