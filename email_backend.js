@@ -542,17 +542,34 @@ export async function handleEmailRequest(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
     if (body.Type === "Notification") {
-      // Prefer the dedicated ses-notification worker, same as
-      // webhook_relay_backend.js's own routing for the relayed copy of
-      // this same event -- SES has TWO parallel SNS subscriptions right
-      // now (direct here, and via the webhook-receiver's relay), and this
-      // direct path needs the same routing fix as that one any time it
-      // changes, since it's a completely separate delivery channel. Falls
-      // through send-worker -> background-worker if the dedicated one
-      // isn't up.
-      const worker = getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
-      if (worker) worker.postMessage({ type: "ses_notification", raw: body.Message });
-      else processSesNotificationMessage(body.Message);
+      // PAUSE_SES_NOTIFICATIONS (2026-10-07) -- this direct path was
+      // missed entirely the first time this got paused tonight: SES has
+      // TWO parallel SNS subscriptions (this route, and the
+      // webhook-receiver's separately-queued relay copy -- see the
+      // routing comment below), and only the relay side had a pause
+      // switch. This route has no durable queue of its own (unlike the
+      // relay's Postgres-backed one), so there's nothing to hold these in
+      // while paused -- Delivery/Open/Click are acknowledged and dropped
+      // outright for the duration (real, disclosed data loss, not a
+      // delay), while Bounce/Complaint still process normally since
+      // they're rare and compliance-relevant, never the volume driver.
+      let skip = false;
+      if (process.env.PAUSE_SES_NOTIFICATIONS === "1") {
+        let eventType = null;
+        try { eventType = JSON.parse(body.Message)?.eventType; } catch {}
+        skip = eventType !== "Bounce" && eventType !== "Complaint";
+      }
+      if (!skip) {
+        // Prefer the dedicated ses-notification worker, same as
+        // webhook_relay_backend.js's own routing for the relayed copy of
+        // this same event -- this direct path needs the same routing fix
+        // as that one any time it changes, since it's a completely
+        // separate delivery channel. Falls through send-worker ->
+        // background-worker if the dedicated one isn't up.
+        const worker = getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
+        if (worker) worker.postMessage({ type: "ses_notification", raw: body.Message });
+        else processSesNotificationMessage(body.Message);
+      }
     }
     return sendJson(res, 200, { ok: true });
   }
