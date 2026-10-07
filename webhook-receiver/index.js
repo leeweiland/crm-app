@@ -92,12 +92,24 @@ function signRelayBody(rawBody) {
 // on the crm-app side. Only a manual restart (clearing the in-memory
 // flag) got it moving again.
 const RELAY_FETCH_TIMEOUT_MS = 100_000;
+// "Connection: close" (2026-10-07) -- confirmed live this service's own
+// long-lived fetch connection pool was the actual cause of a real,
+// reproducible stall: the EXACT SAME queued row that timed out every
+// time through this relay loop processed in 429ms when dispatched fresh
+// (a one-off script, brand-new TCP connection, identical payload and
+// signature). This process stays alive across many of crm-app's own
+// redeploys tonight -- a kept-alive connection pinned to a now-replaced
+// crm-app instance would hang exactly like this, and a plain fetch()
+// with no explicit connection management reuses connections by default.
+// Forcing a fresh connection per request costs one extra TCP handshake
+// each time, trivial next to the alternative (silently stuck behind a
+// dead connection until the fetch timeout, every single request).
 async function relayOne(row) {
   const rawBody = JSON.stringify({ type: row.type, ...row.payload });
   const { timestamp, signature } = signRelayBody(rawBody);
   const res = await fetch(`${CRM_APP_URL}/internal/webhook-relay`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-relay-timestamp": String(timestamp), "x-relay-signature": signature },
+    headers: { "Content-Type": "application/json", "Connection": "close", "x-relay-timestamp": String(timestamp), "x-relay-signature": signature },
     body: rawBody,
     signal: AbortSignal.timeout(RELAY_FETCH_TIMEOUT_MS),
   });
