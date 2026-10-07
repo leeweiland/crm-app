@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast, USERS_FILE } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
-import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE, lookupNotificationSourceType } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
@@ -13,7 +13,6 @@ import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
-import { getAutomationNotificationWorker } from "./automation_notification_worker_handle.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
@@ -564,14 +563,14 @@ export async function handleEmailRequest(req, res, url) {
         skip = parsedMessage?.eventType !== "Bounce" && parsedMessage?.eventType !== "Complaint";
       }
       if (!skip) {
-        // Classified by sourceType before picking a worker, same routing
-        // fix webhook_relay_backend.js's own relayed copy of this event
-        // gets (2026-10-07) -- this direct path needs the identical
-        // routing any time it changes, since it's a completely separate
-        // delivery channel. Falls through send-worker -> background-worker
-        // if neither dedicated one is up.
-        const sourceType = lookupNotificationSourceType(parsedMessage?.mail?.messageId ?? null);
-        const worker = (sourceType === "automation_step" && getAutomationNotificationWorker()) || getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
+        // REVERTED same day (2026-10-07) -- the sourceType classification
+        // here read crm_provider_id_index.json (20MB+, written on nearly
+        // every send) through getProviderIndexCached's mtime-based cache
+        // on every single request, ON THE MAIN THREAD -- confirmed live
+        // as a serious regression, stalling requests 90+ seconds. See
+        // webhook_relay_backend.js's own revert comment for the full
+        // explanation. Reverted to the plain fallback chain.
+        const worker = getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
         if (worker) worker.postMessage({ type: "ses_notification", raw: body.Message });
         else processSesNotificationMessage(body.Message);
       }
