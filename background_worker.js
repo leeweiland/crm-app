@@ -33,7 +33,7 @@ import { guardedTick } from "./scheduler.js";
 import { processTwilioStatusUpdate, processTwilioInboundMessage } from "./sms_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { computeAndCacheAllCounts } from "./contacts_backend.js";
-import { runCampaignSendLoop } from "./campaigns_backend.js";
+import { runCampaignSendLoop, applyCampaignProgressUpdate } from "./campaigns_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
 
 // worker_threads gives this file its own V8 heap and its own module
@@ -68,6 +68,11 @@ parentPort.on("message", (msg) => {
     // there's nothing to report back to the main thread here, same as
     // ses_notification/twilio_status above.
     else if (msg?.type === "send_campaign") runCampaignSendLoop(msg.campaignId).catch((e) => console.error("[background-worker] campaign send failed", msg.campaignId, e.message));
+    // Fire-and-forget, same shape as send_campaign above -- the send-worker
+    // thread dispatches its own per-batch progress update here instead of
+    // writing crm_campaigns.json itself (see applyCampaignProgressUpdate's
+    // own comment), so a slow write never delays that thread's next batch.
+    else if (msg?.type === "update_campaign_progress") applyCampaignProgressUpdate(msg.campaignId, msg.sendProgress);
     else console.error("[background-worker] unknown message type", msg?.type);
   } catch (e) {
     // One bad webhook payload should never take this thread down -- it's

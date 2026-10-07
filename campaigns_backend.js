@@ -118,9 +118,39 @@ function alreadyContactedIds(campaignId) {
 // SES-accepted sends for the same campaign, and it had visibly gone DOWN
 // across resumes (1227 -> 911 -> 947). Nothing was lost; the number was
 // measuring the wrong thing.
-function progressSnapshot(campaignId, remainingUnsent) {
-  const accepted = getMessagesForSource("campaign", campaignId).filter(m => m.providerMessageId).length;
-  return { total: accepted + Math.max(0, remainingUnsent), sent: accepted };
+//
+// No longer re-derived by re-reading the whole per-source file on every
+// batch (2026-10-07) -- confirmed live the fix above traded one bug for
+// another: that file only grows across a campaign's life (this one hit
+// 4.5MB+ sending to 17k), and re-reading+re-parsing it after EVERY batch
+// meant the cost of "how many have I sent" grew right along with the
+// campaign, occasionally stalling for several seconds whenever that read
+// landed while the disk was busy -- invisible to send_timing.js, which
+// only wraps the raw SES call, so it showed up as a growing gap BETWEEN
+// batches rather than a slow send. The fix here keeps the same accuracy
+// guarantee (still a real count of accepted sends, never a segment-
+// membership guess) without the growing-file cost: re-derive ONCE per run
+// from alreadyContactedIds (already paid for at the top of
+// runCampaignSendLoop, not an extra read), then just add each batch's OWN
+// accepted count on top -- in memory, no file touched. A resume (new run)
+// re-syncs from the real file exactly once, so it can never drift from
+// ground truth across a crash/restart; it only avoids re-reading
+// continuously WITHIN one already-trusted run.
+//
+// Dispatched to the background worker (not written inline here) for the
+// same reason -- even a bounded, modest-size file read+write
+// (crm_campaigns.json, under 1MB) is still a synchronous disk op on the
+// send-worker thread; firing it at another thread instead means the next
+// batch's pacing never waits on it. Nothing awaits this -- the UI just
+// polls crm_campaigns.json whenever it next asks, same as before.
+export function applyCampaignProgressUpdate(campaignId, sendProgress) {
+  const latest = readJson(CAMPAIGNS_FILE, []);
+  const c = latest.find(x => x.id === campaignId);
+  if (c) {
+    c.sendProgress = sendProgress;
+    c.updatedAt = new Date().toISOString();
+    writeJson(CAMPAIGNS_FILE, latest);
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -184,6 +214,10 @@ export async function runCampaignSendLoop(campaignId) {
   const allRecipients = resolveRecipients(campaign.recipients || {});
   const contacted = alreadyContactedIds(campaignId);
   const remaining = allRecipients.filter(c => !contacted.has(c.id));
+  // Ground truth for THIS run, paid for by the alreadyContactedIds read
+  // above (not an extra read) -- see the comment on applyCampaignProgressUpdate
+  // for why this is no longer re-derived every batch.
+  let acceptedCount = contacted.size;
 
   try {
     let sentThisRun = 0;
@@ -232,13 +266,11 @@ export async function runCampaignSendLoop(campaignId) {
         ));
         logMessagesBatch(batchLog);
         sentThisRun += batch.length;
-        const latest = readJson(CAMPAIGNS_FILE, []);
-        const c = latest.find(x => x.id === campaignId);
-        if (c) {
-          c.sendProgress = progressSnapshot(campaignId, remaining.length - (i + batch.length));
-          c.updatedAt = new Date().toISOString();
-          writeJson(CAMPAIGNS_FILE, latest);
-        }
+        acceptedCount += batchLog.filter((r) => r.providerMessageId).length;
+        const sendProgress = { total: acceptedCount + Math.max(0, remaining.length - (i + batch.length)), sent: acceptedCount };
+        const progressWorker = getBackgroundWorker();
+        if (progressWorker) progressWorker.postMessage({ type: "update_campaign_progress", campaignId, sendProgress });
+        else applyCampaignProgressUpdate(campaignId, sendProgress);
         // Pad this batch's own wall-clock time up to what SENDING_CONCURRENCY
         // sends should minimally take at the account's real rate limit,
         // rather than assuming SES call latency alone keeps us under it --
@@ -255,7 +287,11 @@ export async function runCampaignSendLoop(campaignId) {
       if (finalCampaign && finalCampaign.status === "sending") {
         finalCampaign.status = "sent";
         finalCampaign.sentAt = finalCampaign.sentAt || new Date().toISOString();
-        finalCampaign.sendProgress = progressSnapshot(campaignId, 0);
+        // One real, final read-derived count here (not the running tally) --
+        // happens once per run, not once per batch, so paying the real cost
+        // exactly here is fine; it's also the one moment "sent" gets frozen
+        // for good, worth getting from ground truth rather than the tally.
+        finalCampaign.sendProgress = { total: contacted.size + sentThisRun, sent: getMessagesForSource("campaign", campaignId).filter((m) => m.providerMessageId).length };
         finalCampaign.stats = rollupStats(campaignId);
         writeJson(CAMPAIGNS_FILE, finalCampaigns);
       }
@@ -289,7 +325,10 @@ export function sendCampaignNow(campaignId) {
   const contacted = alreadyContactedIds(campaignId);
   const remaining = allRecipients.filter(c => !contacted.has(c.id));
   campaign.status = "sending";
-  campaign.sendProgress = progressSnapshot(campaignId, remaining.length);
+  // One real, read-derived count here -- happens once per send/resume
+  // click, not once per batch, so it's fine to pay for ground truth here
+  // (same reasoning as runCampaignSendLoop's own final-write below).
+  campaign.sendProgress = { total: contacted.size + remaining.length, sent: getMessagesForSource("campaign", campaignId).filter((m) => m.providerMessageId).length };
   // Set immediately (not just at each progress checkpoint below) so the
   // scheduler's stuck-campaign check -- which looks at how long updatedAt
   // has been stale -- doesn't see a JUST-(re)started send as already stale
