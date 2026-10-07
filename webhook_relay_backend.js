@@ -40,6 +40,9 @@ import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSmsWorker } from "./sms_worker_handle.js";
 import { getSesNotificationWorkerByKey } from "./ses_notification_worker_handle.js";
+import { getAutomationNotificationWorker } from "./automation_notification_worker_handle.js";
+import { getSequenceNotificationWorker } from "./sequence_notification_worker_handle.js";
+import { lookupNotificationSourceType } from "./message_log.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 // Raised from 45s (2026-10-06) -- confirmed live during a real disk-
@@ -148,8 +151,27 @@ export async function handleWebhookRelayRequest(req, res, url) {
   // it's a pure load-spread, not a correctness requirement -- different
   // messages landing on different threads is exactly the point, since
   // each one mostly touches only that ONE contact's own files.
+  //
+  // Classified by sourceType BEFORE picking a worker (2026-10-07) -- a
+  // campaign's own notification flood could otherwise starve an
+  // automation's, and vice versa, even with a real pool underneath, since
+  // every email notification was landing in the same pool undifferentiated.
+  // The lookup is the SAME cached provider-id index updateMessageStatusByProviderId
+  // already reads, not a second file -- see lookupNotificationSourceType's
+  // own comment. Falls through to the existing campaign pool / sms_worker
+  // for any unrecognized or missing sourceType (manual sends, AI replies,
+  // etc.), same "don't refuse, degrade to the next thread down" shape as
+  // everything else in this chain.
+  let sesProviderMessageId = null;
+  if (body.type === "ses_notification" && body.raw) {
+    try { sesProviderMessageId = JSON.parse(body.raw)?.mail?.messageId ?? null; } catch { /* malformed -- let the worker's own parse fail normally */ }
+  }
+  const sesSourceType = body.type === "ses_notification" ? lookupNotificationSourceType(sesProviderMessageId) : null;
+  const twilioSourceType = body.type === "twilio_status" ? lookupNotificationSourceType(body.sid) : null;
   const worker =
+    (body.type === "ses_notification" && sesSourceType === "automation_step" && getAutomationNotificationWorker()) ||
     (body.type === "ses_notification" && getSesNotificationWorkerByKey(body.raw)) ||
+    (body.type === "twilio_status" && twilioSourceType === "workflow_step" && getSequenceNotificationWorker()) ||
     ((body.type === "twilio_inbound" || body.type === "twilio_status") && getSmsWorker()) ||
     getSendWorker() ||
     getBackgroundWorker();

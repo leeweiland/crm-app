@@ -89,8 +89,21 @@ async function tick() {
         try { sendCampaignNow(campaign.id); } catch (e) { console.error("[scheduler] campaign resume failed", campaign.id, e.message); }
       }
     });
-    await timedPhase("advanceDueEnrollments", advanceDueEnrollments);
-    await timedPhase("advanceDueWorkflowEnrollments", advanceDueWorkflowEnrollments);
+    // Skipped entirely when SEND_WORKER=1 -- see automation_send_worker.js's
+    // own interval, same split as campaigns'/AI Active's send loops above.
+    // Was sharing this thread with everything else the tick does (Gmail
+    // polling, duplicate scans, webhook dispatch) purely because nobody had
+    // isolated it yet, not because that was judged safe.
+    await timedPhase("advanceDueEnrollments", async () => {
+      if (process.env.SEND_WORKER === "1") return;
+      await advanceDueEnrollments();
+    });
+    // Skipped entirely when SEND_WORKER=1 -- see sequence_send_worker.js's
+    // own interval, same reasoning as advanceDueEnrollments just above.
+    await timedPhase("advanceDueWorkflowEnrollments", async () => {
+      if (process.env.SEND_WORKER === "1") return;
+      await advanceDueWorkflowEnrollments();
+    });
     await timedPhase("advanceDueFlowRuns", advanceDueFlowRuns);
     await timedPhase("recoverStaleFlowRuns", recoverStaleFlowRuns);
     await timedPhase("pollYoutubeFlows", pollYoutubeFlows);

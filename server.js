@@ -40,6 +40,8 @@ import { setBackgroundWorker } from "./background_worker_handle.js";
 import { setSendWorker } from "./send_worker_handle.js";
 import { setSmsWorker } from "./sms_worker_handle.js";
 import { setSesNotificationWorker, SES_NOTIFICATION_POOL_SIZE } from "./ses_notification_worker_handle.js";
+import { setAutomationNotificationWorker } from "./automation_notification_worker_handle.js";
+import { setSequenceNotificationWorker } from "./sequence_notification_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
 import { loadContactsCache, getAllContacts } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
@@ -319,6 +321,46 @@ if (process.env.SEND_WORKER === "1") {
   spawnSmsWorker();
   console.log("[server] SEND_WORKER=1 -- Twilio webhook processing also running on its own dedicated thread");
 
+  // Same flag, same reasoning as every other worker here -- email
+  // notifications (delivery/open/click/bounce) belonging to an automation
+  // step get their OWN thread, separate from the campaign-notification
+  // pool, so one source's volume can never starve the other's (2026-10-07).
+  // webhook_relay_backend.js/email_backend.js route here by looking up
+  // each notification's sourceType before dispatch.
+  let consecutiveAutomationNotificationWorkerCrashes = 0;
+  function spawnAutomationNotificationWorker() {
+    const worker = new Worker(join(__dirname, "automation_notification_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[automation-notification-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[automation-notification-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveAutomationNotificationWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveAutomationNotificationWorkerCrashes + 1 : 0;
+      setTimeout(spawnAutomationNotificationWorker, Math.min(30000, 1000 * 2 ** consecutiveAutomationNotificationWorkerCrashes));
+    });
+    setAutomationNotificationWorker(worker);
+  }
+  spawnAutomationNotificationWorker();
+  console.log("[server] SEND_WORKER=1 -- automation-step email notifications also running on their own dedicated thread, separate from campaign notifications");
+
+  // Same flag, same reasoning -- SMS status callbacks belonging to a
+  // workflow (sequence) step get their OWN thread, separate from
+  // sms_worker.js's own thread (which keeps handling inbound replies
+  // always, plus status callbacks for every OTHER source).
+  let consecutiveSequenceNotificationWorkerCrashes = 0;
+  function spawnSequenceNotificationWorker() {
+    const worker = new Worker(join(__dirname, "sequence_notification_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[sequence-notification-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[sequence-notification-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveSequenceNotificationWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveSequenceNotificationWorkerCrashes + 1 : 0;
+      setTimeout(spawnSequenceNotificationWorker, Math.min(30000, 1000 * 2 ** consecutiveSequenceNotificationWorkerCrashes));
+    });
+    setSequenceNotificationWorker(worker);
+  }
+  spawnSequenceNotificationWorker();
+  console.log("[server] SEND_WORKER=1 -- workflow-step SMS status callbacks also running on their own dedicated thread, separate from other SMS");
+
   // Same flag, same reasoning as sms-worker above. Confirmed live
   // (2026-10-06) why this needs splitting OFF send_worker.js, not just
   // onto it: a real campaign showed send calls with a near-zero AWS retry
@@ -380,6 +422,41 @@ if (process.env.SEND_WORKER === "1") {
   }
   spawnAiActiveWorker();
   console.log("[server] SEND_WORKER=1 -- AI Active's batch check also running on its own dedicated thread, separate from campaign/SMS sends");
+
+  // Same flag, same reasoning, same self-driven shape as AI Active above --
+  // email automations' own 30s enrollment check was sharing a thread with
+  // everything else background_worker.js's tick does, purely because
+  // nobody had isolated it yet (2026-10-07).
+  let consecutiveAutomationSendWorkerCrashes = 0;
+  function spawnAutomationSendWorker() {
+    const worker = new Worker(join(__dirname, "automation_send_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[automation-send-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[automation-send-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveAutomationSendWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveAutomationSendWorkerCrashes + 1 : 0;
+      setTimeout(spawnAutomationSendWorker, Math.min(30000, 1000 * 2 ** consecutiveAutomationSendWorkerCrashes));
+    });
+  }
+  spawnAutomationSendWorker();
+  console.log("[server] SEND_WORKER=1 -- email automations' enrollment check also running on its own dedicated thread");
+
+  // Same flag, same reasoning, same self-driven shape -- SMS sequences'
+  // (workflows_backend.js) own 30s enrollment check, same gap as email
+  // automations just above.
+  let consecutiveSequenceSendWorkerCrashes = 0;
+  function spawnSequenceSendWorker() {
+    const worker = new Worker(join(__dirname, "sequence_send_worker.js"), { env: process.env });
+    const startedAt = Date.now();
+    worker.on("error", (e) => console.error("[sequence-send-worker] crashed:", e.message));
+    worker.on("exit", (code) => {
+      console.error(`[sequence-send-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+      consecutiveSequenceSendWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveSequenceSendWorkerCrashes + 1 : 0;
+      setTimeout(spawnSequenceSendWorker, Math.min(30000, 1000 * 2 ** consecutiveSequenceSendWorkerCrashes));
+    });
+  }
+  spawnSequenceSendWorker();
+  console.log("[server] SEND_WORKER=1 -- SMS sequences' enrollment check also running on its own dedicated thread");
 }
 
 // Warms the SQLite DB file's OS page cache on its own thread -- see

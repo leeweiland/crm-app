@@ -121,7 +121,12 @@ function persistRowSideEffects(row) {
   if (row.direction === "inbound" && row.contactId && NOTIFY_CHANNELS.includes(row.channel)) {
     broadcastInboxUpdate({ type: "new_message", contactId: row.contactId });
   }
-  if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId });
+  // sourceType included (2026-10-07) -- lets a webhook dispatcher classify
+  // an incoming delivery/open/click/status notification by WHERE it came
+  // from (campaign vs automation vs workflow) using this one already-
+  // cached lookup, instead of needing a second read to find out. See
+  // lookupNotificationSourceType below.
+  if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId, sourceType: row.sourceType || null });
   appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
   if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
 }
@@ -197,6 +202,17 @@ function getProviderIndexCached() {
     _providerIndexMtimeMs = mtimeMs;
   }
   return _providerIndexCache;
+}
+
+// Built for webhook_relay_backend.js/email_backend.js's own dispatch
+// routing (2026-10-07) -- lets a notification be classified by source
+// (campaign vs automation vs workflow) BEFORE deciding which worker pool
+// handles it, using the same cached index updateMessageStatusByProviderId
+// already reads, not a second file. Returns null for an unknown id (same
+// "no match, caller decides the fallback" shape as that function).
+export function lookupNotificationSourceType(providerMessageId) {
+  if (!providerMessageId) return null;
+  return getProviderIndexCached()[providerMessageId]?.sourceType ?? null;
 }
 
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, appendToJsonObjectFast, USERS_FILE } from "./auth_backend.js";
 import { renderEmailBody, renderBlocksInner, applyMergeTags, tagHtmlLinksWithSource, appendSourceTag } from "./block_editor_shared.js";
-import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId, updateMessageById, MESSAGE_LOG_FILE, lookupNotificationSourceType } from "./message_log.js";
 import { fireTrigger, AUTOMATIONS_FILE } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
@@ -13,6 +13,7 @@ import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
+import { getAutomationNotificationWorker } from "./automation_notification_worker_handle.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
@@ -553,20 +554,24 @@ export async function handleEmailRequest(req, res, url) {
       // outright for the duration (real, disclosed data loss, not a
       // delay), while Bounce/Complaint still process normally since
       // they're rare and compliance-relevant, never the volume driver.
+      // Parsed once, reused for both the pause check and the sourceType
+      // routing lookup below -- was two separate JSON.parse calls before
+      // the routing split, no reason to pay for it twice.
+      let parsedMessage = null;
+      try { parsedMessage = JSON.parse(body.Message); } catch {}
       let skip = false;
       if (process.env.PAUSE_SES_NOTIFICATIONS === "1") {
-        let eventType = null;
-        try { eventType = JSON.parse(body.Message)?.eventType; } catch {}
-        skip = eventType !== "Bounce" && eventType !== "Complaint";
+        skip = parsedMessage?.eventType !== "Bounce" && parsedMessage?.eventType !== "Complaint";
       }
       if (!skip) {
-        // Prefer the dedicated ses-notification worker, same as
-        // webhook_relay_backend.js's own routing for the relayed copy of
-        // this same event -- this direct path needs the same routing fix
-        // as that one any time it changes, since it's a completely
-        // separate delivery channel. Falls through send-worker ->
-        // background-worker if the dedicated one isn't up.
-        const worker = getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
+        // Classified by sourceType before picking a worker, same routing
+        // fix webhook_relay_backend.js's own relayed copy of this event
+        // gets (2026-10-07) -- this direct path needs the identical
+        // routing any time it changes, since it's a completely separate
+        // delivery channel. Falls through send-worker -> background-worker
+        // if neither dedicated one is up.
+        const sourceType = lookupNotificationSourceType(parsedMessage?.mail?.messageId ?? null);
+        const worker = (sourceType === "automation_step" && getAutomationNotificationWorker()) || getSesNotificationWorker() || getSendWorker() || getBackgroundWorker();
         if (worker) worker.postMessage({ type: "ses_notification", raw: body.Message });
         else processSesNotificationMessage(body.Message);
       }

@@ -2,9 +2,10 @@ import { randomUUID } from "crypto";
 import twilio from "twilio";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { getAllContacts, getContactById } from "./contacts_db.js";
-import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
+import { logMessage, updateMessageStatusByProviderId, lookupNotificationSourceType } from "./message_log.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSmsWorker } from "./sms_worker_handle.js";
+import { getSequenceNotificationWorker } from "./sequence_notification_worker_handle.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
@@ -264,11 +265,16 @@ export async function handleSmsRequest(req, res, url) {
     }
     const statusMap = { queued: "queued", sent: "sent", delivered: "delivered", undelivered: "failed", failed: "failed" };
     if (params.MessageSid && statusMap[params.MessageStatus]) {
-      // Dedicated sms-worker thread first, same as the relayed copy of
-      // this same event type (webhook_relay_backend.js) -- this direct
-      // path exists in parallel with the receiver's relay for the same
-      // reason the SES one did, and was just as easy to miss fixing.
-      const worker = getSmsWorker() || getBackgroundWorker();
+      // Classified by sourceType before picking a worker, same routing
+      // webhook_relay_backend.js's own relayed copy of this event gets
+      // (2026-10-07) -- a workflow (sequence) step's own status-callback
+      // volume gets its own thread, separate from every other SMS source.
+      // Dedicated sms-worker thread is still the default fallback, same as
+      // the relayed copy of this same event type -- this direct path
+      // exists in parallel with the receiver's relay for the same reason
+      // the SES one did, and was just as easy to miss fixing.
+      const sourceType = lookupNotificationSourceType(params.MessageSid);
+      const worker = (sourceType === "workflow_step" && getSequenceNotificationWorker()) || getSmsWorker() || getBackgroundWorker();
       if (worker) worker.postMessage({ type: "twilio_status", sid: params.MessageSid, status: statusMap[params.MessageStatus] });
       else processTwilioStatusUpdate(params.MessageSid, statusMap[params.MessageStatus]);
     }
