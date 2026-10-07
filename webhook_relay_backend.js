@@ -39,7 +39,7 @@ import { processSesNotificationMessage } from "./email_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSmsWorker } from "./sms_worker_handle.js";
-import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
+import { getSesNotificationWorkerByKey } from "./ses_notification_worker_handle.js";
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 // Raised from 45s (2026-10-06) -- confirmed live during a real disk-
@@ -141,8 +141,15 @@ export async function handleWebhookRelayRequest(req, res, url) {
   // channel over). Each falls back down the chain (dedicated worker ->
   // send/background worker) if its preferred one isn't up, rather than
   // refusing the event outright.
+  // ses_notification spreads across a pool of threads by hashing the raw
+  // SNS payload (2026-10-07) -- confirmed live a single dedicated thread
+  // only drained the backlog at ~2.5/sec, fully sequential. Hashing the
+  // raw string (not, say, the contact id) needs no parsing here at all;
+  // it's a pure load-spread, not a correctness requirement -- different
+  // messages landing on different threads is exactly the point, since
+  // each one mostly touches only that ONE contact's own files.
   const worker =
-    (body.type === "ses_notification" && getSesNotificationWorker()) ||
+    (body.type === "ses_notification" && getSesNotificationWorkerByKey(body.raw)) ||
     ((body.type === "twilio_inbound" || body.type === "twilio_status") && getSmsWorker()) ||
     getSendWorker() ||
     getBackgroundWorker();

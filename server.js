@@ -39,7 +39,7 @@ import { startScheduler } from "./scheduler.js";
 import { setBackgroundWorker } from "./background_worker_handle.js";
 import { setSendWorker } from "./send_worker_handle.js";
 import { setSmsWorker } from "./sms_worker_handle.js";
-import { setSesNotificationWorker } from "./ses_notification_worker_handle.js";
+import { setSesNotificationWorker, SES_NOTIFICATION_POOL_SIZE } from "./ses_notification_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
 import { loadContactsCache, getAllContacts } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
@@ -333,20 +333,28 @@ if (process.env.SEND_WORKER === "1") {
   // resolving. Giving it its own thread means a send call's resolution is
   // never waiting behind anything but other send calls on its own thread,
   // the same guarantee SMS already has.
-  let consecutiveSesNotificationWorkerCrashes = 0;
-  function spawnSesNotificationWorker() {
-    const worker = new Worker(join(__dirname, "ses_notification_worker.js"), { env: process.env });
-    const startedAt = Date.now();
-    worker.on("error", (e) => console.error("[ses-notification-worker] crashed:", e.message));
-    worker.on("exit", (code) => {
-      console.error(`[ses-notification-worker] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
-      consecutiveSesNotificationWorkerCrashes = (Date.now() - startedAt < 10000) ? consecutiveSesNotificationWorkerCrashes + 1 : 0;
-      setTimeout(spawnSesNotificationWorker, Math.min(30000, 1000 * 2 ** consecutiveSesNotificationWorkerCrashes));
-    });
-    setSesNotificationWorker(worker);
+  // Pool of SES_NOTIFICATION_POOL_SIZE threads, not one (2026-10-07) --
+  // confirmed live the backlog drained at only ~2.5/sec fully sequential
+  // on a single thread. Each slot respawns independently into its OWN
+  // pool index on crash -- a crash in slot 2 never touches slots 0/1/3,
+  // same isolation guarantee every other worker in this file gets, just
+  // replicated per slot instead of once.
+  for (let slot = 0; slot < SES_NOTIFICATION_POOL_SIZE; slot++) {
+    let consecutiveCrashes = 0;
+    function spawnSesNotificationWorker() {
+      const worker = new Worker(join(__dirname, "ses_notification_worker.js"), { env: process.env });
+      const startedAt = Date.now();
+      worker.on("error", (e) => console.error(`[ses-notification-worker:${slot}] crashed:`, e.message));
+      worker.on("exit", (code) => {
+        console.error(`[ses-notification-worker:${slot}] exited with code ${code} after ${Date.now() - startedAt}ms -- respawning`);
+        consecutiveCrashes = (Date.now() - startedAt < 10000) ? consecutiveCrashes + 1 : 0;
+        setTimeout(spawnSesNotificationWorker, Math.min(30000, 1000 * 2 ** consecutiveCrashes));
+      });
+      setSesNotificationWorker(slot, worker);
+    }
+    spawnSesNotificationWorker();
   }
-  spawnSesNotificationWorker();
-  console.log("[server] SEND_WORKER=1 -- SES notification processing also running on its own dedicated thread, separate from campaign/SMS sends");
+  console.log(`[server] SEND_WORKER=1 -- SES notification processing running on a pool of ${SES_NOTIFICATION_POOL_SIZE} dedicated threads, separate from campaign/SMS sends`);
 
   // Same flag, same reasoning as every other worker above. Confirmed live
   // (2026-10-06): AI Active's own 30s batch check was sharing send_worker.js
