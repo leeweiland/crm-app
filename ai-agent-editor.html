@@ -440,7 +440,7 @@
                     <span class="toggle-label" id="fBtLabel">Behavioral Outbound (contextual message when a lead visits the site, opens/clicks an email, or clicks an SMS link)</span>
                   </div>
                 </div>
-                <div id="btSection" style="display:none">
+                <div id="btSection">
                   <div class="active-section-sub" style="margin-bottom:12px">Fires per-contact, not a batch -- reaches out shortly after real activity, using what they just did plus their real history as context. Still requires the AI Active toggle above and this agent's own targeting/segment to match.</div>
 
                   <div class="editor-row">
@@ -631,7 +631,11 @@ function getToggle(btnId) { return document.getElementById(btnId).classList.cont
 // follow-up cadence) can be seen/edited. No-op kept so the click handler
 // below (and any other caller) doesn't need its own special-casing.
 function updateActiveSectionVisibility() {}
-function updateBtSectionVisibility() { document.getElementById('btSection').style.display = getToggle('fBtToggle') ? 'block' : 'none'; }
+// Was gating the whole Behavioral Triggers settings panel behind its own
+// toggle, same as the old Active-section bug -- opening the accordion
+// showed nothing but the toggle itself until it was switched on. Settings
+// should be visible/editable regardless of whether the feature's live.
+function updateBtSectionVisibility() {}
 document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); scheduleAutosave(); });
 document.getElementById('fAiAssistToggle').addEventListener('click', () => { setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')); scheduleAutosave(); });
 document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
