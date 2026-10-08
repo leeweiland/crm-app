@@ -659,28 +659,7 @@ export function upsertConversationSummary(m) {
 // these only ever touch SQLite directly (see flushConversationIndex's own
 // early-return before the slow legacy block), so they stay unconditional
 // regardless of the kill switch.
-// Suppressed during the SES bulk-drain (2026-10-08) -- set/cleared only by
-// ses_notification_worker.js's own runBulkDrain, around that one call,
-// nothing else. Confirmed live via /proc (a thread genuinely blocked in
-// kernel state D on folio_wait_bit_common, plus /proc/pressure/io
-// reading avg10 ~24-27% -- real, system-wide disk contention right now,
-// not something any amount of JS-side batching/chunking fixes, since a
-// single bloated contact's own read still takes however long the disk
-// takes) that THIS call -- not the status write itself, which no longer
-// touches the per-contact file at all (see message_log.js) -- was the
-// actual remaining block. Recomputing the sidebar conversation summary
-// is purely cosmetic (Inbox list's last-message preview/unread count);
-// it has zero bearing on whether a notification gets recorded, on
-// open/click % reporting, or on any contact's own data -- nothing about
-// a contact or its message HISTORY is skipped, only the Inbox sidebar's
-// own derived cache staying exactly as current as it already was until
-// the next REAL message (send/reply) for that contact recomputes it
-// normally, same as always. Off by default (suppressed=false) for every
-// other caller/path.
-let _suppressRecompute = false;
-export function setSuppressConversationRecompute(v) { _suppressRecompute = !!v; }
 export function recomputeConversationSummary(contactId) {
-  if (_suppressRecompute) return;
   _pendingRecomputeIds.add(contactId);
   scheduleConversationFlush();
 }

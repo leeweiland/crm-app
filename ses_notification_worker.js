@@ -28,7 +28,6 @@ import { parentPort } from "worker_threads";
 import pg from "pg";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
-import { setSuppressConversationRecompute } from "./message_index.js";
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
@@ -41,24 +40,14 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 // here too, independently, before any notification can be processed.
 await loadContactsCache();
 
-// Suppressed for ALL processing on this thread, not just runBulkDrain
-// below (2026-10-08) -- unpausing PAUSE_SES_NOTIFICATIONS means the
-// ~53k historical backlog now flows through the SAME real-time relay
-// path as genuinely live events (webhook-receiver has no way to tell
-// "catch-up" traffic apart from a fresh webhook, it's all just rows in
-// webhook_queue), so the recompute-suppression that only wrapped
-// runBulkDrain left every one of those rows still paying for
-// recomputeConversationSummary's getContactMessages() read when they
-// came in through the ordinary "ses_notification" message path instead.
-// Same reasoning as runBulkDrain's own suppression (see
-// setSuppressConversationRecompute's comment in message_index.js):
-// purely cosmetic Inbox-sidebar freshness, zero effect on whether a
-// notification gets recorded or on open/click % reporting, self-heals
-// the instant any real message touches that contact. Permanent for this
-// thread specifically (not every thread -- new/real messages go through
-// upsertConversationSummary on whichever thread SENDS them, completely
-// untouched).
-setSuppressConversationRecompute(true);
+// Reverted (2026-10-08) -- suppressing the sidebar recompute, in any
+// scope, is off the table per direct instruction. The backlog drain
+// goes back to being fully separated from live traffic instead: see
+// PAUSE_SES_NOTIFICATIONS (re-enabled on both services) and
+// runBulkDrain below, which is this drain's own dedicated channel --
+// it never shares the relay's path, never races it for the same rows,
+// and never touches anything the sidebar depends on differently than
+// a normal webhook would.
 
 // replyId handling mirrors every other worker's own reply() exactly --
 // webhook_relay_backend.js's dispatchToWorker() round-trips a correlated
