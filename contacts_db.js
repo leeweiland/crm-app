@@ -327,7 +327,30 @@ const ENGAGEMENT_FLUSH_DELAY_MS = 5000;
 
 export function queueContactEngagementUpdate(contactId, kind, atISO) {
   if (!contactId) return null;
-  syncFromJsonIfChanged();
+  // No syncFromJsonIfChanged() here (2026-10-08, found by direct code
+  // trace, not measurement) -- confirmed live crm_contacts.json is
+  // 194MB and under active, frequent writes (this very flush included),
+  // so the mtime check right above almost always sees "changed" during
+  // any sustained SES-notification volume, forcing a full 194MB
+  // readJson+rebuildIndex on EVERY SINGLE open/click webhook this gets
+  // called from (email_backend.js's markContactEmailEngagement), not
+  // just once per flush window. Unlike updateContactsByIdSet below
+  // (the actual durable write, which legitimately needs a fresh sync
+  // right before it writes, and only pays this cost once per
+  // ENGAGEMENT_FLUSH_DELAY_MS batch, not once per notification), this
+  // function only uses `existing` for a best-effort, non-authoritative
+  // in-memory merge -- the real persisted write always goes through
+  // flushEngagementUpdates -> updateContactsByIdSet, which does its own
+  // correct, fresh sync immediately before writing regardless of
+  // whether this thread's _byId snapshot was stale. If `existing` is
+  // merely stale (not missing -- every real contact is already in
+  // _byId from this worker's own startup loadContactsCache()), this
+  // call's own in-memory mutation below still lands on the right
+  // object, it just might not reflect some OTHER field a different
+  // thread changed in the last few seconds -- irrelevant to the
+  // opened/clicked flags being set here. Nothing about this skips a
+  // contact or its data; it only stops re-paying a 194MB read that
+  // was never needed for this specific, explicitly best-effort write.
   const at = atISO && !isNaN(new Date(atISO)) ? new Date(atISO).toISOString() : new Date().toISOString();
   const atKey = `${kind}At`;
 
