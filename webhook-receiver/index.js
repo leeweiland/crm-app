@@ -217,7 +217,18 @@ async function runRelayLoop() {
     // entire time regardless of how fast crm-app's own per-row processing
     // got. SES_CONCURRENCY matches the worker pool size exactly -- no
     // more in flight than there are threads to actually run them.
-    const SES_CONCURRENCY = 4;
+    // Raised from 4 to 10 (2026-10-08) -- measured live right after the
+    // first concurrency fix: backlog (pending+failed) only dropped
+    // ~42/min, far short of what 4 real worker threads should sustain.
+    // 10 in flight against 4 real worker threads is deliberate
+    // over-subscription, not a mistake -- a worker is busy doing real
+    // (sometimes slow, disk-bound) file I/O for one row while 1-2 more
+    // requests for that SAME thread sit queued in dispatchToWorker's own
+    // pendingReplies map, so the next row is already in crm-app's hands
+    // and ready to run the instant the thread frees up, instead of this
+    // loop's own network round-trip (DNS/TCP/TLS/HTTP) being the thing a
+    // free thread sits idle waiting on between rows.
+    const SES_CONCURRENCY = 10;
     const sesRows = rows.filter(r => r.type === "ses_notification");
     const otherRows = rows.filter(r => r.type !== "ses_notification");
     for (const row of otherRows) await relayAndMark(row);
