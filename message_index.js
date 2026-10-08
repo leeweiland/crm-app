@@ -1,6 +1,6 @@
 import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
-import { DATA_DIR, readJson, writeJson, appendJsonRecords, appendJsonRecordFast, appendJsonRecordsFast, updateJsonArrayRecordByField } from "./auth_backend.js";
+import { DATA_DIR, readJson, writeJson, appendJsonRecordFast, appendJsonRecordsFast, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
 import { getContactById } from "./contacts_db.js";
 
@@ -80,7 +80,18 @@ export function getContactMessages(contactId) {
 export function appendContactMessage(message) {
   if (!message.contactId) return;
   ensureDir();
-  appendJsonRecords(contactFile(message.contactId), [message]);
+  // Was appendJsonRecords -- the full-file-copy-to-append version (see its
+  // own comment: "fine for bulk imports, fatal for a per-send call"),
+  // used here for EVERY message ever logged to ANY contact, system-wide
+  // (2026-10-08). Harmless for a typical contact's small file, but
+  // confirmed live some contacts' own files have grown to 20-30MB (old
+  // import rows carrying full, never-deduped bodies) -- a NEW message to
+  // one of those contacts was copying the entire 20-30MB file just to
+  // append one record. appendJsonRecordFast is the same O(1) in-place
+  // append already used everywhere else in this file; its tail-detection
+  // already handles both compact and pretty-printed JSON, so this is a
+  // pure swap, not a format change.
+  appendJsonRecordFast(contactFile(message.contactId), message);
 }
 // Generic API UNCHANGED (field/value/updater) -- both existing callers
 // (message_log.js's updateMessageStatusByProviderId/updateMessageById)

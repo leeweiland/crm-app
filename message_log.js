@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { statSync } from "fs";
+import { statSync, existsSync, openSync, readSync, closeSync } from "fs";
 import { join } from "path";
 import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, readJson, DATA_DIR } from "./auth_backend.js";
 import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
@@ -89,7 +89,7 @@ function buildMessageRow({ id, channel, direction, contactId, sourceType, source
 // the per-source file) -- split out so both logMessage and
 // logMessagesBatch call the exact same side effects per row, rather than
 // maintaining two copies that could drift.
-function persistRowSideEffects(row) {
+function persistRowSideEffects(row, bodyOffset) {
   appendContactMessage(row);
   recordDailyStatsNew(row);
   upsertConversationSummary(row);
@@ -127,14 +127,22 @@ function persistRowSideEffects(row) {
   // cached lookup, instead of needing a second read to find out. See
   // lookupNotificationSourceType below.
   if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId, sourceType: row.sourceType || null });
-  appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId });
+  // bodyOffset/bodyLength (2026-10-08) -- the exact byte range row's own
+  // JSON text landed at in MESSAGE_LOG_FILE, captured by logMessage/
+  // logMessagesBatch from appendJsonRecordFast's/appendJsonRecordsFast's
+  // own return value. Lets getMessageBodyById fetch a message's full body
+  // by seeking straight to it, without reading or scanning the rest of
+  // this file (12GB+ and growing). Only ever set going forward -- never
+  // backfilled here; see backfill_message_body_offsets.mjs for existing
+  // history.
+  appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null });
   if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
 }
 export function logMessage(fields) {
   const row = buildMessageRow(fields);
-  appendJsonRecordFast(MESSAGE_LOG_FILE, row);
+  const offset = appendJsonRecordFast(MESSAGE_LOG_FILE, row);
   appendSourceMessage(row);
-  persistRowSideEffects(row);
+  persistRowSideEffects(row, offset);
   return row;
 }
 // Built for campaigns_backend.js's send loop (2026-10-06): confirmed live
@@ -150,9 +158,9 @@ export function logMessage(fields) {
 export function logMessagesBatch(fieldsList) {
   if (!fieldsList || !fieldsList.length) return [];
   const rows = fieldsList.map(buildMessageRow);
-  appendJsonRecordsFast(MESSAGE_LOG_FILE, rows);
+  const offsets = appendJsonRecordsFast(MESSAGE_LOG_FILE, rows);
   appendSourceMessagesBatch(rows);
-  for (const row of rows) persistRowSideEffects(row);
+  rows.forEach((row, i) => persistRowSideEffects(row, offsets[i]));
   return rows;
 }
 // compliance_backend.js already imports logMessage (for its own
@@ -279,4 +287,25 @@ export function updateMessageById(id, patch) {
 }
 export function getMessagesForSource(sourceType, sourceId) {
   return getSourceMessages(sourceType, sourceId);
+}
+
+// O(1) body fetch by message id, regardless of how large MESSAGE_LOG_FILE
+// has grown (12GB+) -- seeks straight to the exact byte range recorded in
+// MESSAGE_ID_INDEX_FILE at write time (see persistRowSideEffects's own
+// comment), never reads or scans anything else in the file. Returns null
+// when there's no recorded offset -- either an id that predates this
+// (2026-10-08) or one the backfill script hasn't reached yet -- so
+// callers (inbox_backend.js's conversation rendering) can fall through to
+// whatever they were already doing for that case.
+export function getMessageBodyById(id) {
+  const entry = readJson(MESSAGE_ID_INDEX_FILE, {})[id];
+  if (!entry || entry.bodyOffset == null || entry.bodyLength == null) return null;
+  const p = join(DATA_DIR, MESSAGE_LOG_FILE);
+  if (!existsSync(p)) return null;
+  const fd = openSync(p, "r");
+  try {
+    const buf = Buffer.alloc(entry.bodyLength);
+    readSync(fd, buf, 0, entry.bodyLength, entry.bodyOffset);
+    try { return JSON.parse(buf.toString("utf8")); } catch { return null; }
+  } finally { closeSync(fd); }
 }

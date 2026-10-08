@@ -577,9 +577,17 @@ export function scanJsonArrayFieldSets(file, fieldNames) {
 // here because the alternative (blocking every live send on a multi-GB
 // copy) is far worse in practice, and both truncate+write are synchronous
 // with nothing else able to run in between on this single-threaded process.
+// Returns { offset, length } -- the exact byte range the record's own
+// JSON text landed at (2026-10-08), so a caller that needs to fetch just
+// THIS record back later (message_log.js's own body-offset index, built
+// for exactly this) can seek straight to it instead of re-reading or
+// re-scanning the file. Backward compatible -- every existing caller
+// ignores the return value already, same as when this returned undefined.
 export function appendJsonRecordFast(file, record) {
   const p = join(DATA_DIR, file);
-  if (!existsSync(p)) { writeJsonToDisk(p, [record]); return; }
+  const json = JSON.stringify(record);
+  if (!existsSync(p)) { writeJsonToDisk(p, [record]); return { offset: 1, length: Buffer.byteLength(json, "utf8") }; }
+  let result;
   withFileLock(p, () => {
     const fd = openSync(p, "r+");
     try {
@@ -601,12 +609,15 @@ export function appendJsonRecordFast(file, record) {
       while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
       const isEmpty = hi < headLen && headBuf[hi] === 0x5d;
 
-      const suffix = Buffer.from((isEmpty ? "" : ",") + JSON.stringify(record) + "]", "utf8");
+      const commaLen = isEmpty ? 0 : 1;
+      const suffix = Buffer.from((isEmpty ? "" : ",") + json + "]", "utf8");
       ftruncateSync(fd, bodyEnd);
       writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+      result = { offset: bodyEnd + commaLen, length: Buffer.byteLength(json, "utf8") };
     } finally { closeSync(fd); }
   });
   _mtimeCache.delete(file);
+  return result;
 }
 
 // Same in-place trick as appendJsonRecordFast, but for N records in ONE
@@ -621,10 +632,26 @@ export function appendJsonRecordFast(file, record) {
 // batch's records in memory and flush once, right after the batch's
 // Promise.all resolves, rather than letting each send's own write race the
 // others for this same file's lock.
+// Returns an array of { offset, length } in the SAME order as `records`
+// -- same reasoning as appendJsonRecordFast's own return value, just one
+// per record in the batch. Backward compatible -- existing callers that
+// ignore the return value are unaffected.
 export function appendJsonRecordsFast(file, records) {
-  if (!records || !records.length) return;
+  if (!records || !records.length) return [];
   const p = join(DATA_DIR, file);
-  if (!existsSync(p)) { writeJsonToDisk(p, records); return; }
+  const jsons = records.map((r) => JSON.stringify(r));
+  if (!existsSync(p)) {
+    writeJsonToDisk(p, records);
+    const results = [];
+    let pos = 1;
+    for (const j of jsons) {
+      const length = Buffer.byteLength(j, "utf8");
+      results.push({ offset: pos, length });
+      pos += length + 1;
+    }
+    return results;
+  }
+  let results;
   withFileLock(p, () => {
     const fd = openSync(p, "r+");
     try {
@@ -646,12 +673,21 @@ export function appendJsonRecordsFast(file, records) {
       while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
       const isEmpty = hi < headLen && headBuf[hi] === 0x5d;
 
-      const suffix = Buffer.from((isEmpty ? "" : ",") + records.map(r => JSON.stringify(r)).join(",") + "]", "utf8");
+      const commaLen = isEmpty ? 0 : 1;
+      const suffix = Buffer.from((isEmpty ? "" : ",") + jsons.join(",") + "]", "utf8");
       ftruncateSync(fd, bodyEnd);
       writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+      results = [];
+      let pos = bodyEnd + commaLen;
+      for (const j of jsons) {
+        const length = Buffer.byteLength(j, "utf8");
+        results.push({ offset: pos, length });
+        pos += length + 1;
+      }
     } finally { closeSync(fd); }
   });
   _mtimeCache.delete(file);
+  return results;
 }
 
 // Same in-place trick as appendJsonRecordFast, for a JSON OBJECT (keyed
