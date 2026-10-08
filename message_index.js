@@ -518,11 +518,30 @@ function scheduleConversationFlush() {
   _flushTimer = setTimeout(flushConversationIndex, FLUSH_DELAY_MS);
   if (_flushTimer.unref) _flushTimer.unref(); // never keep the process alive just for this
 }
+// Chunked (2026-10-08) -- confirmed live via /proc (three worker threads
+// stuck in kernel state D for minutes, zero other contention) that the
+// recompute loop below -- unchanged in WHAT it does, only in how it's
+// paced -- was the real remaining stall once the status-write path
+// itself stopped reading the big per-contact file (see message_log.js's
+// own 2026-10-08 comments). A bulk-drain batch can queue up to 2000
+// distinct contactIds into _pendingRecomputeIds before one 5s-debounced
+// flush fires, and getContactMessages() for ANY of the ~238 legacy-
+// import contacts whose file has grown large (up to 30.9MB) is a
+// genuinely slow disk read -- running all 2000 back to back in one
+// unbroken synchronous loop meant a single flush could monopolize this
+// thread's event loop for minutes, during which nothing else on it
+// (including the bulk-drain's own next DB query and its progress log)
+// could run at all. Yielding every RECOMPUTE_CHUNK contacts via
+// setImmediate does not skip or defer a single one of them -- the exact
+// same work, for the exact same contacts, still happens -- it just lets
+// the event loop breathe between chunks instead of holding it hostage
+// for the whole batch in one atomic block.
+const RECOMPUTE_CHUNK = 25;
 function flushConversationIndex() {
   _flushTimer = null;
   if (!_pendingUpsertMessages.size && !_pendingRecomputeIds.size && !_pendingRemoveKeys.size) return;
   const upserts = new Map(_pendingUpsertMessages); _pendingUpsertMessages.clear();
-  const recomputes = new Set(_pendingRecomputeIds); _pendingRecomputeIds.clear();
+  const recomputes = Array.from(_pendingRecomputeIds); _pendingRecomputeIds.clear();
   const removes = new Set(_pendingRemoveKeys); _pendingRemoveKeys.clear();
 
   // Recomputes and removes never need the slow legacy JSON below -- a
@@ -543,39 +562,49 @@ function flushConversationIndex() {
   // from-scratch recompute).
   const recomputedGroups = new Map(); // contactId -> group, reused below for the legacy JSON write
   const deletedRecomputeIds = new Set();
-  for (const contactId of recomputes) {
-    const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
-    if (!messages.length) { deletedRecomputeIds.add(contactId); safeSqliteSync(() => deleteConversationRow(contactId)); continue; }
-    const g = emptyGroup(contactId, contactId);
-    for (const m of messages) foldMessageIntoGroup(g, m);
-    recomputedGroups.set(contactId, g);
-    safeSqliteSync(() => syncMessageFields(g));
+  let i = 0;
+  function runRecomputeChunk() {
+    const end = Math.min(i + RECOMPUTE_CHUNK, recomputes.length);
+    for (; i < end; i++) {
+      const contactId = recomputes[i];
+      const messages = getContactMessages(contactId).filter(m => SIDEBAR_CHANNELS.includes(m.channel));
+      if (!messages.length) { deletedRecomputeIds.add(contactId); safeSqliteSync(() => deleteConversationRow(contactId)); continue; }
+      const g = emptyGroup(contactId, contactId);
+      for (const m of messages) foldMessageIntoGroup(g, m);
+      recomputedGroups.set(contactId, g);
+      safeSqliteSync(() => syncMessageFields(g));
+    }
+    if (i < recomputes.length) { setImmediate(runRecomputeChunk); return; }
+    finishFlush();
   }
-  for (const key of removes) safeSqliteSync(() => deleteConversationRow(key));
+  function finishFlush() {
+    for (const key of removes) safeSqliteSync(() => deleteConversationRow(key));
 
-  // Everything SQLite-facing (the real, live Inbox path) is already done
-  // above -- only the legacy 285MB JSON file's own read+write is left,
-  // which is the actual expensive part SKIP_CONVERSATION_INDEX_FLUSH=1
-  // exists to skip. Checked here, not just at each exported function's
-  // entry, because upserts are never queued while the switch is on (see
-  // upsertConversationSummary's own redirect), but a flush triggered by
-  // recomputes/removes ALONE would otherwise still reach this unconditionally
-  // and pay the full cost on every single one regardless.
-  if (!conversationFlushEnabled()) return;
+    // Everything SQLite-facing (the real, live Inbox path) is already done
+    // above -- only the legacy 285MB JSON file's own read+write is left,
+    // which is the actual expensive part SKIP_CONVERSATION_INDEX_FLUSH=1
+    // exists to skip. Checked here, not just at each exported function's
+    // entry, because upserts are never queued while the switch is on (see
+    // upsertConversationSummary's own redirect), but a flush triggered by
+    // recomputes/removes ALONE would otherwise still reach this unconditionally
+    // and pay the full cost on every single one regardless.
+    if (!conversationFlushEnabled()) return;
 
-  const rows = readJson(CONVERSATION_INDEX_FILE, []);
-  const byKey = new Map(rows.map(r => [r.key, r]));
+    const rows = readJson(CONVERSATION_INDEX_FILE, []);
+    const byKey = new Map(rows.map(r => [r.key, r]));
 
-  for (const [key, messages] of upserts) {
-    let g = byKey.get(key);
-    if (!g) { g = emptyGroup(key, messages[0].contactId); byKey.set(key, g); }
-    for (const m of messages) foldMessageIntoGroup(g, m);
-    safeSqliteSync(() => syncMessageFields(g));
+    for (const [key, messages] of upserts) {
+      let g = byKey.get(key);
+      if (!g) { g = emptyGroup(key, messages[0].contactId); byKey.set(key, g); }
+      for (const m of messages) foldMessageIntoGroup(g, m);
+      safeSqliteSync(() => syncMessageFields(g));
+    }
+    for (const [contactId, g] of recomputedGroups) byKey.set(contactId, g);
+    for (const contactId of deletedRecomputeIds) byKey.delete(contactId);
+    for (const key of removes) byKey.delete(key);
+    writeJson(CONVERSATION_INDEX_FILE, [...byKey.values()]);
   }
-  for (const [contactId, g] of recomputedGroups) byKey.set(contactId, g);
-  for (const contactId of deletedRecomputeIds) byKey.delete(contactId);
-  for (const key of removes) byKey.delete(key);
-  writeJson(CONVERSATION_INDEX_FILE, [...byKey.values()]);
+  if (recomputes.length) runRecomputeChunk(); else finishFlush();
 }
 // Interim kill switch (2026-10-04, off by default -- set
 // SKIP_CONVERSATION_INDEX_FLUSH=1 to enable). Confirmed live: this file is
