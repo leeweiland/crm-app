@@ -193,7 +193,7 @@ async function runRelayLoop() {
     // needs to happen there, not by hiding it behind more concurrent
     // requests that the same one thread still has to process in order
     // anyway.
-    for (const row of rows) {
+    async function relayAndMark(row) {
       try {
         await relayOne(row);
         await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now(), last_attempt_at=now() WHERE id=$1`, [row.id]);
@@ -202,6 +202,30 @@ async function runRelayLoop() {
         console.error(`[webhook-receiver] relay failed for ${row.id} (attempt ${row.attempts + 1}):`, e.message);
       }
     }
+    // ses_notification gets real concurrency now (2026-10-08), twilio_*
+    // stays fully sequential -- the ORIGINAL revert (95c8870) measured
+    // concurrency making things WORSE, but that was dispatching to
+    // crm-app's ONE single-threaded background-worker, which twilio_*
+    // still shares today (a real reply/compliance "Stop" must never be
+    // reordered or raced against another one on that same thread). SES
+    // notifications are different: they've had their OWN 4-thread
+    // dedicated pool since earlier tonight (ses_notification_worker.js),
+    // hashed by payload, specifically so 4 of them CAN run at once --
+    // but this loop never actually used that, dispatching one full HTTP
+    // round-trip (with its own fresh TCP/TLS handshake, "Connection:
+    // close" above) at a time, so 3 of those 4 threads sat idle the
+    // entire time regardless of how fast crm-app's own per-row processing
+    // got. SES_CONCURRENCY matches the worker pool size exactly -- no
+    // more in flight than there are threads to actually run them.
+    const SES_CONCURRENCY = 4;
+    const sesRows = rows.filter(r => r.type === "ses_notification");
+    const otherRows = rows.filter(r => r.type !== "ses_notification");
+    for (const row of otherRows) await relayAndMark(row);
+    let next = 0;
+    async function sesWorker() {
+      while (next < sesRows.length) { await relayAndMark(sesRows[next++]); }
+    }
+    await Promise.all(Array.from({ length: Math.min(SES_CONCURRENCY, sesRows.length) }, sesWorker));
   } catch (e) {
     console.error("[webhook-receiver] relay loop error:", e.message);
   } finally {
