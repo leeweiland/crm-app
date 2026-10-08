@@ -218,21 +218,20 @@
                   <button class="pra-btn pra-btn-ghost pra-btn-sm" id="newSegmentBtn" type="button" style="margin-top:6px">+ Create new segment</button>
                   <div id="newSegmentForm" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--pra-border);border-radius:8px">
                     <input class="pra-input" id="newSegmentName" placeholder="Segment name, e.g. New leads since today" style="margin-bottom:6px"/>
-                    <label class="pra-label" style="display:block;margin-bottom:4px">Who's in it</label>
-                    <select class="pra-select" id="newSegmentPreset" style="margin-bottom:6px">
-                      <option value="createdAfter">Created on or after a date (stays live -- catches every new lead from then on)</option>
-                      <option value="createdBetween">Created within a specific date range (fixed window)</option>
-                      <option value="everyone">Everyone (no filter -- edit conditions later on the Contacts page)</option>
-                    </select>
-                    <div id="newSegmentDateFields" style="display:flex;gap:6px;margin-bottom:8px">
-                      <input class="pra-input" type="date" id="newSegmentDateFrom" style="flex:1"/>
-                      <input class="pra-input" type="date" id="newSegmentDateTo" style="flex:1;display:none"/>
+                    <div class="match-toggle" style="margin-bottom:10px">
+                      Match
+                      <select class="pra-select" id="newSegmentMatchMode" style="width:auto"><option value="all">ALL</option><option value="any">ANY</option></select>
+                      of the following conditions:
+                    </div>
+                    <div id="newSegmentCondRows"></div>
+                    <div class="filter-actions" style="margin-bottom:10px">
+                      <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addNewSegmentCondBtn" type="button">+ Add Condition</button>
                     </div>
                     <div style="display:flex;gap:6px">
                       <button class="pra-btn pra-btn-sm" id="saveNewSegmentBtn" type="button">Create</button>
                       <button class="pra-btn pra-btn-ghost pra-btn-sm" id="cancelNewSegmentBtn" type="button">Cancel</button>
                     </div>
-                    <div class="pra-muted" style="font-size:.7rem;margin-top:6px">For anything more specific than this (income, tags, behavior, etc.), create it on the Contacts page instead -- this is just a fast path for the common "new leads" case.</div>
+                    <div class="pra-muted" style="font-size:.7rem;margin-top:6px">Same full condition builder as the Contacts page -- this segment is saved there too and shows up on both.</div>
                   </div>
                   <div class="pra-muted" id="segmentCountLabel" style="font-size:.76rem;margin-top:6px"></div>
                 </div>
@@ -559,6 +558,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/condition-row-client.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : ''; }
@@ -767,33 +767,44 @@ function renderSearchableMultiSelect(containerId, items, selectedIds, onToggle) 
 // segments_shared.js's matchesSegment/evalCondition), just skipping
 // straight to the one condition instead of a general condition builder.
 // Anything more specific still belongs on the Contacts page.
-document.getElementById('newSegmentBtn').addEventListener('click', () => {
+// Full condition builder (window.ConditionRowBuilder, loaded via
+// condition-row-client.js) -- the exact same component the Contacts page
+// and campaign builder already use, not a cut-down preset picker. Segments
+// created here go through the same POST /api/segments both of those use,
+// so they already show up on the Contacts page's own Segments tab with no
+// extra wiring needed.
+let conditionBuilderReady = loadConditionBuilderRefData();
+async function loadConditionBuilderRefData() {
+  const [statusesRes, tagsRes, listsRes, customFieldsRes] = await Promise.all([
+    fetch('/api/statuses'), fetch('/api/tags'), fetch('/api/lists'), fetch('/api/custom-fields?entityType=contact'),
+  ]);
+  const allStatuses = (await statusesRes.json()).statuses;
+  const allTags = (await tagsRes.json()).tags;
+  const allLists = (await listsRes.json()).lists;
+  const allCustomFields = (await customFieldsRes.json()).fields;
+  window.ConditionRowBuilder.init({ statuses: allStatuses, tags: allTags, lists: allLists, customFields: allCustomFields });
+}
+document.getElementById('newSegmentBtn').addEventListener('click', async () => {
   const form = document.getElementById('newSegmentForm');
-  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  const opening = form.style.display === 'none';
+  form.style.display = opening ? 'block' : 'none';
+  if (opening) {
+    await conditionBuilderReady;
+    const rows = document.getElementById('newSegmentCondRows');
+    rows.innerHTML = '';
+    window.ConditionRowBuilder.addRow(rows);
+  }
 });
 document.getElementById('cancelNewSegmentBtn').addEventListener('click', () => {
   document.getElementById('newSegmentForm').style.display = 'none';
   document.getElementById('newSegmentName').value = '';
 });
-document.getElementById('newSegmentPreset').addEventListener('change', (e) => {
-  document.getElementById('newSegmentDateTo').style.display = e.target.value === 'createdBetween' ? '' : 'none';
-});
+document.getElementById('addNewSegmentCondBtn').addEventListener('click', () => window.ConditionRowBuilder.addRow(document.getElementById('newSegmentCondRows')));
 document.getElementById('saveNewSegmentBtn').addEventListener('click', async () => {
   const name = document.getElementById('newSegmentName').value.trim();
   if (!name) { showToast('Name it first', true); return; }
-  const preset = document.getElementById('newSegmentPreset').value;
-  const fromVal = document.getElementById('newSegmentDateFrom').value;
-  const toVal = document.getElementById('newSegmentDateTo').value;
-  let filter;
-  if (preset === 'everyone') {
-    filter = { all: [] }; // matches every contact -- see matchesSegment's [].every() === true
-  } else if (preset === 'createdAfter') {
-    if (!fromVal) { showToast('Pick a date', true); return; }
-    filter = { all: [{ field: 'createdAt', op: 'after', value: new Date(fromVal + 'T00:00:00').toISOString() }] };
-  } else {
-    if (!fromVal || !toVal) { showToast('Pick both dates', true); return; }
-    filter = { all: [{ field: 'createdAt', op: 'between', value: { from: new Date(fromVal + 'T00:00:00').toISOString(), to: new Date(toVal + 'T23:59:59.999').toISOString() } }] };
-  }
+  const filter = window.ConditionRowBuilder.buildFilter(document.getElementById('newSegmentCondRows'), document.getElementById('newSegmentMatchMode').value);
+  if (!filter) { showToast('Add at least one condition first', true); return; }
   const r = await fetch('/api/segments', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, filter }),
