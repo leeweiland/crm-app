@@ -493,17 +493,7 @@ const _pendingRemoveKeys = new Set(); // keys to delete
 let _flushTimer = null;
 const FLUSH_DELAY_MS = 5000;
 
-// BULK_DRAIN_MODE (2026-10-08) -- a one-off bulk backfill script runs as
-// a SEPARATE OS process sharing this same SQLite file with the live app,
-// and confirmed live this causes real "database is locked" contention
-// under heavy concurrent write load, even with WAL mode + a 5s
-// busy_timeout already set. The conversation-summary sync this flush
-// does only feeds the Inbox's own conversation list -- unrelated to a
-// campaign's open/click % (that reads msg_by_source files directly) --
-// so it's safe to skip entirely for a one-time catchup run; the live
-// app's own normal traffic keeps this in sync as usual, unaffected.
 function scheduleConversationFlush() {
-  if (process.env.BULK_DRAIN_MODE === "1") { _pendingUpsertMessages.clear(); _pendingRecomputeIds.clear(); _pendingRemoveKeys.clear(); return; }
   if (_flushTimer) return;
   _flushTimer = setTimeout(flushConversationIndex, FLUSH_DELAY_MS);
   if (_flushTimer.unref) _flushTimer.unref(); // never keep the process alive just for this
