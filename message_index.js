@@ -36,19 +36,82 @@ function safeId(contactId) {
 }
 function contactFile(contactId) { return `${CONTACT_MSG_DIR}/${safeId(contactId)}.json`; }
 
+// Status overlay for per-contact messages, same shape and same reason as
+// msg_by_source_status below (2026-10-07) -- updateContactMessage was
+// doing a full read-and-rewrite of a contact's ENTIRE message file for
+// EVERY notification (Delivery/Open/Click/Bounce, unconditionally, every
+// single one -- never had the per-status skip Delivery's per-SOURCE
+// write got, since this one has no safe-to-skip case). Most contacts'
+// own files are small, but this runs on literally every notification
+// system-wide, so the total I/O it generates competes for the same disk
+// every other thread (including campaign/SMS sends) needs -- fixing it
+// here reduces total disk demand app-wide, not just for this one path.
+const CONTACT_STATUS_DIR = "msg_by_contact_status";
+let contactStatusDirReady = false;
+function ensureContactStatusDir() {
+  if (contactStatusDirReady) return;
+  const p = join(DATA_DIR, CONTACT_STATUS_DIR);
+  if (!existsSync(p)) mkdirSync(p, { recursive: true });
+  contactStatusDirReady = true;
+}
+function contactStatusFile(contactId) { return `${CONTACT_STATUS_DIR}/${safeId(contactId)}.json`; }
+
 export function getContactMessages(contactId) {
   if (!contactId) return [];
-  return readJson(contactFile(contactId), []);
+  const base = readJson(contactFile(contactId), []);
+  const events = readJson(contactStatusFile(contactId), []);
+  if (!events.length) return base;
+  // Folded by the row's own `id`, not whatever field the original update
+  // was looked up by -- `id` is the one field every message row actually
+  // has and that uniquely identifies it, so keying events by it here
+  // decouples "how a caller found the row" from "how its own updates
+  // fold back onto it".
+  const overlay = new Map();
+  for (const e of events) {
+    const prev = overlay.get(e.id) || { patch: {}, historyAdds: [] };
+    overlay.set(e.id, { patch: { ...prev.patch, ...e.patch }, historyAdds: e.historyAdds?.length ? [...prev.historyAdds, ...e.historyAdds] : prev.historyAdds });
+  }
+  return base.map((m) => {
+    if (!overlay.has(m.id)) return m;
+    const o = overlay.get(m.id);
+    return { ...m, ...o.patch, statusHistory: o.historyAdds.length ? [...(m.statusHistory || []), ...o.historyAdds] : m.statusHistory };
+  });
 }
 export function appendContactMessage(message) {
   if (!message.contactId) return;
   ensureDir();
   appendJsonRecords(contactFile(message.contactId), [message]);
 }
+// Generic API UNCHANGED (field/value/updater) -- both existing callers
+// (message_log.js's updateMessageStatusByProviderId/updateMessageById)
+// need zero changes. Finds the row in the overlay-merged view (so a
+// caller always sees its own prior updates), hands updater() a safe copy
+// (statusHistory shallow-cloned so .push() inside updater never mutates
+// anything cached), then DIFFS what changed instead of rewriting the
+// file: any scalar field that changed becomes part of `patch`, any NEW
+// statusHistory entries (beyond the original length) become `historyAdds`
+// -- both appended as one tiny event (appendJsonRecordFast, O(1)) rather
+// than a full read-and-rewrite of the whole file.
 export function updateContactMessage(contactId, field, value, updater) {
   if (!contactId) return null;
-  ensureDir();
-  return updateJsonArrayRecordByField(contactFile(contactId), field, value, updater);
+  const merged = getContactMessages(contactId);
+  const idx = merged.findIndex((m) => m[field] === value);
+  if (idx === -1) return null;
+  const original = merged[idx];
+  const updated = updater({ ...original, statusHistory: [...(original.statusHistory || [])] });
+  if (!updated) return null;
+  const patch = {};
+  for (const k of Object.keys(updated)) {
+    if (k === "statusHistory" || k === "id") continue;
+    if (updated[k] !== original[k]) patch[k] = updated[k];
+  }
+  const oldHistoryLen = (original.statusHistory || []).length;
+  const historyAdds = (updated.statusHistory || []).slice(oldHistoryLen);
+  if (Object.keys(patch).length || historyAdds.length) {
+    ensureContactStatusDir();
+    appendJsonRecordFast(contactStatusFile(contactId), { id: original.id, patch, historyAdds, at: new Date().toISOString() });
+  }
+  return updated;
 }
 
 // Same split as msg_by_contact above, but keyed by (sourceType, sourceId)
