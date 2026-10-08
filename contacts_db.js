@@ -322,8 +322,43 @@ export function updateContactsByIdSet(idSet, updater) {
 // is unaffected -- the flush persists to it exactly like any other write
 // here, just batched the same as the JSON side.
 const _pendingEngagement = new Map(); // contactId -> { opened?, openedAt?, clicked?, clickedAt? }
+// Tag adds/removes from automation steps, batched into the SAME flush as
+// engagement flags (2026-10-08). Found by direct code trace + /proc I/O
+// counters on the live process: an automation's add_tag/remove_tag step
+// called updateContactByField per contact per step -- a full streaming
+// read+rewrite of crm_contacts.json (194MB) each time -- and the live
+// "Engagement Tagging" automation runs FIVE such steps back to back on
+// every single email open (~970MB of contact-file writes per open). Same
+// design and same explicitly-accepted risk profile as
+// queueContactEngagementUpdate below: the in-memory contact is updated
+// immediately (so the very next step's getContact() sees the tag, and the
+// existing "already has tag" checks keep working), only the on-disk write
+// is deferred and coalesced -- one streaming pass per window for every
+// contact touched in it, instead of one pass per tag per contact.
+const _pendingTagChanges = new Map(); // contactId -> { add: Set<tagId>, remove: Set<tagId> }
 let _engagementFlushTimer = null;
 const ENGAGEMENT_FLUSH_DELAY_MS = 5000;
+function scheduleEngagementFlush() {
+  if (_engagementFlushTimer) return;
+  _engagementFlushTimer = setTimeout(flushEngagementUpdates, ENGAGEMENT_FLUSH_DELAY_MS);
+  if (_engagementFlushTimer.unref) _engagementFlushTimer.unref();
+}
+export function queueContactTagChange(contactId, { add, remove } = {}) {
+  if (!contactId || (!add && !remove)) return;
+  const existing = _byId.get(contactId);
+  if (existing) {
+    existing.tags = existing.tags || [];
+    if (add && !existing.tags.includes(add)) existing.tags.push(add);
+    if (remove) existing.tags = existing.tags.filter(t => t !== remove);
+  }
+  const pending = _pendingTagChanges.get(contactId) || { add: new Set(), remove: new Set() };
+  // Last operation on a given tag within the window wins, same as the
+  // sequential writes it replaces would have resolved to on disk.
+  if (add) { pending.add.add(add); pending.remove.delete(add); }
+  if (remove) { pending.remove.add(remove); pending.add.delete(remove); }
+  _pendingTagChanges.set(contactId, pending);
+  scheduleEngagementFlush();
+}
 
 export function queueContactEngagementUpdate(contactId, kind, atISO) {
   if (!contactId) return null;
@@ -366,10 +401,7 @@ export function queueContactEngagementUpdate(contactId, kind, atISO) {
   if (!pending[atKey] || new Date(at) > new Date(pending[atKey])) pending[atKey] = at;
   _pendingEngagement.set(contactId, pending);
 
-  if (!_engagementFlushTimer) {
-    _engagementFlushTimer = setTimeout(flushEngagementUpdates, ENGAGEMENT_FLUSH_DELAY_MS);
-    if (_engagementFlushTimer.unref) _engagementFlushTimer.unref();
-  }
+  scheduleEngagementFlush();
   return existing ? { ...existing } : null;
 }
 
@@ -390,20 +422,30 @@ export function onEngagementFlush(fn) { _engagementFlushListeners.push(fn); }
 
 function flushEngagementUpdates() {
   _engagementFlushTimer = null;
-  if (!_pendingEngagement.size) return;
+  if (!_pendingEngagement.size && !_pendingTagChanges.size) return;
   const pending = new Map(_pendingEngagement);
   _pendingEngagement.clear();
-  const results = updateContactsByIdSet(new Set(pending.keys()), (c) => {
+  const tags = new Map(_pendingTagChanges);
+  _pendingTagChanges.clear();
+  const ids = new Set([...pending.keys(), ...tags.keys()]);
+  const results = updateContactsByIdSet(ids, (c) => {
     const p = pending.get(c.id);
-    if (!p) return c;
-    c.emailEngagement = c.emailEngagement || {};
-    if (p.opened) {
-      c.emailEngagement.opened = true;
-      if (!c.emailEngagement.openedAt || new Date(p.openedAt) > new Date(c.emailEngagement.openedAt)) c.emailEngagement.openedAt = p.openedAt;
+    if (p) {
+      c.emailEngagement = c.emailEngagement || {};
+      if (p.opened) {
+        c.emailEngagement.opened = true;
+        if (!c.emailEngagement.openedAt || new Date(p.openedAt) > new Date(c.emailEngagement.openedAt)) c.emailEngagement.openedAt = p.openedAt;
+      }
+      if (p.clicked) {
+        c.emailEngagement.clicked = true;
+        if (!c.emailEngagement.clickedAt || new Date(p.clickedAt) > new Date(c.emailEngagement.clickedAt)) c.emailEngagement.clickedAt = p.clickedAt;
+      }
     }
-    if (p.clicked) {
-      c.emailEngagement.clicked = true;
-      if (!c.emailEngagement.clickedAt || new Date(p.clickedAt) > new Date(c.emailEngagement.clickedAt)) c.emailEngagement.clickedAt = p.clickedAt;
+    const t = tags.get(c.id);
+    if (t) {
+      c.tags = c.tags || [];
+      for (const a of t.add) if (!c.tags.includes(a)) c.tags.push(a);
+      if (t.remove.size) c.tags = c.tags.filter(x => !t.remove.has(x));
     }
     return c;
   });

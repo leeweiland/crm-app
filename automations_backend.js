@@ -1,7 +1,15 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
-import { getAllContacts, getContactById, updateContactByField } from "./contacts_db.js";
+import { getAllContacts, getContactById, queueContactTagChange } from "./contacts_db.js";
+// Enrollments live in SQLite now (2026-10-08) -- see automation_enrollments_db.js
+// for why the JSON file they used to live in was the single largest cost
+// behind every email open taking 20+ seconds to process.
+import {
+  saveEnrollment as dbSaveEnrollment, saveEnrollments, getEnrollment, hasActiveEnrollment,
+  listEnrollments, listDueEnrollments, completeActiveEnrollments,
+  stepCounts as dbStepCounts, countsByAutomation, automationStats as dbAutomationStats,
+} from "./automation_enrollments_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
@@ -28,7 +36,6 @@ function resolveTokenBooking(contactId, bookingId) {
 }
 
 export const AUTOMATIONS_FILE = "crm_automations.json";
-export const ENROLLMENTS_FILE = "crm_automation_enrollments.json";
 export const AUTOMATION_VERSIONS_FILE = "crm_automation_versions.json";
 const VERSIONED_FIELDS = ["name", "triggers", "steps", "startStepId", "goal"];
 // A send_email step's failure retries up to this many times, waiting this
@@ -54,15 +61,7 @@ export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "em
 export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal"];
 
 function getContact(id) { return getContactById(id); }
-function saveContact(contact) {
-  updateContactByField("id", contact.id, c => Object.assign(c, contact));
-}
-function saveEnrollment(enrollment) {
-  const enrollments = readJson(ENROLLMENTS_FILE, []);
-  const idx = enrollments.findIndex(e => e.id === enrollment.id);
-  if (idx >= 0) enrollments[idx] = enrollment; else enrollments.push(enrollment);
-  writeJson(ENROLLMENTS_FILE, enrollments);
-}
+function saveEnrollment(enrollment) { dbSaveEnrollment(enrollment); }
 function completeEnrollment(enrollment) {
   enrollment.status = "completed";
   enrollment.updatedAt = new Date().toISOString();
@@ -115,9 +114,9 @@ export function checkAutomationGoal(trigger, contactId, statusValue) {
   if (!contactId || trigger !== "lead_status_change") return;
   const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && Object.values(a.steps || {}).some(s => s.type === "goal"));
   if (!automations.length) return;
-  const enrollments = readJson(ENROLLMENTS_FILE, []);
+  const enrollments = listEnrollments({ contactId, status: "active" });
   for (const a of automations) {
-    for (const e of enrollments.filter(x => x.automationId === a.id && x.contactId === contactId && x.status === "active")) {
+    for (const e of enrollments.filter(x => x.automationId === a.id)) {
       const goal = findGoalAhead(a, e.currentStepId, statusValue);
       if (goal) moveEnrollmentToGoal(e, a, goal);
     }
@@ -168,16 +167,14 @@ export function enrollContact(automation, contactId, context) {
   // but manual/API enrollment and jump_to_automation didn't, so a toggled-
   // off automation could still email a contact.
   if (!automation.active) return;
-  const enrollments = readJson(ENROLLMENTS_FILE, []);
-  if (enrollments.some(e => e.automationId === automation.id && e.contactId === contactId && e.status === "active")) return;
+  if (hasActiveEnrollment(automation.id, contactId)) return;
   const enrollment = {
     id: randomUUID(), automationId: automation.id, contactId,
     status: "active", currentStepId: automation.startStepId || null,
     enteredAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     waitUntil: null, history: [], bookingId: context?.bookingId || null,
   };
-  enrollments.push(enrollment);
-  writeJson(ENROLLMENTS_FILE, enrollments);
+  dbSaveEnrollment(enrollment);
   if (!enrollment.currentStepId) { completeEnrollment(enrollment); return; }
   advanceEnrollment(enrollment, automation).catch(e => console.error("[automations] advance failed", e.message));
 }
@@ -252,12 +249,15 @@ async function advanceEnrollment(enrollment, automation) {
       enrollment.stepRetryCount = 0;
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "add_tag") {
+      // Batched contact write (2026-10-08) -- was saveContact() per step, a
+      // full 194MB streaming rewrite of crm_contacts.json each time; see
+      // queueContactTagChange's own comment in contacts_db.js.
       const contact = getContact(enrollment.contactId);
-      if (contact && step.config.tagId && !contact.tags.includes(step.config.tagId)) { contact.tags.push(step.config.tagId); saveContact(contact); }
+      if (contact && step.config.tagId && !(contact.tags || []).includes(step.config.tagId)) queueContactTagChange(enrollment.contactId, { add: step.config.tagId });
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "remove_tag") {
       const contact = getContact(enrollment.contactId);
-      if (contact && step.config.tagId) { contact.tags = contact.tags.filter(t => t !== step.config.tagId); saveContact(contact); }
+      if (contact && step.config.tagId) queueContactTagChange(enrollment.contactId, { remove: step.config.tagId });
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "add_to_facebook_audience") {
       const contact = getContact(enrollment.contactId);
@@ -274,10 +274,7 @@ async function advanceEnrollment(enrollment, automation) {
       if (target) enrollContact(target, enrollment.contactId, { bookingId: enrollment.bookingId });
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "end_automation") {
-      const all = readJson(ENROLLMENTS_FILE, []);
-      all.filter(e => e.automationId === step.config.automationId && e.contactId === enrollment.contactId && e.status === "active")
-        .forEach(e => { e.status = "completed"; e.updatedAt = new Date().toISOString(); });
-      writeJson(ENROLLMENTS_FILE, all);
+      completeActiveEnrollments(step.config.automationId, enrollment.contactId, new Date().toISOString());
       enrollment.currentStepId = step.nextStepId || null;
     } else {
       enrollment.currentStepId = step.nextStepId || null;
@@ -291,8 +288,7 @@ async function advanceEnrollment(enrollment, automation) {
 // Called by scheduler.js every tick -- resumes any enrollment whose wait
 // step has expired.
 export async function advanceDueEnrollments() {
-  const enrollments = readJson(ENROLLMENTS_FILE, []);
-  const due = enrollments.filter(e => e.status === "active" && e.waitUntil && new Date(e.waitUntil).getTime() <= Date.now());
+  const due = listDueEnrollments(new Date().toISOString());
   for (const enrollment of due) {
     const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === enrollment.automationId);
     if (!automation) continue;
@@ -313,27 +309,13 @@ export async function advanceDueEnrollments() {
   }
 }
 
-function stepCounts(automationId) {
-  const enrollments = readJson(ENROLLMENTS_FILE, []).filter(e => e.automationId === automationId && e.status === "active");
-  const counts = {};
-  enrollments.forEach(e => { if (e.currentStepId) counts[e.currentStepId] = (counts[e.currentStepId] || 0) + 1; });
-  return counts;
-}
+function stepCounts(automationId) { return dbStepCounts(automationId); }
 
 // Mirrors workflows_backend.js's workflowStats -- automations don't track
 // "bounced" or "errored" enrollment states (those are SMS-delivery-specific,
 // only set by workflows_backend.js's own send step), so this only reports
 // the statuses that actually occur here: active/completed/goal_met/cancelled.
-function automationStats(automationId) {
-  const enrollments = readJson(ENROLLMENTS_FILE, []).filter(e => e.automationId === automationId);
-  return {
-    active: enrollments.filter(e => e.status === "active").length,
-    enrolled: enrollments.length,
-    completed: enrollments.filter(e => e.status === "completed").length,
-    goalMet: enrollments.filter(e => e.status === "goal_met" || (e.goalHits || []).length).length,
-    cancelled: enrollments.filter(e => e.status === "cancelled").length,
-  };
-}
+function automationStats(automationId) { return dbAutomationStats(automationId); }
 
 export async function handleAutomationsRequest(req, res, url) {
   const p = url.pathname;
@@ -425,11 +407,11 @@ export async function handleAutomationsRequest(req, res, url) {
 
   if (p === "/api/automations" && req.method === "GET") {
     const automations = readJson(AUTOMATIONS_FILE, []);
-    const enrollments = readJson(ENROLLMENTS_FILE, []);
+    const counts = countsByAutomation();
     const list = automations.map(a => ({
       ...a,
-      enrolledCount: enrollments.filter(e => e.automationId === a.id && e.status === "active").length,
-      totalEnrolled: enrollments.filter(e => e.automationId === a.id).length,
+      enrolledCount: counts.get(a.id)?.active || 0,
+      totalEnrolled: counts.get(a.id)?.total || 0,
     }));
     return sendJson(res, 200, { automations: list });
   }
@@ -507,19 +489,18 @@ export async function handleAutomationsRequest(req, res, url) {
             (oldStep.config?.amount !== newStep.config?.amount || oldStep.config?.unit !== newStep.config?.unit);
         });
         if (changedWaitStepIds.length) {
-          const enrollments = readJson(ENROLLMENTS_FILE, []);
-          let touched = false;
-          for (const enrollment of enrollments) {
-            if (enrollment.automationId === automation.id && enrollment.status === "active" && enrollment.waitUntil && changedWaitStepIds.includes(enrollment.currentStepId)) {
+          const touched = [];
+          for (const enrollment of listEnrollments({ automationId: automation.id, status: "active" })) {
+            if (enrollment.waitUntil && changedWaitStepIds.includes(enrollment.currentStepId)) {
               const step = newSteps[enrollment.currentStepId];
               const ms = step.config.unit === "days" ? step.config.amount * 86400000
                 : step.config.unit === "hours" ? step.config.amount * 3600000
                 : step.config.amount * 60000;
               enrollment.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
-              touched = true;
+              touched.push(enrollment);
             }
           }
-          if (touched) writeJson(ENROLLMENTS_FILE, enrollments);
+          if (touched.length) saveEnrollments(touched);
         }
 
         // Steps the builder reports as deliberately deleted (removedStepIds --
@@ -541,11 +522,10 @@ export async function handleAutomationsRequest(req, res, url) {
             }
             return cur || null;
           };
-          const enrollments = readJson(ENROLLMENTS_FILE, []);
           const nowIso = new Date().toISOString();
-          let touched = false;
-          for (const enrollment of enrollments) {
-            if (enrollment.automationId !== automation.id || enrollment.status !== "active" || !removedStepIds.includes(enrollment.currentStepId)) continue;
+          const touched = [];
+          for (const enrollment of listEnrollments({ automationId: automation.id, status: "active" })) {
+            if (!removedStepIds.includes(enrollment.currentStepId)) continue;
             const target = survivorAfter(enrollment.currentStepId);
             if (target) {
               // reenterCurrentStep: advanceDueEnrollments treats a due
@@ -559,9 +539,9 @@ export async function handleAutomationsRequest(req, res, url) {
               enrollment.waitUntil = null;
             }
             enrollment.updatedAt = nowIso;
-            touched = true;
+            touched.push(enrollment);
           }
-          if (touched) writeJson(ENROLLMENTS_FILE, enrollments);
+          if (touched.length) saveEnrollments(touched);
         }
       }
 
@@ -627,7 +607,7 @@ export async function handleAutomationsRequest(req, res, url) {
 
   const enrollmentsMatch = p.match(/^\/api\/automations\/([^/]+)\/enrollments$/);
   if (enrollmentsMatch && req.method === "GET") {
-    const enrollments = readJson(ENROLLMENTS_FILE, []).filter(e => e.automationId === enrollmentsMatch[1]);
+    const enrollments = listEnrollments({ automationId: enrollmentsMatch[1] });
     const contacts = getAllContacts();
     const withContacts = enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null }));
     return sendJson(res, 200, { enrollments: withContacts });
@@ -638,12 +618,11 @@ export async function handleAutomationsRequest(req, res, url) {
   // tick-driven resumer included) while keeping history.
   const enrollmentDeleteMatch = p.match(/^\/api\/automations\/([^/]+)\/enrollments\/([^/]+)$/);
   if (enrollmentDeleteMatch && req.method === "DELETE") {
-    const enrollments = readJson(ENROLLMENTS_FILE, []);
-    const enrollment = enrollments.find(e => e.id === enrollmentDeleteMatch[2] && e.automationId === enrollmentDeleteMatch[1]);
-    if (!enrollment) return sendJson(res, 404, { error: "Not found" });
+    const enrollment = getEnrollment(enrollmentDeleteMatch[2]);
+    if (!enrollment || enrollment.automationId !== enrollmentDeleteMatch[1]) return sendJson(res, 404, { error: "Not found" });
     enrollment.status = "cancelled";
     enrollment.updatedAt = new Date().toISOString();
-    writeJson(ENROLLMENTS_FILE, enrollments);
+    dbSaveEnrollment(enrollment);
     return sendJson(res, 200, { ok: true });
   }
 
