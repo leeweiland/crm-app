@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { statSync, existsSync, openSync, readSync, closeSync } from "fs";
 import { join } from "path";
 import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, appendToJsonObjectsFast, readJson, DATA_DIR } from "./auth_backend.js";
-import { appendContactMessage, appendContactMessageStatusEvent, appendContactMessageStatusEventsBatch, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
+import { appendContactMessage, appendContactMessageStatusEvent, appendContactMessageStatusEventsBatch, getContactMessages, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
@@ -300,9 +300,52 @@ export function lookupNotificationSourceType(providerMessageId) {
 // Nothing is skipped -- every row still gets its status recorded, its
 // conversation summary recomputed, its source/daily-stats updated,
 // exactly as before, just without the large read.
+// Legacy index entries (2026-10-08 regression, found by verifying campaign
+// report counts against the index after the backlog drain): every entry
+// written before persistRowSideEffects' extension carries only
+// {id, contactId}, so once the status-update path stopped reading the
+// per-contact file it also stopped knowing the message's sourceType/
+// sourceId/channel/direction -- opens and clicks for every pre-existing
+// message landed on the contact but never on the campaign report or the
+// daily stats (131,814 of 134,236 entries; "ALL the easy way" showed 2,143
+// opened in its report against 4,940 the index knew about). Resolves the
+// real rows from the contact's own file ONCE -- and, since that read
+// costs the same whether it upgrades one message or all of this
+// contact's, upgrades every legacy entry for this contact in one batched
+// write, so each contact pays this exactly once no matter how many of
+// its messages later get events. openCount/clickCount seed from the real
+// (folded) statusHistory, so repeat detection is correct for messages
+// that opened before any of this existed.
+function isLegacyEntry(e) { return e && !("channel" in e); }
+function enrichLegacyEntriesForContact(contactId) {
+  const rows = getContactMessages(contactId);
+  const pidx = getProviderIndexCached(), midx = getMessageIdIndexCached();
+  const pPatch = {}, mPatch = {};
+  for (const row of rows) {
+    const hist = row.statusHistory || [];
+    const fields = {
+      sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction,
+      createdAt: row.createdAt, status: row.status,
+    };
+    const pe = row.providerMessageId && pidx[row.providerMessageId];
+    if (isLegacyEntry(pe)) {
+      Object.assign(pe, fields, { openCount: hist.filter(h => h.status === "opened").length, clickCount: hist.filter(h => h.status === "clicked").length });
+      pPatch[row.providerMessageId] = pe;
+    }
+    const me = midx[row.id];
+    if (isLegacyEntry(me)) { Object.assign(me, fields); mPatch[row.id] = me; }
+  }
+  if (Object.keys(pPatch).length) appendToJsonObjectsFast(PROVIDER_ID_INDEX_FILE, pPatch);
+  if (Object.keys(mPatch).length) appendToJsonObjectsFast(MESSAGE_ID_INDEX_FILE, mPatch);
+}
+function enrichLegacyEntry(entry) {
+  if (isLegacyEntry(entry) && entry.contactId) enrichLegacyEntriesForContact(entry.contactId);
+  return entry;
+}
+
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
   if (!providerMessageId) return null;
-  const entry = getProviderIndexCached()[providerMessageId];
+  const entry = enrichLegacyEntry(getProviderIndexCached()[providerMessageId]);
   if (!entry) return null;
   const oldStatus = entry.status;
   // Same signal email_backend.js's old isRepeatForThisMessage check used
@@ -371,7 +414,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
   for (let i = 0; i < updates.length; i++) {
     const { providerMessageId, status, extra } = updates[i];
     if (!providerMessageId) continue;
-    const entry = indexPatch[providerMessageId] || index[providerMessageId];
+    const entry = indexPatch[providerMessageId] || enrichLegacyEntry(index[providerMessageId]);
     if (!entry) continue;
     const oldStatus = entry.status;
     const isRepeat = status === "opened" ? (entry.openCount || 0) > 0 : status === "clicked" ? (entry.clickCount || 0) > 0 : false;
@@ -412,7 +455,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
 // (2026-10-08) no longer reads the big per-contact file either, for the
 // identical reason/fix as updateMessageStatusByProviderId above.
 export function updateMessageById(id, patch) {
-  const entry = getMessageIdIndexCached()[id];
+  const entry = enrichLegacyEntry(getMessageIdIndexCached()[id]);
   if (!entry) return null;
   const oldStatus = entry.status;
   const historyAdd = patch.status ? { status: patch.status, at: new Date().toISOString() } : null;
