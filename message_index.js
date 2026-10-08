@@ -78,9 +78,39 @@ function sourceFile(sourceType, sourceId) {
 function slimSourceMessage(m) {
   return { id: m.id, contactId: m.contactId, to: m.to, status: m.status, sentAt: m.sentAt || m.createdAt, providerMessageId: m.providerMessageId || null };
 }
+// Status overlay, not a second copy of the messages themselves (2026-10-07)
+// -- see updateSourceMessageStatus's own comment for why this exists.
+// Tiny append-only records ({id, patch, at}), one per status change, NOT
+// one file per message -- folded onto the base array at READ time here,
+// which is the one place old and new code both already paid the "scan
+// the whole source" cost (campaign reporting, dedup at a run's start),
+// never on the hot per-notification WRITE path that used to rewrite the
+// entire base file for a single status flip.
+const SOURCE_STATUS_DIR = "msg_by_source_status";
+let sourceStatusDirReady = false;
+function ensureSourceStatusDir() {
+  if (sourceStatusDirReady) return;
+  const p = join(DATA_DIR, SOURCE_STATUS_DIR);
+  if (!existsSync(p)) mkdirSync(p, { recursive: true });
+  sourceStatusDirReady = true;
+}
+function sourceStatusFile(sourceType, sourceId) { return `${SOURCE_STATUS_DIR}/${safeId(sourceType)}__${safeId(sourceId)}.json`; }
+
 export function getSourceMessages(sourceType, sourceId) {
   if (!sourceType || !sourceId) return [];
-  return readJson(sourceFile(sourceType, sourceId), []);
+  const base = readJson(sourceFile(sourceType, sourceId), []);
+  const events = readJson(sourceStatusFile(sourceType, sourceId), []);
+  // Fast path, by far the common case (a source with no open/click/bounce
+  // activity recorded yet) -- skip building a Map just to find nothing.
+  if (!events.length) return base;
+  // Last event per id wins, same semantic the old in-place
+  // `{...m, ...patch}` mutation always had (newest write overwrites the
+  // field) -- events are appended in the order they happened, so a plain
+  // forward fold already gives "latest patch per id" without needing to
+  // sort by a timestamp.
+  const overlay = new Map();
+  for (const e of events) overlay.set(e.id, { ...(overlay.get(e.id) || {}), ...e.patch });
+  return base.map((m) => (overlay.has(m.id) ? { ...m, ...overlay.get(m.id) } : m));
 }
 export function appendSourceMessage(message) {
   if (!message.sourceType || !message.sourceId) return;
@@ -121,10 +151,24 @@ export function appendSourceMessagesBatch(messages) {
     appendJsonRecordsFast(sourceFile(sourceType, sourceId), rows);
   }
 }
+// Was a full read-and-rewrite of the ENTIRE per-source file for every
+// single status flip (updateJsonArrayRecordByField) -- confirmed live
+// (2026-10-07) via /proc this was causing genuine disk-I/O blocking,
+// caught directly mid-hang (a worker thread in kernel state D,
+// "submit_bio_wait"/"folio_wait_bit_common") on a live production
+// campaign, not inferred. A campaign's per-source file only grows across
+// its life (4.5MB+ confirmed on a 17k-recipient send) and every Open/
+// Click notification was paying a full rewrite of it -- the one case
+// Delivery already got fixed for (see message_log.js's own comment) but
+// Open/Click couldn't skip the same way, since those numbers are real,
+// reported, and not optional to keep accurate. appendJsonRecordFast is
+// the same O(1) in-place append already proven safe for the base file's
+// own appends -- just appending the STATUS CHANGE as its own tiny event
+// instead of mutating the base row in place.
 export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
   if (!sourceType || !sourceId) return;
-  ensureSourceDir();
-  updateJsonArrayRecordByField(sourceFile(sourceType, sourceId), "id", id, m => ({ ...m, ...patch }));
+  ensureSourceStatusDir();
+  appendJsonRecordFast(sourceStatusFile(sourceType, sourceId), { id, patch, at: new Date().toISOString() });
 }
 
 // Per-day running counts (by CURRENT status, same classification
