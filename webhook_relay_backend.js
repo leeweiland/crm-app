@@ -194,3 +194,28 @@ export async function handleWebhookRelayRequest(req, res, url) {
     return sendJson(res, 500, { ok: false, error: e.message });
   }
 }
+
+// One-time trigger for the ses_notification backlog bulk-drain
+// (2026-10-08) -- see ses_notification_worker.js's own runBulkDrain for
+// why this runs ON that existing dedicated thread instead of a separate
+// script/process (a standalone script doing the same work caused real
+// SQLite lock contention against the live app). Fire-and-forget on
+// purpose -- a real backlog takes many minutes, far longer than
+// dispatchToWorker's own 90s reply timeout, so this doesn't wait for
+// completion; progress is visible in that worker's own logs and via the
+// webhook_queue table directly. Same HMAC auth as the relay endpoint
+// above, not a new trust boundary.
+export async function handleBulkDrainTriggerRequest(req, res, url) {
+  if (url.pathname !== "/internal/bulk-drain-ses-notifications" || req.method !== "POST") return false;
+
+  const secret = process.env.WEBHOOK_RELAY_SECRET;
+  const raw = await readRawBody(req);
+  if (!secret || !validSignature(secret, req.headers["x-relay-timestamp"], raw, req.headers["x-relay-signature"])) {
+    res.writeHead(403); res.end(); return true;
+  }
+
+  const worker = getSesNotificationWorkerByKey(String(Date.now()));
+  if (!worker) return sendJson(res, 503, { ok: false, error: "ses-notification worker pool not up" });
+  worker.postMessage({ type: "bulk_drain_backlog", batchSize: 2000 });
+  return sendJson(res, 200, { ok: true, started: true });
+}

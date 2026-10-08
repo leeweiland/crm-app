@@ -11,7 +11,7 @@ import { handleEmailRequest } from "./email_backend.js";
 import { handleCampaignsRequest } from "./campaigns_backend.js";
 import { handleAutomationsRequest } from "./automations_backend.js";
 import { handleSmsRequest } from "./sms_backend.js";
-import { handleWebhookRelayRequest } from "./webhook_relay_backend.js";
+import { handleWebhookRelayRequest, handleBulkDrainTriggerRequest } from "./webhook_relay_backend.js";
 import { handleCallsRequest } from "./calls_backend.js";
 import { handleCallsSheetRequest } from "./calls_sheet_backend.js";
 import { handleWorkflowsRequest } from "./workflows_backend.js";
@@ -185,6 +185,7 @@ createServer(async (req, res) => {
   // plus the static-file fallback below. Adding a feature (Phase 2+) means
   // adding one more line here, nothing else changes.
   if (await handleWebhookRelayRequest(req, res, url)) return;
+  if (await handleBulkDrainTriggerRequest(req, res, url)) return;
   if (await handleAuthRequest(req, res, url)) return;
   if (await handleContactsRequest(req, res, url)) return;
   if (await handleStatusesRequest(req, res, url)) return;

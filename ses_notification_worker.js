@@ -25,8 +25,12 @@
 // anything but other send calls on its own thread, same guarantee SMS
 // already has.
 import { parentPort } from "worker_threads";
+import pg from "pg";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
+
+const { Pool } = pg;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 
 // Same reasoning as every other worker file's own loadContactsCache() call
 // -- worker_threads get their own independent module registry, so this
@@ -42,9 +46,56 @@ await loadContactsCache();
 function reply(msg, err) {
   if (msg?.replyId) parentPort.postMessage({ type: "relay_result", replyId: msg.replyId, ok: !err, error: err?.message });
 }
+
+// One-time bulk catchup for the ses_notification backlog (2026-10-08) --
+// runs ON THIS EXISTING dedicated thread, using the SAME
+// processSesNotificationMessage real-time notifications already go
+// through, NOT a separate OS process. A standalone script doing this
+// same work as its own process was confirmed live to cause real SQLite
+// "database is locked" contention against the live app -- running it
+// here instead means it shares this thread's own connections exactly
+// the way real-time traffic already does correctly, nothing bypassed,
+// nothing skipped. Pulls directly from Postgres (not through the
+// webhook-receiver's HTTP relay) since that round-trip/10s-retry-
+// cooldown pacing was built for steady real-time traffic, not a one-
+// time backlog catchup. Fire-and-forget from the dispatcher's
+// perspective -- progress logs here, the dispatcher gets one reply when
+// the whole run finishes.
+let bulkDrainRunning = false;
+async function runBulkDrain(batchSize) {
+  if (bulkDrainRunning) return { alreadyRunning: true };
+  bulkDrainRunning = true;
+  let totalProcessed = 0;
+  const t0 = Date.now();
+  try {
+    while (true) {
+      const { rows } = await pool.query(
+        `SELECT id, payload FROM webhook_queue WHERE type='ses_notification' AND status IN ('pending','failed') ORDER BY created_at DESC LIMIT $1`,
+        [batchSize]
+      );
+      if (!rows.length) break;
+      const doneIds = [];
+      for (const row of rows) {
+        try { processSesNotificationMessage(row.payload.raw); doneIds.push(row.id); }
+        catch (e) { console.error(`[ses-notification-worker] bulk-drain row ${row.id} failed:`, e.message); }
+      }
+      if (doneIds.length) await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now() WHERE id = ANY($1::uuid[])`, [doneIds]);
+      totalProcessed += doneIds.length;
+      const elapsed = (Date.now() - t0) / 1000;
+      console.log(`[ses-notification-worker] bulk-drain: ${totalProcessed} total, rate ${(totalProcessed / elapsed).toFixed(1)}/sec`);
+    }
+  } finally { bulkDrainRunning = false; }
+  return { totalProcessed, elapsedSec: (Date.now() - t0) / 1000 };
+}
+
 parentPort.on("message", (msg) => {
   try {
     if (msg?.type === "ses_notification") { processSesNotificationMessage(msg.raw); reply(msg); }
+    else if (msg?.type === "bulk_drain_backlog") {
+      runBulkDrain(msg.batchSize || 2000)
+        .then((result) => parentPort.postMessage({ type: "relay_result", replyId: msg.replyId, ok: true, result }))
+        .catch((e) => reply(msg, e));
+    }
     else { console.error("[ses-notification-worker] unknown message type", msg?.type); reply(msg, new Error("unknown message type")); }
   } catch (e) {
     // One bad webhook payload should never take this thread down -- same
