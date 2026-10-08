@@ -41,6 +41,25 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 // here too, independently, before any notification can be processed.
 await loadContactsCache();
 
+// Suppressed for ALL processing on this thread, not just runBulkDrain
+// below (2026-10-08) -- unpausing PAUSE_SES_NOTIFICATIONS means the
+// ~53k historical backlog now flows through the SAME real-time relay
+// path as genuinely live events (webhook-receiver has no way to tell
+// "catch-up" traffic apart from a fresh webhook, it's all just rows in
+// webhook_queue), so the recompute-suppression that only wrapped
+// runBulkDrain left every one of those rows still paying for
+// recomputeConversationSummary's getContactMessages() read when they
+// came in through the ordinary "ses_notification" message path instead.
+// Same reasoning as runBulkDrain's own suppression (see
+// setSuppressConversationRecompute's comment in message_index.js):
+// purely cosmetic Inbox-sidebar freshness, zero effect on whether a
+// notification gets recorded or on open/click % reporting, self-heals
+// the instant any real message touches that contact. Permanent for this
+// thread specifically (not every thread -- new/real messages go through
+// upsertConversationSummary on whichever thread SENDS them, completely
+// untouched).
+setSuppressConversationRecompute(true);
+
 // replyId handling mirrors every other worker's own reply() exactly --
 // webhook_relay_backend.js's dispatchToWorker() round-trips a correlated
 // reply regardless of which worker it dispatched to.
@@ -68,13 +87,9 @@ async function runBulkDrain(batchSize) {
   bulkDrainRunning = true;
   let totalProcessed = 0;
   const t0 = Date.now();
-  // Suppressed for the ENTIRE drain, not just this batch -- see
-  // setSuppressConversationRecompute's own comment in message_index.js.
-  // Nothing about a contact's own message/status data is skipped by this;
-  // only the Inbox sidebar's cosmetic summary cache stops refreshing from
-  // these historical catch-up rows specifically, same as it would during
-  // any other genuinely disk-starved stretch.
-  setSuppressConversationRecompute(true);
+  // Suppression itself now lives at module load (see top of this file) --
+  // covers this AND the ordinary real-time "ses_notification" message
+  // path identically, so nothing extra to toggle here.
   try {
     while (true) {
       // Oldest-first (2026-10-08, per explicit instruction -- not newest-
@@ -104,7 +119,7 @@ async function runBulkDrain(batchSize) {
       const elapsed = (Date.now() - t0) / 1000;
       console.log(`[ses-notification-worker] bulk-drain: ${totalProcessed} total, rate ${(totalProcessed / elapsed).toFixed(1)}/sec`);
     }
-  } finally { bulkDrainRunning = false; setSuppressConversationRecompute(false); }
+  } finally { bulkDrainRunning = false; }
   return { totalProcessed, elapsedSec: (Date.now() - t0) / 1000 };
 }
 
