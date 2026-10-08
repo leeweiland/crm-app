@@ -132,6 +132,26 @@ export function updateContactMessage(contactId, field, value, updater) {
   return updated;
 }
 
+// Direct overlay append -- no read of the base (or overlay) file at all
+// (2026-10-08). For a caller that already knows everything it needs
+// from a fast index (see message_log.js's own updateMessageStatusByProviderId/
+// updateMessageById, both rewritten to read MESSAGE_ID_INDEX_FILE/
+// PROVIDER_ID_INDEX_FILE instead of this contact's own file) -- confirmed
+// live that reading a contact's full message history just to append ONE
+// status-change event could block for MINUTES on a contact whose file
+// has grown large (caught directly via /proc: a thread in kernel state
+// D, sustained, with zero other contention). The fold in getContactMessages
+// above already concatenates historyAdds onto whatever the base row's
+// OWN statusHistory turns out to be at READ time, regardless of how long
+// it was when this event was WRITTEN -- so there was never an actual
+// need to know the prior length in advance, only to assume it's correct,
+// which this does by construction (one new entry, appended, every time).
+export function appendContactMessageStatusEvent(contactId, id, patch, historyAdd) {
+  if (!contactId) return;
+  ensureContactStatusDir();
+  appendJsonRecordFast(contactStatusFile(contactId), { id, patch, historyAdds: historyAdd ? [historyAdd] : [], at: new Date().toISOString() });
+}
+
 // Same split as msg_by_contact above, but keyed by (sourceType, sourceId)
 // instead of contactId -- this is what lets a campaign/automation-step/
 // workflow-step reporting query read "just this source's own messages"

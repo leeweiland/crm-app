@@ -471,15 +471,19 @@ export function processSesNotificationMessage(raw) {
       // send loop also needs) AND re-fired both trigger systems AND
       // re-queued a behavioral trigger, all for a value that was not going
       // to change.
-      // Scoped to THIS message's own statusHistory, not
+      // Scoped to THIS message's own open/click counters, not
       // contact.emailEngagement (which is a lifetime, contact-level flag,
       // not per-send) -- a contact's FIRST open of a brand new campaign
       // must still fire every time, even though they opened some other
-      // email months ago. statusHistory already gets an entry pushed on
-      // every call, duplicate or not (see updateMessageStatusByProviderId),
-      // so a 2nd+ entry of the same status on THIS row is the correct,
-      // precise signal that this exact notification is a repeat.
-      const isRepeatForThisMessage = row?.statusHistory?.filter(h => h.status === statusMap[eventType]).length > 1;
+      // email months ago. row.isRepeat (2026-10-08) is computed by
+      // updateMessageStatusByProviderId directly from this message's own
+      // openCount/clickCount in PROVIDER_ID_INDEX_FILE -- same "has this
+      // exact status already fired for this exact message before" signal
+      // the old statusHistory-length check gave, just read off an already-
+      // cached counter instead of re-deriving it from a growing array (that
+      // function no longer returns a statusHistory array at all, since it
+      // no longer reads the per-contact file to get one).
+      const isRepeatForThisMessage = !!row?.isRepeat;
       if (row?.contactId && statusMap[eventType] === "opened" && !isRepeatForThisMessage) { markContactEmailEngagement(row.contactId, "opened"); fireTrigger("email_opened", { contactId: row.contactId }); fireWorkflowTrigger("email_opened", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_open", context: {} }); }
       if (row?.contactId && statusMap[eventType] === "clicked" && !isRepeatForThisMessage) { markContactEmailEngagement(row.contactId, "clicked"); fireTrigger("email_clicked", { contactId: row.contactId }); fireWorkflowTrigger("email_clicked", { contactId: row.contactId }); queueBehavioralTrigger({ contactId: row.contactId, source: "email_click", context: {} }); }
       if (row?.contactId && (statusMap[eventType] === "bounced" || statusMap[eventType] === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressContactEmail(row.contactId, statusMap[eventType]);

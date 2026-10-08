@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { statSync, existsSync, openSync, readSync, closeSync } from "fs";
 import { join } from "path";
 import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, readJson, DATA_DIR } from "./auth_backend.js";
-import { appendContactMessage, updateContactMessage, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
+import { appendContactMessage, appendContactMessageStatusEvent, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
@@ -126,7 +126,20 @@ function persistRowSideEffects(row, bodyOffset) {
   // from (campaign vs automation vs workflow) using this one already-
   // cached lookup, instead of needing a second read to find out. See
   // lookupNotificationSourceType below.
-  if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId, sourceType: row.sourceType || null });
+  // channel/direction/sourceType/sourceId/createdAt/status/openCount/
+  // clickCount (2026-10-08) -- everything updateMessageStatusByProviderId
+  // needs to process a status change WITHOUT reading this contact's own
+  // message file at all. Confirmed live via /proc: a thread could block
+  // for MINUTES in kernel state D reading a contact's file once it had
+  // grown large (20-30MB, old import rows), with zero other contention --
+  // a real, severe cost for a read that was only ever needed to learn
+  // the message's OWN current status/repeat-count, both small enough to
+  // just carry in this already-O(1)-cached index instead. openCount/
+  // clickCount replace the old statusHistory-length scan (email_backend.js's
+  // own isRepeatForThisMessage check) -- same signal ("has this exact
+  // message already fired this status before"), computed from a counter
+  // instead of re-deriving it from a full history array.
+  if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status, openCount: 0, clickCount: 0 });
   // bodyOffset/bodyLength (2026-10-08) -- the exact byte range row's own
   // JSON text landed at in MESSAGE_LOG_FILE, captured by logMessage/
   // logMessagesBatch from appendJsonRecordFast's/appendJsonRecordsFast's
@@ -134,8 +147,10 @@ function persistRowSideEffects(row, bodyOffset) {
   // by seeking straight to it, without reading or scanning the rest of
   // this file (12GB+ and growing). Only ever set going forward -- never
   // backfilled here; see backfill_message_body_offsets.mjs for existing
-  // history.
-  appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null });
+  // history. Same extra fields as PROVIDER_ID_INDEX_FILE just above, for
+  // updateMessageById's identical reasoning (keyed by our own row id
+  // instead of the provider's).
+  appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status });
   if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
 }
 export function logMessage(fields) {
@@ -199,59 +214,65 @@ function notifyFailedSend(contactId, channel) {
 // thread; this cache lives on whichever thread calls
 // updateMessageStatusByProviderId, i.e. background-worker, and picks up
 // those appends the next time its own mtime check notices).
-const PROVIDER_INDEX_PATH = join(DATA_DIR, PROVIDER_ID_INDEX_FILE);
-let _providerIndexCache = null;
-let _providerIndexMtimeMs = null;
-let _providerIndexSize = null;
 // Incremental on growth (2026-10-08) -- confirmed live, caught directly
-// via per-row timing: this file (20MB+) is append-only (every new send
-// adds one key, never rewrites existing ones), but the live app keeps
-// appending to it continuously from its own sends while something else
-// (a bulk backlog drain, in this case) is also calling this function --
-// the OLD mtime-only check meant ANY concurrent append invalidated the
-// WHOLE cache, forcing a full 20MB+ re-read+re-parse on the very next
-// call, repeatedly, throughout a long-running batch (measured: one call
-// in ten took 22.6s, the other nine took 0-1ms -- the 22.6s ones were
-// exactly these full reloads). Since appendToJsonObjectFast only ever
-// grows the file by replacing its trailing "}" with new entries + "}",
-// a size increase means everything before the OLD size is still byte-
-// identical -- reading just the NEW tail and merging it into the
-// existing in-memory object is enough, no need to discard and reparse
-// bytes already correctly cached. Falls back to a full reload for
-// anything unexpected (file shrank, truncated oddly, etc.) -- safety
-// over speed when the fast path's own assumption doesn't hold.
-function getProviderIndexCached() {
-  let mtimeMs = null, size = null;
-  try { const st = statSync(PROVIDER_INDEX_PATH); mtimeMs = st.mtimeMs; size = st.size; } catch { /* file not created yet */ }
-  if (_providerIndexCache === null) {
-    _providerIndexCache = readJson(PROVIDER_ID_INDEX_FILE, {});
-    _providerIndexMtimeMs = mtimeMs;
-    _providerIndexSize = size;
-    return _providerIndexCache;
-  }
-  if (mtimeMs !== _providerIndexMtimeMs) {
-    let appliedIncremental = false;
-    if (size != null && _providerIndexSize != null && size > _providerIndexSize && _providerIndexSize > 0) {
-      try {
-        const fd = openSync(PROVIDER_INDEX_PATH, "r");
-        try {
-          const startOffset = _providerIndexSize - 1; // the OLD "}" byte, which the new write started by replacing
-          const newLen = size - startOffset;
-          const buf = Buffer.alloc(newLen);
-          readSync(fd, buf, 0, newLen, startOffset);
-          const text = buf.toString("utf8");
-          const added = JSON.parse("{" + (text.startsWith(",") ? text.slice(1) : text));
-          Object.assign(_providerIndexCache, added);
-          appliedIncremental = true;
-        } finally { closeSync(fd); }
-      } catch { /* fall through to full reload below */ }
+// via per-row timing: these index files (20MB+) are append-only (every
+// new send/status-write adds or extends one key, never rewrites existing
+// bytes), but the live app keeps appending to them continuously from its
+// own sends while something else (a bulk backlog drain, in this case) is
+// also calling this function -- the OLD mtime-only check meant ANY
+// concurrent append invalidated the WHOLE cache, forcing a full 20MB+
+// re-read+re-parse on the very next call, repeatedly, throughout a long-
+// running batch (measured: one call in ten took 22.6s, the other nine
+// took 0-1ms -- the 22.6s ones were exactly these full reloads). Since
+// appendToJsonObjectFast only ever grows the file by replacing its
+// trailing "}" with new entries + "}", a size increase means everything
+// before the OLD size is still byte-identical -- reading just the NEW
+// tail and merging it into the existing in-memory object is enough, no
+// need to discard and reparse bytes already correctly cached. Falls back
+// to a full reload for anything unexpected (file shrank, truncated
+// oddly, etc.) -- safety over speed when the fast path's own assumption
+// doesn't hold. Factored into one function (2026-10-08) so both
+// PROVIDER_ID_INDEX_FILE and MESSAGE_ID_INDEX_FILE -- the latter now hot
+// on the same bulk-drain/status-update path -- get the identical
+// incremental treatment instead of one of them staying on a plain
+// readJson that re-parses the whole file on every single call.
+function makeIncrementalJsonCache(filename) {
+  const path = join(DATA_DIR, filename);
+  let cache = null, mtimeMs = null, size = null;
+  return function getCached() {
+    let st = null;
+    try { st = statSync(path); } catch { /* file not created yet */ }
+    const newMtimeMs = st ? st.mtimeMs : null, newSize = st ? st.size : null;
+    if (cache === null) {
+      cache = readJson(filename, {});
+      mtimeMs = newMtimeMs; size = newSize;
+      return cache;
     }
-    if (!appliedIncremental) _providerIndexCache = readJson(PROVIDER_ID_INDEX_FILE, {});
-    _providerIndexMtimeMs = mtimeMs;
-    _providerIndexSize = size;
-  }
-  return _providerIndexCache;
+    if (newMtimeMs !== mtimeMs) {
+      let appliedIncremental = false;
+      if (newSize != null && size != null && newSize > size && size > 0) {
+        try {
+          const fd = openSync(path, "r");
+          try {
+            const startOffset = size - 1; // the OLD "}" byte, which the new write started by replacing
+            const newLen = newSize - startOffset;
+            const buf = Buffer.alloc(newLen);
+            readSync(fd, buf, 0, newLen, startOffset);
+            const text = buf.toString("utf8");
+            const added = JSON.parse("{" + (text.startsWith(",") ? text.slice(1) : text));
+            Object.assign(cache, added);
+            appliedIncremental = true;
+          } finally { closeSync(fd); }
+        } catch { /* fall through to full reload below */ }
+      }
+      if (!appliedIncremental) cache = readJson(filename, {});
+      mtimeMs = newMtimeMs; size = newSize;
+    }
+    return cache;
+  };
 }
+const getProviderIndexCached = makeIncrementalJsonCache(PROVIDER_ID_INDEX_FILE);
+const getMessageIdIndexCached = makeIncrementalJsonCache(MESSAGE_ID_INDEX_FILE);
 
 // Built for webhook_relay_backend.js/email_backend.js's own dispatch
 // routing (2026-10-07) -- lets a notification be classified by source
@@ -264,66 +285,92 @@ export function lookupNotificationSourceType(providerMessageId) {
   return getProviderIndexCached()[providerMessageId]?.sourceType ?? null;
 }
 
+// Rewritten (2026-10-08) to never read this contact's own per-contact
+// file at all -- see persistRowSideEffects' comment on why that read, by
+// itself, was confirmed live (via /proc, thread stuck in kernel state D
+// for MINUTES) to be the real remaining cost on the bulk-drain's known-
+// bloated legacy-import contacts (238 of them, up to 30.9MB each), with
+// zero other contention. Everything this function needs (contactId,
+// sourceType/sourceId, channel, direction, createdAt, and now the prior
+// status + repeat counts) already lives in PROVIDER_ID_INDEX_FILE, kept
+// current by the appendToJsonObjectFast call below -- so every webhook
+// after the first only ever touches two small, already-incrementally-
+// cached index files plus a tiny append-only overlay event
+// (appendContactMessageStatusEvent), never the big per-contact file.
+// Nothing is skipped -- every row still gets its status recorded, its
+// conversation summary recomputed, its source/daily-stats updated,
+// exactly as before, just without the large read.
 export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
   if (!providerMessageId) return null;
   const entry = getProviderIndexCached()[providerMessageId];
   if (!entry) return null;
-  let oldStatus = null;
-  const found = updateContactMessage(entry.contactId, "id", entry.id, row => {
-    oldStatus = row.status;
-    row.status = status;
-    row.statusHistory.push({ status, at: new Date().toISOString(), ...(extra || {}) });
-    return row;
-  });
-  if (found) {
-    recomputeConversationSummary(entry.contactId);
-    // Skipped specifically for "delivered" (2026-10-06) -- confirmed live
-    // this is the actual cause of the SES-notification worker timing out on
-    // every single dispatch: updateSourceMessageStatus's
-    // updateJsonArrayRecordByField does a full read-and-rewrite of the
-    // ENTIRE per-campaign source file (never given the same O(1) fix
-    // appendSourceMessage got, see that function's own comment), and a
-    // live 17k-recipient send generates one Delivery notification per
-    // recipient -- a full rewrite of an ever-growing, multi-thousand-row
-    // file, once per send, from a DIFFERENT thread than the one actively
-    // appending new sends to that same file under the same lock. Confirmed
-    // via /proc this was the dominant disk-I/O consumer in the whole app,
-    // climbing as the file grew, eventually exceeding the 45s relay
-    // timeout on every call. "Delivered" is the highest-volume, lowest-
-    // value status of the five (SES confirmed receipt, nothing a human
-    // reads this campaign's own report for distinctly from "sent" --
-    // unlike opened/clicked/bounced/complained, which stay exactly as
-    // before). The contact's own message record (above) and daily stats
-    // (below) still update either way -- only the campaign-report's own
-    // per-row "delivered" status on this one shared file is skipped, so
-    // rollupStats' delivered count will undercount for messages that never
-    // separately opened/clicked -- a real, disclosed tradeoff, not a
-    // silent one.
-    if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
-    recordDailyStatsTransition(found, oldStatus, status);
-    if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
-  }
+  const oldStatus = entry.status;
+  // Same signal email_backend.js's old isRepeatForThisMessage check used
+  // (statusHistory.filter(...).length), now a counter instead of a
+  // history scan -- true only once this exact status has already fired
+  // for this exact message before.
+  const isRepeat = status === "opened" ? (entry.openCount || 0) > 0 : status === "clicked" ? (entry.clickCount || 0) > 0 : false;
+  const openCount = (entry.openCount || 0) + (status === "opened" ? 1 : 0);
+  const clickCount = (entry.clickCount || 0) + (status === "clicked" ? 1 : 0);
+  appendContactMessageStatusEvent(entry.contactId, entry.id, { status }, { status, at: new Date().toISOString(), ...(extra || {}) });
+  // Keep the index current -- the NEXT webhook for this same provider id
+  // (a repeat open/click, or any later status) reads this same entry, so
+  // it must reflect what this call just recorded, not what was there
+  // before.
+  appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, providerMessageId, { ...entry, status, openCount, clickCount });
+  const found = { ...entry, id: entry.id, status, isRepeat };
+  recomputeConversationSummary(entry.contactId);
+  // Skipped specifically for "delivered" (2026-10-06) -- confirmed live
+  // this is the actual cause of the SES-notification worker timing out on
+  // every single dispatch: updateSourceMessageStatus's
+  // updateJsonArrayRecordByField does a full read-and-rewrite of the
+  // ENTIRE per-campaign source file (never given the same O(1) fix
+  // appendSourceMessage got, see that function's own comment), and a
+  // live 17k-recipient send generates one Delivery notification per
+  // recipient -- a full rewrite of an ever-growing, multi-thousand-row
+  // file, once per send, from a DIFFERENT thread than the one actively
+  // appending new sends to that same file under the same lock. Confirmed
+  // via /proc this was the dominant disk-I/O consumer in the whole app,
+  // climbing as the file grew, eventually exceeding the 45s relay
+  // timeout on every call. "Delivered" is the highest-volume, lowest-
+  // value status of the five (SES confirmed receipt, nothing a human
+  // reads this campaign's own report for distinctly from "sent" --
+  // unlike opened/clicked/bounced/complained, which stay exactly as
+  // before). The contact's own message record (above) and daily stats
+  // (below) still update either way -- only the campaign-report's own
+  // per-row "delivered" status on this one shared file is skipped, so
+  // rollupStats' delivered count will undercount for messages that never
+  // separately opened/clicked -- a real, disclosed tradeoff, not a
+  // silent one.
+  if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
+  recordDailyStatsTransition(found, oldStatus, status);
+  if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
   return found;
 }
 // Used by /api/email/click (marking a message "clicked" by our own row id).
 // Same fix as updateMessageStatusByProviderId above: was a full scan of the
 // main log to find the row by id, which is exactly the class of bug that
-// caused the 2026-08-29 outage -- now O(1) via MESSAGE_ID_INDEX_FILE.
+// caused the 2026-08-29 outage -- now O(1) via MESSAGE_ID_INDEX_FILE, and
+// (2026-10-08) no longer reads the big per-contact file either, for the
+// identical reason/fix as updateMessageStatusByProviderId above.
 export function updateMessageById(id, patch) {
-  const entry = readJson(MESSAGE_ID_INDEX_FILE, {})[id];
+  const entry = getMessageIdIndexCached()[id];
   if (!entry) return null;
-  let oldStatus = null;
-  const found = updateContactMessage(entry.contactId, "id", id, row => {
-    oldStatus = row.status;
-    Object.assign(row, patch);
-    if (patch.status) row.statusHistory.push({ status: patch.status, at: new Date().toISOString() });
-    return row;
-  });
-  if (found) {
-    recomputeConversationSummary(entry.contactId);
-    if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
-    if (patch.status) recordDailyStatsTransition(found, oldStatus, patch.status);
-  }
+  const oldStatus = entry.status;
+  const historyAdd = patch.status ? { status: patch.status, at: new Date().toISOString() } : null;
+  appendContactMessageStatusEvent(entry.contactId, id, patch, historyAdd);
+  // Only `status` ever gets written back into the index -- a caller like
+  // calls_backend.js's recording-upload patch (`{ body: ... }`) still
+  // lands correctly in the contact's own message thread via the overlay
+  // append just above, but body TEXT has no business living in this
+  // index: it exists specifically to stay small enough to keep in memory
+  // (see makeIncrementalJsonCache above), and arbitrary patch content
+  // (recording links, etc.) would defeat that on every such call.
+  if (patch.status && patch.status !== entry.status) appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, id, { ...entry, status: patch.status });
+  const found = { ...entry, id, ...patch };
+  recomputeConversationSummary(entry.contactId);
+  if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
+  if (patch.status) recordDailyStatsTransition(found, oldStatus, patch.status);
   return found;
 }
 export function getMessagesForSource(sourceType, sourceId) {
@@ -339,7 +386,7 @@ export function getMessagesForSource(sourceType, sourceId) {
 // callers (inbox_backend.js's conversation rendering) can fall through to
 // whatever they were already doing for that case.
 export function getMessageBodyById(id) {
-  const entry = readJson(MESSAGE_ID_INDEX_FILE, {})[id];
+  const entry = getMessageIdIndexCached()[id];
   if (!entry || entry.bodyOffset == null || entry.bodyLength == null) return null;
   const p = join(DATA_DIR, MESSAGE_LOG_FILE);
   if (!existsSync(p)) return null;
