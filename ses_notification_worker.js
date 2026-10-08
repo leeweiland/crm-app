@@ -77,8 +77,20 @@ async function runBulkDrain(batchSize) {
   setSuppressConversationRecompute(true);
   try {
     while (true) {
+      // Oldest-first (2026-10-08, per explicit instruction -- not newest-
+      // first). Confirmed live this was the actual reason the drain never
+      // visibly progressed: new real-time SES events keep arriving
+      // continuously (PAUSE_SES_NOTIFICATIONS only stops the relay's own
+      // auto-dispatch, not webhook-receiver's own insert into
+      // webhook_queue), and DESC always re-served those freshest rows
+      // first on every single batch -- the drain was perpetually
+      // reprocessing whatever just arrived instead of ever reaching the
+      // actual ~53k historical backlog sitting behind it. ASC means the
+      // real backlog drains in the order it actually queued, and new
+      // real-time rows simply wait their turn at the back instead of
+      // cutting in front of it forever.
       const { rows } = await pool.query(
-        `SELECT id, payload FROM webhook_queue WHERE type='ses_notification' AND status IN ('pending','failed') ORDER BY created_at DESC LIMIT $1`,
+        `SELECT id, payload FROM webhook_queue WHERE type='ses_notification' AND status IN ('pending','failed') ORDER BY created_at ASC LIMIT $1`,
         [batchSize]
       );
       if (!rows.length) break;
