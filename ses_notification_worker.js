@@ -136,6 +136,15 @@ async function runBulkDrain(batchSize) {
       updateIndices.forEach((idx, j) => foundByIndex.set(idx, results[j]));
 
       const doneIds = [];
+      // Bounce/complaint opt-outs are applied AFTER the batch transaction
+      // commits, not inside it: suppressContactEmail -> syncContactFields
+      // writes through sqlite_inbox.js's own separate connection to the
+      // same crm_prototype.db, and from inside this thread's open
+      // BEGIN IMMEDIATE it can only wait out busy_timeout and fail
+      // ("database is locked" -- seen live, 25 times, on the first
+      // drain after this batching landed). Same calls, same order, just
+      // once the lock is released.
+      const suppressions = [];
       // One SQLite transaction (one fsync) for every enrollment write the
       // whole batch's trigger-firing produces -- see withEnrollmentBatch.
       withEnrollmentBatch(() => {
@@ -147,11 +156,15 @@ async function runBulkDrain(batchSize) {
           const isRepeatForThisMessage = !!found?.isRepeat;
           if (found?.contactId && p.status === "opened" && !isRepeatForThisMessage) { markContactEmailEngagement(found.contactId, "opened"); fireTrigger("email_opened", { contactId: found.contactId }); fireWorkflowTrigger("email_opened", { contactId: found.contactId }); queueBehavioralTrigger({ contactId: found.contactId, source: "email_open", context: {} }); }
           if (found?.contactId && p.status === "clicked" && !isRepeatForThisMessage) { markContactEmailEngagement(found.contactId, "clicked"); fireTrigger("email_clicked", { contactId: found.contactId }); fireWorkflowTrigger("email_clicked", { contactId: found.contactId }); queueBehavioralTrigger({ contactId: found.contactId, source: "email_click", context: {} }); }
-          if (found?.contactId && (p.status === "bounced" || p.status === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressContactEmail(found.contactId, p.status);
+          if (found?.contactId && (p.status === "bounced" || p.status === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressions.push({ contactId: found.contactId, status: p.status });
           doneIds.push(p.row.id);
         } catch (e) { console.error(`[ses-notification-worker] bulk-drain row ${p.row.id} failed:`, e.message); }
       }
       });
+      for (const s of suppressions) {
+        try { suppressContactEmail(s.contactId, s.status); }
+        catch (e) { console.error(`[ses-notification-worker] bulk-drain opt-out for ${s.contactId} failed:`, e.message); }
+      }
       if (doneIds.length) await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now() WHERE id = ANY($1::uuid[])`, [doneIds]);
       totalProcessed += doneIds.length;
       const elapsed = (Date.now() - t0) / 1000;
