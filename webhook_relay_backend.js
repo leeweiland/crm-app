@@ -216,6 +216,18 @@ export async function handleBulkDrainTriggerRequest(req, res, url) {
 
   const worker = getSesNotificationWorkerByKey(String(Date.now()));
   if (!worker) return sendJson(res, 503, { ok: false, error: "ses-notification worker pool not up" });
-  worker.postMessage({ type: "bulk_drain_backlog", batchSize: 2000 });
+  // Dropped from 2000 (2026-10-08) -- both the progress log AND the
+  // webhook_queue "delivered" UPDATE in runBulkDrain only happen once per
+  // FULL batch, after every row in it finishes. Under tonight's real,
+  // confirmed (via /proc: path_openat/folio_wait_bit_common D-state,
+  // /proc/pressure/io avg10 ~24-27%) disk contention, a single row can
+  // now take anywhere from under a second to many seconds -- at 2000 rows
+  // per batch that meant long stretches with ZERO visible progress (no
+  // log line, no DB write) even while the loop was genuinely working,
+  // indistinguishable from a hang. A smaller batch doesn't change how
+  // much total work there is or skip anything -- the while(true) loop
+  // keeps pulling batches until the backlog is empty either way -- it
+  // only makes forward progress observable in seconds instead of minutes.
+  worker.postMessage({ type: "bulk_drain_backlog", batchSize: 100 });
   return sendJson(res, 200, { ok: true, started: true });
 }
