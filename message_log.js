@@ -202,12 +202,53 @@ function notifyFailedSend(contactId, channel) {
 const PROVIDER_INDEX_PATH = join(DATA_DIR, PROVIDER_ID_INDEX_FILE);
 let _providerIndexCache = null;
 let _providerIndexMtimeMs = null;
+let _providerIndexSize = null;
+// Incremental on growth (2026-10-08) -- confirmed live, caught directly
+// via per-row timing: this file (20MB+) is append-only (every new send
+// adds one key, never rewrites existing ones), but the live app keeps
+// appending to it continuously from its own sends while something else
+// (a bulk backlog drain, in this case) is also calling this function --
+// the OLD mtime-only check meant ANY concurrent append invalidated the
+// WHOLE cache, forcing a full 20MB+ re-read+re-parse on the very next
+// call, repeatedly, throughout a long-running batch (measured: one call
+// in ten took 22.6s, the other nine took 0-1ms -- the 22.6s ones were
+// exactly these full reloads). Since appendToJsonObjectFast only ever
+// grows the file by replacing its trailing "}" with new entries + "}",
+// a size increase means everything before the OLD size is still byte-
+// identical -- reading just the NEW tail and merging it into the
+// existing in-memory object is enough, no need to discard and reparse
+// bytes already correctly cached. Falls back to a full reload for
+// anything unexpected (file shrank, truncated oddly, etc.) -- safety
+// over speed when the fast path's own assumption doesn't hold.
 function getProviderIndexCached() {
-  let mtimeMs = null;
-  try { mtimeMs = statSync(PROVIDER_INDEX_PATH).mtimeMs; } catch { /* file not created yet */ }
-  if (_providerIndexCache === null || mtimeMs !== _providerIndexMtimeMs) {
+  let mtimeMs = null, size = null;
+  try { const st = statSync(PROVIDER_INDEX_PATH); mtimeMs = st.mtimeMs; size = st.size; } catch { /* file not created yet */ }
+  if (_providerIndexCache === null) {
     _providerIndexCache = readJson(PROVIDER_ID_INDEX_FILE, {});
     _providerIndexMtimeMs = mtimeMs;
+    _providerIndexSize = size;
+    return _providerIndexCache;
+  }
+  if (mtimeMs !== _providerIndexMtimeMs) {
+    let appliedIncremental = false;
+    if (size != null && _providerIndexSize != null && size > _providerIndexSize && _providerIndexSize > 0) {
+      try {
+        const fd = openSync(PROVIDER_INDEX_PATH, "r");
+        try {
+          const startOffset = _providerIndexSize - 1; // the OLD "}" byte, which the new write started by replacing
+          const newLen = size - startOffset;
+          const buf = Buffer.alloc(newLen);
+          readSync(fd, buf, 0, newLen, startOffset);
+          const text = buf.toString("utf8");
+          const added = JSON.parse("{" + (text.startsWith(",") ? text.slice(1) : text));
+          Object.assign(_providerIndexCache, added);
+          appliedIncremental = true;
+        } finally { closeSync(fd); }
+      } catch { /* fall through to full reload below */ }
+    }
+    if (!appliedIncremental) _providerIndexCache = readJson(PROVIDER_ID_INDEX_FILE, {});
+    _providerIndexMtimeMs = mtimeMs;
+    _providerIndexSize = size;
   }
   return _providerIndexCache;
 }
