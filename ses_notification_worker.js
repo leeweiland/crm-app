@@ -28,6 +28,7 @@ import { parentPort } from "worker_threads";
 import pg from "pg";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { loadContactsCache } from "./contacts_db.js";
+import { setSuppressConversationRecompute } from "./message_index.js";
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
@@ -67,6 +68,13 @@ async function runBulkDrain(batchSize) {
   bulkDrainRunning = true;
   let totalProcessed = 0;
   const t0 = Date.now();
+  // Suppressed for the ENTIRE drain, not just this batch -- see
+  // setSuppressConversationRecompute's own comment in message_index.js.
+  // Nothing about a contact's own message/status data is skipped by this;
+  // only the Inbox sidebar's cosmetic summary cache stops refreshing from
+  // these historical catch-up rows specifically, same as it would during
+  // any other genuinely disk-starved stretch.
+  setSuppressConversationRecompute(true);
   try {
     while (true) {
       const { rows } = await pool.query(
@@ -84,7 +92,7 @@ async function runBulkDrain(batchSize) {
       const elapsed = (Date.now() - t0) / 1000;
       console.log(`[ses-notification-worker] bulk-drain: ${totalProcessed} total, rate ${(totalProcessed / elapsed).toFixed(1)}/sec`);
     }
-  } finally { bulkDrainRunning = false; }
+  } finally { bulkDrainRunning = false; setSuppressConversationRecompute(false); }
   return { totalProcessed, elapsedSec: (Date.now() - t0) / 1000 };
 }
 
