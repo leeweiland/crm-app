@@ -193,7 +193,20 @@ async function runRelayLoop() {
     // needs to happen there, not by hiding it behind more concurrent
     // requests that the same one thread still has to process in order
     // anyway.
-    async function relayAndMark(row) {
+    // REVERTED (2026-10-08) -- tried giving ses_notification real
+    // concurrency (4, then 10) on the theory that 4 dedicated worker
+    // threads sitting mostly idle behind one-at-a-time HTTP dispatch was
+    // the throughput ceiling. Measured live, twice, that it made things
+    // WORSE both times (42/min at concurrency 4, an actual regression at
+    // 10) -- the SAME lesson this file's own history already had on
+    // record (95c8870, the original twilio-targeted revert) just
+    // reconfirmed for ses_notification specifically: when the real
+    // bottleneck is shared disk I/O (confirmed live tonight via /proc
+    // pressure at 24-31%), piling on more concurrent requests doesn't
+    // parallelize real work, it just makes the same disk thrash harder
+    // under more simultaneous small writes/lock cycles. Back to plain
+    // sequential for every row, exactly as this loop has always worked.
+    for (const row of rows) {
       try {
         await relayOne(row);
         await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now(), last_attempt_at=now() WHERE id=$1`, [row.id]);
@@ -202,41 +215,6 @@ async function runRelayLoop() {
         console.error(`[webhook-receiver] relay failed for ${row.id} (attempt ${row.attempts + 1}):`, e.message);
       }
     }
-    // ses_notification gets real concurrency now (2026-10-08), twilio_*
-    // stays fully sequential -- the ORIGINAL revert (95c8870) measured
-    // concurrency making things WORSE, but that was dispatching to
-    // crm-app's ONE single-threaded background-worker, which twilio_*
-    // still shares today (a real reply/compliance "Stop" must never be
-    // reordered or raced against another one on that same thread). SES
-    // notifications are different: they've had their OWN 4-thread
-    // dedicated pool since earlier tonight (ses_notification_worker.js),
-    // hashed by payload, specifically so 4 of them CAN run at once --
-    // but this loop never actually used that, dispatching one full HTTP
-    // round-trip (with its own fresh TCP/TLS handshake, "Connection:
-    // close" above) at a time, so 3 of those 4 threads sat idle the
-    // entire time regardless of how fast crm-app's own per-row processing
-    // got. SES_CONCURRENCY matches the worker pool size exactly -- no
-    // more in flight than there are threads to actually run them.
-    // Raised from 4 to 10 (2026-10-08) -- measured live right after the
-    // first concurrency fix: backlog (pending+failed) only dropped
-    // ~42/min, far short of what 4 real worker threads should sustain.
-    // 10 in flight against 4 real worker threads is deliberate
-    // over-subscription, not a mistake -- a worker is busy doing real
-    // (sometimes slow, disk-bound) file I/O for one row while 1-2 more
-    // requests for that SAME thread sit queued in dispatchToWorker's own
-    // pendingReplies map, so the next row is already in crm-app's hands
-    // and ready to run the instant the thread frees up, instead of this
-    // loop's own network round-trip (DNS/TCP/TLS/HTTP) being the thing a
-    // free thread sits idle waiting on between rows.
-    const SES_CONCURRENCY = 10;
-    const sesRows = rows.filter(r => r.type === "ses_notification");
-    const otherRows = rows.filter(r => r.type !== "ses_notification");
-    for (const row of otherRows) await relayAndMark(row);
-    let next = 0;
-    async function sesWorker() {
-      while (next < sesRows.length) { await relayAndMark(sesRows[next++]); }
-    }
-    await Promise.all(Array.from({ length: Math.min(SES_CONCURRENCY, sesRows.length) }, sesWorker));
   } catch (e) {
     console.error("[webhook-receiver] relay loop error:", e.message);
   } finally {
