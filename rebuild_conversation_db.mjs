@@ -28,7 +28,10 @@ function readJsonFile(name, fallback) {
 
 console.log("Reading source JSON files from", DATA_DIR, "...");
 const convoIndex = readJsonFile("crm_conversation_index.json", []);
-const contacts = readJsonFile("crm_contacts.json", []);
+// crm_contacts_export.json is the scheduler's daily snapshot (contacts_db.js's
+// exportContactsSnapshotIfDue) -- Postgres is the live store since 2026-10-08
+// and crm_contacts.json is no longer written.
+const contacts = readJsonFile("crm_contacts_export.json", []);
 const meta = readJsonFile("crm_conversation_meta.json", []);
 console.log(`Read ${convoIndex.length} conversations, ${contacts.length} contacts, ${meta.length} meta rows in ${Date.now() - t0}ms`);
 

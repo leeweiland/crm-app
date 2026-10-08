@@ -5,10 +5,10 @@
 //
 // Same safety model as kickoff_dates.mjs (see that file's own header for the
 // full rationale): its own process via `railway ssh`, never inside the web
-// server; reads the ~190MB contacts file into a Buffer and rewrites it as a
-// NEW file, atomically renamed into place; retries the whole pass if the live
-// file changed underneath it; only touches customFields START DATE / END DATE
-// (+ updatedAt) on matched contacts.
+// server; reads contacts from Postgres (the live store since 2026-10-08) and
+// writes each change as a row-level custom_fields merge + a NOTIFY the app
+// picks up (backchannel/contacts_pg.mjs); only touches customFields START
+// DATE / END DATE (+ updatedAt) on matched contacts.
 //
 //   node --no-warnings calls_tracking_dates.mjs            dry run: prints the plan, writes nothing
 //   node --no-warnings calls_tracking_dates.mjs --apply    writes the changes
@@ -19,14 +19,12 @@
 // an end date the contact already has is never replaced by an earlier one.
 import fs from "fs";
 import path from "path";
-import { randomBytes } from "crypto";
 import { pathToFileURL } from "url";
 
 const APPLY = process.argv.includes("--apply");
 const SHEET_ID = "1ue2wI4Nm5StnRhOSCYvMCjwiDMgqnWOuifGWbUQB92w";
 const TABS = ["ONLINE", "GYM"];
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
-const CONTACTS = path.join(DATA_DIR, "crm_contacts.json");
 const REPORT = path.join(DATA_DIR, "_calls_tracking_dates_backchannel_report.json");
 const APP_DIR = process.env.APP_DIR || "/app";
 
@@ -73,28 +71,13 @@ async function fetchSheetRows() {
   return rows;
 }
 
-// ── streaming the contacts array out of a Buffer (identical to kickoff_dates.mjs) ─
-function* elementRanges(buf) {
-  let i = buf.indexOf(0x5b); // outer '['
-  if (i < 0) return;
-  let depth = 1, inStr = false, esc = false, start = -1;
-  for (i++; i < buf.length; i++) {
-    const b = buf[i];
-    if (inStr) { if (esc) esc = false; else if (b === 0x5c) esc = true; else if (b === 0x22) inStr = false; continue; }
-    if (b === 0x22) { inStr = true; continue; }
-    if (b === 0x7b || b === 0x5b) { if (depth === 1 && b === 0x7b) start = i; depth++; }
-    else if (b === 0x7d || b === 0x5d) { depth--; if (depth === 1 && b === 0x7d) yield [start, i + 1]; if (depth === 0) return; }
-  }
-}
-
-function buildPlan(buf, rows, ids) {
+function buildPlan(contacts, rows, ids) {
   const sheetEmails = new Set(rows.map(r => r.email).filter(Boolean));
   const sheetPhones = new Set(rows.map(r => r.phone).filter(p => p.length === 10));
   const byEmail = new Map(), byPhone = new Map();
   let total = 0;
-  for (const [s, e] of elementRanges(buf)) {
+  for (const c of contacts) {
     total++;
-    const c = JSON.parse(buf.toString("utf8", s, e));
     const em = String(c.email || "").trim().toLowerCase(), ph = digits10(c.phone);
     const slim = { id: c.id, email: c.email, name: `${c.first || ""} ${c.last || ""}`.trim(), status: c.status, curStart: c.customFields?.[ids.start] || null, curEnd: c.customFields?.[ids.end] || null };
     if (em && sheetEmails.has(em)) (byEmail.get(em) || byEmail.set(em, []).get(em)).push(slim);
@@ -127,39 +110,6 @@ function buildPlan(buf, rows, ids) {
   return { total, matched: best.size, changes, unmatched, unparseable };
 }
 
-// Rewrites the file with the planned edits applied; returns the edited contacts.
-function writeNewFile(buf, changes, ids, tmpPath) {
-  const want = new Map(changes.map(c => [c.id, c.to]));
-  const fd = fs.openSync(tmpPath, "w");
-  const edited = [];
-  try {
-    fs.writeSync(fd, "[");
-    let first = true, pending = [], pendingLen = 0;
-    const flush = () => { if (pending.length) { fs.writeSync(fd, Buffer.concat(pending)); pending = []; pendingLen = 0; } };
-    const push = b => { pending.push(b); pendingLen += b.length; if (pendingLen > 8 << 20) flush(); };
-    const now = new Date().toISOString();
-    for (const [s, e] of elementRanges(buf)) {
-      let out = buf.subarray(s, e);
-      const head = buf.toString("latin1", s, Math.min(e, s + 80));
-      const m = /"id"\s*:\s*"([^"]+)"/.exec(head);
-      if (m && want.has(m[1])) {
-        const c = JSON.parse(buf.toString("utf8", s, e)), to = want.get(m[1]);
-        c.customFields = c.customFields || {};
-        if (to.start) c.customFields[ids.start] = to.start;
-        if (to.end) c.customFields[ids.end] = to.end;
-        c.updatedAt = now;
-        out = Buffer.from(JSON.stringify(c), "utf8");
-        edited.push(c);
-      }
-      push(first ? out : Buffer.concat([Buffer.from(","), out]));
-      first = false;
-    }
-    push(Buffer.from("]"));
-    flush();
-  } finally { fs.closeSync(fd); }
-  return edited;
-}
-
 // ── main ─────────────────────────────────────────────────────────────────
 const t0 = Date.now();
 const defs = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "crm_custom_fields.json"), "utf8")).filter(d => d.entityType === "contact");
@@ -168,33 +118,32 @@ if (!ids.start || !ids.end) { console.error("START DATE / END DATE contact field
 const rows = await fetchSheetRows();
 console.log(`sheet rows read: ${rows.length}`);
 
-for (let attempt = 1; attempt <= 5; attempt++) {
-  const st0 = fs.statSync(CONTACTS);
-  const buf = fs.readFileSync(CONTACTS);
-  const plan = buildPlan(buf, rows, ids);
-  console.log(`attempt ${attempt}: contacts scanned ${plan.total} | matched to a sheet row ${plan.matched} | to update ${plan.changes.length} | already current ${plan.matched - plan.changes.length} | sheet rows matching no contact ${plan.unmatched.length} | unusable end dates ${plan.unparseable.length}`);
-  if (!APPLY) {
-    console.log("DRY RUN -- nothing written. Sample changes:", JSON.stringify(plan.changes.slice(0, 5).map(c => `${c.name} (${c.status}): ${c.from.end || "-"} -> ${c.to.end || "-"} (${c.matchedBy})`)));
-    console.log("unusable end dates (sample):", JSON.stringify(plan.unparseable.slice(0, 8).map(u => `${u.name}: "${u.endRaw}"`)));
-    process.exit(0);
-  }
-  if (!plan.changes.length) { console.log("nothing to update"); fs.writeFileSync(REPORT, JSON.stringify({ ranAt: new Date().toISOString(), updated: 0, unmatchedRows: plan.unmatched, unparseableEndDates: plan.unparseable }, null, 2)); process.exit(0); }
-  const tmp = path.join(DATA_DIR, `crm_contacts.json.backchannel-${randomBytes(4).toString("hex")}`);
-  const edited = writeNewFile(buf, plan.changes, ids, tmp);
-  const nb = fs.readFileSync(tmp);
-  let count = 0; for (const _ of elementRanges(nb)) count++;
-  if (count !== plan.total || nb[0] !== 0x5b || nb[nb.length - 1] !== 0x5d) { fs.unlinkSync(tmp); throw new Error(`new file failed the check (${count} records vs ${plan.total}); aborting, live file untouched`); }
-  const st1 = fs.statSync(CONTACTS);
-  if (st1.mtimeMs !== st0.mtimeMs || st1.size !== st0.size) { fs.unlinkSync(tmp); console.log("live file changed while working -- retrying"); continue; }
-  fs.renameSync(tmp, CONTACTS);
-  console.log(`contacts file replaced: ${edited.length} contacts edited`);
-  try {
-    const sq = await import(pathToFileURL(path.join(APP_DIR, "sqlite_inbox.js")).href);
-    let n = 0; for (const c of edited) { sq.syncContactFields(c.id, c); n++; }
-    console.log(`sqlite synced for ${n} contacts`);
-  } catch (e) { console.error("sqlite sync failed (the Contacts/Inbox copies catch up on the next edit or boot):", e.message); }
-  fs.writeFileSync(REPORT, JSON.stringify({ ranAt: new Date().toISOString(), sheetRows: rows.length, contactsMatched: plan.matched, updated: edited.length, alreadyUpToDate: plan.matched - plan.changes.length, unmatchedRows: plan.unmatched, unparseableEndDates: plan.unparseable, changes: plan.changes }, null, 2));
-  console.log(`done in ${Date.now() - t0}ms -- report: ${REPORT}`);
-  process.exit(0);
+// Contacts come from Postgres and changes go back as targeted custom_fields
+// merges + a NOTIFY the running app picks up -- see backchannel/contacts_pg.mjs
+// and kickoff_dates.mjs (identical model).
+const { loadAllContactsPg, patchContactsPg, closeContactsPg } = await import(pathToFileURL(path.join(import.meta.dirname, "contacts_pg.mjs")).href);
+const contacts = await loadAllContactsPg();
+const plan = buildPlan(contacts, rows, ids);
+console.log(`contacts scanned ${plan.total} | matched to a sheet row ${plan.matched} | to update ${plan.changes.length} | already current ${plan.matched - plan.changes.length} | sheet rows matching no contact ${plan.unmatched.length} | unusable end dates ${plan.unparseable.length}`);
+if (!APPLY) {
+  console.log("DRY RUN -- nothing written. Sample changes:", JSON.stringify(plan.changes.slice(0, 5).map(c => `${c.name} (${c.status}): ${c.from.end || "-"} -> ${c.to.end || "-"} (${c.matchedBy})`)));
+  console.log("unusable end dates (sample):", JSON.stringify(plan.unparseable.slice(0, 8).map(u => `${u.name}: "${u.endRaw}"`)));
+  await closeContactsPg(); process.exit(0);
 }
-console.error("gave up: the live contacts file kept changing"); process.exit(2);
+if (!plan.changes.length) { console.log("nothing to update"); fs.writeFileSync(REPORT, JSON.stringify({ ranAt: new Date().toISOString(), updated: 0, unmatchedRows: plan.unmatched, unparseableEndDates: plan.unparseable }, null, 2)); await closeContactsPg(); process.exit(0); }
+const now = new Date().toISOString();
+const edited = await patchContactsPg(plan.changes.map(ch => ({
+  id: ch.id,
+  customFields: { ...(ch.to.start ? { [ids.start]: ch.to.start } : {}), ...(ch.to.end ? { [ids.end]: ch.to.end } : {}) },
+  set: { updated_at: now },
+})));
+console.log(`postgres updated: ${edited.length} contacts edited (app notified)`);
+try {
+  const sq = await import(pathToFileURL(path.join(APP_DIR, "sqlite_inbox.js")).href);
+  let n = 0; for (const c of edited) { sq.syncContactFields(c.id, c); n++; }
+  console.log(`sqlite synced for ${n} contacts`);
+} catch (e) { console.error("sqlite sync failed (the Contacts/Inbox copies catch up on the next edit or boot):", e.message); }
+fs.writeFileSync(REPORT, JSON.stringify({ ranAt: new Date().toISOString(), sheetRows: rows.length, contactsMatched: plan.matched, updated: edited.length, alreadyUpToDate: plan.matched - plan.changes.length, unmatchedRows: plan.unmatched, unparseableEndDates: plan.unparseable, changes: plan.changes }, null, 2));
+console.log(`done in ${Date.now() - t0}ms -- report: ${REPORT}`);
+await closeContactsPg();
+process.exit(0);

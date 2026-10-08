@@ -15,6 +15,7 @@ import { resyncStaleStopRows, resyncStaleLegacyLabelRows } from "./sqlite_inbox.
 import { processAcRefFillBatch } from "./ac_sync.js";
 import { processBehavioralTriggers } from "./behavioral_triggers_backend.js";
 import { refreshCountsCacheIfDue } from "./contacts_backend.js";
+import { exportContactsSnapshotIfDue } from "./contacts_db.js";
 
 // One setInterval ticker for the whole app, started once from server.js.
 // Phase 2 only checks scheduled campaigns; Phase 3 adds automation
@@ -147,6 +148,11 @@ async function tick() {
     // functions are still exported from ac_sync.js, just not scheduled.
     await timedPhase("processBehavioralTriggers", processBehavioralTriggers);
     await timedPhase("refreshCountsCacheIfDue", async () => refreshCountsCacheIfDue());
+    // Daily crm_contacts_export.json for disaster recovery / offline tools
+    // (Postgres is the live store since 2026-10-08 -- nothing reads this
+    // file live; see contacts_db.js). One ~200MB write per day, here on the
+    // scheduler thread so it never lands on a request or notification path.
+    await timedPhase("exportContactsSnapshotIfDue", async () => exportContactsSnapshotIfDue());
   } catch (e) {
     console.error("[scheduler] tick failed", e.message);
   }

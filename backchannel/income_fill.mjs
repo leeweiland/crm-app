@@ -1,3 +1,7 @@
+// RETIRED PATH (2026-10-08): crm_contacts.json is no longer the live contacts store (Postgres is; see contacts_db.js).
+// This script still reads/rewrites that file, so running it would change nothing the app sees. Port it to
+// backchannel/contacts_pg.mjs (loadAllContactsPg / patchContactsPg) before using it again.
+console.error("REFUSING TO RUN: crm_contacts.json is no longer the live contacts store (2026-10-08). Port this script to backchannel/contacts_pg.mjs first."); process.exit(2);
 // BACK CHANNEL: writes AI income estimates (income_estimate_core.js) onto our
 // contacts' two custom fields -- ESTIMATED INCOME (USD/YR) and INCOME ESTIMATE
 // BASIS -- in ONE pass over the contacts file.

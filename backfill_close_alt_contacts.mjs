@@ -1,3 +1,7 @@
+// RETIRED PATH (2026-10-08): crm_contacts.json is no longer the live contacts store (Postgres is; see contacts_db.js).
+// This script still reads/rewrites that file, so running it would change nothing the app sees. Port it to
+// backchannel/contacts_pg.mjs (loadAllContactsPg / patchContactsPg) before using it again.
+console.error("REFUSING TO RUN: crm_contacts.json is no longer the live contacts store (2026-10-08). Port this script to backchannel/contacts_pg.mjs first."); process.exit(2);
 // One-time backfill: import_backend.js's upsertFromCloseLead only ever kept
 // emails[0]/phones[0] from each Close lead's nested contact, discarding any
 // additional emails/phones Close had on file. Nothing was deleted -- it was
