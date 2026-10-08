@@ -1853,12 +1853,17 @@ function renderBtActivityRow(t) {
 }
 // Only ever reveals BT_ACTIVITY_PAGE_SIZE more of what's already fetched
 // (the endpoint itself caps at 50) -- a little at a time on scroll instead
-// of rendering all of it into the small accordion frame at once.
+// of rendering all of it into the small accordion frame at once. Keeps
+// revealing past the first page if the frame still isn't scrollable yet --
+// confirmed live: the first 5 rows exactly fit the frame's height with zero
+// overflow, so no scrollbar ever appeared and the scroll listener had
+// nothing to fire on, permanently stranding the list at 5 of 50.
 function revealMoreBtActivity() {
   const el = document.getElementById('btActivityList');
   const next = btActivityRows.slice(btActivityShown, btActivityShown + BT_ACTIVITY_PAGE_SIZE);
   next.forEach(t => el.appendChild(renderBtActivityRow(t)));
   btActivityShown += next.length;
+  if (btActivityShown < btActivityRows.length && el.scrollHeight <= el.clientHeight) revealMoreBtActivity();
 }
 async function loadBtActivity(agentId) {
   const el = document.getElementById('btActivityList');
