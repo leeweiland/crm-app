@@ -151,6 +151,30 @@ export function appendContactMessageStatusEvent(contactId, id, patch, historyAdd
   ensureContactStatusDir();
   appendJsonRecordFast(contactStatusFile(contactId), { id, patch, historyAdds: historyAdd ? [historyAdd] : [], at: new Date().toISOString() });
 }
+// Batched sibling for a bulk-drain-sized run (2026-10-08) -- events is an
+// array of { contactId, id, patch, historyAdd }. Grouped by contactId so
+// each contact's own overlay file gets ONE appendJsonRecordsFast call
+// (one lock cycle) covering every event THIS batch has for that contact,
+// instead of one lock cycle per event -- a real win whenever a batch
+// contains more than one notification for the same contact (repeat
+// opens/clicks, or several campaigns to the same recipient), and no
+// worse than the unbatched version when it doesn't.
+export function appendContactMessageStatusEventsBatch(events) {
+  if (!events || !events.length) return;
+  ensureContactStatusDir();
+  const byContact = new Map();
+  for (const e of events) {
+    if (!e.contactId) continue;
+    const at = new Date().toISOString();
+    const rec = { id: e.id, patch: e.patch, historyAdds: e.historyAdd ? [e.historyAdd] : [], at };
+    if (!byContact.has(e.contactId)) byContact.set(e.contactId, []);
+    byContact.get(e.contactId).push(rec);
+  }
+  for (const [contactId, recs] of byContact) {
+    if (recs.length === 1) appendJsonRecordFast(contactStatusFile(contactId), recs[0]);
+    else appendJsonRecordsFast(contactStatusFile(contactId), recs);
+  }
+}
 
 // Same split as msg_by_contact above, but keyed by (sourceType, sourceId)
 // instead of contactId -- this is what lets a campaign/automation-step/

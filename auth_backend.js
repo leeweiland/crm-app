@@ -726,6 +726,50 @@ export function appendToJsonObjectFast(file, key, value) {
   _mtimeCache.delete(file);
 }
 
+// Batched sibling of appendToJsonObjectFast -- N keys in ONE lock-acquire/
+// open/write/close cycle instead of N (built for ses_notification_worker.js's
+// bulk-drain, 2026-10-08: confirmed live that a true per-row disk write,
+// even a small O(1) one, is still a real, nontrivial cost at tens of
+// thousands of rows -- every row paid its own full lock cycle against the
+// SAME file, serialized. Collecting a whole drain batch's worth of index
+// updates and flushing them as one write collapses that back down to one
+// disk operation per BATCH instead of per ROW, same reasoning as
+// appendJsonRecordsFast's own batched sibling above.
+export function appendToJsonObjectsFast(file, entries) {
+  const keys = Object.keys(entries);
+  if (!keys.length) return;
+  const p = join(DATA_DIR, file);
+  if (!existsSync(p)) { writeJsonToDisk(p, { ...entries }); return; }
+  const pairs = keys.map((k) => JSON.stringify(k) + ":" + JSON.stringify(entries[k])).join(",");
+  withFileLock(p, () => {
+    const fd = openSync(p, "r+");
+    try {
+      const size = fstatSync(fd).size;
+      const tailLen = Math.min(size, 64);
+      const tailBuf = Buffer.alloc(tailLen);
+      readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+      let end = tailLen - 1;
+      while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      if (end < 0 || tailBuf[end] !== 0x7d) throw new Error(`appendToJsonObjectsFast: ${file} does not end with '}'`);
+      const bodyEnd = size - (tailLen - end);
+
+      const headLen = Math.min(size, 256);
+      const headBuf = Buffer.alloc(headLen);
+      readSync(fd, headBuf, 0, headLen, 0);
+      let hi = 0;
+      while (hi < headLen && headBuf[hi] !== 0x7b) hi++;
+      hi++;
+      while (hi < headLen && (headBuf[hi] === 0x20 || headBuf[hi] === 0x0a || headBuf[hi] === 0x0d || headBuf[hi] === 0x09)) hi++;
+      const isEmpty = hi < headLen && headBuf[hi] === 0x7d;
+
+      const suffix = Buffer.from((isEmpty ? "" : ",") + pairs + "}", "utf8");
+      ftruncateSync(fd, bodyEnd);
+      writeSync(fd, suffix, 0, suffix.length, bodyEnd);
+    } finally { closeSync(fd); }
+  });
+  _mtimeCache.delete(file);
+}
+
 export function appendJsonRecords(file, newRecords) {
   if (!newRecords || !newRecords.length) return;
   const p = join(DATA_DIR, file);

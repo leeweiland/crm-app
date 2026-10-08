@@ -216,18 +216,16 @@ export async function handleBulkDrainTriggerRequest(req, res, url) {
 
   const worker = getSesNotificationWorkerByKey(String(Date.now()));
   if (!worker) return sendJson(res, 503, { ok: false, error: "ses-notification worker pool not up" });
-  // Dropped from 2000 (2026-10-08) -- both the progress log AND the
-  // webhook_queue "delivered" UPDATE in runBulkDrain only happen once per
-  // FULL batch, after every row in it finishes. Under tonight's real,
-  // confirmed (via /proc: path_openat/folio_wait_bit_common D-state,
-  // /proc/pressure/io avg10 ~24-27%) disk contention, a single row can
-  // now take anywhere from under a second to many seconds -- at 2000 rows
-  // per batch that meant long stretches with ZERO visible progress (no
-  // log line, no DB write) even while the loop was genuinely working,
-  // indistinguishable from a hang. A smaller batch doesn't change how
-  // much total work there is or skip anything -- the while(true) loop
-  // keeps pulling batches until the backlog is empty either way -- it
-  // only makes forward progress observable in seconds instead of minutes.
-  worker.postMessage({ type: "bulk_drain_backlog", batchSize: 100 });
+  // Raised back to 500 (2026-10-08) -- was dropped to 100 earlier tonight
+  // specifically because the per-row disk write made large batches look
+  // indistinguishable from a hang (no log/DB-update until the whole
+  // batch finished). Now that runBulkDrain batches its two disk writes
+  // ONE PER BATCH instead of one per row (see
+  // updateMessageStatusesByProviderIdBatch in message_log.js), a bigger
+  // batch no longer carries that same per-row write penalty -- it just
+  // amortizes the query round-trip and the one batched write over more
+  // rows, so 500 is a real throughput win, not the visibility regression
+  // the 100 drop was guarding against.
+  worker.postMessage({ type: "bulk_drain_backlog", batchSize: 500 });
   return sendJson(res, 200, { ok: true, started: true });
 }

@@ -27,7 +27,13 @@
 import { parentPort } from "worker_threads";
 import pg from "pg";
 import { processSesNotificationMessage } from "./email_backend.js";
+import { updateMessageStatusesByProviderIdBatch } from "./message_log.js";
 import { loadContactsCache } from "./contacts_db.js";
+import { markContactEmailEngagement, suppressContactEmail } from "./contacts_backend.js";
+import { fireTrigger } from "./automations_backend.js";
+import { fireWorkflowTrigger } from "./workflows_backend.js";
+import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
+import { getComplianceSettings } from "./integrations_backend.js";
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
@@ -70,6 +76,7 @@ function reply(msg, err) {
 // time backlog catchup. Fire-and-forget from the dispatcher's
 // perspective -- progress logs here, the dispatcher gets one reply when
 // the whole run finishes.
+const STATUS_MAP = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
 let bulkDrainRunning = false;
 async function runBulkDrain(batchSize) {
   if (bulkDrainRunning) return { alreadyRunning: true };
@@ -98,10 +105,47 @@ async function runBulkDrain(batchSize) {
         [batchSize]
       );
       if (!rows.length) break;
+      // Batched status-write path (2026-10-08) -- confirmed live, by
+      // direct code trace, that even with zero big-file reads left on
+      // this path, every row still paid its OWN full disk write (one
+      // lock-acquire/open/write/close cycle each) to
+      // PROVIDER_ID_INDEX_FILE, serialized one after another. Parses
+      // the whole batch up front (pure CPU, no I/O), then makes ONE call
+      // to updateMessageStatusesByProviderIdBatch instead of one call
+      // per row -- collapses that file's write side from N lock cycles
+      // to 1 per batch. This duplicates (deliberately, not an oversight)
+      // processSesNotificationMessage's own eventType->status mapping
+      // and trigger-firing logic from email_backend.js, since that
+      // function calls the PER-ROW update internally and can't be
+      // reused as-is for a batch -- if that function's own mapping or
+      // trigger logic ever changes, this needs to change with it.
+      const parsed = rows.map((row) => {
+        try {
+          const msg = JSON.parse(row.payload.raw);
+          return { row, providerMessageId: msg.mail?.messageId, status: STATUS_MAP[msg.eventType || msg.notificationType] };
+        } catch (e) { return { row, parseError: e }; }
+      });
+      const updateIndices = [];
+      const updates = [];
+      parsed.forEach((p, i) => {
+        if (!p.parseError && p.providerMessageId && p.status) { updateIndices.push(i); updates.push({ providerMessageId: p.providerMessageId, status: p.status }); }
+      });
+      const results = updates.length ? updateMessageStatusesByProviderIdBatch(updates) : [];
+      const foundByIndex = new Map();
+      updateIndices.forEach((idx, j) => foundByIndex.set(idx, results[j]));
+
       const doneIds = [];
-      for (const row of rows) {
-        try { processSesNotificationMessage(row.payload.raw); doneIds.push(row.id); }
-        catch (e) { console.error(`[ses-notification-worker] bulk-drain row ${row.id} failed:`, e.message); }
+      for (let i = 0; i < parsed.length; i++) {
+        const p = parsed[i];
+        if (p.parseError) { console.error(`[ses-notification-worker] bulk-drain row ${p.row.id} parse failed:`, p.parseError.message); doneIds.push(p.row.id); continue; }
+        try {
+          const found = foundByIndex.get(i) || null;
+          const isRepeatForThisMessage = !!found?.isRepeat;
+          if (found?.contactId && p.status === "opened" && !isRepeatForThisMessage) { markContactEmailEngagement(found.contactId, "opened"); fireTrigger("email_opened", { contactId: found.contactId }); fireWorkflowTrigger("email_opened", { contactId: found.contactId }); queueBehavioralTrigger({ contactId: found.contactId, source: "email_open", context: {} }); }
+          if (found?.contactId && p.status === "clicked" && !isRepeatForThisMessage) { markContactEmailEngagement(found.contactId, "clicked"); fireTrigger("email_clicked", { contactId: found.contactId }); fireWorkflowTrigger("email_clicked", { contactId: found.contactId }); queueBehavioralTrigger({ contactId: found.contactId, source: "email_click", context: {} }); }
+          if (found?.contactId && (p.status === "bounced" || p.status === "complained") && getComplianceSettings().autoOptOutOnBounceComplaint) suppressContactEmail(found.contactId, p.status);
+          doneIds.push(p.row.id);
+        } catch (e) { console.error(`[ses-notification-worker] bulk-drain row ${p.row.id} failed:`, e.message); }
       }
       if (doneIds.length) await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now() WHERE id = ANY($1::uuid[])`, [doneIds]);
       totalProcessed += doneIds.length;

@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { statSync, existsSync, openSync, readSync, closeSync } from "fs";
 import { join } from "path";
-import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, readJson, DATA_DIR } from "./auth_backend.js";
-import { appendContactMessage, appendContactMessageStatusEvent, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
+import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, appendToJsonObjectsFast, readJson, DATA_DIR } from "./auth_backend.js";
+import { appendContactMessage, appendContactMessageStatusEvent, appendContactMessageStatusEventsBatch, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
@@ -346,6 +346,64 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   recordDailyStatsTransition(found, oldStatus, status);
   if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
   return found;
+}
+// Batched sibling for a bulk-drain-sized run (2026-10-08) -- updates is an
+// array of { providerMessageId, status, extra? }. The per-row version
+// above already stopped reading any big file per call; the remaining
+// cost at tens of thousands of rows is simply that EVERY row still pays
+// its own full disk write (one lock cycle each) to PROVIDER_ID_INDEX_FILE
+// and to its contact's own overlay file -- real, measured, not fixable by
+// more caching since each write genuinely is new data. This collapses
+// the PROVIDER_ID_INDEX_FILE side to ONE write for the whole batch
+// (appendToJsonObjectsFast) and the contact-overlay side to one write
+// PER DISTINCT CONTACT in the batch (appendContactMessageStatusEventsBatch)
+// instead of one write per row -- same total data persisted, same
+// guarantees, just far fewer separate disk operations to get there.
+// Returns results in the SAME order as `updates`, null for any id this
+// index doesn't know about, so the caller can still run the exact same
+// per-row side effects (recompute, source-status, daily-stats, trigger
+// firing) it always has -- nothing about those changes here.
+export function updateMessageStatusesByProviderIdBatch(updates) {
+  const index = getProviderIndexCached();
+  const indexPatch = {};
+  const overlayEvents = [];
+  const results = new Array(updates.length).fill(null);
+  for (let i = 0; i < updates.length; i++) {
+    const { providerMessageId, status, extra } = updates[i];
+    if (!providerMessageId) continue;
+    const entry = indexPatch[providerMessageId] || index[providerMessageId];
+    if (!entry) continue;
+    const oldStatus = entry.status;
+    const isRepeat = status === "opened" ? (entry.openCount || 0) > 0 : status === "clicked" ? (entry.clickCount || 0) > 0 : false;
+    const openCount = (entry.openCount || 0) + (status === "opened" ? 1 : 0);
+    const clickCount = (entry.clickCount || 0) + (status === "clicked" ? 1 : 0);
+    const updatedEntry = { ...entry, status, openCount, clickCount };
+    indexPatch[providerMessageId] = updatedEntry; // repeats of the SAME id within one batch see their own prior update
+    overlayEvents.push({ contactId: entry.contactId, id: entry.id, patch: { status }, historyAdd: { status, at: new Date().toISOString(), ...(extra || {}) } });
+    results[i] = { ...entry, id: entry.id, status, isRepeat, _oldStatus: oldStatus };
+  }
+  if (Object.keys(indexPatch).length) appendToJsonObjectsFast(PROVIDER_ID_INDEX_FILE, indexPatch);
+  if (overlayEvents.length) appendContactMessageStatusEventsBatch(overlayEvents);
+  // Same remaining bookkeeping updateMessageStatusByProviderId does per
+  // call, just looped here instead -- none of these do a big-file read
+  // (recomputeConversationSummary is an in-memory Set.add + debounced
+  // timer, updateSourceMessageStatus/recordDailyStatsTransition are
+  // already O(1) overlay/bucket writes), so there's no equivalent batch
+  // win available for them the way there was for the two disk writes
+  // above -- only reason to loop them here instead of leaving this to
+  // the caller is so this function stays a complete drop-in replacement
+  // for calling updateMessageStatusByProviderId once per update.
+  for (let i = 0; i < updates.length; i++) {
+    const found = results[i];
+    if (!found) continue;
+    const { status } = updates[i];
+    const oldStatus = found._oldStatus;
+    recomputeConversationSummary(found.contactId);
+    if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
+    recordDailyStatsTransition(found, oldStatus, status);
+    if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(found.contactId, found.channel);
+  }
+  return results;
 }
 // Used by /api/email/click (marking a message "clicked" by our own row id).
 // Same fix as updateMessageStatusByProviderId above: was a full scan of the
