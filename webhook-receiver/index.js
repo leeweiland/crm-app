@@ -177,23 +177,24 @@ async function runRelayLoop() {
       `SELECT * FROM webhook_queue WHERE status IN ('pending','failed') AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '10 seconds') AND ($1::boolean IS FALSE OR type <> 'ses_notification') ORDER BY (CASE type WHEN 'twilio_inbound' THEN 0 WHEN 'twilio_status' THEN 1 ELSE 2 END) ASC, created_at ASC LIMIT 500`,
       [PAUSE_SES_NOTIFICATIONS]
     );
-    // REVERTED same day (2026-10-05) -- tried Promise.all here on the
-    // theory that each row's relay call was independent, but every one of
-    // them funnels through crm-app's SAME single background-worker thread
-    // (one thread, processing inbound SMS one at a time, including a real
-    // LLM call per reply). Firing all 25 at once didn't parallelize
-    // anything real -- it just piled 25+ concurrent /internal/webhook-relay
-    // requests onto crm-app at once, confirmed live via its own watchdog
-    // log showing the stuck-request count climbing every single cycle
-    // (#133 up to #157 and still growing) as each new batch added 25 more
-    // on top of the previous batch's still-unresolved ones. The real
-    // bottleneck is the single-threaded worker on crm-app's side, not
-    // anything sequential here -- fixing that (if it's even worth fixing,
-    // given a real conversational back-and-forth is bursty, not sustained)
-    // needs to happen there, not by hiding it behind more concurrent
-    // requests that the same one thread still has to process in order
-    // anyway.
-    for (const row of rows) {
+    // REVERTED same day (2026-10-05), RE-INTRODUCED 2026-10-08 for
+    // ses_notification ONLY -- the original revert's reasoning was
+    // correct for what existed then: every row funneled through crm-app's
+    // SAME single background-worker thread, so firing many at once just
+    // piled up concurrent requests one thread still had to process in
+    // order anyway. That's no longer true for ses_notification -- it now
+    // has a real 4-thread dedicated pool (see ses_notification_worker_handle.js),
+    // and this loop was STILL dispatching to it one row at a time, so 3 of
+    // those 4 threads sat completely idle while the backlog drained at a
+    // fraction of its real capacity. twilio_inbound/twilio_status still go
+    // through ONE dedicated thread (sms_worker.js) -- those stay fully
+    // sequential, unchanged, since concurrency there would just recreate
+    // the original 2026-10-05 problem on that one thread.
+    const SES_CONCURRENCY = 8; // > the pool's own 4 slots so hash collisions still keep most slots busy
+    const twilioRows = rows.filter((r) => r.type !== "ses_notification");
+    const sesRows = rows.filter((r) => r.type === "ses_notification");
+
+    async function relayAndRecord(row) {
       try {
         await relayOne(row);
         await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now(), last_attempt_at=now() WHERE id=$1`, [row.id]);
@@ -201,6 +202,11 @@ async function runRelayLoop() {
         await pool.query(`UPDATE webhook_queue SET status='failed', attempts=attempts+1, last_error=$2, last_attempt_at=now() WHERE id=$1`, [row.id, e.message]);
         console.error(`[webhook-receiver] relay failed for ${row.id} (attempt ${row.attempts + 1}):`, e.message);
       }
+    }
+
+    for (const row of twilioRows) await relayAndRecord(row);
+    for (let i = 0; i < sesRows.length; i += SES_CONCURRENCY) {
+      await Promise.all(sesRows.slice(i, i + SES_CONCURRENCY).map(relayAndRecord));
     }
   } catch (e) {
     console.error("[webhook-receiver] relay loop error:", e.message);
