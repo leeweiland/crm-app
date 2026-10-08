@@ -23,12 +23,15 @@ window.ConditionRowBuilder = (function () {
   // cohort filter). No "all of" here (unlike ARRAY_FIELDS) -- a contact
   // only ever has one status, so "is all of X, Y" could never match more
   // than a single selected value and would silently return nothing for
-  // any real multi-value selection.
-  const SCALAR_MULTI_FIELDS = ["status"];
+  // any real multi-value selection. ownerId (contact.ownerId, "Assigned
+  // to" -- see crm-nav.js's ownerFieldHtml) is the same shape: one user
+  // per contact, same eq/neq/any_of/not_any_of as status.
+  const SCALAR_MULTI_FIELDS = ["status", "ownerId"];
 
   function fieldOptionsHtml() {
     return `
       <option value="status">Status</option>
+      <option value="ownerId">Assigned to</option>
       <option value="programType">Type (Online/Gym)</option>
       <option value="smsOptOut">SMS Opt-Out</option>
       <option value="emailOptOut">Email Opt-Out</option>
@@ -38,6 +41,7 @@ window.ConditionRowBuilder = (function () {
       <option value="emailClicked">Clicked Email</option>
       <option value="visitedPage">Visited Webpage</option>
       <option value="firstSeenAt">Lead date (oldest of Hyros / Close / AC)</option>
+      <option value="bookedAt">Booked date (most recent confirmed booking)</option>
       ${(window.crmTeamUsers || []).filter(u => !u.archived).map(u => `<option value="staffActivity:${escapeHtml(u.id)}">Emailed / texted with ${escapeHtml(u.first || u.email)}</option>`).join('')}
       ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
     `;
@@ -51,6 +55,7 @@ window.ConditionRowBuilder = (function () {
     // "after" = a FIXED lower bound (segments_shared.js) -- e.g. "leads since
     // Sep 6, ongoing" -- as opposed to within_last_hours' rolling window.
     if (field === "firstSeenAt" || field === "createdAt") return `<option value="within_last_hours">Within the last (hours)</option><option value="after">Is on or after (date &amp; time)</option><option value="between">Is between (dates, inclusive)</option>`;
+    if (field === "bookedAt") return `<option value="eq">Is (on this date)</option><option value="on_or_after">Is on or after</option><option value="on_or_before">Is on or before</option><option value="between">Is between (dates, inclusive)</option>`;
     // "Has emailed/texted with <team member> in the last N days" and its
     // opposite -- the second is what keeps another rep's leads out of a segment.
     if (field.startsWith("staffActivity:")) return `<option value="not_within_last_days">Has NOT in the last (days)</option><option value="within_last_days">Has, in the last (days)</option>`;
@@ -135,9 +140,11 @@ window.ConditionRowBuilder = (function () {
     if (op === 'between') return `<span data-cond-range style="display:inline-flex;gap:6px;align-items:center"><input class="pra-input" type="date" data-cond-from title="First day (your local time)"/> and <input class="pra-input" type="date" data-cond-to title="Last day, included (your local time)"/></span>`;
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
     if (field === 'status') return `<select class="pra-select" data-cond-value>${allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('')}</select>`;
+    if (field === 'ownerId') return `<select class="pra-select" data-cond-value>${(window.crmTeamUsers || []).filter(u => !u.archived).map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.first)} ${escapeHtml(u.last)}</option>`).join('')}</select>`;
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
     if ((field === 'firstSeenAt' || field === 'createdAt') && op === 'after') return `<input class="pra-input" type="datetime-local" data-cond-value title="Your local time"/>`;
     if (field === 'firstSeenAt' || field === 'createdAt') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="e.g. 72"/>`;
+    if (field === 'bookedAt') return `<input class="pra-input" type="date" data-cond-value/>`;
     if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
     if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
     return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
@@ -206,6 +213,7 @@ window.ConditionRowBuilder = (function () {
         const items = fieldSel.value === 'tags' ? allTags
           : fieldSel.value === 'listIds' ? allLists
           : fieldSel.value === 'status' ? allStatuses.map(s => ({ id: s.label, name: s.label })) // status has no separate id -- its label IS the stored value
+          : fieldSel.value === 'ownerId' ? (window.crmTeamUsers || []).filter(u => !u.archived).map(u => ({ id: u.id, name: `${u.first} ${u.last}`.trim() }))
           : [];
         if (!row._msSelected.length && initial && initial.field === fieldSel.value && Array.isArray(initial.value)) row._msSelected = [...initial.value];
         renderMultiSelectInto(multiHost, items, row._msSelected, (sel) => { row._msSelected = sel; });
@@ -222,7 +230,9 @@ window.ConditionRowBuilder = (function () {
         row.querySelector('[data-cond-to]').value = isoToDateInput(initial.value.to, -1);
       } else if (!MULTI_VALUE_OPS.includes(initial.op)) {
         const valEl = row.querySelector('[data-cond-value]');
-        if (valEl) valEl.value = initial.op === 'after' ? isoToLocalInput(initial.value) : (initial.value ?? '');
+        if (valEl) valEl.value = initial.op === 'after' ? isoToLocalInput(initial.value)
+          : (initial.field === 'bookedAt' && ['eq', 'on_or_after', 'on_or_before'].includes(initial.op)) ? isoToDateInput(initial.value, 0)
+          : (initial.value ?? '');
       }
     }
     row.querySelector('[data-remove-cond]').onclick = () => row.remove();
@@ -242,6 +252,7 @@ window.ConditionRowBuilder = (function () {
       }
       else value = row.querySelector('[data-cond-value]')?.value;
       if (op === 'after') value = localInputToIso(value);
+      if (field === 'bookedAt' && ['eq', 'on_or_after', 'on_or_before'].includes(op)) value = dateInputToIso(value, 0);
       return { field, op, value };
     // A blank value is meaningful for visitedPage's "contains" op --
     // matchesSegment (segments_shared.js) matches it against ANY visited
@@ -253,15 +264,16 @@ window.ConditionRowBuilder = (function () {
   }
 
   const FIELD_LABELS = {
-    type: 'Type (Lead/Contact)', status: 'Status', programType: 'Type', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
+    type: 'Type (Lead/Contact)', status: 'Status', ownerId: 'Assigned to', programType: 'Type', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
     tags: 'Tag', listIds: 'List', emailOpened: 'Opened Email', emailClicked: 'Clicked Email', visitedPage: 'Visited Webpage',
-    firstSeenAt: 'Lead date', createdAt: 'Lead date',
+    firstSeenAt: 'Lead date', createdAt: 'Lead date', bookedAt: 'Booked date',
   };
   const OP_LABELS = {
     eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', contains: 'contains',
     any_of: 'is any of', all_of: 'is all of', not_any_of: 'is not any of', not_all_of: 'is not all of',
     within_last_hours: 'is within the last', within_last_days: 'in the last', after: 'is on or after', between: 'is between',
     not_within_last_days: 'not in the last', gt: 'is greater than', gte: 'is at least', lt: 'is less than', lte: 'is at most',
+    on_or_after: 'is on or after', on_or_before: 'is on or before',
   };
   // Can this row builder faithfully show + re-save this stored condition? A
   // saved segment can hold conditions the UI never offered (field "id" for a
@@ -292,17 +304,22 @@ window.ConditionRowBuilder = (function () {
     const staffUser = cond.field.startsWith('staffActivity:') ? (window.crmTeamUsers || []).find(u => u.id === cond.field.slice(14)) : null;
     const fieldLabel = FIELD_LABELS[cond.field] || (staffUser ? `Emailed / texted with ${staffUser.first || staffUser.email}` : cond.field.startsWith('staffActivity:') ? 'Emailed / texted with a team member' : null) || (cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field);
     const opLabel = OP_LABELS[cond.op] || cond.op;
+    const ownerName = (id) => { const u = (window.crmTeamUsers || []).find(x => x.id === id); return u ? `${u.first} ${u.last}`.trim() : id; };
     let valueLabel = cond.value;
     if (Array.isArray(cond.value)) {
       const items = cond.field === 'tags' ? allTags : cond.field === 'listIds' ? allLists : null;
-      valueLabel = items ? cond.value.map(id => items.find(i => i.id === id)?.name || id).join(', ') : cond.value.join(', ');
+      valueLabel = items ? cond.value.map(id => items.find(i => i.id === id)?.name || id).join(', ')
+        : cond.field === 'ownerId' ? cond.value.map(ownerName).join(', ')
+        : cond.value.join(', ');
     } else {
       if (cond.field === 'tags') valueLabel = allTags.find(t => t.id === cond.value)?.name || cond.value;
       if (cond.field === 'listIds') valueLabel = allLists.find(l => l.id === cond.value)?.name || cond.value;
+      if (cond.field === 'ownerId') valueLabel = ownerName(cond.value);
     }
     if (cond.op === 'within_last_hours') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} hours`;
     if (cond.op === 'within_last_days' || cond.op === 'not_within_last_days') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} days`;
     if (cond.op === 'after' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    if (['eq', 'on_or_after', 'on_or_before'].includes(cond.op) && cond.field === 'bookedAt' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleDateString([], { dateStyle: 'medium' });
     if (cond.op === 'between' && valueLabel && typeof valueLabel === 'object' && !Array.isArray(valueLabel)) {
       // Whole-day windows read as dates ("Jan 1, 2026 and May 1, 2026" -- the
       // stored end is the exclusive start of the NEXT day); anything else keeps its time.

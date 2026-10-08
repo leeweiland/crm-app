@@ -18,6 +18,12 @@ export const STAFF_ACTIVITY_FILE = "crm_staff_activity.json";
 // STATUSES_FILE the other way round would cycle back here. Just a filename
 // string, safe to duplicate.
 const STATUSES_FILE = "crm_statuses.json";
+// Duplicated from scheduling_backend.js's own BOOKINGS_FILE (not imported) --
+// scheduling_backend.js already imports findContactMatch/applyAdvancingStatus
+// from here, so pulling BOOKINGS_FILE the other way round would cycle back.
+// Just a filename string, safe to duplicate (same reasoning as STATUSES_FILE
+// just above).
+const BOOKINGS_FILE = "crm_bookings.json";
 
 export function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -125,16 +131,25 @@ export function leadDateMs(contact) {
 }
 
 // filter shape: { all: [ {field, op, value}, ... ] } | { any: [...] }
-// field: "status" | "smsOptOut" | "emailOptOut" | "tags" | "listIds" | "customFields.<fieldId>"
-//      | "emailOpened" | "emailClicked" | "visitedPage" | "firstSeenAt" | "createdAt"
+// field: "status" | "ownerId" | "smsOptOut" | "emailOptOut" | "tags" | "listIds" | "customFields.<fieldId>"
+//      | "emailOpened" | "emailClicked" | "visitedPage" | "firstSeenAt" | "createdAt" | "bookedAt"
 // op: "eq" | "neq" | "includes" | "excludes" | "exists"           (legacy, still fully supported)
-//   | "any_of" | "all_of" | "not_any_of" | "not_all_of"           (new -- value is an array, array-valued fields only)
+//   | "any_of" | "all_of" | "not_any_of" | "not_all_of"           (new -- value is an array; array-valued fields, plus any scalar field via the generic eq-style fallback below, e.g. "status"/"ownerId" is any of [...])
 //   | "contains"                                                   (new -- substring match, visitedPage only)
 //   | "within_last_hours"                                          (new -- value is a number of hours, firstSeenAt/createdAt only, re-evaluated against Date.now() every read)
-//   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
+//   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt/bookedAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
 //   | "within_last_days"                                           (new -- value is a number of days, emailOpened/emailClicked only: latest such event within the last N days, incl. imported ActiveCampaign history)
 //   | "after"                                                       (new -- value is a single ISO timestamp, firstSeenAt/createdAt only; a FIXED lower bound with no upper bound, so it keeps matching every new contact from that point forward -- e.g. "leads since Sep 6, 2026, ongoing".)
+//   | "on_or_after" | "on_or_before"                                (new -- bookedAt only; value is a single ISO local-midnight timestamp, whole-calendar-day semantics same as between's `to` being exclusive.)
 //   | "gt" | "gte" | "lt" | "lte"                                  (new -- customFields.<id> only; numeric comparison, value is a number. "$85,000" / "85,000" read as 85000; a blank or non-numeric field never matches, so "income > 60000" can't be satisfied by a contact with no estimate.)
+//
+// field "ownerId" (contact.ownerId, "Assigned to" -- see crm-nav.js's
+// ownerFieldHtml) is a plain scalar field, handled entirely by the generic
+// actual = contact[field] fallback below -- no special-case branch needed.
+//
+// field "bookedAt": NOT a contact-record property -- their most recent
+// CONFIRMED booking's start time (bookingIndex, below; bookings live in
+// crm_bookings.json, never denormalized onto the contact).
 //
 // field "staffActivity:<userId>" with op "within_last_days" | "not_within_last_days"
 // (value = number of days): whether that team member has an email or SMS
@@ -200,6 +215,25 @@ function evalCondition(contact, cond, payload) {
     if (!at) return false;
     const ageMs = Date.now() - at;
     return ageMs >= 0 && ageMs <= Number(value) * 24 * 3600 * 1000;
+  }
+
+  // "Booked date" -- their most recent CONFIRMED booking's start time
+  // (bookingIndex, above), not any contact-record field (bookings live in
+  // crm_bookings.json, never denormalized onto the contact). value is a
+  // single ISO local-midnight timestamp for eq/on_or_after/on_or_before
+  // (whole calendar day, same "to is exclusive" convention as
+  // firstSeenAt/createdAt's between), or {from, to} for between.
+  if (field === "bookedAt") {
+    const at = Date.parse(bookingIndex()[contact.id] || "");
+    if (isNaN(at)) return false;
+    const dayMs = 24 * 3600 * 1000;
+    switch (op) {
+      case "eq": { const d = new Date(value).getTime(); return at >= d && at < d + dayMs; }
+      case "on_or_after": return at >= new Date(value).getTime();
+      case "on_or_before": return at < new Date(value).getTime() + dayMs;
+      case "between": return at >= new Date(value.from).getTime() && at < new Date(value.to).getTime();
+      default: return false;
+    }
   }
 
   if (field.startsWith("staffActivity:") && (op === "within_last_days" || op === "not_within_last_days")) {
@@ -285,6 +319,24 @@ let _staffIdx = null, _staffIdxAt = 0;
 function staffActivityIndex() {
   if (!_staffIdx || Date.now() - _staffIdxAt > 2000) { _staffIdx = readJson(STAFF_ACTIVITY_FILE, {}); _staffIdxAt = Date.now(); }
   return _staffIdx;
+}
+// contactId -> ISO startAt of that contact's most recent CONFIRMED booking
+// (a rebooked contact's latest booking is the one that actually matters for
+// "when are they booked"). Same 2s-memo pattern as staffActivityIndex --
+// a segment pass calls evalCondition once per contact, so this keeps a
+// full-contacts pass to one read of crm_bookings.json instead of one per
+// contact.
+let _bookingIdx = null, _bookingIdxAt = 0;
+function bookingIndex() {
+  if (!_bookingIdx || Date.now() - _bookingIdxAt > 2000) {
+    const idx = {};
+    for (const b of readJson(BOOKINGS_FILE, [])) {
+      if (b.status !== "confirmed" || !b.contactId || !b.startAt) continue;
+      if (!idx[b.contactId] || new Date(b.startAt) > new Date(idx[b.contactId])) idx[b.contactId] = b.startAt;
+    }
+    _bookingIdx = idx; _bookingIdxAt = Date.now();
+  }
+  return _bookingIdx;
 }
 export function matchesSegment(contact, filter, payload) {
   if (!filter) return true;

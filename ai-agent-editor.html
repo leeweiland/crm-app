@@ -753,13 +753,19 @@ function renderSearchableMultiSelect(containerId, items, selectedIds, onToggle) 
   }
   const chipsEl = el.querySelector('.ms-chips');
   const selected = items.filter((i) => selectedIds.includes(i.id));
-  chipsEl.innerHTML = selected.map((i) => `<span class="tag-pill">${escapeHtml(i.name)}<button type="button" data-remove="${i.id}">&times;</button></span>`).join('');
+  // The edit (pencil) button only makes sense for segments -- this widget
+  // is only ever used for fSegments in this file (checked: no other caller),
+  // so it's safe to wire it in here directly rather than threading an
+  // "editable" flag through every call site.
+  const showEdit = containerId === 'fSegments';
+  chipsEl.innerHTML = selected.map((i) => `<span class="tag-pill">${escapeHtml(i.name)}${showEdit ? `<button type="button" data-edit-segment="${i.id}" title="Edit this segment">&#9998;</button>` : ''}<button type="button" data-remove="${i.id}">&times;</button></span>`).join('');
   chipsEl.querySelectorAll('[data-remove]').forEach((btn) => btn.onclick = () => {
     onToggle(btn.dataset.remove);
     renderSearchableMultiSelect(containerId, items, selectedIds, onToggle);
     scheduleAutosave();
     updateSegmentSizeDisplay();
   });
+  chipsEl.querySelectorAll('[data-edit-segment]').forEach((btn) => btn.onclick = () => openSegmentEditor(btn.dataset.editSegment));
 }
 // Fast path for the one case this came up for ("new leads since a date,
 // ongoing") -- builds a real segment via the same POST /api/segments the
@@ -784,38 +790,86 @@ async function loadConditionBuilderRefData() {
   const allCustomFields = (await customFieldsRes.json()).fields;
   window.ConditionRowBuilder.init({ statuses: allStatuses, tags: allTags, lists: allLists, customFields: allCustomFields });
 }
+// null = creating a new segment; a segment id = editing that one in place
+// (PATCH instead of POST) -- same form, same condition builder, reused for
+// both so there's one code path instead of two near-duplicates.
+let editingSegmentId = null;
+function setSegmentFormMode(editing) {
+  document.getElementById('saveNewSegmentBtn').textContent = editing ? 'Save Changes' : 'Create';
+}
 document.getElementById('newSegmentBtn').addEventListener('click', async () => {
   const form = document.getElementById('newSegmentForm');
   const opening = form.style.display === 'none';
   form.style.display = opening ? 'block' : 'none';
   if (opening) {
+    editingSegmentId = null;
+    setSegmentFormMode(false);
+    document.getElementById('newSegmentName').value = '';
+    document.getElementById('newSegmentMatchMode').value = 'all';
     await conditionBuilderReady;
     const rows = document.getElementById('newSegmentCondRows');
     rows.innerHTML = '';
     window.ConditionRowBuilder.addRow(rows);
   }
 });
+// Opens the same inline form pre-filled with an existing segment's name/
+// conditions -- reachable via the pencil icon on a selected segment's chip
+// (renderSearchableMultiSelect above). A condition the builder can't
+// represent (an old "between"/legacy op the UI never offers for a NEW row)
+// is kept and resubmitted as-is rather than silently dropped -- same
+// safety the Contacts page's own Edit Segment modal relies on.
+let editingSegmentPreserved = [];
+async function openSegmentEditor(segmentId) {
+  const seg = allSegments.find((s) => s.id === segmentId);
+  if (!seg) return;
+  await conditionBuilderReady;
+  editingSegmentId = segmentId;
+  editingSegmentPreserved = [];
+  setSegmentFormMode(true);
+  document.getElementById('newSegmentName').value = seg.name || '';
+  const filter = seg.filter || {};
+  const conds = filter.all || filter.any || [];
+  document.getElementById('newSegmentMatchMode').value = filter.any ? 'any' : 'all';
+  const rows = document.getElementById('newSegmentCondRows');
+  rows.innerHTML = '';
+  conds.forEach((c) => { if (window.ConditionRowBuilder.canRepresent(c)) window.ConditionRowBuilder.addRow(rows, c); else editingSegmentPreserved.push(c); });
+  if (!rows.children.length && !editingSegmentPreserved.length) window.ConditionRowBuilder.addRow(rows);
+  document.getElementById('newSegmentForm').style.display = 'block';
+}
 document.getElementById('cancelNewSegmentBtn').addEventListener('click', () => {
   document.getElementById('newSegmentForm').style.display = 'none';
   document.getElementById('newSegmentName').value = '';
+  editingSegmentId = null;
 });
 document.getElementById('addNewSegmentCondBtn').addEventListener('click', () => window.ConditionRowBuilder.addRow(document.getElementById('newSegmentCondRows')));
 document.getElementById('saveNewSegmentBtn').addEventListener('click', async () => {
   const name = document.getElementById('newSegmentName').value.trim();
   if (!name) { showToast('Name it first', true); return; }
-  const filter = window.ConditionRowBuilder.buildFilter(document.getElementById('newSegmentCondRows'), document.getElementById('newSegmentMatchMode').value);
-  if (!filter) { showToast('Add at least one condition first', true); return; }
-  const r = await fetch('/api/segments', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  const built = window.ConditionRowBuilder.buildFilter(document.getElementById('newSegmentCondRows'), 'all'); // conds only; match mode applied below
+  const conds = [...(built?.all || []), ...editingSegmentPreserved];
+  if (!conds.length) { showToast('Add at least one condition first', true); return; }
+  const matchMode = document.getElementById('newSegmentMatchMode').value;
+  const filter = matchMode === 'any' ? { any: conds } : { all: conds };
+  const url = editingSegmentId ? `/api/segments/${editingSegmentId}` : '/api/segments';
+  const r = await fetch(url, {
+    method: editingSegmentId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, filter }),
   });
   const d = await r.json();
-  if (!r.ok) { showToast(d.error || 'Could not create segment', true); return; }
-  allSegments.push(d.segment);
-  renderSegmentCheckboxes([...getSelectedSegmentIds(), d.segment.id]);
+  if (!r.ok) { showToast(d.error || `Could not ${editingSegmentId ? 'save' : 'create'} segment`, true); return; }
+  if (editingSegmentId) {
+    const idx = allSegments.findIndex((s) => s.id === editingSegmentId);
+    if (idx !== -1) allSegments[idx] = d.segment;
+    renderSegmentCheckboxes(getSelectedSegmentIds());
+    showToast('Segment updated');
+  } else {
+    allSegments.push(d.segment);
+    renderSegmentCheckboxes([...getSelectedSegmentIds(), d.segment.id]);
+    showToast('Segment created and selected');
+  }
+  editingSegmentId = null;
   document.getElementById('newSegmentForm').style.display = 'none';
   document.getElementById('newSegmentName').value = '';
-  showToast('Segment created and selected');
   updateSegmentSizeDisplay();
   scheduleAutosave();
 });
