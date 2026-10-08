@@ -120,12 +120,25 @@ function migrateLegacyJsonOnce() {
   try { writeFileSync(MIGRATED_MARKER, new Date().toISOString()); } catch { /* read-only or raced -- harmless, INSERT OR IGNORE makes a rerun a no-op */ }
 }
 
+// Depth-aware: a transaction opened inside an outer withEnrollmentBatch()
+// just runs inline in it (SQLite can't nest BEGINs on one connection).
+let _txDepth = 0;
 function transaction(fn) {
   const d = getDb();
+  if (_txDepth > 0) return fn();
   d.exec("BEGIN IMMEDIATE");
+  _txDepth++;
   try { const r = fn(); d.exec("COMMIT"); return r; }
   catch (e) { try { d.exec("ROLLBACK"); } catch { /* nothing open */ } throw e; }
+  finally { _txDepth--; }
 }
+// Wrap a whole drain batch's enrollment writes in ONE transaction (2026-10-08).
+// Measured live after the SQLite move: every first-open runs the Engagement
+// Tagging chain -- ~8 enrollment writes -- and each autocommitted write is
+// its own fsync, ~40ms on this volume (sqlite_inbox.js documents the same
+// lesson: "1,600 contacts froze the whole server for ~140s" from per-row
+// autocommits). One fsync per 500-row batch instead of ~8 per open.
+export function withEnrollmentBatch(fn) { return transaction(fn); }
 const parse = (r) => JSON.parse(r.data);
 
 // Upsert the full record (insert if new, replace if existing).

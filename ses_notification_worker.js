@@ -28,6 +28,7 @@ import { parentPort } from "worker_threads";
 import pg from "pg";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { updateMessageStatusesByProviderIdBatch } from "./message_log.js";
+import { withEnrollmentBatch } from "./automation_enrollments_db.js";
 import { loadContactsCache } from "./contacts_db.js";
 import { markContactEmailEngagement, suppressContactEmail } from "./contacts_backend.js";
 import { fireTrigger } from "./automations_backend.js";
@@ -135,6 +136,9 @@ async function runBulkDrain(batchSize) {
       updateIndices.forEach((idx, j) => foundByIndex.set(idx, results[j]));
 
       const doneIds = [];
+      // One SQLite transaction (one fsync) for every enrollment write the
+      // whole batch's trigger-firing produces -- see withEnrollmentBatch.
+      withEnrollmentBatch(() => {
       for (let i = 0; i < parsed.length; i++) {
         const p = parsed[i];
         if (p.parseError) { console.error(`[ses-notification-worker] bulk-drain row ${p.row.id} parse failed:`, p.parseError.message); doneIds.push(p.row.id); continue; }
@@ -147,6 +151,7 @@ async function runBulkDrain(batchSize) {
           doneIds.push(p.row.id);
         } catch (e) { console.error(`[ses-notification-worker] bulk-drain row ${p.row.id} failed:`, e.message); }
       }
+      });
       if (doneIds.length) await pool.query(`UPDATE webhook_queue SET status='delivered', delivered_at=now() WHERE id = ANY($1::uuid[])`, [doneIds]);
       totalProcessed += doneIds.length;
       const elapsed = (Date.now() - t0) / 1000;
