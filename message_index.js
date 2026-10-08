@@ -94,6 +94,13 @@ export function appendContactMessage(message) {
 // than a full read-and-rewrite of the whole file.
 export function updateContactMessage(contactId, field, value, updater) {
   if (!contactId) return null;
+  // Tried a byte-search-before-parse scan here first (2026-10-08) on the
+  // theory that JSON.parse-ing a 20-30MB contact file was itself the CPU
+  // cost. Measured directly before shipping it: on a realistic 21MB file,
+  // it was NOT faster (61ms vs 51ms for plain JSON.parse) -- V8's native
+  // parser is fast enough that a hand-rolled JS byte scan doesn't beat
+  // it. Reverted that approach; see getContactMessages' own fold logic
+  // below for how this and the merged read handle the overlay.
   const merged = getContactMessages(contactId);
   const idx = merged.findIndex((m) => m[field] === value);
   if (idx === -1) return null;
