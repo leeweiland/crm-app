@@ -286,9 +286,24 @@ async function loadCampaigns(isPoll = false) {
   // campaign too (it rolls up from that campaign's own source file,
   // independent of the cached stats snapshot above), so this loses
   // nothing for the one that matters during a poll.
-  const statsTargets = isPoll ? allCampaigns.filter(c => c.status === 'sending') : allCampaigns.filter(c => c.status === 'sent');
+  // Live stats are remembered across polls (2026-10-09). Before this, every
+  // 3s poll during a send re-read the list from the server (snapshot stats)
+  // and only re-fetched live stats for the campaign mid-send -- so every
+  // finished campaign's numbers flipped back to its stale send-time
+  // snapshot on each poll, then jumped to the live rollup again on the next
+  // full load. Confirmed live: open rates visibly alternating between e.g.
+  // 0.7% (snapshot) and 34.8% (live) every few seconds. Now: the full load
+  // fetches live stats for everything that has sent anything (the one
+  // mid-send included, so it never shows 0.0% from a not-yet-written
+  // snapshot), polls still only re-fetch the sending campaign (same load
+  // reasoning as above), and whatever live stats are already known are
+  // re-applied over the snapshot on every render. The snapshot only ever
+  // shows for a campaign whose live stats haven't loaded yet.
+  const live = loadCampaigns._live || (loadCampaigns._live = {});
+  const statsTargets = isPoll ? allCampaigns.filter(c => c.status === 'sending') : allCampaigns.filter(c => c.status === 'sent' || c.status === 'sending');
   const liveStats = await Promise.all(statsTargets.map(c => fetch(`/api/reporting/campaigns/${c.id}`).then(res => res.ok ? res.json() : null).catch(() => null)));
-  statsTargets.forEach((c, i) => { if (liveStats[i]) c.stats = liveStats[i].stats; });
+  statsTargets.forEach((c, i) => { if (liveStats[i]?.stats) live[c.id] = liveStats[i].stats; });
+  allCampaigns.forEach(c => { if (live[c.id]) c.stats = live[c.id]; });
   renderCampaignsTable();
   // Re-poll every 3s only while something is actually mid-send -- avoids
   // polling forever on a normal, idle campaigns list.
