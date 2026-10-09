@@ -224,7 +224,14 @@ function evalCondition(contact, cond, payload) {
   // (whole calendar day, same "to is exclusive" convention as
   // firstSeenAt/createdAt's between), or {from, to} for between.
   if (field === "bookedAt") {
-    const at = Date.parse(bookingIndex()[contact.id] || "");
+    let at = Date.parse(bookingIndex()[contact.id] || "");
+    // A real confirmed booking always wins, but most of this account's
+    // actual applied/booked history never made it into crm_bookings.json
+    // (that table only has live Calendly syncs -- confirmed live: ~129
+    // records vs 11k+ contacts carrying a real date here). "APPLIED WHEN?"
+    // is the Tally form-submission date captured at import time -- falls
+    // back to it only when there's no real booking record for this contact.
+    if (isNaN(at)) at = Date.parse(contact.customFields?.["75b51532-68b5-4d10-a377-48e1dafc462f"] || "");
     if (isNaN(at)) return false;
     const dayMs = 24 * 3600 * 1000;
     switch (op) {
