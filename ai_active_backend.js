@@ -246,8 +246,26 @@ function stripModelSignoff(text) {
     .replace(/\n+\s*see (you |u )?(in training )?soon!?\s*(\n+\s*coach\s+\w+\s*)?$/i, "")
     .trim();
 }
+// The model occasionally bakes a channel label into its own output despite
+// the prompt's format instructions -- "subject: .../body: ..." (echoing the
+// cold-open email format even when not asked for) or a bare "SMS: "/"text: "
+// prefix. Confirmed live on BOTH channels (not just SMS, where this used to
+// live as a send-time-only fix) -- an email went out starting with a literal
+// "sms: " line -- so this now runs for every send regardless of channel.
+function stripChannelLabelLeak(text) {
+  return String(text || "")
+    .replace(/^\s*subject:\s*.*\n+(?:body:\s*)?/i, "")
+    .replace(/^\s*(?:sms|text):\s*/i, "");
+}
+// No more multi-bubble replies -- [[SPLIT]] is no longer a prompt
+// instruction (removed from the agent's MESSAGE FORMAT rules), but the
+// model may still occasionally emit the literal marker out of habit. Strip
+// it rather than split on it, so a reply is always sent as one message.
+function stripSplitMarker(text) {
+  return String(text || "").replaceAll("[[SPLIT]]", " ").replace(/\s{2,}/g, " ").trim();
+}
 export async function sendViaChannel(contact, channel, rawText, agentId, subject, sourceType = "ai_active", senderId = null) {
-  const text = stripModelSignoff(stripForeignPreamble(rawText));
+  const text = stripSplitMarker(stripChannelLabelLeak(stripModelSignoff(stripForeignPreamble(rawText))));
   if (channel === "email" && contact.email) {
     const { text: cleaned, gifUrl } = extractGifMarker(text);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
@@ -289,35 +307,10 @@ export async function sendViaChannel(contact, channel, rawText, agentId, subject
   }
   if (channel === "sms" && contact.phone) {
     const { sendSms } = await import("./sms_backend.js");
-    // The cold-open prompt asks for a "SUBJECT: .../BODY: ..." format on
-    // email only, but the model sometimes echoes that same shape into an SMS
-    // reply anyway -- confirmed live: a real SMS send went out reading
-    // "subject: quick follow up on your application" as its own first line.
-    // Text has no subject line at all, so strip it defensively rather than
-    // texting it to the lead.
-    // Confirmed live again (2026-10-05), a different variant: the model
-    // prefixed a reply with a bare "SMS: " channel label instead, on a
-    // single line with no newline at all -- the subject/body regex above
-    // requires \n+ after the label, so it doesn't match this shape, and the
-    // label has no separate "value" to discard (unlike subject:, where the
-    // whole first line is a fake subject to throw away) -- the real message
-    // starts right after the colon on the same line, so only the label
-    // itself gets stripped here, not the rest of the line.
-    const smsText = text.replace(/^\s*subject:\s*.*\n+(?:body:\s*)?/i, "").replace(/^\s*(?:sms|text):\s*/i, "");
-    // A reply can be split into two short back-to-back texts instead of
-    // one long one (see the per-agent MESSAGE FORMAT prompt rule) --
-    // [[SPLIT]] is the model's own signal for that boundary. Sent as two
-    // separate Twilio messages a couple seconds apart, so it reads as
-    // someone texting twice in a row rather than one message with a line
-    // break in it.
-    const parts = smsText.split("[[SPLIT]]").map((p) => p.trim()).filter(Boolean);
-    let result = null;
-    for (let i = 0; i < parts.length; i++) {
-      if (i > 0) await new Promise((r) => setTimeout(r, 2500));
-      const { text: cleaned, gifUrl } = extractGifMarker(parts[i]);
-      result = await sendSms({ to: contact.phone, body: cleaned, contactId: contact.id, sourceType, sourceId: agentId, mediaUrl: gifUrl || undefined });
-    }
-    return result;
+    // Channel-label leak and [[SPLIT]] are already stripped above (shared
+    // across both channels) -- always sent as exactly one message now.
+    const { text: cleaned, gifUrl } = extractGifMarker(text);
+    return sendSms({ to: contact.phone, body: cleaned, contactId: contact.id, sourceType, sourceId: agentId, mediaUrl: gifUrl || undefined });
   }
   return null;
 }
