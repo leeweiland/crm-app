@@ -467,8 +467,19 @@ function latestOnChannel(journey, channel) {
 // on disk right now.
 function mergeSafeWrite(file, ours) {
   const fresh = readJson(file, []);
+  const freshIds = new Set(fresh.map((f) => f.id));
   const oursById = new Map(ours.map((r) => [r.id, r]));
   const merged = fresh.map((f) => oursById.get(f.id) || f);
+  // Every prior caller of this only ever updated rows that already existed
+  // (fresh.map above covers that) -- topUpContinuousBatches is the first
+  // one that also INSERTS brand-new rows (a freshly created batch, a newly
+  // enrolled contact's state) in the same tick. Without this, a blind
+  // writeJson of its own full in-memory array was the actual race: two
+  // overlapping ticks (or this tick racing processAiActiveBatches' own
+  // write) each stomped the other's inserts/updates wholesale. Appending
+  // anything in `ours` that `fresh` doesn't have yet keeps new rows without
+  // reintroducing that blind-overwrite risk for existing ones.
+  for (const r of ours) if (!freshIds.has(r.id)) merged.push(r);
   writeJson(file, merged);
 }
 
@@ -499,6 +510,8 @@ export async function topUpContinuousBatches() {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   let batchesChanged = false, statesChanged = false;
+  const touchedBatches = new Map(); // id -> batch, every row this tick created/modified
+  const newStates = []; // brand-new enrollments this tick -- never existing rows
 
   for (const agent of activeTargeted) {
     const cfg = agent.activeConfig || {};
@@ -517,6 +530,7 @@ export async function topUpContinuousBatches() {
       };
       batches.push(batch);
       batchesChanged = true;
+      touchedBatches.set(batch.id, batch);
     }
     if (batch.status === "paused") continue;
     if (batch.lastToppedUpAt && nowMs - new Date(batch.lastToppedUpAt).getTime() < TOPUP_INTERVAL_MS) continue;
@@ -542,6 +556,7 @@ export async function topUpContinuousBatches() {
     const enrolledIds = new Set(states.filter((s) => agentBatchIds.has(s.batchId)).map((s) => s.contactId));
     batch.lastToppedUpAt = nowIso;
     batchesChanged = true;
+    touchedBatches.set(batch.id, batch);
     if (enrolledIds.size >= cap) continue;
 
     const result = buildCandidateList(segments, Infinity, agent.targeting);
@@ -550,7 +565,9 @@ export async function topUpContinuousBatches() {
     for (const c of result.candidates) {
       if (room <= 0) break;
       if (enrolledIds.has(c.id)) continue; // never re-enroll -- see file header comment
-      states.push({ id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId: c.id, state: "queued", followUpCount: 0, nextActionAt: nowIso, createdAt: nowIso, updatedAt: nowIso });
+      const newState = { id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId: c.id, state: "queued", followUpCount: 0, nextActionAt: nowIso, createdAt: nowIso, updatedAt: nowIso };
+      states.push(newState);
+      newStates.push(newState);
       batch.contactIds.push(c.id);
       enrolledIds.add(c.id);
       room--;
@@ -558,8 +575,14 @@ export async function topUpContinuousBatches() {
     }
   }
 
-  if (batchesChanged) writeJson(AI_ACTIVE_BATCHES_FILE, batches);
-  if (statesChanged) writeJson(AI_ACTIVE_STATES_FILE, states);
+  // mergeSafeWrite, not a blind writeJson of the whole in-memory array --
+  // this tick only has authority over the rows it actually touched
+  // (touchedBatches/newStates), so anything else on disk (another tick's
+  // concurrent write, processAiActiveBatches' own state updates) survives
+  // the merge instead of getting silently stomped. See mergeSafeWrite's own
+  // comment for the incident this was confirmed to cause.
+  if (batchesChanged) mergeSafeWrite(AI_ACTIVE_BATCHES_FILE, [...touchedBatches.values()]);
+  if (statesChanged) mergeSafeWrite(AI_ACTIVE_STATES_FILE, newStates);
 }
 
 export async function processAiActiveBatches() {
@@ -672,6 +695,20 @@ export async function processAiActiveBatches() {
       if (exclReason) { st.state = contact.status && TERMINAL_STATUSES.has(contact.status) ? "done" : "opted_out"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
 
       if (!isStillTargeted(contact, agent, allSegments)) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
+
+      // Defense-in-depth against topUpContinuousBatches enrolling the same
+      // contact twice in a race (two overlapping ticks each seeing a
+      // not-yet-written enrollment) -- see its own write-safety comment.
+      // If more than one active state exists for this (agent, contact)
+      // pair, only the oldest is real; retire any newer duplicate here,
+      // before it ever gets a chance to generate/send, rather than relying
+      // on the race never happening. Confirmed live: this exact shape is
+      // what let one contact receive duplicate sends minutes apart.
+      const siblings = states.filter((s) => s.agentId === agent.id && s.contactId === contact.id && ["queued", "waiting_reply"].includes(s.state));
+      if (siblings.length > 1) {
+        const oldest = siblings.reduce((a, b) => new Date(a.createdAt) < new Date(b.createdAt) ? a : b);
+        if (st.id !== oldest.id) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
+      }
 
       const journey = getContactMessages(contact.id).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
