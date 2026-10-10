@@ -360,6 +360,18 @@ export async function handleCampaignsRequest(req, res, url) {
 
   if (p === "/api/campaigns" && req.method === "GET") {
     const campaigns = readJson(CAMPAIGNS_FILE, []).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    // rollupStats used to only ever run ONCE, the instant a send loop
+    // finished -- frozen into campaign.stats forever after. Confirmed live:
+    // that's the moment FEWEST SES Delivery/Open/Click webhooks have had
+    // time to arrive (they trickle in over hours/days, opens especially),
+    // so every campaign's stats page showed something close to its worst
+    // possible snapshot and never improved, no matter how much real
+    // engagement happened afterward -- a campaign checked 9 days later
+    // still showed single digits while its real per-message log had
+    // hundreds of opens. Recomputed live here instead of trusting the
+    // stale stored field, for "sent" campaigns only (a "sending" one's
+    // live progress already comes from sendProgress, not stats).
+    for (const c of campaigns) if (c.status === "sent") c.stats = rollupStats(c.id);
     return sendJson(res, 200, { campaigns });
   }
   // Full HTML for one native campaign, fetched separately from the list
@@ -451,6 +463,10 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaign = campaigns.find(c => c.id === campaignMatch[1]);
     if (req.method === "GET") {
       if (!campaign) return sendJson(res, 404, { error: "Not found" });
+      // Same stale-snapshot fix as the list endpoint above -- a report page
+      // opened days after sending should show today's real numbers, not
+      // the moment sending finished.
+      if (campaign.status === "sent") campaign.stats = rollupStats(campaign.id);
       return sendJson(res, 200, { campaign });
     }
     if (req.method === "PATCH") {
