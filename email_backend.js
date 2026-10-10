@@ -423,27 +423,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     const cmd = new SendEmailCommand({
       FromEmailAddress: fromAddress,
       Destination: { ToAddresses: [to] },
-      Content: {
-        Simple: {
-          Subject: { Data: renderedSubject }, Body: { Html: { Data: html } },
-          // RFC 2369 + RFC 8058 one-click unsubscribe -- without these,
-          // Gmail/Outlook never show their own native "Unsubscribe" button
-          // next to the sender name, so recipients are stuck hunting for
-          // the small footer link (confirmed live: a real recipient on a
-          // 15,847-send campaign said they'd "tried to unsubscribe many
-          // times" and still weren't opted out). Google has required
-          // one-click List-Unsubscribe for any sender doing 5,000+/day
-          // since Feb 2024 -- missing it is also a likely contributor to
-          // that same campaign's huge sent-vs-delivered gap (15,847 vs
-          // 1,018), since Gmail bulk-sender filtering penalizes senders
-          // without it. The POST handler below (List-Unsubscribe-Post)
-          // is what makes the one-click button actually work.
-          Headers: [
-            { Name: "List-Unsubscribe", Value: `<${unsubscribeUrl}>` },
-            { Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click" },
-          ],
-        },
-      },
+      Content: { Simple: { Subject: { Data: renderedSubject }, Body: { Html: { Data: html } } } },
       ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
     });
     const result = await client.send(cmd);
@@ -654,7 +634,7 @@ export async function handleEmailRequest(req, res, url) {
     return true;
   }
 
-  if ((p === "/api/email/unsubscribe") && (req.method === "GET" || req.method === "POST")) {
+  if (p === "/api/email/unsubscribe" && req.method === "GET") {
     const contactId = url.searchParams.get("c");
     const contact = getContactById(contactId);
     if (contact) {
@@ -673,15 +653,6 @@ export async function handleEmailRequest(req, res, url) {
       // whether `c` was ever actually valid for them -- logging here at
       // least makes a future case diagnosable instead of invisible.
       console.warn(`[email] unsubscribe hit with no matching contact for c=${contactId}`);
-    }
-    // RFC 8058 one-click unsubscribe -- Gmail/Outlook's own native
-    // "Unsubscribe" button next to the sender name sends a bare POST here
-    // (see List-Unsubscribe-Post on the send side) and expects a plain 200
-    // with no redirect/page, not the human-facing GET flow below.
-    if (req.method === "POST") {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("OK");
-      return true;
     }
     // Settings > Opt Out's "Unsubscribe Redirect" -- "" (the default) falls
     // back to this CRM's own plain confirmation page below instead of
