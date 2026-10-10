@@ -25,16 +25,32 @@ import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
 // currently sitting at sent-or-later, since status only ever moves forward.
 // Still used by the per-source endpoints below (getMessagesForSource
 // returns real slim message rows, not pre-aggregated counts).
+// message_log.js's updateMessageStatusByProviderId deliberately never
+// writes a plain "delivered" status onto a per-source file (full-file
+// rewrite per Delivery notification was timing out the SES-notification
+// worker -- see its own 2026-10-06 comment), so a message delivered but
+// never opened/clicked sits frozen at "sent" in `messages` here forever.
+// Confirmed live: this is what made campaign-report.html's own delivered
+// count exactly equal its opened count (mathematically impossible for
+// real recipients) even after campaigns_backend.js's list-view rollup was
+// fixed to cross-reference the real index -- this function is a SEPARATE
+// code path (shared by campaign/automation/workflow reporting) that
+// nothing else here had touched. crm_provider_id_index.json is never
+// skipped for any status, so it's cross-referenced as the real source of
+// truth per message, same fix as campaigns_backend.js's rollupStats.
+const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
 function statsFromMessages(messages) {
+  const index = readJson(PROVIDER_ID_INDEX_FILE, {});
   const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, complained: 0, failed: 0 };
   for (const m of messages) {
-    if (["sent", "delivered", "opened", "clicked"].includes(m.status)) stats.sent++;
-    if (["delivered", "opened", "clicked"].includes(m.status)) stats.delivered++;
-    if (["opened", "clicked"].includes(m.status)) stats.opened++;
-    if (m.status === "clicked") stats.clicked++;
-    if (m.status === "bounced") stats.bounced++;
-    if (m.status === "complained") stats.complained++;
-    if (m.status === "failed") stats.failed++;
+    const status = (m.providerMessageId && index[m.providerMessageId]?.status) || m.status;
+    if (["sent", "delivered", "opened", "clicked"].includes(status)) stats.sent++;
+    if (["delivered", "opened", "clicked"].includes(status)) stats.delivered++;
+    if (["opened", "clicked"].includes(status)) stats.opened++;
+    if (status === "clicked") stats.clicked++;
+    if (status === "bounced") stats.bounced++;
+    if (status === "complained") stats.complained++;
+    if (status === "failed") stats.failed++;
   }
   return stats;
 }

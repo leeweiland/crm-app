@@ -376,10 +376,6 @@ export async function handleCampaignsRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
   if (p === "/api/campaigns" && req.method === "GET") {
-    // TEMP DEBUG MARKER (2026-10-10) -- remove once the client-side stale-
-    // data mystery is resolved. Proves definitively whether a given
-    // request/device is actually reaching this code path.
-    console.log("[campaigns debug] GET /api/campaigns served at", new Date().toISOString());
     const campaigns = readJson(CAMPAIGNS_FILE, []).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     // rollupStats used to only ever run ONCE, the instant a send loop
     // finished -- frozen into campaign.stats forever after. Confirmed live:
@@ -393,7 +389,7 @@ export async function handleCampaignsRequest(req, res, url) {
     // stale stored field, for "sent" campaigns only (a "sending" one's
     // live progress already comes from sendProgress, not stats).
     for (const c of campaigns) if (c.status === "sent") c.stats = rollupStats(c.id);
-    return sendJson(res, 200, { campaigns, _debugBuildAt: "2026-10-10T22:50Z-v2" });
+    return sendJson(res, 200, { campaigns });
   }
   // Full HTML for one native campaign, fetched separately from the list
   // (which never needs more than name/subject/stats) -- placed ahead of
