@@ -262,13 +262,16 @@
                   <div id="batchList" class="pra-muted" style="font-size:.8rem">Loading…</div>
                 </div>
 
-                <div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--pra-border)">
-                  <div class="active-section-title" style="margin-bottom:6px">Coverage</div>
-                  <div class="active-section-sub">For a checked TEAMMATE: when they switch to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first. For "Unassigned": there's no human to go Away, so those leads' replies are covered all the time, not conditionally.</div>
-                  <div class="editor-row" style="margin-bottom:0">
-                    <label>Cover replies for</label>
-                    <div id="fCoverUsers" style="display:flex;flex-wrap:wrap;gap:14px"></div>
-                  </div>
+              </div>
+            </div>
+
+            <div class="accordion-item" data-acc="coverage">
+              <button type="button" class="accordion-header"><span>Coverage</span><span class="accordion-chev">▾</span></button>
+              <div class="accordion-body">
+                <div class="active-section-sub">For a checked TEAMMATE: when they switch to Away in the Inbox, this agent autonomously replies to NEW incoming messages on leads they own -- no draft review, same as AI Active batches. It never proactively messages their whole book; it only answers what comes in while they're out, and stands down immediately if a human replies first. For "Unassigned": there's no human to go Away, so those leads' replies are covered all the time, not conditionally. Reactive only -- Coverage NEVER sends a cold-open re-engagement SMS or email to anyone; that's exclusively AI Active's own Targeting batch, above.</div>
+                <div class="editor-row" style="margin-bottom:0">
+                  <label>Cover replies for</label>
+                  <div id="fCoverUsers" style="display:flex;flex-wrap:wrap;gap:14px"></div>
                 </div>
               </div>
             </div>
@@ -383,8 +386,14 @@
                     <span class="toggle-label" id="fReengageSmsLabel">Re-engagement SMS (Kai starts the conversation by text)</span>
                   </div>
                 </div>
+                <div class="editor-row toggle-row" style="margin-bottom:10px">
+                  <div class="toggle-item">
+                    <button type="button" class="active-toggle" id="fReengageSmsVerbatimToggle"></button>
+                    <span class="toggle-label" id="fReengageSmsVerbatimLabel">Send verbatim (off = Kai writes it in his own voice from this prompt)</span>
+                  </div>
+                </div>
                 <div class="editor-row">
-                  <label>Re-engagement SMS opener prompt</label>
+                  <label id="fReengageSmsPromptLabel">Re-engagement SMS opener prompt</label>
                   <textarea id="fReengageSmsPrompt" style="min-height:70px" placeholder="e.g. Keep it very short and text-native, reference their real goal from their application, ask one specific question to get them talking."></textarea>
                   <button class="pra-btn pra-btn-sm" id="testSmsBtn" type="button" style="margin-top:6px">Test SMS</button>
                   <div class="preview-result" id="testSmsResult" style="display:none;margin-top:8px"></div>
@@ -396,8 +405,18 @@
                     <span class="toggle-label" id="fReengageEmailLabel">Re-engagement Email (Kai starts the conversation by email)</span>
                   </div>
                 </div>
+                <div class="editor-row toggle-row" style="margin-bottom:10px">
+                  <div class="toggle-item">
+                    <button type="button" class="active-toggle" id="fReengageEmailVerbatimToggle"></button>
+                    <span class="toggle-label" id="fReengageEmailVerbatimLabel">Send verbatim (off = Kai writes it in his own voice from this prompt)</span>
+                  </div>
+                </div>
+                <div class="editor-row" id="fReengageEmailVerbatimSubjectRow" style="display:none">
+                  <label>Verbatim subject line</label>
+                  <input class="pra-input" id="fReengageEmailVerbatimSubject" placeholder="e.g. %FIRSTNAME%, still want to hit your goals?"/>
+                </div>
                 <div class="editor-row">
-                  <label>Re-engagement email opener prompt</label>
+                  <label id="fReengageEmailPromptLabel">Re-engagement email opener prompt</label>
                   <textarea id="fReengageEmailPrompt" style="min-height:70px" placeholder="e.g. Warm, personal-sounding subject line, reference something specific from their application, short and inviting a reply."></textarea>
                   <button class="pra-btn pra-btn-sm" id="testEmailBtn" type="button" style="margin-top:6px">Test Email</button>
                   <div class="preview-result" id="testEmailResult" style="display:none;margin-top:8px"></div>
@@ -637,6 +656,25 @@ function updateActiveSectionVisibility() {}
 // showed nothing but the toggle itself until it was switched on. Settings
 // should be visible/editable regardless of whether the feature's live.
 function updateBtSectionVisibility() {}
+// Verbatim toggles swap the opener textarea between "a prompt describing
+// how Kai should write it" and "the literal text that gets sent, merge
+// tags and all" -- relabel it live so it's never ambiguous which mode is
+// active, and only show the separate subject line input (email has no
+// SUBJECT:/BODY: split to parse once the model's out of the loop) while
+// email verbatim is on.
+function updateReengageVerbatimVisibility() {
+  const smsVerbatim = getToggle('fReengageSmsVerbatimToggle');
+  document.getElementById('fReengageSmsPromptLabel').textContent = smsVerbatim ? 'Re-engagement SMS -- exact text to send' : 'Re-engagement SMS opener prompt';
+  document.getElementById('fReengageSmsPrompt').placeholder = smsVerbatim
+    ? 'e.g. hey %FIRSTNAME%, this is Kai with Pacific Rim Athletics -- still want help with your strength & mobility goals?'
+    : 'e.g. Keep it very short and text-native, reference their real goal from their application, ask one specific question to get them talking.';
+  const emailVerbatim = getToggle('fReengageEmailVerbatimToggle');
+  document.getElementById('fReengageEmailPromptLabel').textContent = emailVerbatim ? 'Re-engagement email -- exact body to send' : 'Re-engagement email opener prompt';
+  document.getElementById('fReengageEmailPrompt').placeholder = emailVerbatim
+    ? 'e.g. Hey %FIRSTNAME%, this is Kai, Coach Lee\'s assistant at Pacific Rim Athletics...'
+    : 'e.g. Warm, personal-sounding subject line, reference something specific from their application, short and inviting a reply.';
+  document.getElementById('fReengageEmailVerbatimSubjectRow').style.display = emailVerbatim ? 'block' : 'none';
+}
 document.getElementById('fActiveToggle').addEventListener('click', () => { setToggle('fActiveToggle', !getToggle('fActiveToggle')); updateActiveSectionVisibility(); scheduleAutosave(); });
 document.getElementById('fAiAssistToggle').addEventListener('click', () => { setToggle('fAiAssistToggle', !getToggle('fAiAssistToggle')); scheduleAutosave(); });
 document.getElementById('fActiveLabel').addEventListener('click', () => document.getElementById('fActiveToggle').click());
@@ -941,8 +979,12 @@ async function loadEditor() {
   const reengage = cfg.reengagement || {};
   setToggle('fReengageSmsToggle', reengage.sms?.enabled);
   document.getElementById('fReengageSmsPrompt').value = reengage.sms?.prompt || '';
+  setToggle('fReengageSmsVerbatimToggle', reengage.sms?.verbatim);
   setToggle('fReengageEmailToggle', reengage.email?.enabled);
   document.getElementById('fReengageEmailPrompt').value = reengage.email?.prompt || '';
+  setToggle('fReengageEmailVerbatimToggle', reengage.email?.verbatim);
+  document.getElementById('fReengageEmailVerbatimSubject').value = reengage.email?.verbatimSubject || '';
+  updateReengageVerbatimVisibility();
   document.getElementById('fColdOpenPerHour').value = cfg.coldOpenPerHour || '';
   // Re-detected fresh on every load (not the last-saved value) -- "my
   // timezone" means whoever's actually editing this right now, and the
@@ -1619,8 +1661,8 @@ function buildAgentPayload() {
       } : null,
       maxFollowUps: Number(document.getElementById('fMaxFollowUps').value) || 0,
       reengagement: {
-        sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value },
-        email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value },
+        sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value, verbatim: getToggle('fReengageSmsVerbatimToggle') },
+        email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value, verbatim: getToggle('fReengageEmailVerbatimToggle'), verbatimSubject: document.getElementById('fReengageEmailVerbatimSubject').value },
         // adminTimezone is re-detected fresh here too (not read back from
         // any stored/displayed value) -- always whatever this save's own
         // browser resolves to right now.
@@ -1685,7 +1727,7 @@ function wireAutosave() {
   [
     'fName', 'fDescription', 'fSystemPrompt', 'fBatchSize', 'fColdOpenPerHour', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
     'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
-    'fReengageSmsPrompt', 'fReengageEmailPrompt',
+    'fReengageSmsPrompt', 'fReengageEmailPrompt', 'fReengageEmailVerbatimSubject',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
     'btWaitMin', 'btWaitMinUnit', 'btWaitMax', 'btWaitMaxUnit', 'btCapCount', 'btCapWindowValue', 'btCapWindowUnit', 'btRevisitDelayValue', 'btRevisitDelayUnit',
   ].forEach((id) => {
@@ -1697,6 +1739,8 @@ function wireAutosave() {
   document.getElementById('fCoverUsers').addEventListener('change', scheduleAutosave);
   document.getElementById('fReengageSmsToggle').addEventListener('click', () => { setToggle('fReengageSmsToggle', !getToggle('fReengageSmsToggle')); scheduleAutosave(); });
   document.getElementById('fReengageEmailToggle').addEventListener('click', () => { setToggle('fReengageEmailToggle', !getToggle('fReengageEmailToggle')); scheduleAutosave(); });
+  document.getElementById('fReengageSmsVerbatimToggle').addEventListener('click', () => { setToggle('fReengageSmsVerbatimToggle', !getToggle('fReengageSmsVerbatimToggle')); updateReengageVerbatimVisibility(); scheduleAutosave(); });
+  document.getElementById('fReengageEmailVerbatimToggle').addEventListener('click', () => { setToggle('fReengageEmailVerbatimToggle', !getToggle('fReengageEmailVerbatimToggle')); updateReengageVerbatimVisibility(); scheduleAutosave(); });
   document.getElementById('fBtToggle').addEventListener('click', () => { setToggle('fBtToggle', !getToggle('fBtToggle')); updateBtSectionVisibility(); scheduleAutosave(); });
   document.getElementById('btRevisitToggle').addEventListener('click', () => { setToggle('btRevisitToggle', !getToggle('btRevisitToggle')); scheduleAutosave(); });
 }

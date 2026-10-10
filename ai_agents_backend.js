@@ -8,6 +8,7 @@ import { getContactMessages, getSourceMessages, removeContactMessagesByIds, reco
 import { logMessage } from "./message_log.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
 import { BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
+import { applyMergeTags } from "./block_editor_shared.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WRITING_CACHE_PATH = join(__dirname, "data", "chunks_cache.json");
@@ -753,6 +754,24 @@ TAKEOVER: <yes or no> - <short reason>`;
       if (!["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "channel ('email'|'sms') is required" });
       const agent = agentDraft && typeof agentDraft === "object" ? { ...savedAgent, ...agentDraft } : savedAgent;
       const reengage = agent.activeConfig?.reengagement?.[channel];
+      // Mirrors generateColdOpenForChannel's own verbatim branch (ai_active_backend.js)
+      // -- this test route doesn't call that function (see its own comment
+      // about test-send proving what the real engine would say, which this
+      // route doesn't actually honor), so verbatim has to be handled here too
+      // or Test SMS/Test Email would silently ignore the toggle and still
+      // call the model.
+      if (reengage?.verbatim) {
+        const contactForTags = contactId ? getContactById(contactId) : null;
+        const raw = (reengage.prompt || "").trim();
+        if (!raw) return sendJson(res, 200, { status: "skip", reason: "Verbatim is on but no opener text is written yet." });
+        const body = applyMergeTags(raw, contactForTags);
+        if (channel === "email") {
+          const subjectRaw = (agent.activeConfig?.reengagement?.email?.verbatimSubject || "").trim();
+          if (!subjectRaw) return sendJson(res, 200, { status: "skip", reason: "Verbatim is on but no subject line is written yet." });
+          return sendJson(res, 200, { status: "ok", subject: applyMergeTags(subjectRaw, contactForTags), body });
+        }
+        return sendJson(res, 200, { status: "ok", subject: null, body });
+      }
       const customPrompt = reengage?.prompt?.trim();
       const defaultPrompt = channel === "email"
         ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."

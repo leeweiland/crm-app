@@ -9,6 +9,7 @@ import {
   generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound,
 } from "./ai_agents_backend.js";
 import { resolveContactTimezone } from "./contact_timezone.js";
+import { applyMergeTags } from "./block_editor_shared.js";
 
 // ── AI Active -- "works the selected lead batch and brings the human in
 // when needed", the counterpart to AI Assist ("helps the human work
@@ -153,6 +154,20 @@ export function isWithinSendWindow(agent, contact, now) {
 // channel to check on demand, without touching the agent's own config.
 async function generateColdOpenForChannel(agent, contact, cfg, channel) {
   const reengage = cfg.reengagement || {};
+  // Verbatim mode: send exactly what's typed (with %FIRSTNAME%-style merge
+  // tags filled in), no model pass at all -- for openers that must be
+  // word-for-word compliant/approved rather than Kai's own phrasing.
+  if (reengage[channel]?.verbatim) {
+    const raw = (reengage[channel]?.prompt || "").trim();
+    if (!raw) return { ok: false, reason: "Verbatim is on but no opener text is written yet." };
+    const body = applyMergeTags(raw, contact);
+    if (channel === "email") {
+      const subjectRaw = (reengage.email?.verbatimSubject || "").trim();
+      if (!subjectRaw) return { ok: false, reason: "Verbatim is on but no subject line is written yet." };
+      return { ok: true, channel, subject: applyMergeTags(subjectRaw, contact), body };
+    }
+    return { ok: true, channel, subject: null, body };
+  }
   const customPrompt = reengage[channel]?.prompt?.trim();
   const defaultPrompt = channel === "email"
     ? "This is a cold re-engagement opener to a lead via email -- write a short, warm, personal-sounding opener referencing something specific from their real info/application if available, and inviting a reply."
