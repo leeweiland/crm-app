@@ -113,6 +113,8 @@ NO SIGN-OFFS
 // AI Active's escalate/hot-handoff/skip transitions silently never fire.
 const RESPONSE_FORMAT_INSTRUCTIONS = `NEVER show your reasoning, deliberation, or thought process in your response -- not "let me think about this," not weighing options out loud, nothing before or around the actual answer. Your entire response is EITHER the reply/marker itself and NOTHING else.
 
+If you do find yourself needing to reason or plan before landing on the actual reply, you MUST wrap every bit of that reasoning between \`[[THINKING]]\` and \`[[/THINKING]]\`, with nothing outside those tags except the real reply itself -- never let reasoning text sit unwrapped before, after, or around the message a lead would actually see.
+
 WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
 - \`[[NO_RESPONSE_NEEDED: <short reason>]]\` -- the lead's last message doesn't need a reply (e.g. just "thanks", an automated/system notification, or the conversation has already reached a clear conclusion).
 - \`[[ESCALATE: <short reason>]]\` -- this needs a human, not a suggested reply: a complaint, a refund request, a medical question, or anything else outside a normal sales conversation.
@@ -406,8 +408,22 @@ const RECENT_FOLLOWUP_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 // use in place of a normal reply (see DEFAULT_SYSTEM_PROMPT above) --
 // `[[NO_RESPONSE_NEEDED: reason]]`, `[[ESCALATE: reason]]`, and a trailing
 // `[[BUYING_SIGNAL]]` line appended to an otherwise-normal reply.
+// Strips [[THINKING]]...[[/THINKING]] block(s), if present -- see
+// RESPONSE_FORMAT_INSTRUCTIONS' own escape valve for this. A flat "never
+// show your reasoning" prohibition alone wasn't reliable (confirmed live,
+// repeatedly, including a real lead receiving the model's raw internal
+// monologue as a normal reply with no marker at all for parseAgentOutput's
+// other leak-detection below to anchor on) -- same lesson as pricing/GIF/
+// SPLIT elsewhere in this file: a prompt-only "don't do X" doesn't hold as
+// well as giving the model an explicit, parseable place to put it and
+// deterministically removing that in code. Global/multiline since a model
+// that slips into reasoning more than once in one response should still
+// have every instance caught, not just the first.
+function stripThinkingBlocks(text) {
+  return text.replace(/\[\[THINKING\]\][\s\S]*?\[\[\/THINKING\]\]/gi, "").trim();
+}
 function parseAgentOutput(raw) {
-  const text = (raw || "").trim();
+  const text = stripThinkingBlocks((raw || "").trim());
   // The model is instructed to output ONLY the marker, nothing else (see
   // RESPONSE_FORMAT_INSTRUCTIONS) -- checked first, anchored at both ends,
   // exactly as before. Confirmed live: it sometimes narrates its own

@@ -1193,6 +1193,16 @@ async function streamAgentReplyIntoBubbles(requestMessages) {
       }
     }
     setTcTyping(false);
+    // Mirrors parseAgentOutput's own [[THINKING]]...[[/THINKING]] stripping
+    // (ai_agents_backend.js) -- this streaming test panel doesn't go through
+    // that function at all (raw deltas are forwarded live as they arrive),
+    // so without this the leaked-reasoning case this was built to catch
+    // would still show up, unstripped, right here in the one place it was
+    // actually first spotted.
+    if (full.includes('[[THINKING]]')) {
+      full = full.replace(/\[\[THINKING\]\][\s\S]*?\[\[\/THINKING\]\]/gi, '').trim();
+      if (bubble) bubble.textContent = full;
+    }
     if (full) {
       // A NO_RESPONSE_NEEDED/ESCALATE response means no real send would
       // ever go out here -- shown as a plain system note (not a chat
