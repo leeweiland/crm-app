@@ -261,7 +261,7 @@ function renderCampaignsTable() {
 let sendPollTimer = null;
 let refsLoaded = false;
 async function loadCampaigns(isPoll = false) {
-  const requests = [fetch('/api/campaigns')];
+  const requests = [fetch('/api/campaigns', { cache: 'no-store' })];
   if (!refsLoaded) requests.push(fetch('/api/lists'), fetch('/api/segments'));
   const [r, listsRes, segmentsRes] = await Promise.all(requests);
   if (!r.ok) { document.getElementById('campaignsBody').innerHTML = '<tr><td colspan="9" class="pra-muted">Could not load campaigns.</td></tr>'; return; }
