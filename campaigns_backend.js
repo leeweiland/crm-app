@@ -45,16 +45,33 @@ function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
   });
 }
 
+// message_log.js's updateMessageStatusByProviderId deliberately NEVER
+// writes a plain "delivered" status onto a campaign's own per-source file
+// (see its own comment, 2026-10-06 -- a full-file rewrite per Delivery
+// notification was timing out the SES-notification worker on any large
+// send). So a message that was delivered but never opened/clicked just
+// sits frozen at "sent" in THAT file forever -- confirmed live, this made
+// a campaign's "delivered" count exactly equal its "opened" count, every
+// time, which is what actually surfaced this (a 15,847-recipient send
+// showing a mathematically-impossible 100% open-rate-of-delivered).
+// crm_provider_id_index.json is never skipped for any status, so it's
+// cross-referenced here as the real source of truth per message -- the
+// per-source file is still used for which messages exist and their
+// bounced/complained/failed flags (unaffected by the skip), just not for
+// delivered/opened/clicked, where the index's status wins.
+const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
 function rollupStats(campaignId) {
   const messages = getMessagesForSource("campaign", campaignId);
+  const index = readJson(PROVIDER_ID_INDEX_FILE, {});
   const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 };
   for (const m of messages) {
-    if (["sent", "delivered", "opened", "clicked"].includes(m.status)) stats.sent++;
-    if (["delivered", "opened", "clicked"].includes(m.status)) stats.delivered++;
-    if (["opened", "clicked"].includes(m.status)) stats.opened++;
-    if (m.status === "clicked") stats.clicked++;
-    if (m.status === "bounced") stats.bounced++;
-    if (m.status === "complained") stats.unsubscribed++;
+    const status = (m.providerMessageId && index[m.providerMessageId]?.status) || m.status;
+    if (["sent", "delivered", "opened", "clicked"].includes(status)) stats.sent++;
+    if (["delivered", "opened", "clicked"].includes(status)) stats.delivered++;
+    if (["opened", "clicked"].includes(status)) stats.opened++;
+    if (status === "clicked") stats.clicked++;
+    if (status === "bounced") stats.bounced++;
+    if (status === "complained") stats.unsubscribed++;
   }
   return stats;
 }
