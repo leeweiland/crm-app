@@ -380,7 +380,8 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // gracefully (an empty c= param, /api/email/unsubscribe just won't find
   // a matching contact to opt out), so test sends get a working, clickable
   // link too instead of the literal, non-functional string "%unsubscribe%".
-  html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`);
+  const unsubscribeUrl = `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
+  html = html.replace(/%UNSUBSCRIBE%/gi, unsubscribeUrl);
   // Appended after the footer, not folded into `blocks` by the caller (see
   // inbox_backend.js's Reply handling) -- a quoted older message shouldn't
   // be click-tracking-wrapped or %UNSUBSCRIBE%-substituted like the caller's
@@ -394,7 +395,13 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // reply path's own text block can carry a literal &#39; etc. (see
   // gmail_backend.js's plainPreview, fixed for the same reason), and a raw
   // slice also risked truncating mid-tag for anything with real markup.
-  const bodyPreview = plainTextPreview((blocks || []).find(b => b.type === "text")?.html || "", 140);
+  // Confirmed live: this used to run on the raw block html, before merge
+  // tags resolved -- a real sent email's preview showed the literal
+  // "%FIRSTNAME%" token even though the recipient's actual inbox copy had
+  // their real name. Runs through the same applyMergeTags the real body
+  // already got above, so the stored preview matches what was truly sent.
+  const previewSourceHtml = (blocks || []).find(b => b.type === "text")?.html || "";
+  const bodyPreview = plainTextPreview(contact ? applyMergeTags(previewSourceHtml, contact) : previewSourceHtml, 140);
   // Only ever empties the stored body when the shared template is
   // CONFIRMED cached (see ensureEmailTemplateCached's own comment) --
   // `html` itself (what's actually transmitted below) is never touched.
@@ -416,7 +423,27 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     const cmd = new SendEmailCommand({
       FromEmailAddress: fromAddress,
       Destination: { ToAddresses: [to] },
-      Content: { Simple: { Subject: { Data: renderedSubject }, Body: { Html: { Data: html } } } },
+      Content: {
+        Simple: {
+          Subject: { Data: renderedSubject }, Body: { Html: { Data: html } },
+          // RFC 2369 + RFC 8058 one-click unsubscribe -- without these,
+          // Gmail/Outlook never show their own native "Unsubscribe" button
+          // next to the sender name, so recipients are stuck hunting for
+          // the small footer link (confirmed live: a real recipient on a
+          // 15,847-send campaign said they'd "tried to unsubscribe many
+          // times" and still weren't opted out). Google has required
+          // one-click List-Unsubscribe for any sender doing 5,000+/day
+          // since Feb 2024 -- missing it is also a likely contributor to
+          // that same campaign's huge sent-vs-delivered gap (15,847 vs
+          // 1,018), since Gmail bulk-sender filtering penalizes senders
+          // without it. The POST handler below (List-Unsubscribe-Post)
+          // is what makes the one-click button actually work.
+          Headers: [
+            { Name: "List-Unsubscribe", Value: `<${unsubscribeUrl}>` },
+            { Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click" },
+          ],
+        },
+      },
       ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
     });
     const result = await client.send(cmd);
@@ -627,7 +654,7 @@ export async function handleEmailRequest(req, res, url) {
     return true;
   }
 
-  if (p === "/api/email/unsubscribe" && req.method === "GET") {
+  if ((p === "/api/email/unsubscribe") && (req.method === "GET" || req.method === "POST")) {
     const contactId = url.searchParams.get("c");
     const contact = getContactById(contactId);
     if (contact) {
@@ -640,6 +667,21 @@ export async function handleEmailRequest(req, res, url) {
         return c;
       });
       setConvoMeta(contact.id, { archived: true });
+    } else {
+      // Confirmed live: a contact complained their unsubscribe "didn't
+      // work" after clicking it repeatedly. No way to tell after the fact
+      // whether `c` was ever actually valid for them -- logging here at
+      // least makes a future case diagnosable instead of invisible.
+      console.warn(`[email] unsubscribe hit with no matching contact for c=${contactId}`);
+    }
+    // RFC 8058 one-click unsubscribe -- Gmail/Outlook's own native
+    // "Unsubscribe" button next to the sender name sends a bare POST here
+    // (see List-Unsubscribe-Post on the send side) and expects a plain 200
+    // with no redirect/page, not the human-facing GET flow below.
+    if (req.method === "POST") {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("OK");
+      return true;
     }
     // Settings > Opt Out's "Unsubscribe Redirect" -- "" (the default) falls
     // back to this CRM's own plain confirmation page below instead of
