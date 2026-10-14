@@ -286,6 +286,46 @@
   </div>
 </div>
 
+<!-- Send Email step: same visual block editor as Automations/Campaigns/Calendars -->
+<div class="modal-backdrop" id="flowEmailModal">
+  <div class="pra-panel modal-box eb-fullscreen">
+    <div class="pra-h2" style="margin-bottom:16px">Send Email</div>
+    <div class="cb-layout">
+      <div>
+        <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">"To" can be staff addresses (a "new lead" notification), the lead itself via a token, or both -- separate multiple recipients with commas. Use the editor's Personalize menu to drop in this flow's fields.</div>
+        <div id="flowEmailFields"></div>
+        <div class="field" style="margin-bottom:16px">
+          <label class="pra-label">Preview text</label>
+          <input class="pra-input" id="flowEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
+        </div>
+        <div id="flowEmailEditorRoot"></div>
+      </div>
+      <div class="cb-sidebar">
+        <div class="pra-panel">
+          <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
+          <select class="pra-select" id="flowEmailFooter"></select>
+          <div id="flowEmailFooterDirtyBar" style="display:none;margin-top:12px">
+            <div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">Footer content changed here -- these edits aren't saved yet.</div>
+            <button class="pra-btn pra-btn-sm" id="flowEmailFooterUpdateBtn" type="button" style="width:100%;margin-bottom:6px">Update this footer everywhere</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" id="flowEmailFooterSaveAsNewBtn" type="button" style="width:100%">Save as new footer</button>
+          </div>
+          <div class="pra-muted" id="flowEmailFooterMsg" style="font-size:.78rem;margin-top:8px;min-height:1em"></div>
+        </div>
+        <div class="pra-panel">
+          <button class="pra-btn" id="saveFlowEmailBtn" style="width:100%;margin-bottom:8px">Save</button>
+          <button class="pra-btn pra-btn-ghost" style="width:100%" id="closeFlowEmailBtn">Close</button>
+        </div>
+        <div class="pra-panel">
+          <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Test Send</div>
+          <input class="pra-input" id="flowEmailTestInput" placeholder="you@email.com" style="margin-bottom:8px"/>
+          <button class="pra-btn pra-btn-ghost" id="flowEmailTestBtn" style="width:100%">Send Test</button>
+          <div class="pra-muted" id="flowEmailTestMsg" style="font-size:.78rem;margin-top:8px;min-height:1em"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Move-runs-before-delete -->
 <div class="modal-backdrop" id="moveRunsModal">
   <div class="pra-panel modal-box">
@@ -313,6 +353,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/block-editor-client.js"></script>
 <script>
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
@@ -335,6 +376,14 @@ document.getElementById('stepConfigModal').addEventListener('click', (e) => {
   if (!stepConfigDownOnBackdrop) return;
   if (stepConfigDirty) document.getElementById('saveStepBtn').click();
   else closeModal('stepConfigModal');
+});
+// Clicking the dimmed area around the email editor commits, same as Close.
+let flowEmailDownOnBackdrop = false;
+document.getElementById('flowEmailModal').addEventListener('mousedown', (e) => { flowEmailDownOnBackdrop = e.target.id === 'flowEmailModal'; });
+document.getElementById('flowEmailModal').addEventListener('click', (e) => {
+  if (e.target.id !== 'flowEmailModal') return;
+  e.stopPropagation();
+  if (flowEmailDownOnBackdrop) document.getElementById('closeFlowEmailBtn').click();
 });
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
@@ -896,7 +945,7 @@ function defaultConfig(type) {
   if (type === 'enroll_automation') return { automationId: '' };
   if (type === 'enroll_workflow') return { workflowId: '' };
   if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '', customFields: {} };
-  if (type === 'send_email') return { to: '', from: '', subject: '', body: '' };
+  if (type === 'send_email') return { to: '', from: '', subject: '', previewText: '', blocks: [], theme: {}, footerTemplateId: null };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_list') return { listId: '' };
   if (type === 'send_conversion_event') return { eventKey: '' };
@@ -1047,7 +1096,117 @@ function acCustomFieldsGridHtml(customFields) {
   `).join('');
 }
 
+// ── Send Email step: the same visual block editor Automations, Campaigns
+// and Calendars use. To/From/Subject keep their {{token}} editors; this
+// flow's own fields are offered in the editor's Personalize menu, and
+// flows_backend.js fills them in inside the blocks at send time.
+// Steps saved before this carry a plain-text `body` (**bold** + newlines) --
+// converted to one text block exactly the way the server used to render it,
+// so an existing email looks the same the first time it's opened here.
+function legacyEmailBodyToHtml(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+}
+let flowEmailEditor = null;
+async function openFlowEmailEditor(step, isNew) {
+  editingStepId = step.id;
+  const c = step.config;
+  const blocks = (c.blocks && c.blocks.length) ? c.blocks : (c.body ? [{ type: 'text', html: legacyEmailBodyToHtml(c.body), style: {} }] : []);
+  const fields = document.getElementById('flowEmailFields');
+  fields.innerHTML = `
+    <div class="field"><label class="pra-label">To</label><div class="token-input-wrap">${tokenEditorHtml(c.to || '', { placeholder: 'lee@pacificrimathletics.com, {{payload.Email}}', attrs: 'id="cfgEmailTo"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+    <div class="field"><label class="pra-label">From (optional -- defaults to this business's sender)</label><div class="token-input-wrap">${tokenEditorHtml(c.from || '', { placeholder: 'leave blank to use the default sender', attrs: 'id="cfgEmailFrom"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+    <div class="field"><label class="pra-label">Subject</label><div class="token-input-wrap">${tokenEditorHtml(c.subject || '', { placeholder: 'New {{payload.Program}} lead: {{payload.First Name}}', attrs: 'id="cfgEmailSubject"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
+  `;
+  wireTokenButtons(fields);
+  refreshChipAnswers(fields);
+  document.getElementById('flowEmailPreviewText').value = c.previewText || '';
+  document.getElementById('flowEmailFooterMsg').textContent = '';
+  document.getElementById('flowEmailTestMsg').textContent = '';
+
+  const footerSel = document.getElementById('flowEmailFooter');
+  const defaultLabel = () => { const d = allFooters.find(f => f.isDefault); return d ? `${d.name} (default)` : 'No footer'; };
+  const fillFooters = (selectedId) => {
+    footerSel.innerHTML = `<option value="">${escapeHtml(defaultLabel())}</option>` + allFooters.map(f => `<option value="${f.id}" ${selectedId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('');
+  };
+  fillFooters(c.footerTemplateId);
+
+  const tokens = await getAvailableTokens().catch(() => []);
+  const root = document.getElementById('flowEmailEditorRoot');
+  root.innerHTML = '';
+  const dirtyBar = document.getElementById('flowEmailFooterDirtyBar');
+  flowEmailEditor = BlockEditor.init(root, { blocks, theme: c.theme }, () => {},
+    () => { dirtyBar.style.display = 'block'; },
+    { extraPersonalizeOptions: tokens.map(o => ({ value: escapeHtml(o.token), label: escapeHtml(o.label) })) });
+  const currentFooter = () => allFooters.find(f => f.id === footerSel.value) || allFooters.find(f => f.isDefault) || null;
+  const applyFooter = () => { flowEmailEditor.setFooter(currentFooter()); dirtyBar.style.display = 'none'; };
+  applyFooter();
+  footerSel.onchange = applyFooter;
+  const footerMsg = (t) => { document.getElementById('flowEmailFooterMsg').textContent = t; };
+  document.getElementById('flowEmailFooterUpdateBtn').onclick = async () => {
+    const footer = currentFooter();
+    if (!footer) return;
+    const r = await fetch('/api/footer-templates/' + footer.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks: flowEmailEditor.getFooterState().blocks }) });
+    if (!r.ok) { footerMsg('Failed to update footer'); return; }
+    const { template } = await r.json();
+    allFooters = allFooters.map(f => f.id === template.id ? template : f);
+    flowEmailEditor.setFooter(template);
+    dirtyBar.style.display = 'none';
+    footerMsg("Footer updated everywhere it's used.");
+  };
+  document.getElementById('flowEmailFooterSaveAsNewBtn').onclick = async () => {
+    const footer = currentFooter();
+    const name = prompt('Name for the new footer:', footer ? `Copy of ${footer.name}` : 'New Footer');
+    if (!name) return;
+    const r = await fetch('/api/footer-templates', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, blocks: flowEmailEditor.getFooterState().blocks, theme: footer?.theme || {}, physicalAddress: footer?.physicalAddress || '', socialLinks: footer?.socialLinks || [], unsubscribeLinkText: footer?.unsubscribeLinkText || 'Unsubscribe' }),
+    });
+    if (!r.ok) { footerMsg('Failed to save new footer'); return; }
+    const { template } = await r.json();
+    allFooters.push(template);
+    fillFooters(template.id);
+    flowEmailEditor.setFooter(template);
+    dirtyBar.style.display = 'none';
+    footerMsg('Saved as a new footer.');
+  };
+
+  // Save and Close both commit, same as Automations' email step -- clicking
+  // away must never lose what was just typed.
+  const commitAndClose = () => {
+    c.to = getTokenEditorValue(document.getElementById('cfgEmailTo')).trim();
+    c.from = getTokenEditorValue(document.getElementById('cfgEmailFrom')).trim();
+    c.subject = getTokenEditorValue(document.getElementById('cfgEmailSubject')).trim();
+    c.previewText = document.getElementById('flowEmailPreviewText').value;
+    c.footerTemplateId = footerSel.value || null;
+    const state = flowEmailEditor.getState();
+    c.blocks = state.blocks;
+    c.theme = state.theme;
+    delete c.body; // superseded by blocks
+    if (isNew) attachNewStep(step);
+    closeModal('flowEmailModal');
+    render(); saveDebounced();
+  };
+  document.getElementById('saveFlowEmailBtn').onclick = commitAndClose;
+  document.getElementById('closeFlowEmailBtn').onclick = commitAndClose;
+  document.getElementById('flowEmailTestBtn').onclick = async () => {
+    const to = document.getElementById('flowEmailTestInput').value.trim();
+    const msg = document.getElementById('flowEmailTestMsg');
+    if (!to) return;
+    msg.textContent = 'Sending...';
+    const state = flowEmailEditor.getState();
+    const r = await fetch('/api/email/test-send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject: '[TEST] ' + getTokenEditorValue(document.getElementById('cfgEmailSubject')).trim(), previewText: document.getElementById('flowEmailPreviewText').value, blocks: state.blocks, theme: state.theme, footerTemplateId: footerSel.value || null }),
+    });
+    const d = await r.json().catch(() => ({}));
+    msg.textContent = r.ok ? "Test sent. (Fields like {{payload.First Name}} stay as-is in a test -- they're filled in from real submissions.)" : (d.error || 'Test send failed');
+  };
+  openModal('flowEmailModal');
+}
+
 function openStepConfigModal(step, isNew) {
+  if (step.type === 'send_email') return openFlowEmailEditor(step, isNew);
   editingStepId = step.id;
   stepConfigDirty = false;
   document.getElementById('stepConfigTitle').textContent = TYPE_LABELS[step.type];
@@ -1493,20 +1652,6 @@ function openStepConfigModal(step, isNew) {
       <div class="pra-label" style="margin:12px 0 6px">Custom fields (optional)</div>
       ${allCustomFields.length ? `<div id="cfgCustomFieldRows">${customFieldsGridHtml(c.customFields || {})}</div>` : `<div class="pra-muted" style="font-size:.78rem;margin-bottom:8px">No custom fields defined yet -- add one in Contacts &rarr; manage columns first.</div>`}
     `;
-  } else if (step.type === 'send_email') {
-    const c = step.config;
-    body.innerHTML = `
-      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">Sends a plain email through this business's own sender -- not tied to the contact like Automations' Send Email step, so "To" can be staff addresses (a "new lead" notification), the lead itself via a token, or both. Multiple recipients: separate with commas.</div>
-      <div class="field"><label class="pra-label">To</label><div class="token-input-wrap">${tokenEditorHtml(c.to || '', { placeholder: 'lee@pacificrimathletics.com, {{payload.Email}}', attrs: 'id="cfgEmailTo"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field"><label class="pra-label">From (optional -- defaults to this business's sender)</label><div class="token-input-wrap">${tokenEditorHtml(c.from || '', { placeholder: 'leave blank to use the default sender', attrs: 'id="cfgEmailFrom"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field"><label class="pra-label">Subject</label><div class="token-input-wrap">${tokenEditorHtml(c.subject || '', { placeholder: 'New {{payload.Program}} lead: {{payload.First Name}}', attrs: 'id="cfgEmailSubject"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-      <div class="field">
-        <label class="pra-label">Body</label>
-        <div class="pra-muted" style="font-size:.74rem;margin-bottom:4px">Click a field below to insert it as a formatted question/answer pair (bold label, the value, a blank line) -- or select text and hit <b>B</b> to bold it yourself.</div>
-        <div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"', expand: true })}<button class="token-bold-btn" type="button" data-bold-btn title="Bold selected text">B</button><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
-      </div>
-      <div class="field"><label class="pra-label">Footer</label><select class="pra-select" id="cfgEmailFooter"><option value="">${escapeHtml((() => { const d = allFooters.find(f => f.isDefault); return d ? `${d.name} (default)` : 'No footer'; })())}</option>${allFooters.map(f => `<option value="${f.id}" ${c.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select></div>
-    `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'add_to_list') {
@@ -1684,13 +1829,6 @@ function openStepConfigModal(step, isNew) {
         if (val) customFields[inp.dataset.cfFieldId] = val;
       });
       step.config.customFields = customFields;
-    }
-    else if (step.type === 'send_email') {
-      step.config.to = getTokenEditorValue(document.getElementById('cfgEmailTo')).trim();
-      step.config.from = getTokenEditorValue(document.getElementById('cfgEmailFrom')).trim();
-      step.config.subject = getTokenEditorValue(document.getElementById('cfgEmailSubject')).trim();
-      step.config.body = getTokenEditorValue(document.getElementById('cfgEmailBody'));
-      step.config.footerTemplateId = document.getElementById('cfgEmailFooter').value || null;
     }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
     else if (step.type === 'add_to_list') { step.config.listId = document.getElementById('cfgList').value; }

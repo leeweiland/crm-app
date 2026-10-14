@@ -351,6 +351,25 @@ function describeAdClick(clickIds, platform) {
   const adText = ad ? [ad.name || `Ad ${ad.id}`, ad.adGroup && `${platform === "google" ? "Ad group" : "Ad set"}: ${ad.adGroup}`, ad.campaign && `Campaign: ${ad.campaign}`].filter(Boolean).join(" · ") : "";
   return adText && id ? `${adText} (click ID: ${id})` : adText || id;
 }
+// {{tokens}} inside a visual-editor block's HTML. Values are HTML-escaped
+// (newlines -> <br>) so a form answer can't break the email's markup, and
+// &nbsp; inside a token (contenteditable inserts it around spaces) is
+// normalized so "{{payload.First&nbsp;Name}}" still matches.
+function resolveTemplateInHtml(html, ctx) {
+  return String(html || "").replace(/\{\{([^{}]+?)\}\}/g, (_, inner) => {
+    const path = inner.replace(/&nbsp;| /g, " ").replace(/&amp;/g, "&").trim();
+    return resolveTemplate(`{{${path}}}`, ctx)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+      .replace(/\n/g, "<br>");
+  });
+}
+function resolveBlockTokens(block, ctx) {
+  if (block.type === "text") return { ...block, html: resolveTemplateInHtml(block.html, ctx) };
+  if (block.type === "button") return { ...block, text: resolveTemplate(block.text || "", ctx), link: resolveTemplate(block.link || "", ctx) };
+  if (block.type === "image") return { ...block, link: resolveTemplate(block.link || "", ctx) };
+  return block;
+}
+
 function resolveTemplate(str, { contact, payload, timestamp }) {
   // [^{}]+ (not [\w.]+) -- a raw webhook field name is often a human label
   // like "First Name" or "Work Email", spaces and all. The old \w-only
@@ -649,10 +668,15 @@ async function advanceFlowRun(run, flow) {
       if (toAddresses.length) {
         const fromResolved = cfg.from ? resolveTemplate(cfg.from, ctx).trim() : "";
         const subjectResolved = resolveTemplate(cfg.subject || "", ctx);
-        const bodyHtml = escapeHtmlForEmail(resolveTemplate(cfg.body || "", ctx));
+        // Visual-editor steps carry blocks; a step saved before that still has
+        // a plain-text body (rendered the old way until it's re-saved).
+        const blocks = Array.isArray(cfg.blocks) && cfg.blocks.length
+          ? cfg.blocks.map(b => resolveBlockTokens(b, ctx))
+          : [{ type: "text", html: escapeHtmlForEmail(resolveTemplate(cfg.body || "", ctx)) }];
+        const previewResolved = cfg.previewText ? resolveTemplate(cfg.previewText, ctx) : undefined;
         for (const to of toAddresses) {
           await withTimeout(sendEmail({
-            to, subject: subjectResolved, blocks: [{ type: "text", html: bodyHtml }],
+            to, subject: subjectResolved, previewText: previewResolved, blocks, theme: cfg.theme || {},
             contactId: contact?.id || null, sourceType: "flow_step", sourceId: `${flow.id}:${step.id}`,
             from: fromResolved || undefined, footerTemplateId: cfg.footerTemplateId || undefined,
           }), 20000, "send_email").catch(e => console.error("[flows] send_email failed", e.message));
