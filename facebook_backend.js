@@ -171,10 +171,12 @@ export function endWindowAndTrim(audienceId, person, keepAtLeast) {
     for (const m of members) if (key && m.key === key && !m.removedAt && !m.windowEndedAt) m.windowEndedAt = now;
     writeJson(AUDIENCE_MEMBERS_FILE, all);
 
+    // windowEndedAt can be in the future for a backfilled person (set to
+    // their own date + 7 days) -- they're still in their window until then.
     const active = members.filter(m => !m.removedAt);
     const excess = active.length - Math.max(0, Number(keepAtLeast) || 0);
     const toRemove = excess > 0
-      ? active.filter(m => m.windowEndedAt).sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt)).slice(0, excess)
+      ? active.filter(m => m.windowEndedAt && m.windowEndedAt <= now).sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt)).slice(0, excess)
       : [];
     if (toRemove.length) {
       const r = await audienceUsersCall("DELETE", audienceId, toRemove);
