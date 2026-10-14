@@ -779,9 +779,21 @@ document.getElementById('saveTriggerBtn').onclick = async () => {
 // being dragged) -- both just need "put this step object at this
 // path/after/before slot", the only difference is whether the step already
 // has an old position to detach from first.
+// A branch step (if_then, cancel_if_no_engagement) never follows
+// nextStepId, so whatever came after the insert point has to hang off its
+// YES/KEPT branch instead -- setting nextStepId there silently disconnects
+// those steps (and any runs parked on them) from the flow.
+function attachRest(step, restId) {
+  if (!isBranch(step)) { step.nextStepId = restId; return; }
+  if (!restId) return;
+  if (!step.yesStepId) { step.yesStepId = restId; return; }
+  let tail = flow.steps[step.yesStepId];
+  while (tail && !isBranch(tail) && tail.nextStepId) tail = flow.steps[tail.nextStepId];
+  attachRest(tail, restId);
+}
 function placeStepAt(step, path, afterId, beforeId) {
   if (beforeId) {
-    step.nextStepId = beforeId;
+    attachRest(step, beforeId);
     if (path === 'root') flow.startStepId = step.id;
     else if (path.startsWith('yes:')) flow.steps[path.slice(4)].yesStepId = step.id;
     else if (path.startsWith('no:')) flow.steps[path.slice(3)].noStepId = step.id;
@@ -789,8 +801,9 @@ function placeStepAt(step, path, afterId, beforeId) {
     flow.startStepId = step.id;
   } else if (afterId) {
     const prevStep = flow.steps[afterId];
-    step.nextStepId = prevStep.nextStepId || null;
+    const rest = prevStep.nextStepId || null;
     prevStep.nextStepId = step.id;
+    attachRest(step, rest);
   } else if (path.startsWith('yes:')) {
     flow.steps[path.slice(4)].yesStepId = step.id;
   } else if (path.startsWith('no:')) {
