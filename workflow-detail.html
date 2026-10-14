@@ -315,6 +315,27 @@ function trigLabel(trig) {
 }
 const GOAL_SHORT_LABELS = { incoming_email: 'Incoming email', incoming_sms: 'Incoming SMS', incoming_call: 'Incoming call', meeting_booked: 'Meeting booked', lead_status_change: 'Lead status change', outcome_met: 'Outcome met' };
 
+// Live "N / 160" under each SMS box. Plain-text texts are 160 chars per
+// message (153 per part once split); any emoji or other non-GSM character
+// switches the whole text to 70 (67 per part). Merge tags are counted as
+// typed -- a first name can push it over, so that's called out.
+const GSM7 = /^[A-Za-z0-9 \r\n@£$¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ!"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà^{}\\[~\]|€]*$/;
+function smsCountText(body) {
+  const text = String(body || '');
+  const len = [...text].length;
+  const gsm = GSM7.test(text);
+  const single = gsm ? 160 : 70, part = gsm ? 153 : 67;
+  const parts = len <= single ? 1 : Math.ceil(len / part);
+  const tags = /%(FIRSTNAME|LASTNAME|EMAIL|PHONE|EVENTNAME|WHEN|DATE|TIME|LOCATION|NOTES)%/i.test(text) ? ' + merge tags fill in at send' : '';
+  return { label: `${len} / ${single} characters · ${parts} text${parts === 1 ? '' : 's'}${gsm ? '' : ' (emoji/special characters: 70 per text)'}${tags}`, over: parts > 1 };
+}
+function updateSmsCount(ta) {
+  const el = document.querySelector(`[data-sms-count-for="${ta.dataset.bodyFor}"]`);
+  if (!el) return;
+  const { label, over } = smsCountText(ta.value);
+  el.textContent = label;
+  el.style.color = over ? 'var(--pra-red)' : '';
+}
 function autoGrow(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
 
 // Same insert-step-btn affordance as automation-builder.html's arrowHtml --
@@ -432,6 +453,7 @@ function renderCanvasContent() {
           <option value="%NOTES%">Meeting notes</option>
         </select>
         <textarea class="step-body-input" data-body-for="${step.id}" rows="1" placeholder="%FIRSTNAME% ...">${escapeHtml(step.config.body || '')}</textarea>
+        <div class="pra-muted" data-sms-count-for="${step.id}" style="font-size:.74rem;margin-top:4px;text-align:right"></div>
       ` : ''}
     </div>
     ${i < workflow.steps.length - 1 ? arrowHtml(step) : '<div class="chain-arrow">&darr;</div>'}
@@ -580,7 +602,8 @@ function renderCanvasContent() {
   }));
   canvas.querySelectorAll('[data-body-for]').forEach(textarea => {
     autoGrow(textarea);
-    textarea.addEventListener('input', () => autoGrow(textarea));
+    updateSmsCount(textarea);
+    textarea.addEventListener('input', () => { autoGrow(textarea); updateSmsCount(textarea); });
     textarea.addEventListener('change', () => {
       const step = workflow.steps.find(s => s.id === textarea.dataset.bodyFor);
       if (!step) return;
@@ -602,6 +625,7 @@ function renderCanvasContent() {
     ta.focus();
     ta.selectionStart = ta.selectionEnd = start + token.length;
     autoGrow(ta);
+    updateSmsCount(ta);
     ta.dispatchEvent(new Event('change', { bubbles: true }));
   }));
 }
