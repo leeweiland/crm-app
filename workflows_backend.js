@@ -517,6 +517,39 @@ export async function handleWorkflowsRequest(req, res, url) {
         const oldSteps = workflow.steps || [];
         const newSteps = body.steps;
         const effectiveWorkflow = { ...workflow, ...body, steps: newSteps };
+        // Enrollments point at a step by POSITION (currentStepIndex), so a
+        // deleted or reordered step used to silently shift everyone onto the
+        // wrong step (someone in a deleted Drip's line ended up "on" the Wait
+        // after it with no due time -- stuck forever). Re-point each active
+        // enrollment at the same step id in the new list; anyone whose step
+        // was deleted moves to the first surviving step after it and starts
+        // that step now (completes if nothing is left).
+        if (oldSteps.map(s => s.id).join() !== newSteps.map(s => s.id).join()) {
+          const newIdx = new Map(newSteps.map((s, i) => [s.id, i]));
+          const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
+          const now = new Date().toISOString();
+          let touched = false;
+          for (const e of enrollments) {
+            if (e.workflowId !== workflow.id || e.status !== "active") continue;
+            const oldStep = oldSteps[e.currentStepIndex];
+            if (!oldStep) continue;
+            if (newIdx.has(oldStep.id)) {
+              const ni = newIdx.get(oldStep.id);
+              if (ni !== e.currentStepIndex) { e.currentStepIndex = ni; touched = true; }
+              continue;
+            }
+            let j = e.currentStepIndex + 1;
+            while (j < oldSteps.length && !newIdx.has(oldSteps[j].id)) j++;
+            touched = true;
+            delete e.dripQueued;
+            if (j >= oldSteps.length) { e.status = "completed"; e.completedAt = now; e.nextStepDueAt = null; continue; }
+            e.currentStepIndex = firstNonGoalIndex(effectiveWorkflow, newIdx.get(oldSteps[j].id));
+            e.stepEnteredAt = now;
+            if (newSteps[e.currentStepIndex]) scheduleStep(e, effectiveWorkflow, e.currentStepIndex, now);
+            else { e.status = "completed"; e.completedAt = now; e.nextStepDueAt = null; }
+          }
+          if (touched) writeJson(WF_ENROLLMENTS_FILE, enrollments);
+        }
         const changedWaitIndexes = [];
         newSteps.forEach((newStep, i) => {
           const oldStep = oldSteps[i];
