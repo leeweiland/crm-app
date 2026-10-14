@@ -972,8 +972,7 @@ document.getElementById('editSegmentSaveBtn').onclick = async () => {
   // real count now (a live filter query) instead of showing the stale one.
   const countEl = document.querySelector(`#segmentsBody [data-count="${segment.id}"]`);
   if (countEl) countEl.textContent = '…';
-  let n = await fetchCount('segment', segment);
-  if (typeof n === 'number' && Number(segment.limit) > 0) n = Math.min(n, Number(segment.limit));
+  const n = await fetchCount('segment', segment);
   tableState.segment.prefetchedCounts?.set(segment.id, n ?? 0);
   if (countEl) countEl.textContent = typeof n === 'number' ? n.toLocaleString() : '—';
 };

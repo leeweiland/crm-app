@@ -66,7 +66,6 @@ function computeAllCounts() {
   const segments = {};
   for (const s of segmentList) segments[s.id] = 0;
   for (const c of getContacts()) for (const s of segmentList) if (matchesSegment(c, s.filter)) segments[s.id]++;
-  for (const s of segmentList) if (Number(s.limit) > 0) segments[s.id] = Math.min(segments[s.id], Math.floor(Number(s.limit)));
   // testContact IDs, for reporting_backend.js's excludeTestContacts -- was
   // its own full readJson(CONTACTS_FILE, []) on every single campaign/
   // automation/workflow report request (confirmed live as the dominant cost
@@ -823,7 +822,6 @@ export async function handleContactsRequest(req, res, url) {
     const counts = {};
     for (const s of segments) counts[s.id] = 0;
     for (const c of contacts) for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++;
-    for (const s of segments) if (Number(s.limit) > 0) counts[s.id] = Math.min(counts[s.id], Math.floor(Number(s.limit)));
     return sendJson(res, 200, { counts });
   }
   const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);
