@@ -266,11 +266,11 @@ function scheduleStep(enrollment, workflow, index, fromIso) {
 const WF_DRIP_STATE_FILE = "crm_wf_drip_state.json";
 function releaseWorkflowDripQueues(enrollments, workflows) {
   const dripWorkflows = workflows.filter(w => w.active && (w.steps || []).some(s => s.type === "drip"));
-  if (!dripWorkflows.length) return false;
+  if (!dripWorkflows.length) return [];
   const now = new Date();
   const { day, secs } = dripClock(now);
   const state = readJson(WF_DRIP_STATE_FILE, {});
-  let changed = false;
+  const released = [];
   for (const w of dripWorkflows) {
     for (const step of w.steps.filter(s => s.type === "drip")) {
       const key = `${w.id}:${step.id}`;
@@ -281,22 +281,32 @@ function releaseWorkflowDripQueues(enrollments, workflows) {
         .sort((a, b) => String(a.dripQueuedAt).localeCompare(String(b.dripQueuedAt)))
         .slice(0, allowed);
       if (!queue.length) continue;
-      for (const e of queue) { e.nextStepDueAt = now.toISOString(); delete e.dripQueued; }
+      for (const e of queue) { e.nextStepDueAt = now.toISOString(); delete e.dripQueued; released.push(e); }
       entry.released += queue.length;
       state[key] = entry;
-      changed = true;
     }
   }
-  if (changed) writeJson(WF_DRIP_STATE_FILE, state);
-  return changed;
+  if (released.length) writeJson(WF_DRIP_STATE_FILE, state);
+  return released;
 }
 
 // Called by scheduler.js every tick.
 export async function advanceDueWorkflowEnrollments() {
   const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
   const workflows = readJson(WORKFLOWS_FILE, []);
-  try { if (releaseWorkflowDripQueues(enrollments, workflows)) writeJson(WF_ENROLLMENTS_FILE, enrollments); }
-  catch (e) { console.error("[workflows] drip release failed", e.message); }
+  // Released ones are written back onto a FRESH read, patching only their own
+  // records -- writing back this tick's whole snapshot would drop anything
+  // enrolled by another thread since it was read (confirmed live: 150 of a
+  // 1,000-contact bulk enroll vanished that way).
+  try {
+    const released = releaseWorkflowDripQueues(enrollments, workflows);
+    if (released.length) {
+      const byId = new Map(released.map(e => [e.id, e]));
+      const fresh = readJson(WF_ENROLLMENTS_FILE, []);
+      for (const e of fresh) { const r = byId.get(e.id); if (r && e.dripQueued) { e.nextStepDueAt = r.nextStepDueAt; delete e.dripQueued; } }
+      writeJson(WF_ENROLLMENTS_FILE, fresh);
+    }
+  } catch (e) { console.error("[workflows] drip release failed", e.message); }
   const due = enrollments.filter(e => e.status === "active" && e.nextStepDueAt && new Date(e.nextStepDueAt).getTime() <= Date.now());
   for (const enrollment of due) {
     const workflow = workflows.find(w => w.id === enrollment.workflowId);
