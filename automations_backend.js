@@ -7,7 +7,7 @@ import { getAllContacts, getContactById, queueContactTagChange } from "./contact
 // behind every email open taking 20+ seconds to process.
 import {
   saveEnrollment as dbSaveEnrollment, saveEnrollments, getEnrollment, hasActiveEnrollment,
-  listEnrollments, listDueEnrollments, completeActiveEnrollments,
+  listEnrollments, listDueEnrollments, completeActiveEnrollments, listDripQueue,
   stepCounts as dbStepCounts, countsByAutomation, automationStats as dbAutomationStats,
 } from "./automation_enrollments_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
@@ -58,7 +58,7 @@ function automationSnapshotFields(automation) {
 // "add_to_facebook_audience" degrades gracefully -- see facebook_backend.js
 // -- same "not configured yet" pattern as SES/Twilio.
 export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created"];
-export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal"];
+export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal", "drip"];
 
 function getContact(id) { return getContactById(id); }
 function saveEnrollment(enrollment) { dbSaveEnrollment(enrollment); }
@@ -201,6 +201,14 @@ async function advanceEnrollment(enrollment, automation) {
       return; // pauses here -- scheduler.js's advanceDueEnrollments() resumes it
     }
 
+    if (step.type === "drip") {
+      // Joins this step's queue (waitUntil null = not due); releaseDripQueues
+      // lets config.perDay of them through per day.
+      enrollment.waitUntil = null;
+      saveEnrollment(enrollment);
+      return;
+    }
+
     if (step.type === "send_email") {
       const contact = getContact(enrollment.contactId);
       if (contact) {
@@ -285,9 +293,53 @@ async function advanceEnrollment(enrollment, automation) {
   saveEnrollment(enrollment);
 }
 
+// ── Drip step ────────────────────────────────────────────────────────────
+// Lets at most config.perDay contacts through per Alaska calendar day, spread
+// evenly across the day (by noon, half the day's allowance has gone out) so
+// a big batch enrolled at once trickles out instead of hitting SES in one
+// burst. Released contacts are marked due (waitUntil = now) and moved past
+// the drip by advanceDueEnrollments, exactly like a finished Wait step.
+// Per-step "released today" counts live in a tiny state file; only the one
+// thread that runs advanceDueEnrollments ever touches it.
+const DRIP_STATE_FILE = "crm_drip_state.json";
+const DRIP_TZ = "America/Anchorage";
+function dripClock(now) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: DRIP_TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+    .formatToParts(now).map(p => [p.type, p.value]));
+  const secs = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, fraction: Math.min(1, secs / 86400) };
+}
+function releaseDripQueues() {
+  const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && Object.values(a.steps || {}).some(s => s.type === "drip"));
+  if (!automations.length) return;
+  const now = new Date();
+  const { day, fraction } = dripClock(now);
+  const state = readJson(DRIP_STATE_FILE, {});
+  let stateChanged = false;
+  for (const a of automations) {
+    for (const step of Object.values(a.steps).filter(s => s.type === "drip")) {
+      const key = `${a.id}:${step.id}`;
+      const entry = state[key]?.day === day ? state[key] : { day, released: 0 };
+      const perDay = Math.max(0, Math.floor(Number(step.config?.perDay) || 0));
+      const allowed = Math.ceil(perDay * fraction) - entry.released;
+      if (allowed <= 0) continue;
+      const batch = listDripQueue(a.id, step.id, allowed);
+      if (!batch.length) continue;
+      const nowIso = now.toISOString();
+      for (const e of batch) { e.waitUntil = nowIso; e.updatedAt = nowIso; }
+      saveEnrollments(batch);
+      entry.released += batch.length;
+      state[key] = entry;
+      stateChanged = true;
+    }
+  }
+  if (stateChanged) writeJson(DRIP_STATE_FILE, state);
+}
+
 // Called by scheduler.js every tick -- resumes any enrollment whose wait
 // step has expired.
 export async function advanceDueEnrollments() {
+  try { releaseDripQueues(); } catch (e) { console.error("[automations] drip release failed", e.message); }
   const due = listDueEnrollments(new Date().toISOString());
   for (const enrollment of due) {
     const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === enrollment.automationId);
@@ -303,7 +355,8 @@ export async function advanceDueEnrollments() {
     // skipped, so currentStepId only moves for an actual wait step here.
     // reenterCurrentStep: the enrollment was just repointed here (its old step
     // was deleted), so a Wait step here still has to be waited out, not skipped.
-    if (currentStep?.type === "wait" && !reenter) enrollment.currentStepId = currentStep.nextStepId || null;
+    // A released drip enrollment moves past the drip the same way.
+    if ((currentStep?.type === "wait" || currentStep?.type === "drip") && !reenter) enrollment.currentStepId = currentStep.nextStepId || null;
     if (!enrollment.currentStepId) { completeEnrollment(enrollment); continue; }
     await advanceEnrollment(enrollment, automation);
   }

@@ -179,6 +179,12 @@ export function completeActiveEnrollments(automationId, contactId, nowIso) {
   saveEnrollments(rows);
   return rows.length;
 }
+// A drip step's queue: active enrollments parked on that step with no
+// waitUntil (released ones get waitUntil set and leave on the next pass),
+// oldest arrival first.
+export function listDripQueue(automationId, stepId, limit) {
+  return getDb().prepare("SELECT data FROM automation_enrollments WHERE automation_id = ? AND status = 'active' AND current_step_id = ? AND wait_until IS NULL ORDER BY entered_at LIMIT ?").all(automationId, stepId, limit).map(parse);
+}
 export function stepCounts(automationId) {
   const counts = {};
   for (const r of getDb().prepare("SELECT current_step_id AS s, count(*) AS n FROM automation_enrollments WHERE automation_id = ? AND status = 'active' AND current_step_id IS NOT NULL GROUP BY current_step_id").all(automationId)) counts[r.s] = r.n;

@@ -153,6 +153,7 @@
     <div class="type-picker">
       <button data-type="send_email">📧 Send Email</button>
       <button data-type="wait">⏱ Wait</button>
+      <button data-type="drip"><svg viewBox="0 0 24 24" fill="none" style="width:16px;height:16px;vertical-align:-3px;margin-right:2px"><path d="M12 3.5c3 4 5.5 7.2 5.5 10.2a5.5 5.5 0 0 1-11 0c0-3 2.5-6.2 5.5-10.2Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><path d="M9.5 14.5a2.6 2.6 0 0 0 2.5 2.4" stroke="#009bff" stroke-width="1.6" stroke-linecap="round"/></svg>Drip (limit per day)</button>
       <button data-type="add_tag">🏷 Add Tag</button>
       <button data-type="remove_tag">🏷 Remove Tag</button>
       <button data-type="add_to_facebook_audience">📘 Add to Facebook Audience</button>
@@ -364,10 +365,11 @@ function stepSummary(step) {
   }
   if (step.type === 'jump_to_automation') return `Add to: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
   if (step.type === 'end_automation') return `End: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
+  if (step.type === 'drip') return `Release ${Number(step.config.perDay) || 0} per day`;
   if (step.type === 'goal') return step.config.status ? `Goal: status changes to ${escapeHtml(step.config.status)}` : 'Goal: any status change';
   return '';
 }
-const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation', goal: 'Goal' };
+const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation', goal: 'Goal', drip: 'Drip' };
 let facebookIsConfigured = false;
 
 function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
@@ -375,7 +377,7 @@ function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
 function stepCardHtml(stepId, isLast) {
   const step = automation.steps[stepId];
   const count = stepCounts[stepId] || 0;
-  const countLabel = step.type === 'wait' ? `${count} waiting` : `${count} here`;
+  const countLabel = (step.type === 'wait' || step.type === 'drip') ? `${count} waiting` : `${count} here`;
   const stats = step.type === 'send_email' ? stepEmailStats[stepId] : null;
   const statsRow = stats ? `
     <div style="margin-top:8px;display:flex;gap:14px;font-size:.76rem;color:var(--pra-dim)">
@@ -713,6 +715,7 @@ function defaultConfig(type) {
   if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
   if (type === 'jump_to_automation' || type === 'end_automation') return { automationId: '' };
   if (type === 'goal') return { trigger: 'lead_status_change', status: null };
+  if (type === 'drip') return { perDay: 100 };
   return {};
 }
 
@@ -953,6 +956,10 @@ function openStepConfigModal(step, isNew) {
     }
     fieldSel.addEventListener('change', updateValueOptions);
     updateValueOptions();
+  } else if (step.type === 'drip') {
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Everyone who reaches this step waits in line here. Only this many are let through per day (Alaska time), spread evenly across the day, in the order they arrived -- so a big batch trickles out instead of sending all at once.</div>
+      <div class="field"><label class="pra-label">Contacts per day</label><input class="pra-input" type="number" min="0" id="cfgDripPerDay" value="${Number(step.config.perDay) || 0}"/></div>`;
   } else if (step.type === 'goal') {
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">When a contact hits this goal, anyone still above it in this automation is moved straight down to here and continues with the next step. Contacts already past it aren't affected.</div>
@@ -967,6 +974,7 @@ function openStepConfigModal(step, isNew) {
     else if (step.type === 'add_to_facebook_audience') { step.config.audienceName = document.getElementById('cfgFbName').value.trim(); step.config.audienceId = document.getElementById('cfgFbId').value.trim(); }
     else if (step.type === 'condition') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
     else if (step.type === 'jump_to_automation' || step.type === 'end_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
+    else if (step.type === 'drip') { step.config = { perDay: Math.max(0, Math.floor(Number(document.getElementById('cfgDripPerDay').value) || 0)) }; }
     else if (step.type === 'goal') { step.config = { trigger: 'lead_status_change', status: document.getElementById('cfgGoalStatus').value || null }; }
     if (isNew) attachNewStep(step);
     closeModal('stepConfigModal');
