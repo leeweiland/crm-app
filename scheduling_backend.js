@@ -585,9 +585,15 @@ function validateQuestionAnswers(questions, answers) {
   }
   return null;
 }
+// A renamed event type keeps answering on its old links (previousSlugs) --
+// Framer embeds, form calendar steps, and manage/cancel links in emails
+// already sent all hold the slug they were created with.
+export function eventTypeHasSlug(e, slug) {
+  return !!slug && (e.slug === slug || (e.previousSlugs || []).includes(slug));
+}
 function uniqueSlug(base, existing, excludeId) {
   let slug = base, n = 2;
-  while (existing.some(e => e.slug === slug && e.id !== excludeId)) slug = `${base}-${n++}`;
+  while (existing.some(e => eventTypeHasSlug(e, slug) && e.id !== excludeId)) slug = `${base}-${n++}`;
   return slug;
 }
 
@@ -1219,7 +1225,7 @@ export async function handleSchedulingRequest(req, res, url) {
   const publicEtMatch = p.match(/^\/api\/scheduling\/event-types\/([^/]+)$/);
   if (publicEtMatch && req.method === "GET") {
     const eventTypes = getEventTypes();
-    const et = eventTypes.find(e => e.slug === publicEtMatch[1] && e.active);
+    const et = eventTypes.find(e => eventTypeHasSlug(e, publicEtMatch[1]) && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     return sendJson(res, 200, { eventType: publicEventType(et) });
   }
@@ -1227,7 +1233,7 @@ export async function handleSchedulingRequest(req, res, url) {
   if (p === "/api/scheduling/availability" && req.method === "GET") {
     const slug = url.searchParams.get("slug");
     const eventTypes = getEventTypes();
-    const et = eventTypes.find(e => e.slug === slug && e.active);
+    const et = eventTypes.find(e => eventTypeHasSlug(e, slug) && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     // start/end are an optional fixed-window override (only the admin
     // Design-page preview passes these, to browse any month) -- the real
@@ -1246,7 +1252,7 @@ export async function handleSchedulingRequest(req, res, url) {
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
     const { slug, startAt, timezone, answers, formAnswers, formAnswerLabels, vid } = await readJsonBody(req);
     const eventTypes = getEventTypes();
-    const et = eventTypes.find(e => e.slug === slug && e.active);
+    const et = eventTypes.find(e => eventTypeHasSlug(e, slug) && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (!startAt) return sendJson(res, 400, { error: "startAt is required" });
     const questionError = validateQuestionAnswers(et.questions, answers);
@@ -1576,7 +1582,7 @@ export async function handleSchedulingRequest(req, res, url) {
     // so formatFormAnswers' own dedup (drop the code-keyed duplicate when a
     // label exists) runs here identically to how it runs for a real booking.
     const NON_ANSWERABLE_FORM_TYPES = ["statement", "headline", "image", "video", "calendar", "page_break"];
-    const embeddingForm = readJson("crm_forms.json", []).find(f => (f.fields || []).some(fl => fl.type === "calendar" && fl.eventTypeSlug === et.slug));
+    const embeddingForm = readJson("crm_forms.json", []).find(f => (f.fields || []).some(fl => fl.type === "calendar" && eventTypeHasSlug(et, fl.eventTypeSlug)));
     const formAnswers = {}, formAnswerLabels = {};
     (embeddingForm?.fields || []).filter(fl => !NON_ANSWERABLE_FORM_TYPES.includes(fl.type)).forEach((fl, i) => {
       const sample = `Sample ${i + 1}`;
@@ -1611,8 +1617,10 @@ export async function handleSchedulingRequest(req, res, url) {
       const body = await readJsonBody(req);
       for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
+      const slugBefore = et.slug;
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);
+      if (et.slug !== slugBefore) et.previousSlugs = [...new Set([...(et.previousSlugs || []), slugBefore])].filter(x => x && x !== et.slug);
       et.updatedAt = new Date().toISOString();
       writeJson(EVENT_TYPES_FILE, eventTypes);
       return sendJson(res, 200, { ok: true, eventType: et });

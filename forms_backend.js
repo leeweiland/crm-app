@@ -11,7 +11,7 @@ import { fireWorkflowTrigger } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
 import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_backend.js";
 import { normalizePhoneForRequest } from "./phone_util.js";
-import { EVENT_TYPES_FILE, BOOKINGS_FILE } from "./scheduling_backend.js";
+import { EVENT_TYPES_FILE, BOOKINGS_FILE, eventTypeHasSlug } from "./scheduling_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -785,7 +785,7 @@ export async function handleFormsRequest(req, res, url) {
     if (!form) return sendJson(res, 404, { error: "Form not found" });
     const calField = form.fields.find(f => f.type === "calendar" && f.eventTypeSlug);
     if (!calField) return sendJson(res, 400, { error: "This form has no calendar step, so there's nothing to match against." });
-    const et = readJson(EVENT_TYPES_FILE, []).find(e => e.slug === calField.eventTypeSlug);
+    const et = readJson(EVENT_TYPES_FILE, []).find(e => eventTypeHasSlug(e, calField.eventTypeSlug));
     if (!et) return sendJson(res, 400, { error: "The calendar step's event type couldn't be found." });
 
     const responses = readJson(RESPONSES_FILE, []);

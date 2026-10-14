@@ -936,7 +936,7 @@ async function loadCalFieldData(idx) {
     fetch('/api/scheduling/admin/google-calendars'),
   ]);
   const eventTypes = etRes.ok ? (await etRes.json()).eventTypes : [];
-  const eventType = eventTypes.find(e => e.slug === slug);
+  const eventType = eventTypes.find(e => e.slug === slug || (e.previousSlugs || []).includes(slug));
   if (eventType) eventType.questions = eventType.questions || [];
   const calendars = calRes.ok ? (await calRes.json()).calendars : [];
   const calendarsById = {}; calendars.forEach(c => calendarsById[c.id] = c);
@@ -1196,7 +1196,7 @@ function renderBlockBody(f, i) {
     return `<div class="fb-image-placeholder">${ICONS.country}<span>Auto-detects the respondent's country from their IP -- not shown to them. Add a Logic rule below (e.g. equals "India" -> Hide Next button) to screen by it.</span></div>`;
   }
   if (f.type === 'calendar') {
-    const picked = allEventTypes.find(e => e.slug === f.eventTypeSlug);
+    const picked = allEventTypes.find(e => e.slug === f.eventTypeSlug || (e.previousSlugs || []).includes(f.eventTypeSlug));
     // Real embedded booking widget (same as the published form actually
     // shows), not just a placeholder box -- widget.js re-scans for
     // uninitialized .scheduling-inline-widget divs after every render (see
@@ -1208,7 +1208,7 @@ function renderBlockBody(f, i) {
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
           <select class="pra-select" style="flex:1" data-calendar-idx="${i}">
             <option value="">Choose an event type…</option>
-            ${allEventTypes.map(e => `<option value="${escapeHtml(e.slug)}" ${f.eventTypeSlug === e.slug ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
+            ${allEventTypes.map(e => `<option value="${escapeHtml(e.slug)}" ${f.eventTypeSlug === e.slug || (e.previousSlugs || []).includes(f.eventTypeSlug) ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}
           </select>
           ${picked ? `<button class="icon-btn ${openPanel?.idx === i && openPanel?.kind === 'gear' ? 'on' : ''}" data-panel-idx="${i}" data-panel-kind="gear" title="Calendar design options (hours, buffers, questions)">${ICONS.gear}</button>` : ''}
         </div>
