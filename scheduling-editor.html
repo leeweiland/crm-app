@@ -55,10 +55,6 @@
        same controls from scheduling.html's Calendars tab, sized for the
        300px sidebar so hours/buffers/rolling window are editable right
        here instead of requiring a trip to a different page. ── */
-  .cal-week-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--pra-border); font-size: .76rem; }
-  .cal-week-row:last-child { border-bottom: none; }
-  .cal-week-row .cal-week-day { width: 30px; flex-shrink: 0; color: var(--pra-dim); }
-  .cal-week-row input[type=time] { flex: 1; min-width: 0; padding: 4px 6px; font-size: .72rem; }
   .toggle-switch { width: 34px; height: 20px; border-radius: 12px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); position: relative; cursor: pointer; flex-shrink: 0; }
   .toggle-switch::after { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--pra-dim); top: 2px; left: 2px; transition: left .15s, background .15s; }
   .toggle-switch.on { border-color: var(--pra-blue); }
@@ -417,6 +413,7 @@
 
 <script src="/crm-nav.js"></script>
 <script src="/block-editor-client.js"></script>
+<script src="/week-hours-editor.js"></script>
 <script>
 const eventTypeId = new URLSearchParams(location.search).get('id');
 let draft = null, saveTimer = null, confEmailEditor = null, cancelEmailEditor = null;
@@ -1166,27 +1163,7 @@ function renderCalendarSettings() {
 }
 function renderCalWeekEditor() {
   const cal = calendarsState[draft.calendarId];
-  const wrap = document.getElementById('calWeekEditor');
-  wrap.innerHTML = DAY_LABELS_SHORT.map((label, i) => {
-    const rule = cal.availability.weekly[String(i)];
-    const on = !!rule;
-    return `
-      <div class="cal-week-row">
-        <div class="cal-week-day">${label}</div>
-        <div class="toggle-switch ${on ? 'on' : ''}" data-cal-day="${i}"></div>
-        <input class="pra-input" type="time" data-cal-start="${i}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
-        <input class="pra-input" type="time" data-cal-end="${i}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
-      </div>
-    `;
-  }).join('');
-  wrap.querySelectorAll('[data-cal-day]').forEach(sw => sw.onclick = () => {
-    const isOn = sw.classList.toggle('on');
-    cal.availability.weekly[sw.dataset.calDay] = isOn ? { start: '09:00', end: '17:00' } : null;
-    renderCalWeekEditor();
-    saveCalendarDebounced();
-  });
-  wrap.querySelectorAll('[data-cal-start]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.calStart].start = inp.value; saveCalendarDebounced(); });
-  wrap.querySelectorAll('[data-cal-end]').forEach(inp => inp.onchange = () => { cal.availability.weekly[inp.dataset.calEnd].end = inp.value; saveCalendarDebounced(); });
+  WeekHoursEditor.mount(document.getElementById('calWeekEditor'), cal.availability.weekly, () => saveCalendarDebounced(), DAY_LABELS_SHORT);
 }
 document.getElementById('calMinNotice').addEventListener('input', () => {
   const cal = calendarsState[draft.calendarId];

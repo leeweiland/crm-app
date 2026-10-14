@@ -577,6 +577,14 @@ function uniqueSlug(base, existing, excludeId) {
 }
 
 // ── Slot computation ─────────────────────────────────────────────────────
+// A day's rule is { start, end } (its first time block) plus optional
+// extraBlocks: [{ start, end }, ...] for days with several windows
+// (e.g. 4:00-4:30pm, 5:30-5:45pm, 6:15-7:00pm). null = closed.
+function dayBlocks(rule) {
+  if (!rule) return [];
+  return [{ start: rule.start, end: rule.end }, ...(Array.isArray(rule.extraBlocks) ? rule.extraBlocks : [])]
+    .filter(b => b && b.start && b.end && b.end > b.start);
+}
 // opts.previewStart/previewEnd (admin editor preview only): a fixed window,
 // ignoring the calendar's rolling mode, so the Design page can browse any
 // month freely. The real public booking page never passes these -- it
@@ -617,9 +625,9 @@ async function computeAvailableSlots(eventType, opts = {}) {
     const dow = String(new Date(cursor + "T12:00:00Z").getUTCDay());
     const rule = override?.closed ? null : (override?.hours || avail.weekly[dow]);
     const daySlots = [];
-    if (rule) {
-      const dayStart = localTimeToUTC(cursor, rule.start, avail.timezone).getTime();
-      const dayEnd = localTimeToUTC(cursor, rule.end, avail.timezone).getTime();
+    for (const block of dayBlocks(rule)) {
+      const dayStart = localTimeToUTC(cursor, block.start, avail.timezone).getTime();
+      const dayEnd = localTimeToUTC(cursor, block.end, avail.timezone).getTime();
       const durationMs = eventType.durationMinutes * 60000;
       // Candidate start times step by the calendar's own interval, not the
       // event's duration -- a 30-min meeting on a 15-min interval still
@@ -637,7 +645,9 @@ async function computeAvailableSlots(eventType, opts = {}) {
         if (!conflict) daySlots.push(new Date(t).toISOString());
       }
     }
-    if (daySlots.length) { byDate[cursor] = daySlots; totalSlots += daySlots.length; }
+    // Overlapping blocks would otherwise list the same start twice.
+    const uniqueSlots = [...new Set(daySlots)].sort();
+    if (uniqueSlots.length) { byDate[cursor] = uniqueSlots; totalSlots += uniqueSlots.length; }
     cursor = addDays(cursor, 1);
 
     if (!previewMode) {

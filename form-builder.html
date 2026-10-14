@@ -154,10 +154,6 @@
        hours/buffers/timezone/rolling-window and its custom questions (with
        contact-field mapping) are editable right here, not just linked out
        to a separate page. ── */
-  .cal-week-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--pra-border); font-size: .76rem; }
-  .cal-week-row:last-child { border-bottom: none; }
-  .cal-week-row .cal-week-day { width: 30px; flex-shrink: 0; color: var(--pra-dim); }
-  .cal-week-row input[type=time] { flex: 1; min-width: 0; padding: 4px 6px; font-size: .72rem; }
   .toggle-switch { width: 34px; height: 20px; border-radius: 12px; background: var(--pra-panel-2); border: 1px solid var(--pra-border); position: relative; cursor: pointer; flex-shrink: 0; }
   .toggle-switch::after { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--pra-dim); top: 2px; left: 2px; transition: left .15s, background .15s; }
   .toggle-switch.on { border-color: var(--pra-blue); }
@@ -386,6 +382,7 @@
 </div>
 
 <script src="/crm-nav.js"></script>
+<script src="/week-hours-editor.js"></script>
 <script>
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 // A headline/statement block's label is rich text (Ctrl+B/I/U), stored and
@@ -949,18 +946,6 @@ async function loadCalFieldData(idx) {
   calFieldData[idx] = { eventType, calendarsById, googleCalendars };
 }
 
-function calWeekRowHtml(cal, day, idx) {
-  const rule = cal.availability.weekly[String(day)];
-  const on = !!rule;
-  return `
-    <div class="cal-week-row">
-      <div class="cal-week-day">${DAY_LABELS_SHORT[day]}</div>
-      <div class="toggle-switch ${on ? 'on' : ''}" data-cal-day="${idx}:${day}"></div>
-      <input class="pra-input" type="time" data-cal-start="${idx}:${day}" value="${rule?.start || '09:00'}" ${on ? '' : 'disabled'}/>
-      <input class="pra-input" type="time" data-cal-end="${idx}:${day}" value="${rule?.end || '17:00'}" ${on ? '' : 'disabled'}/>
-    </div>
-  `;
-}
 
 const CAL_QUESTION_TYPE_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown' };
 const CAL_AUTO_MAPPED_TYPES = ['first_name', 'last_name', 'email', 'phone'];
@@ -1014,7 +999,7 @@ function renderCalendarPanel(f, i) {
     </div>
     <div class="field" style="margin-bottom:8px">
       <label class="pra-label">Weekly hours</label>
-      <div data-cal-week="${i}">${[0, 1, 2, 3, 4, 5, 6].map(d => calWeekRowHtml(cal, d, i)).join('')}</div>
+      <div data-cal-week="${i}"></div>
     </div>
     <div class="cal-inline-row">
       <div class="field"><label class="pra-label">Interval (min)</label><input class="pra-input" type="number" min="5" step="5" data-cal-interval="${i}" value="${cal.availability.slotIntervalMinutes ?? 15}"/></div>
@@ -1473,25 +1458,8 @@ function bindCanvas(canvas) {
   // rebuilt) by wireCalWeekRows below -- called once per calendar field
   // at the bottom of this block for the initial render.
   function wireCalWeekRows(idx) {
-    document.querySelectorAll(`[data-cal-day^="${idx}:"]`).forEach(sw => sw.onclick = () => {
-      const [, day] = parseIdxPair(sw.dataset.calDay);
-      const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
-      const isOn = sw.classList.toggle('on');
-      cal.availability.weekly[day] = isOn ? { start: '09:00', end: '17:00' } : null;
-      document.querySelector(`[data-cal-week="${idx}"]`).innerHTML = [0, 1, 2, 3, 4, 5, 6].map(d => calWeekRowHtml(cal, d, idx)).join('');
-      wireCalWeekRows(idx);
-      saveCalendarDebounced(idx);
-    });
-    document.querySelectorAll(`[data-cal-start^="${idx}:"]`).forEach(inp => inp.onchange = () => {
-      const [, day] = parseIdxPair(inp.dataset.calStart);
-      calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.weekly[day].start = inp.value;
-      saveCalendarDebounced(idx);
-    });
-    document.querySelectorAll(`[data-cal-end^="${idx}:"]`).forEach(inp => inp.onchange = () => {
-      const [, day] = parseIdxPair(inp.dataset.calEnd);
-      calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.weekly[day].end = inp.value;
-      saveCalendarDebounced(idx);
-    });
+    const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
+    WeekHoursEditor.mount(document.querySelector(`[data-cal-week="${idx}"]`), cal.availability.weekly, () => saveCalendarDebounced(idx), DAY_LABELS_SHORT);
   }
   canvas.querySelectorAll('[data-cal-week]').forEach(el => wireCalWeekRows(+el.dataset.calWeek));
   canvas.querySelectorAll('[data-cal-interval]').forEach(el => el.addEventListener('input', e => {
