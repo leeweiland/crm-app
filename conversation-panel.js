@@ -1596,13 +1596,9 @@
             },
           });
         }
-        // See enroll-popup.js's own top comment -- a native <select> never
-        // fires 'change' for re-picking the option it's already showing, so
-        // this is the only way an already-Enrolled contact can log a
-        // renewal/travel sale from this same control.
-        statusSel.addEventListener('dblclick', () => {
-          if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openChatEnrollPopup('renewal');
-        });
+        // Re-picking Enrolled on an already-Enrolled contact reopens the
+        // popup (renewal/travel) -- see crm-nav.js's praMakeEnrolledReselectable.
+        window.praMakeEnrolledReselectable?.(statusSel);
         statusSel.addEventListener('change', (e) => {
           const status = e.target.value, prevStatus = getContact()?.status;
           if (!contactId) return;

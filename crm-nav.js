@@ -368,6 +368,37 @@ function enhanceSelectForMobile(sel) {
 
   renderTrigger();
 }
+// A native <select> never fires 'change' when the option it already shows is
+// picked again (confirmed live) -- so an already-Enrolled contact could never
+// re-open the enrollment popup (renewal/travel) from a status dropdown. On
+// mousedown, a status select showing ENROLLED is temporarily blanked
+// (selectedIndex -1) so picking Enrolled again IS a change; closing the
+// dropdown without picking anything puts ENROLLED straight back on blur.
+// While blanked, the real value is kept in data-held-value -- praSelectValue
+// reads that, so an autosave that happens to run mid-click can never read the
+// blank as "status cleared". (The mobile custom menu already fires change
+// unconditionally, so this only matters for the native desktop dropdown.)
+function praMakeEnrolledReselectable(sel) {
+  if (!sel || sel.dataset.enrolledReselectable) return;
+  sel.dataset.enrolledReselectable = "1";
+  sel.addEventListener("mousedown", () => {
+    if (sel.dataset.heldValue === undefined && String(sel.value).toUpperCase() === "ENROLLED") {
+      sel.dataset.heldValue = sel.value;
+      sel.selectedIndex = -1;
+    }
+  });
+  // Capture phase: cleared before any page's own change handler runs, so
+  // those handlers see an ordinary change to whatever was picked.
+  sel.addEventListener("change", () => { delete sel.dataset.heldValue; }, true);
+  sel.addEventListener("blur", () => {
+    if (sel.dataset.heldValue === undefined) return;
+    const held = sel.dataset.heldValue;
+    delete sel.dataset.heldValue;
+    if (sel.selectedIndex === -1) sel.value = held;
+  });
+}
+window.praMakeEnrolledReselectable = praMakeEnrolledReselectable;
+window.praSelectValue = (sel) => (sel && sel.dataset.heldValue !== undefined ? sel.dataset.heldValue : sel ? sel.value : "");
 function enhanceAllSelectsForMobile(root) {
   (root || document).querySelectorAll("select:not(.mobile-select-native)").forEach(enhanceSelectForMobile);
 }

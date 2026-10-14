@@ -63,8 +63,11 @@ window.EnrollPopup = (function () {
   // whatever it was BEFORE calling this, so nothing anywhere shows
   // "Enrolled" prematurely. opts.onCommitted() is how the caller finds out
   // it's real and can now show it.
-  const KIND_LABELS = { new: "New Enrollment", renewal: "Renewal", travel: "Travel" };
-  const KIND_TITLES = { new: "Record Enrollment", renewal: "Record Renewal", travel: "Record Travel Booking" };
+  // "manual" (far right) = just set the status to Enrolled -- no inputs, no
+  // sheet write. Its enrollKind is excluded by every one of the 3 flows'
+  // leading filter steps, so nothing runs off it.
+  const KIND_LABELS = { new: "New Enrollment", renewal: "Renewal", travel: "Travel", manual: "Manual" };
+  const KIND_TITLES = { new: "Record Enrollment", renewal: "Record Renewal", travel: "Record Travel Booking", manual: "Mark as Enrolled" };
   // What each kind does on Save, spelled out right under the toggle so it's
   // never a surprise which sheet is about to get a new row -- see each
   // kind's own flow (Flows list: "3 ENROLLMENT FORM" / "3 RENEWAL FORM" /
@@ -73,13 +76,11 @@ window.EnrollPopup = (function () {
     new: "updates their row in the CALLS TRACKING sheet (ONLINE/GYM tab).",
     renewal: "adds a new row to the CALLS TRACKING sheet's ONLINE/GYM RENEWALS &amp; PAYOFFS tab.",
     travel: "adds a new row to the CALLS TRACKING sheet's ONLINE/GYM TRAVEL tab.",
+    manual: "just sets their status to Enrolled -- nothing is written to any sheet.",
   };
 
-  // opts.forceKind: callers that open this for an already-Enrolled contact
-  // (the status select can't fire a real change event for re-picking the
-  // value it's already showing -- see the dblclick handlers that call this
-  // with forceKind set) skip the "New" default entirely, since a brand-new
-  // enrollment on someone already enrolled is never the intent there.
+  // opts.forceKind: optional -- pre-select a kind instead of the default
+  // (New, or Renewal when the contact is already Enrolled).
   async function open(contactId, opts = {}) {
     close();
     let contact, sheetOptions;
@@ -119,6 +120,7 @@ window.EnrollPopup = (function () {
               </label>`).join("")}
           </div>
         </div>
+        <div id="epFields">
         <div class="field">
           <label class="pra-label">Sheet</label>
           <div style="display:flex;gap:16px">
@@ -154,6 +156,7 @@ window.EnrollPopup = (function () {
           <label class="pra-label">Enrollment Date</label>
           <input class="pra-input" id="epEnrollDate" type="date" value="${today}"/>
         </div>
+        </div>
 
         <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
           <button class="pra-btn" id="epSaveBtn" style="flex:1">Save</button>
@@ -171,9 +174,11 @@ window.EnrollPopup = (function () {
       selectedKind = r.value;
       titleEl.textContent = KIND_TITLES[selectedKind];
       subtitleEl.innerHTML = KIND_SUBTITLES[selectedKind];
+      backdropEl.querySelector("#epFields").style.display = selectedKind === "manual" ? "none" : "";
       backdropEl.querySelectorAll(".enroll-kind-option").forEach(o => o.classList.toggle("checked", o.querySelector("input").checked));
     }));
 
+    if (selectedKind === "manual") backdropEl.querySelector("#epFields").style.display = "none";
     const programSel = backdropEl.querySelector("#epProgram");
     const endDateEl = backdropEl.querySelector("#epEndDate");
     let endDateTouched = false;
@@ -202,12 +207,26 @@ window.EnrollPopup = (function () {
     // exact same gate as the Cancel button, not a silent close.
     function requestClose() {
       const verb = selectedKind === "renewal" ? "record this renewal" : selectedKind === "travel" ? "record this travel booking" : "enroll this contact";
+      if (selectedKind === "manual") { close(); return; } // nothing was filled in -- no need to confirm
       if (confirm(`Are you sure you don't want to ${verb}?`)) close();
     }
     backdropEl.querySelector("#epCancelBtn").onclick = requestClose;
     backdropEl.addEventListener("click", (e) => { if (e.target === backdropEl) requestClose(); });
     backdropEl.querySelector("#epSaveBtn").onclick = async () => {
       const btn = backdropEl.querySelector("#epSaveBtn"), msg = backdropEl.querySelector("#epMsg");
+      // Manual: status only. No programType, no sale fields -- the earlier
+      // enrollment's own values stay exactly as they were on the contact.
+      if (selectedKind === "manual") {
+        btn.disabled = true; msg.textContent = "Saving...";
+        try {
+          const r = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED", customFieldsPatch: { enrollKind: "manual" } }) });
+          if (!r.ok) { btn.disabled = false; msg.textContent = "Could not save"; return; }
+          toast("Marked as Enrolled");
+          opts.onCommitted && opts.onCommitted("manual");
+          close();
+        } catch { btn.disabled = false; msg.textContent = "Could not reach the server"; }
+        return;
+      }
       const notes = backdropEl.querySelector("#epNotes").value.trim();
       const enrollmentDate = backdropEl.querySelector("#epEnrollDate").value;
       // Everything the sheet-write flow step needs, captured as customFields

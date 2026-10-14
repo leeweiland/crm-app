@@ -1130,14 +1130,9 @@ function wireConvoRow(row) {
       // the instant case; this is the reconcile for everything else.
       loadConversations();
     });
-    // See inline-edit.js/conversation-panel.js's own comment on this same
-    // trick -- re-picking the option a native <select> is already showing
-    // never fires 'change' at all, so an already-Enrolled row's only way to
-    // log a renewal/travel sale here is this double-click.
-    statusSel.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openSidebarEnrollPopup('renewal');
-    });
+    // Re-picking Enrolled on an already-Enrolled row reopens the popup
+    // (renewal/travel) -- see crm-nav.js's praMakeEnrolledReselectable.
+    window.praMakeEnrolledReselectable?.(statusSel);
   }
   row.querySelector('[data-pin]')?.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1612,11 +1607,9 @@ async function openContactOverlay(contactId) {
     statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(newStatus)};${statusSelectWidthRule(newStatus)}`);
     overlaySaver.flush();
   };
-  // A native <select> never fires 'change' for re-picking the option it's
-  // already showing -- the ONLY way an already-Enrolled contact can log a
-  // renewal/travel sale through this control otherwise. Double-click reopens
-  // the popup directly, defaulting its toggle to Renewal (see enroll-popup.js).
-  statusSel.ondblclick = () => { if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openOverlayEnrollPopup('renewal'); };
+  // Re-picking Enrolled on an already-Enrolled contact reopens the popup
+  // (renewal/travel) -- see crm-nav.js's praMakeEnrolledReselectable.
+  window.praMakeEnrolledReselectable?.(statusSel);
   document.getElementById('ovFirst').value = overlayContact.first || '';
   document.getElementById('ovLast').value = overlayContact.last || '';
   document.getElementById('ovAccount').value = overlayContact.accountName || '';
@@ -1650,7 +1643,7 @@ function readOverlayForm() {
   overlayContact.accountName = v('ovAccount').value.trim();
   overlayContact.email = v('ovEmail').value.trim();
   overlayContact.phone = v('ovPhone').value.trim();
-  overlayContact.status = v('ovStatus').value;
+  overlayContact.status = window.praSelectValue ? window.praSelectValue(v('ovStatus')) : v('ovStatus').value;
   overlayContact.emailOptOut = v('ovEmailOptOut').checked;
   overlayContact.smsOptOut = v('ovSmsOptOut').checked;
   overlayContact.customFields = overlayContact.customFields || {};

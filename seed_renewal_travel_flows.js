@@ -50,7 +50,7 @@ const stepId = () => "st" + Array.from({ length: 8 }, () => ID_CHARS[Math.floor(
 function kindFilterStep(id, kind, op, nextStepId) {
   return {
     id, type: "filter",
-    config: { filter: { all: [{ field: "customFields.enrollKind", op, value: op === "eq" ? kind : ["renewal", "travel"] }] } },
+    config: { filter: { all: [{ field: "customFields.enrollKind", op, value: op === "eq" ? kind : ["renewal", "travel", "manual"] }] } },
     nextStepId: nextStepId || null, yesStepId: null, noStepId: null,
   };
 }
