@@ -40,8 +40,14 @@ const END_DATE_FIELD_ID = "d49b092b-3054-4d5c-b7fa-d4ac32e9df3b";
 const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 const stepId = () => "st" + Array.from({ length: 8 }, () => ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]).join("");
 
-function kindFilterStep(kind, op, nextStepId) {
-  const id = stepId();
+// id is the caller's to provide (not generated here) -- every OTHER step
+// builder in this file generates its own id and is always stored under that
+// exact same id, but buildKindFlow needs this step's id BEFORE building it
+// (to wire the if_then's nextStepId), so it has to pass one in; a step whose
+// own .id disagrees with the key it's stored under in flow.steps is exactly
+// the kind of bug flow-builder.html's editor (which re-keys by step.id on
+// save) would silently corrupt the next time a human edited it.
+function kindFilterStep(id, kind, op, nextStepId) {
   return {
     id, type: "filter",
     config: { filter: { all: [{ field: "customFields.enrollKind", op, value: op === "eq" ? kind : ["renewal", "travel"] }] } },
@@ -101,7 +107,7 @@ function buildKindFlow({ kind, name, sheetTabs, updateContactDates }) {
   const ifId = stepId();
   const guardId = stepId();
   const steps = {
-    [guardId]: kindFilterStep(kind, "eq", ifId),
+    [guardId]: kindFilterStep(guardId, kind, "eq", ifId),
     [ifId]: { id: ifId, type: "if_then", config: { filter: { all: [{ field: "programType", op: "eq", value: "online" }] } }, nextStepId: null, yesStepId: onlineStep.id, noStepId: gymStep.id },
     [onlineStep.id]: onlineStep,
     [gymStep.id]: gymStep,
@@ -127,7 +133,8 @@ function patchEnrollmentFlow(flows) {
   // start step is already our guard.
   const already = flow.steps[flow.startStepId]?.type === "filter" && flow.steps[flow.startStepId]?.config?.filter?.all?.[0]?.field === "customFields.enrollKind";
   if (already) { console.log("[seed] enrollment flow already guarded -- skipping"); return; }
-  const guard = kindFilterStep(null, "not_any_of", flow.startStepId);
+  const guardId = stepId();
+  const guard = kindFilterStep(guardId, null, "not_any_of", flow.startStepId);
   flow.steps[guard.id] = guard;
   flow.startStepId = guard.id;
   flow.updatedAt = new Date().toISOString();
