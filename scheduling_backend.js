@@ -181,6 +181,18 @@ function getCalendarById(id) {
 // calendarEmail field -- resolved here rather than force-migrated on write,
 // so a stale event type keeps working even if nobody's opened its Design
 // page since this shipped.
+// Hours, notice, buffers, rolling window, timezone and conflict handling
+// belong to the event type (et.availability) -- the calendar only decides
+// which Google Calendar gets booked and checked for conflicts, so switching
+// an event type's calendar never changes its hours. calendar.availability
+// is just the starting point a new event type is seeded from.
+function eventTypeAvailability(et, calendar) {
+  return { ...DEFAULT_CALENDAR_AVAILABILITY, ...(calendar?.availability || {}), ...(et?.availability || {}) };
+}
+function seedAvailabilityFromCalendar(calendar) {
+  return JSON.parse(JSON.stringify({ ...DEFAULT_CALENDAR_AVAILABILITY, ...(calendar?.availability || {}) }));
+}
+
 function resolveCalendarForEventType(et) {
   if (et.calendarId) return getCalendarById(et.calendarId);
   if (et.calendarEmail) {
@@ -220,6 +232,9 @@ export function getEventTypes() {
     }
     if (!et.confirmation) { et.confirmation = { ...DEFAULT_CONFIRMATION }; changed = true; }
     if (!et.cancellation) { et.cancellation = { ...DEFAULT_CANCELLATION }; changed = true; }
+    // Before hours moved onto the event type: take over whatever its
+    // calendar has right now, so the live booking page doesn't change.
+    if (!et.availability) { et.availability = seedAvailabilityFromCalendar(resolveCalendarForEventType(et)); changed = true; }
     // subject/previewText/footerTemplateId were added after email/sms --
     // an event type saved between the two ships would otherwise be missing
     // them entirely rather than getting the "" / null defaults.
@@ -481,10 +496,10 @@ function newEventType({ name, description, durationMinutes, location, branding, 
     location: location || { type: "zoom", detail: "" },
     branding: { ...DEFAULT_BRANDING, ...(branding || {}) },
     statusId: statusId !== undefined ? statusId : defaultStatusId,
-    // References a crm_calendars.json entry -- that calendar's own
-    // availability (hours, buffers, rolling window) governs this event
-    // type's slots. Defaults to the connected account's own calendar.
+    // References a crm_calendars.json entry -- the Google Calendar this
+    // books onto. Defaults to the connected account's own calendar.
     calendarId: calendarId || "default",
+    availability: seedAvailabilityFromCalendar(getCalendarById(calendarId || "default")),
     questions: defaultQuestions(),
     confirmation: { ...DEFAULT_CONFIRMATION },
     reminders: { email: [], sms: [] },
@@ -591,7 +606,7 @@ function dayBlocks(rule) {
 // always gets however-far-forward the calendar's own rolling setting says.
 async function computeAvailableSlots(eventType, opts = {}) {
   const calendar = resolveCalendarForEventType(eventType);
-  const avail = { ...DEFAULT_CALENDAR_AVAILABILITY, ...calendar.availability };
+  const avail = eventTypeAvailability(eventType, calendar);
   const calendarId = calendar.email || getCalendarId();
   const bookings = readJson(BOOKINGS_FILE, []).filter(b => b.status === "confirmed" && (b.calendarId || getCalendarId()) === calendarId);
   const now = Date.now();
@@ -861,7 +876,7 @@ async function syncBookingToCalendar(booking, et, calendar) {
         summary: buildCalendarTitle(booking),
         description: buildCalendarDescription(booking),
         startISO: booking.startAt, durationMinutes: et.durationMinutes,
-        attendees: [{ email: booking.email, name: booking.name }], timezone: booking.timezone || calendar.availability.timezone,
+        attendees: [{ email: booking.email, name: booking.name }], timezone: booking.timezone || eventTypeAvailability(et, calendar).timezone,
         calendarId,
       });
       booking.calendarEventId = created.id; booking.calendarId = calendarId; booking.calendarError = null;
@@ -1270,7 +1285,7 @@ export async function handleSchedulingRequest(req, res, url) {
     catch (e) { return sendJson(res, 500, { error: e.message }); }
     let bookedStartAt = startAt;
     if (!(freshSlots[dateStr] || []).includes(new Date(startAt).toISOString())) {
-      const conflictResolution = calendar.availability?.conflictResolution || "doubleBook";
+      const conflictResolution = eventTypeAvailability(et, calendar).conflictResolution || "doubleBook";
       if (conflictResolution === "nextAvailable") {
         // A miss (nothing at all open in the whole rolling window) falls
         // through to double-booking the originally requested time --
@@ -1313,12 +1328,12 @@ export async function handleSchedulingRequest(req, res, url) {
       // for an answer by resolveTemplate.
       formAnswerLabels: formAnswerLabels && typeof formAnswerLabels === "object" ? formAnswerLabels : {},
       startAt: start.toISOString(), endAt: end.toISOString(),
-      timezone: timezone || calendar.availability.timezone,
+      timezone: timezone || eventTypeAvailability(et, calendar).timezone,
       status: "confirmed", calendarEventId: null, calendarId: calendar.email || getCalendarId(), calendarError: null,
       eventTypeSlug: et.slug,
       // The staff calendar's own timezone at booking time -- flows_backend.js's
       // samples endpoint needs it to show a real "Calendar Time" example.
-      calendarTimezone: calendar.availability.timezone,
+      calendarTimezone: eventTypeAvailability(et, calendar).timezone,
       cancelToken,
       remindersSent: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), cancelledAt: null,
@@ -1361,7 +1376,7 @@ export async function handleSchedulingRequest(req, res, url) {
         // "Europe/London"); Calendar Time is the same moment on the staff
         // calendar's own clock, i.e. what they'll actually see in Google Calendar.
         "Timezone": booking.timezone,
-        "Calendar Time": formatWhenWithZoneName(start, calendar.availability.timezone),
+        "Calendar Time": formatWhenWithZoneName(start, eventTypeAvailability(et, calendar).timezone),
       },
     });
     checkConversionGoal("meeting_booked", contact.id);
@@ -1594,7 +1609,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);

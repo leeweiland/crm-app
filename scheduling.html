@@ -279,7 +279,8 @@ function calendarCardHtml(cal) {
         ${cal.isDefault ? '<span class="pra-badge" style="margin-top:8px">Default</span>' : `<button class="pra-btn pra-btn-sm pra-btn-danger" style="margin-top:8px" data-del-cal="${cal.id}">Delete</button>`}
       </div>
 
-      <div class="pra-label" style="margin-bottom:8px">Weekly hours (${escapeHtml(a.timezone)})</div>
+      <div class="pra-label" style="margin-bottom:4px">Starting hours for new event types (${escapeHtml(a.timezone)})</div>
+      <div class="pra-muted" style="font-size:.74rem;margin-bottom:8px">A new event type on this calendar starts with these hours and settings. After that, each event type keeps its own -- change them on its Design page. Editing them here doesn't change any existing event type.</div>
       <div id="weekEditor-${cal.id}"></div>
 
       <div class="add-row" style="margin-top:14px">

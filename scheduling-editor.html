@@ -187,6 +187,7 @@
             <div class="fb-side-title">Calendar</div>
             <div class="field"><label class="pra-label">Uses calendar</label>
               <select class="pra-select" id="fCalendar"></select>
+              <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-top:6px">Bookings go onto this Google Calendar, and anything already on it blocks those times. The hours and settings below belong to this event type only -- switching calendars doesn't change them.</div>
             </div>
             <div class="field"><label class="pra-label">Timezone</label>
               <select class="pra-select" id="calTimezone"></select>
@@ -212,7 +213,7 @@
               </div>
               <div class="field"><label class="pra-label" id="calRollingLabel">Days ahead</label><input class="pra-input" type="number" min="1" id="calRollingAmount"/></div>
             </div>
-            <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-bottom:6px">If a stretch has no openings, the booking page always skips ahead to the next one that does — this just controls how far it's allowed to look. These settings apply to every event type on this calendar.</div>
+            <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-bottom:6px">If a stretch has no openings, the booking page always skips ahead to the next one that does — this just controls how far it's allowed to look.</div>
             <div class="field" style="margin-bottom:8px">
               <label class="pra-label">If someone's exact time gets taken first</label>
               <select class="pra-select" id="calConflictResolution">
@@ -221,7 +222,6 @@
               </select>
             </div>
             <div class="pra-muted" style="font-size:.7rem;line-height:1.4;margin-bottom:6px">Only matters for the rare case where two people grab the same minute at once. "Double-book" never delays or loses the lead, at the cost of occasionally putting two people on the calendar back to back. "Next open slot" avoids that but the visitor won't see the corrected time on the page (it redirects immediately) — only in their confirmation email/text. Default is double-book; switch a calendar to the other option if it turns out to be a problem.</div>
-            <div class="pra-muted" style="font-size:.74rem" id="calSaveMsg"></div>
           </div>
 
           <div class="fb-side-section">
@@ -1062,7 +1062,7 @@ async function saveNow() {
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
-      notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders,
+      notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders, availability: draft.availability,
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate, calendarTitleTemplate: draft.calendarTitleTemplate,
     }),
   });
@@ -1140,87 +1140,50 @@ const TIMEZONE_OPTIONS = (() => {
 })();
 document.getElementById('calTimezone').innerHTML = TIMEZONE_OPTIONS.map(tz => `<option value="${tz}">${tz}</option>`).join('');
 document.getElementById('calTimezone').addEventListener('change', () => {
-  const cal = calendarsState[draft.calendarId];
-  cal.availability.timezone = document.getElementById('calTimezone').value;
-  saveCalendarDebounced();
+  draft.availability.timezone = document.getElementById('calTimezone').value;
+  saveDebounced();
 });
 
-let calSaveTimer = null;
+// Hours/notice/buffers/rolling window belong to this event type
+// (draft.availability), saved with the rest of it -- switching "Uses
+// calendar" only changes which Google Calendar gets booked.
 function renderCalendarSettings() {
-  const cal = calendarsState[draft.calendarId];
-  if (!cal) return;
-  document.getElementById('calTimezone').value = cal.availability.timezone;
-  document.getElementById('calSlotInterval').value = cal.availability.slotIntervalMinutes ?? 15;
-  document.getElementById('calMinNotice').value = (cal.availability.minNoticeMinutes ?? 0) / 60;
-  document.getElementById('calBufferBefore').value = cal.availability.bufferBeforeMinutes ?? 0;
-  document.getElementById('calBufferAfter').value = cal.availability.bufferAfterMinutes ?? 0;
-  document.getElementById('calRollingMode').value = cal.availability.rollingMode;
-  document.getElementById('calRollingAmount').value = cal.availability.rollingAmount;
-  document.getElementById('calRollingLabel').textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
-  document.getElementById('calConflictResolution').value = cal.availability.conflictResolution || 'doubleBook';
-  document.getElementById('calSaveMsg').textContent = '';
-  renderCalWeekEditor();
-}
-function renderCalWeekEditor() {
-  const cal = calendarsState[draft.calendarId];
-  WeekHoursEditor.mount(document.getElementById('calWeekEditor'), cal.availability.weekly, () => saveCalendarDebounced(), DAY_LABELS_SHORT);
+  const a = draft.availability;
+  document.getElementById('calTimezone').value = a.timezone;
+  document.getElementById('calSlotInterval').value = a.slotIntervalMinutes ?? 15;
+  document.getElementById('calMinNotice').value = (a.minNoticeMinutes ?? 0) / 60;
+  document.getElementById('calBufferBefore').value = a.bufferBeforeMinutes ?? 0;
+  document.getElementById('calBufferAfter').value = a.bufferAfterMinutes ?? 0;
+  document.getElementById('calRollingMode').value = a.rollingMode;
+  document.getElementById('calRollingAmount').value = a.rollingAmount;
+  document.getElementById('calRollingLabel').textContent = a.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+  document.getElementById('calConflictResolution').value = a.conflictResolution || 'doubleBook';
+  WeekHoursEditor.mount(document.getElementById('calWeekEditor'), a.weekly, () => saveDebounced(), DAY_LABELS_SHORT);
 }
 document.getElementById('calMinNotice').addEventListener('input', () => {
-  const cal = calendarsState[draft.calendarId];
-  // Stored in minutes (matches the slot-computation code and the old
-  // per-minute field), shown in hours since that's how a real notice
-  // period gets set ("6 hours out", "12 hours out") -- 0.5 step covers
-  // half-hour notice without forcing whole hours.
-  cal.availability.minNoticeMinutes = Math.round((Number(document.getElementById('calMinNotice').value) || 0) * 60);
-  saveCalendarDebounced();
+  // Stored in minutes, shown in hours ("6 hours out", "12 hours out").
+  draft.availability.minNoticeMinutes = Math.round((Number(document.getElementById('calMinNotice').value) || 0) * 60);
+  saveDebounced();
 });
 ['calSlotInterval', 'calBufferBefore', 'calBufferAfter', 'calRollingAmount'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
-    const cal = calendarsState[draft.calendarId];
-    cal.availability.slotIntervalMinutes = Number(document.getElementById('calSlotInterval').value) || 15;
-    cal.availability.bufferBeforeMinutes = Number(document.getElementById('calBufferBefore').value) || 0;
-    cal.availability.bufferAfterMinutes = Number(document.getElementById('calBufferAfter').value) || 0;
-    cal.availability.rollingAmount = Number(document.getElementById('calRollingAmount').value) || 1;
-    saveCalendarDebounced();
+    const a = draft.availability;
+    a.slotIntervalMinutes = Number(document.getElementById('calSlotInterval').value) || 15;
+    a.bufferBeforeMinutes = Number(document.getElementById('calBufferBefore').value) || 0;
+    a.bufferAfterMinutes = Number(document.getElementById('calBufferAfter').value) || 0;
+    a.rollingAmount = Number(document.getElementById('calRollingAmount').value) || 1;
+    saveDebounced();
   });
 });
 document.getElementById('calRollingMode').addEventListener('change', () => {
-  const cal = calendarsState[draft.calendarId];
-  cal.availability.rollingMode = document.getElementById('calRollingMode').value;
-  document.getElementById('calRollingLabel').textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
-  saveCalendarDebounced();
+  draft.availability.rollingMode = document.getElementById('calRollingMode').value;
+  document.getElementById('calRollingLabel').textContent = draft.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+  saveDebounced();
 });
 document.getElementById('calConflictResolution').addEventListener('change', () => {
-  const cal = calendarsState[draft.calendarId];
-  cal.availability.conflictResolution = document.getElementById('calConflictResolution').value;
-  saveCalendarDebounced();
+  draft.availability.conflictResolution = document.getElementById('calConflictResolution').value;
+  saveDebounced();
 });
-function saveCalendarDebounced() {
-  document.getElementById('calSaveMsg').textContent = 'Saving…';
-  clearTimeout(calSaveTimer);
-  calSaveTimer = setTimeout(saveCalendarNow, 500);
-}
-async function saveCalendarNow() {
-  const cal = calendarsState[draft.calendarId];
-  const r = await fetch('/api/scheduling/admin/calendars/' + cal.id, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ availability: cal.availability }),
-  });
-  document.getElementById('calSaveMsg').textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
-  if (r.ok) {
-    // Deliberately NOT replacing calendarsState[cal.id] with the server's
-    // echoed object here: the day-toggle/time-input handlers in
-    // renderCalWeekEditor() close over this exact `cal` object, rebound
-    // only when that function re-runs. Swapping in a new object reference
-    // would orphan those closures -- a click landing between an autosave
-    // resolving and the next render would mutate the orphaned copy while
-    // the next render reads the fresh one, silently dropping the click.
-    // We already hold the authoritative state (it's what we just sent).
-    await loadPreviewSlots();
-    snapToFirstAvailableMonth();
-    renderCalendar();
-  }
-}
 
 let defaultCalendarDescriptionTemplate = '';
 let defaultCalendarTitleTemplate = '';
@@ -1260,6 +1223,8 @@ async function init() {
     draft.calendarId = match ? match.id : 'default';
   }
   document.getElementById('fCalendar').value = draft.calendarId;
+  if (!draft.availability) draft.availability = JSON.parse(JSON.stringify(calendarsState[draft.calendarId]?.availability || {}));
+  draft.availability.weekly = draft.availability.weekly || {};
   renderCalendarSettings();
   renderSidebar();
   await loadPreviewSlots();
@@ -1302,7 +1267,6 @@ document.getElementById('fCalendar').addEventListener('change', async () => {
   } else {
     draft.calendarId = val;
   }
-  renderCalendarSettings();
   // saveNow() (fired by saveDebounced below) already refreshes the slots
   // preview on success, which is exactly what's needed here too since
   // which calendar's freeBusy gets checked just changed.

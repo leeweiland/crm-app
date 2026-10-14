@@ -943,6 +943,7 @@ async function loadCalFieldData(idx) {
   const googleCalendarsRaw = gcalRes.ok ? (await gcalRes.json()).googleCalendars : [];
   const existingEmails = new Set(calendars.map(c => c.email).filter(Boolean));
   const googleCalendars = googleCalendarsRaw.filter(g => !g.primary && !existingEmails.has(g.id));
+  if (eventType && !eventType.availability) eventType.availability = JSON.parse(JSON.stringify((calendarsById[eventType.calendarId] || calendarsById['default'])?.availability || { weekly: {} }));
   calFieldData[idx] = { eventType, calendarsById, googleCalendars };
 }
 
@@ -986,7 +987,6 @@ function renderCalendarPanel(f, i) {
   const data = calFieldData[i];
   if (!data || !data.eventType) return `<div class="fb-panel"><div class="pra-muted" style="font-size:.8rem">Loading…</div></div>`;
   const { eventType: et, calendarsById, googleCalendars } = data;
-  const cal = calendarsById[et.calendarId] || calendarsById['default'];
   const calOptions = Object.values(calendarsById).map(c => `<option value="${c.id}" ${et.calendarId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}${c.email ? ' (' + escapeHtml(c.email) + ')' : ''}</option>`).join('');
   const googleOptions = googleCalendars.map(g => `<option value="google:${escapeHtml(g.id)}">+ Add: ${escapeHtml(g.name)} (${escapeHtml(g.id)})</option>`).join('');
   return `<div class="fb-panel">
@@ -995,28 +995,28 @@ function renderCalendarPanel(f, i) {
       <select class="pra-select" data-cal-select="${i}">${calOptions}${googleOptions ? `<optgroup label="Subscribed on Google, not yet added">${googleOptions}</optgroup>` : ''}</select>
     </div>
     <div class="field"><label class="pra-label">Timezone</label>
-      <select class="pra-select" data-cal-tz="${i}">${TIMEZONE_OPTIONS.map(tz => `<option value="${tz}" ${cal.availability.timezone === tz ? 'selected' : ''}>${tz}</option>`).join('')}</select>
+      <select class="pra-select" data-cal-tz="${i}">${TIMEZONE_OPTIONS.map(tz => `<option value="${tz}" ${et.availability.timezone === tz ? 'selected' : ''}>${tz}</option>`).join('')}</select>
     </div>
     <div class="field" style="margin-bottom:8px">
       <label class="pra-label">Weekly hours</label>
       <div data-cal-week="${i}"></div>
     </div>
     <div class="cal-inline-row">
-      <div class="field"><label class="pra-label">Interval (min)</label><input class="pra-input" type="number" min="5" step="5" data-cal-interval="${i}" value="${cal.availability.slotIntervalMinutes ?? 15}"/></div>
-      <div class="field"><label class="pra-label">Min notice (hrs)</label><input class="pra-input" type="number" min="0" step="0.5" data-cal-minnotice="${i}" value="${(cal.availability.minNoticeMinutes ?? 0) / 60}"/></div>
+      <div class="field"><label class="pra-label">Interval (min)</label><input class="pra-input" type="number" min="5" step="5" data-cal-interval="${i}" value="${et.availability.slotIntervalMinutes ?? 15}"/></div>
+      <div class="field"><label class="pra-label">Min notice (hrs)</label><input class="pra-input" type="number" min="0" step="0.5" data-cal-minnotice="${i}" value="${(et.availability.minNoticeMinutes ?? 0) / 60}"/></div>
     </div>
     <div class="cal-inline-row">
-      <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" data-cal-bufbefore="${i}" value="${cal.availability.bufferBeforeMinutes ?? 0}"/></div>
-      <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" data-cal-bufafter="${i}" value="${cal.availability.bufferAfterMinutes ?? 0}"/></div>
+      <div class="field"><label class="pra-label">Buffer before</label><input class="pra-input" type="number" min="0" data-cal-bufbefore="${i}" value="${et.availability.bufferBeforeMinutes ?? 0}"/></div>
+      <div class="field"><label class="pra-label">Buffer after</label><input class="pra-input" type="number" min="0" data-cal-bufafter="${i}" value="${et.availability.bufferAfterMinutes ?? 0}"/></div>
     </div>
     <div class="cal-inline-row" style="align-items:flex-end;margin-bottom:0">
       <div class="field"><label class="pra-label">Rolling window</label>
         <select class="pra-select" data-cal-rollmode="${i}">
-          <option value="days" ${cal.availability.rollingMode === 'days' ? 'selected' : ''}>Next N days</option>
-          <option value="slots" ${cal.availability.rollingMode === 'slots' ? 'selected' : ''}>Next N available slots</option>
+          <option value="days" ${et.availability.rollingMode === 'days' ? 'selected' : ''}>Next N days</option>
+          <option value="slots" ${et.availability.rollingMode === 'slots' ? 'selected' : ''}>Next N available slots</option>
         </select>
       </div>
-      <div class="field"><label class="pra-label" data-cal-roll-label="${i}">${cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead'}</label><input class="pra-input" type="number" min="1" data-cal-rollamt="${i}" value="${cal.availability.rollingAmount}"/></div>
+      <div class="field"><label class="pra-label" data-cal-roll-label="${i}">${et.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead'}</label><input class="pra-input" type="number" min="1" data-cal-rollamt="${i}" value="${et.availability.rollingAmount}"/></div>
     </div>
     <div class="pra-muted" style="font-size:.72rem;margin-top:6px" data-cal-savemsg="${i}"></div>
 
@@ -1391,10 +1391,9 @@ function bindCanvas(canvas) {
     saveDebounced(); renderCanvas();
   }));
 
-  // ── Calendar field's settings panel -- two separate backends being
-  // saved from one panel: the calendar's own availability
-  // (/api/scheduling/admin/calendars/:id) and the event type's own
-  // duration/status/redirect/questions (/api/scheduling/admin/event-types/:id).
+  // ── Calendar field's settings panel -- all saved onto the event type
+  // (/api/scheduling/admin/event-types/:id): its own hours/notice/buffers
+  // (availability) and its duration/status/redirect/questions.
   // "idx:n" (field index : sub-index) is how day-of-week rows and question
   // cards address themselves, parsed back out here. ──────────────────────
   function parseIdxPair(raw) { const [idx, n] = raw.split(':').map(Number); return [idx, n]; }
@@ -1406,10 +1405,10 @@ function bindCanvas(canvas) {
     calSaveTimers[idx] = setTimeout(() => saveCalendarNow(idx), 500);
   }
   async function saveCalendarNow(idx) {
-    const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
-    const r = await fetch('/api/scheduling/admin/calendars/' + cal.id, {
+    const et = calFieldData[idx].eventType;
+    const r = await fetch('/api/scheduling/admin/event-types/' + et.id, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ availability: cal.availability }),
+      body: JSON.stringify({ availability: et.availability }),
     });
     const msgEl = document.querySelector(`[data-cal-savemsg="${idx}"]`);
     if (msgEl) msgEl.textContent = r.ok ? 'Saved at ' + new Date().toLocaleTimeString() : 'Could not save';
@@ -1451,48 +1450,47 @@ function bindCanvas(canvas) {
   }));
   canvas.querySelectorAll('[data-cal-tz]').forEach(el => el.addEventListener('change', e => {
     const idx = +el.dataset.calTz;
-    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.timezone = e.target.value;
+    calFieldData[idx].eventType.availability.timezone = e.target.value;
     saveCalendarDebounced(idx);
   }));
   // Wired (and re-wired after every toggle, since the row markup is
   // rebuilt) by wireCalWeekRows below -- called once per calendar field
   // at the bottom of this block for the initial render.
   function wireCalWeekRows(idx) {
-    const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
-    WeekHoursEditor.mount(document.querySelector(`[data-cal-week="${idx}"]`), cal.availability.weekly, () => saveCalendarDebounced(idx), DAY_LABELS_SHORT);
+    WeekHoursEditor.mount(document.querySelector(`[data-cal-week="${idx}"]`), calFieldData[idx].eventType.availability.weekly, () => saveCalendarDebounced(idx), DAY_LABELS_SHORT);
   }
   canvas.querySelectorAll('[data-cal-week]').forEach(el => wireCalWeekRows(+el.dataset.calWeek));
   canvas.querySelectorAll('[data-cal-interval]').forEach(el => el.addEventListener('input', e => {
     const idx = +el.dataset.calInterval;
-    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.slotIntervalMinutes = Number(e.target.value) || 15;
+    calFieldData[idx].eventType.availability.slotIntervalMinutes = Number(e.target.value) || 15;
     saveCalendarDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-minnotice]').forEach(el => el.addEventListener('input', e => {
     const idx = +el.dataset.calMinnotice;
-    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.minNoticeMinutes = Math.round((Number(e.target.value) || 0) * 60);
+    calFieldData[idx].eventType.availability.minNoticeMinutes = Math.round((Number(e.target.value) || 0) * 60);
     saveCalendarDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-bufbefore]').forEach(el => el.addEventListener('input', e => {
     const idx = +el.dataset.calBufbefore;
-    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.bufferBeforeMinutes = Number(e.target.value) || 0;
+    calFieldData[idx].eventType.availability.bufferBeforeMinutes = Number(e.target.value) || 0;
     saveCalendarDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-bufafter]').forEach(el => el.addEventListener('input', e => {
     const idx = +el.dataset.calBufafter;
-    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.bufferAfterMinutes = Number(e.target.value) || 0;
+    calFieldData[idx].eventType.availability.bufferAfterMinutes = Number(e.target.value) || 0;
     saveCalendarDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-rollmode]').forEach(el => el.addEventListener('change', e => {
     const idx = +el.dataset.calRollmode;
-    const cal = calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId];
-    cal.availability.rollingMode = e.target.value;
+    const a = calFieldData[idx].eventType.availability;
+    a.rollingMode = e.target.value;
     const label = document.querySelector(`[data-cal-roll-label="${idx}"]`);
-    if (label) label.textContent = cal.availability.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
+    if (label) label.textContent = a.rollingMode === 'slots' ? 'Number of slots' : 'Days ahead';
     saveCalendarDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-rollamt]').forEach(el => el.addEventListener('input', e => {
     const idx = +el.dataset.calRollamt;
-    calFieldData[idx].calendarsById[calFieldData[idx].eventType.calendarId].availability.rollingAmount = Number(e.target.value) || 1;
+    calFieldData[idx].eventType.availability.rollingAmount = Number(e.target.value) || 1;
     saveCalendarDebounced(idx);
   }));
   canvas.querySelectorAll('[data-cal-duration]').forEach(el => el.addEventListener('input', e => {
