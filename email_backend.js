@@ -13,7 +13,7 @@ import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
-import { getContactByIdFast } from "./sqlite_inbox.js";
+import { getContactByIdFast, syncContactFields } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
 
@@ -348,7 +348,13 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   const ses = getSesSettings();
   const contact = contactId ? getContact(contactId) : null;
 
-  if (contact?.emailOptOut) {
+  // getContact() reads the SQLite copy, which some opt-out writers never
+  // updated -- confirmed live: an unsubscribe still unsynced 4 days later,
+  // and an opted-out lead still got an automation email. The main contacts
+  // DB (loaded in every send thread) is checked too; opted out if either says so.
+  let mainOptOut = false;
+  try { mainOptOut = !!(contactId && getContactById(contactId)?.emailOptOut); } catch {}
+  if (contact?.emailOptOut || mainOptOut) {
     return { ok: false, reason: "opted_out" };
   }
 
@@ -642,10 +648,12 @@ export async function handleEmailRequest(req, res, url) {
       // recheckStopStatus (compliance_backend.js): a genuinely ENROLLED or
       // BOOKED contact clicking an unsubscribe link must stop receiving
       // marketing email without their real pipeline stage being erased.
-      updateContactByField("id", contact.id, c => {
+      const updated = updateContactByField("id", contact.id, c => {
         c.emailOptOut = true; c.updatedAt = new Date().toISOString();
         return c;
       });
+      // Keep the SQLite copy in step too (Inbox, filters, and the send check above read it).
+      if (updated) { try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
       setConvoMeta(contact.id, { archived: true });
     } else {
       // Confirmed live: a contact complained their unsubscribe "didn't

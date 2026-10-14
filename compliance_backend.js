@@ -66,11 +66,13 @@ export function recheckStopStatus(contactId) {
 
   const contact = getContactById(contactId);
   if (!contact || contact.smsOptOut) return false;
-  updateContactByField("id", contactId, c => {
+  const updated = updateContactByField("id", contactId, c => {
     c.smsOptOut = true;
     c.updatedAt = new Date().toISOString();
     return c;
   });
+  // Keep the SQLite copy (Inbox, filters) in step with the main DB.
+  if (updated) { try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
   // A suppressed contact has nothing left to action in the Inbox -- get
   // their thread out of the main list the same way a real STOP reply
   // would in any texting platform. Hidden (not archived): STOP is
