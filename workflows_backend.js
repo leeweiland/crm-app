@@ -5,6 +5,7 @@ import { getAllContacts, getContactById } from "./contacts_db.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
+import { dripClock, dripAllowedSoFar } from "./automations_backend.js";
 
 export const WORKFLOWS_FILE = "crm_workflows.json";
 // An sms step's failure retries up to this many times, waiting this long
@@ -163,9 +164,10 @@ export function enrollContactInWorkflow(workflow, contactId, context) {
   if (!workflow.steps[startIndex]) return;
   const enrollment = {
     id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: startIndex, stepEnteredAt: new Date().toISOString(),
-    enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[startIndex]),
+    enrolledAt: new Date().toISOString(), nextStepDueAt: null,
     completedAt: null, goalMetAt: null, bookingId: context?.bookingId || null,
   };
+  scheduleStep(enrollment, workflow, startIndex, enrollment.enrolledAt);
   enrollments.push(enrollment);
   writeJson(WF_ENROLLMENTS_FILE, enrollments);
 }
@@ -229,7 +231,7 @@ export function checkConversionGoal(trigger, contactId) {
       e.stepRetryCount = 0;
       e.currentStepIndex = nextIndex;
       e.stepEnteredAt = now;
-      if (w.steps[nextIndex]) e.nextStepDueAt = computeStepDueDate(w, now, w.steps[nextIndex]);
+      if (w.steps[nextIndex]) scheduleStep(e, w, nextIndex, now);
       else { e.status = "goal_met"; e.nextStepDueAt = null; } // goal was the last step
       saveWfEnrollment(e);
     }
@@ -242,11 +244,59 @@ function firstNonGoalIndex(workflow, from) {
   while (workflow.steps[i]?.type === "goal") i++;
   return i;
 }
+// Point an enrollment at step `index`: a Drip step parks it in that drip's
+// queue (no due time -- releaseWorkflowDripQueues gives it one when its turn
+// comes); anything else gets its normal due date.
+function scheduleStep(enrollment, workflow, index, fromIso) {
+  const step = workflow.steps[index];
+  if (step?.type === "drip") {
+    enrollment.nextStepDueAt = null;
+    enrollment.dripQueued = step.id;
+    enrollment.dripQueuedAt = fromIso;
+    return;
+  }
+  delete enrollment.dripQueued;
+  enrollment.nextStepDueAt = computeStepDueDate(workflow, fromIso, step);
+}
+// Drip step: at most config.perDay per Alaska day, spread across it or all at
+// a set time (same pacing as automations_backend.js -- dripAllowedSoFar), in
+// arrival order. A released enrollment becomes due now and moves past the drip
+// on the same pass, like a finished Wait. Own state file -- this runs on the
+// sequence send thread.
+const WF_DRIP_STATE_FILE = "crm_wf_drip_state.json";
+function releaseWorkflowDripQueues(enrollments, workflows) {
+  const dripWorkflows = workflows.filter(w => w.active && (w.steps || []).some(s => s.type === "drip"));
+  if (!dripWorkflows.length) return false;
+  const now = new Date();
+  const { day, secs } = dripClock(now);
+  const state = readJson(WF_DRIP_STATE_FILE, {});
+  let changed = false;
+  for (const w of dripWorkflows) {
+    for (const step of w.steps.filter(s => s.type === "drip")) {
+      const key = `${w.id}:${step.id}`;
+      const entry = state[key]?.day === day ? state[key] : { day, released: 0 };
+      const allowed = dripAllowedSoFar(step.config, secs) - entry.released;
+      if (allowed <= 0) continue;
+      const queue = enrollments.filter(e => e.workflowId === w.id && e.status === "active" && e.dripQueued === step.id && !e.nextStepDueAt)
+        .sort((a, b) => String(a.dripQueuedAt).localeCompare(String(b.dripQueuedAt)))
+        .slice(0, allowed);
+      if (!queue.length) continue;
+      for (const e of queue) { e.nextStepDueAt = now.toISOString(); delete e.dripQueued; }
+      entry.released += queue.length;
+      state[key] = entry;
+      changed = true;
+    }
+  }
+  if (changed) writeJson(WF_DRIP_STATE_FILE, state);
+  return changed;
+}
 
 // Called by scheduler.js every tick.
 export async function advanceDueWorkflowEnrollments() {
   const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
   const workflows = readJson(WORKFLOWS_FILE, []);
+  try { if (releaseWorkflowDripQueues(enrollments, workflows)) writeJson(WF_ENROLLMENTS_FILE, enrollments); }
+  catch (e) { console.error("[workflows] drip release failed", e.message); }
   const due = enrollments.filter(e => e.status === "active" && e.nextStepDueAt && new Date(e.nextStepDueAt).getTime() <= Date.now());
   for (const enrollment of due) {
     const workflow = workflows.find(w => w.id === enrollment.workflowId);
@@ -300,7 +350,7 @@ export async function advanceDueWorkflowEnrollments() {
         // would make every step after a long wait (e.g. the 10,000-day
         // placeholder some sequences use) become due in the same instant
         // the wait elapses, firing the rest of the chain in one burst.
-        enrollment.nextStepDueAt = computeStepDueDate(workflow, new Date().toISOString(), nextStep);
+        scheduleStep(enrollment, workflow, nextIndex, new Date().toISOString());
       } else {
         enrollment.status = "completed"; enrollment.completedAt = new Date().toISOString(); enrollment.nextStepDueAt = null;
       }

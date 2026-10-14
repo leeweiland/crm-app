@@ -7,6 +7,7 @@
 // import.
 import { readJson } from "./auth_backend.js";
 import { getAllContacts } from "./contacts_db.js";
+import { smsStatsIndex } from "./sms_stats.js";
 
 export const CONTACTS_FILE = "crm_contacts.json";
 export const SEGMENTS_FILE = "crm_segments.json";
@@ -140,12 +141,22 @@ export function leadDateMs(contact) {
 //   | "between"                                                    (new -- value is {from, to} ISO timestamps, firstSeenAt/createdAt/bookedAt only; a FIXED calendar window baked into the filter at save time, unlike within_last_hours -- e.g. "created on this specific date". `to` is exclusive.)
 //   | "within_last_days"                                           (new -- value is a number of days, emailOpened/emailClicked only: latest such event within the last N days, incl. imported ActiveCampaign history)
 //   | "after"                                                       (new -- value is a single ISO timestamp, firstSeenAt/createdAt only; a FIXED lower bound with no upper bound, so it keeps matching every new contact from that point forward -- e.g. "leads since Sep 6, 2026, ongoing".)
+//   | "not_exists"                                                 (new -- opposite of exists, e.g. "phone number is not set")
 //   | "on_or_after" | "on_or_before"                                (new -- bookedAt only; value is a single ISO local-midnight timestamp, whole-calendar-day semantics same as between's `to` being exclusive.)
 //   | "gt" | "gte" | "lt" | "lte"                                  (new -- customFields.<id> only; numeric comparison, value is a number. "$85,000" / "85,000" read as 85000; a blank or non-numeric field never matches, so "income > 60000" can't be satisfied by a contact with no estimate.)
 //
 // field "ownerId" (contact.ownerId, "Assigned to" -- see crm-nav.js's
 // ownerFieldHtml) is a plain scalar field, handled entirely by the generic
 // actual = contact[field] fallback below -- no special-case branch needed.
+//
+// field "smsErrored" (eq/neq true|false): any text to them has ever errored
+// (Close "error", Twilio failed/undelivered). field "smsInbound" with
+// within_last_days / not_within_last_days: they texted US in the last N days.
+// Neither is on the contact record -- both read sms_stats.js's small
+// per-contact index, never the message history itself.
+//
+// Segment "limit" (segment.limit, optional): cap the segment at that many
+// contacts, newest lead date first -- see segmentMembers below.
 //
 // field "bookedAt": NOT a contact-record property -- their most recent
 // CONFIRMED booking's start time (bookingIndex, below; bookings live in
@@ -249,6 +260,17 @@ function evalCondition(contact, cond, payload) {
     return op === "within_last_days" ? recent : !recent;
   }
 
+  if (field === "smsErrored") {
+    const errored = (smsStatsIndex().get(contact.id)?.errorCount || 0) > 0;
+    const want = value === true || value === "true";
+    return op === "neq" ? errored !== want : errored === want;
+  }
+  if (field === "smsInbound" && (op === "within_last_days" || op === "not_within_last_days")) {
+    const lastAt = Date.parse(smsStatsIndex().get(contact.id)?.lastInboundAt || "");
+    const recent = !isNaN(lastAt) && Date.now() - lastAt <= Number(value) * 24 * 3600 * 1000;
+    return op === "within_last_days" ? recent : !recent;
+  }
+
   if (field === "visitedPage") {
     const paths = contact.visitedPaths || [];
     switch (op) {
@@ -301,6 +323,7 @@ function evalCondition(contact, cond, payload) {
     case "includes": return Array.isArray(actual) && actual.includes(value);
     case "excludes": return Array.isArray(actual) && !actual.includes(value);
     case "exists": return actual !== undefined && actual !== null && actual !== "";
+    case "not_exists": return actual === undefined || actual === null || actual === "";
     case "any_of": return Array.isArray(value) && (Array.isArray(actual) ? value.some(v => actual.includes(v)) : value.includes(actual));
     case "all_of": return Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v));
     case "not_any_of": return !(Array.isArray(value) && (Array.isArray(actual) ? value.some(v => actual.includes(v)) : value.includes(actual)));
@@ -345,6 +368,16 @@ function bookingIndex() {
   }
   return _bookingIdx;
 }
+// A saved segment's members: everyone matching its filter, capped at
+// segment.limit (when set) keeping the newest leads first -- same idea as a
+// Close smart view's limit. Every "who's in this segment" caller goes through
+// here so the count, the contact list and bulk-enroll all agree.
+export function segmentMembers(segment, contacts) {
+  const matched = (contacts || getAllContacts()).filter(c => matchesSegment(c, segment?.filter));
+  const limit = Math.floor(Number(segment?.limit) || 0);
+  if (limit <= 0 || matched.length <= limit) return matched;
+  return matched.sort((a, b) => (leadDateMs(b) || 0) - (leadDateMs(a) || 0)).slice(0, limit);
+}
 export function matchesSegment(contact, filter, payload) {
   if (!filter) return true;
   if (filter.all) return filter.all.every(c => evalCondition(contact, c, payload));
@@ -367,7 +400,7 @@ export function resolveBulkContactIds(body) {
     const segments = readJson(SEGMENTS_FILE, []);
     const segment = segments.find(s => s.id === body.segmentId);
     if (!segment) return [];
-    return getAllContacts().filter(c => matchesSegment(c, segment.filter)).map(c => c.id);
+    return segmentMembers(segment).map(c => c.id);
   }
   if (body.tagId) {
     return getAllContacts().filter(c => (c.tags || []).includes(body.tagId)).map(c => c.id);

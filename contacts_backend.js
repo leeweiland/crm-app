@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
 import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact, queueContactEngagementUpdate, onEngagementFlush } from "./contacts_db.js";
 import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
-import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
+import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, segmentMembers, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
 import { fireWorkflowTrigger, checkConversionGoal } from "./workflows_backend.js";
 import { fireFlowTrigger } from "./flows_backend.js";
@@ -66,6 +66,7 @@ function computeAllCounts() {
   const segments = {};
   for (const s of segmentList) segments[s.id] = 0;
   for (const c of getContacts()) for (const s of segmentList) if (matchesSegment(c, s.filter)) segments[s.id]++;
+  for (const s of segmentList) if (Number(s.limit) > 0) segments[s.id] = Math.min(segments[s.id], Math.floor(Number(s.limit)));
   // testContact IDs, for reporting_backend.js's excludeTestContacts -- was
   // its own full readJson(CONTACTS_FILE, []) on every single campaign/
   // automation/workflow report request (confirmed live as the dominant cost
@@ -773,11 +774,12 @@ export async function handleContactsRequest(req, res, url) {
     return sendJson(res, 200, { segments: getOrderedSegments() });
   }
   if (p === "/api/segments" && req.method === "POST") {
-    const { name, filter, channel } = await readJsonBody(req);
+    const { name, filter, channel, limit } = await readJsonBody(req);
     if (!name || !filter) return sendJson(res, 400, { error: "name and filter are required" });
     if (channel && !["email", "sms"].includes(channel)) return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
     const segments = readJson(SEGMENTS_FILE, []);
     const segment = { id: randomUUID(), name, filter, channel: channel || "email", order: segments.length, createdAt: new Date().toISOString() };
+    if (Number(limit) > 0) segment.limit = Math.floor(Number(limit));
     segments.push(segment);
     writeJson(SEGMENTS_FILE, segments);
     scheduleCountsCacheRefresh();
@@ -821,6 +823,7 @@ export async function handleContactsRequest(req, res, url) {
     const counts = {};
     for (const s of segments) counts[s.id] = 0;
     for (const c of contacts) for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++;
+    for (const s of segments) if (Number(s.limit) > 0) counts[s.id] = Math.min(counts[s.id], Math.floor(Number(s.limit)));
     return sendJson(res, 200, { counts });
   }
   const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);
@@ -853,6 +856,10 @@ export async function handleContactsRequest(req, res, url) {
       }
       segment.filter = Array.isArray(f.all) ? { all: f.all } : { any: f.any };
     }
+    // Optional cap (see segments_shared.js segmentMembers); blank/0 removes it.
+    if ("limit" in body) {
+      if (Number(body.limit) > 0) segment.limit = Math.floor(Number(body.limit)); else delete segment.limit;
+    }
     if ("channel" in body) {
       if (!["email", "sms"].includes(body.channel)) return sendJson(res, 400, { error: "channel must be 'email' or 'sms'" });
       segment.channel = body.channel;
@@ -867,7 +874,7 @@ export async function handleContactsRequest(req, res, url) {
     const segments = readJson(SEGMENTS_FILE, []);
     const segment = segments.find(s => s.id === segmentContactsMatch[1]);
     if (!segment) return sendJson(res, 404, { error: "Segment not found" });
-    const contacts = getAllContacts().filter(c => matchesSegment(c, segment.filter));
+    const contacts = segmentMembers(segment);
     return sendJson(res, 200, { contacts, total: contacts.length });
   }
 

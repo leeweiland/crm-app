@@ -17,7 +17,7 @@ window.ConditionRowBuilder = (function () {
   }
 
   const ARRAY_FIELDS = ["tags", "listIds"];
-  const BOOL_FIELDS = ["smsOptOut", "emailOptOut", "emailOpened", "emailClicked"];
+  const BOOL_FIELDS = ["smsOptOut", "emailOptOut", "emailOpened", "emailClicked", "smsErrored"];
   // Single-valued fields that can still usefully be matched against a SET
   // of options ("status is any of Potential/Application/Booked" -- a
   // cohort filter). No "all of" here (unlike ARRAY_FIELDS) -- a contact
@@ -34,6 +34,9 @@ window.ConditionRowBuilder = (function () {
       <option value="ownerId">Assigned to</option>
       <option value="programType">Type (Online/Gym)</option>
       <option value="smsOptOut">SMS Opt-Out</option>
+      <option value="phone">Phone number</option>
+      <option value="smsErrored">Has an errored SMS</option>
+      <option value="smsInbound">Texted us (inbound SMS)</option>
       <option value="emailOptOut">Email Opt-Out</option>
       <option value="tags">Tag</option>
       <option value="listIds">List</option>
@@ -58,6 +61,8 @@ window.ConditionRowBuilder = (function () {
     if (field === "bookedAt") return `<option value="eq">Is (on this date)</option><option value="on_or_after">Is on or after</option><option value="on_or_before">Is on or before</option><option value="between">Is between (dates, inclusive)</option>`;
     // "Has emailed/texted with <team member> in the last N days" and its
     // opposite -- the second is what keeps another rep's leads out of a segment.
+    if (field === "phone") return `<option value="exists">Is set (has a phone number)</option><option value="not_exists">Is not set</option>`;
+    if (field === "smsInbound") return `<option value="not_within_last_days">Has NOT in the last (days)</option><option value="within_last_days">Has, in the last (days)</option>`;
     if (field.startsWith("staffActivity:")) return `<option value="not_within_last_days">Has NOT in the last (days)</option><option value="within_last_days">Has, in the last (days)</option>`;
     if (ARRAY_FIELDS.includes(field)) {
       const legacy = (legacyOp === "includes") ? `<option value="includes">Includes (legacy)</option>` : (legacyOp === "excludes") ? `<option value="excludes">Excludes (legacy)</option>` : "";
@@ -127,7 +132,7 @@ window.ConditionRowBuilder = (function () {
   const MULTI_VALUE_OPS = ["any_of", "all_of", "not_any_of", "not_all_of"];
 
   function valueInputHtml(field, op) {
-    if (op === 'exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
+    if (op === 'exists' || op === 'not_exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
     // Checked before the plain single-value <select> branches below, so
     // "is any of"/"is not any of" on a SCALAR_MULTI_FIELDS field (status)
     // gets the same chip multi-picker as an ARRAY_FIELDS field, instead of
@@ -244,7 +249,7 @@ window.ConditionRowBuilder = (function () {
       const field = row.querySelector('[data-cond-field]').value;
       const op = row.querySelector('[data-cond-op]').value;
       let value;
-      if (op === 'exists') value = undefined;
+      if (op === 'exists' || op === 'not_exists') value = undefined;
       else if (MULTI_VALUE_OPS.includes(op)) value = row._msSelected || [];
       else if (op === 'between') {
         const from = row.querySelector('[data-cond-from]')?.value, to = row.querySelector('[data-cond-to]')?.value;
@@ -258,18 +263,19 @@ window.ConditionRowBuilder = (function () {
     // matchesSegment (segments_shared.js) matches it against ANY visited
     // path (every string contains ""), i.e. "visited any page at all" --
     // so it can't be dropped here the way every other blank condition is.
-    }).filter(c => c.op === 'exists' || (c.field === 'visitedPage' && c.op === 'contains') || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
+    }).filter(c => c.op === 'exists' || c.op === 'not_exists' || (c.field === 'visitedPage' && c.op === 'contains') || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
     if (!conds.length) return null;
     return matchMode === 'any' ? { any: conds } : { all: conds };
   }
 
   const FIELD_LABELS = {
     type: 'Type (Lead/Contact)', status: 'Status', ownerId: 'Assigned to', programType: 'Type', smsOptOut: 'SMS Opt-Out', emailOptOut: 'Email Opt-Out',
+    phone: 'Phone number', smsErrored: 'Has an errored SMS', smsInbound: 'Texted us (inbound SMS)',
     tags: 'Tag', listIds: 'List', emailOpened: 'Opened Email', emailClicked: 'Clicked Email', visitedPage: 'Visited Webpage',
     firstSeenAt: 'Lead date', createdAt: 'Lead date', bookedAt: 'Booked date',
   };
   const OP_LABELS = {
-    eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', contains: 'contains',
+    eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', not_exists: 'is not set', contains: 'contains',
     any_of: 'is any of', all_of: 'is all of', not_any_of: 'is not any of', not_all_of: 'is not all of',
     within_last_hours: 'is within the last', within_last_days: 'in the last', after: 'is on or after', between: 'is between',
     not_within_last_days: 'not in the last', gt: 'is greater than', gte: 'is at least', lt: 'is less than', lte: 'is at most',
@@ -290,7 +296,7 @@ window.ConditionRowBuilder = (function () {
     if (![...opSel.options].some(o => o.value === cond.op)) return false;
     if (cond.op === 'between') return !!cond.value && typeof cond.value === 'object' && isLocalMidnight(cond.value.from) && isLocalMidnight(cond.value.to);
     if (MULTI_VALUE_OPS.includes(cond.op)) return Array.isArray(cond.value);
-    if (cond.op === 'exists') return true;
+    if (cond.op === 'exists' || cond.op === 'not_exists') return true;
     if (Array.isArray(cond.value)) return false;
     // A single-value <select> (status/type/tag/list/yes-no) can only show a
     // value it has an option for -- e.g. a tag or list since deleted would
@@ -327,7 +333,7 @@ window.ConditionRowBuilder = (function () {
       const fmt = (v, back) => { const d = new Date(v); if (isNaN(d)) return String(v ?? ''); if (wholeDays) { if (back) d.setDate(d.getDate() - 1); return d.toLocaleDateString([], { dateStyle: 'medium' }); } return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); };
       valueLabel = `${fmt(valueLabel.from)} and ${fmt(valueLabel.to, true)}`;
     }
-    return `${fieldLabel} ${opLabel}${cond.op === 'exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
+    return `${fieldLabel} ${opLabel}${cond.op === 'exists' || cond.op === 'not_exists' ? '' : ' ' + escapeHtml(String(valueLabel ?? ''))}`;
   }
   function describeFilter(filter) {
     if (!filter) return '';

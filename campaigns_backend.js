@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
+import { segmentMembers } from "./segments_shared.js";
 import { getAllContacts } from "./contacts_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { getMessagesForSource, logMessagesBatch } from "./message_log.js";
@@ -33,6 +34,8 @@ function campaignSnapshotFields(campaign) {
 function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
   const contacts = getAllContacts();
   const segment = segmentId ? readJson(SEGMENTS_FILE, []).find(s => s.id === segmentId) : null;
+  // A segment with a limit is a fixed set of members (segmentMembers), not just a per-contact test.
+  const limitedIds = segment && Number(segment.limit) > 0 ? new Set(segmentMembers(segment, contacts).map(c => c.id)) : null;
   const hasFilters = (listIds?.length) || (tagIds?.length) || segment;
   return contacts.filter(c => {
     if (c.emailOptOut || !c.email) return false;
@@ -40,7 +43,7 @@ function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
     if (!hasFilters) return true; // no targeting = everyone (minus opt-outs/exclusions above)
     if (listIds?.length && !(c.listIds || []).some(id => listIds.includes(id))) return false;
     if (tagIds?.length && !(c.tags || []).some(id => tagIds.includes(id))) return false;
-    if (segment && !matchesSegment(c, segment.filter)) return false;
+    if (segment && (limitedIds ? !limitedIds.has(c.id) : !matchesSegment(c, segment.filter))) return false;
     return true;
   });
 }

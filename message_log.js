@@ -6,6 +6,7 @@ import { appendContactMessage, appendContactMessageStatusEvent, appendContactMes
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
+import { noteSmsRow, noteSmsStatusChange } from "./sms_stats.js";
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -96,6 +97,8 @@ function persistRowSideEffects(row, bodyOffset) {
   // Which team member (if any) this message puts in conversation with the
   // contact -- feeds the "emailed/texted with <person>" segment condition.
   noteStaffActivity(row);
+  // Last inbound text / any errored text, for the SMS segment conditions (sms_stats.js).
+  try { noteSmsRow(row); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
   // A conversation marked Done stays that way forever otherwise (done is a
   // sticky manual flag -- see conversation_meta.js -- never cleared just
   // because unread_count went back up). A genuinely new inbound message
@@ -387,6 +390,7 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   // silent one.
   if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
   recordDailyStatsTransition(found, oldStatus, status);
+  try { noteSmsStatusChange(found, oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
   if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
   return found;
 }
@@ -444,6 +448,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
     recomputeConversationSummary(found.contactId);
     if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
     recordDailyStatsTransition(found, oldStatus, status);
+    try { noteSmsStatusChange(found, oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
     if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(found.contactId, found.channel);
   }
   return results;
@@ -472,6 +477,7 @@ export function updateMessageById(id, patch) {
   recomputeConversationSummary(entry.contactId);
   if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
   if (patch.status) recordDailyStatsTransition(found, oldStatus, patch.status);
+  if (patch.status) { try { noteSmsStatusChange(found, oldStatus, patch.status); } catch (e) { console.error("[sms_stats] note failed:", e.message); } }
   return found;
 }
 export function getMessagesForSource(sourceType, sourceId) {

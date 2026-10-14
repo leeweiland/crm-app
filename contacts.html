@@ -408,6 +408,7 @@
       <div id="editSegmentKeptList"></div>
     </div>
     <button class="pra-btn pra-btn-ghost pra-btn-sm" id="editSegmentAddCond" type="button">+ Add Condition</button>
+    <div class="field" style="margin-top:14px"><label class="pra-label">Limit (max contacts, newest leads first -- blank = no limit)</label><input class="pra-input" type="number" min="0" id="editSegmentLimit" placeholder="No limit" style="max-width:200px"/></div>
     <div id="editSegmentError" style="color:var(--pra-red);font-size:.82rem;margin-top:10px;display:none"></div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="editSegmentSaveBtn" style="flex:1">Save Changes</button>
@@ -420,6 +421,7 @@
   <div class="pra-panel modal-box">
     <div class="pra-h2" style="margin-bottom:16px">Save as Segment</div>
     <div class="field"><label class="pra-label">Name</label><input class="pra-input" id="segmentName"/></div>
+    <div class="field"><label class="pra-label">Limit (max contacts, newest leads first -- blank = no limit)</label><input class="pra-input" type="number" min="0" id="segmentLimit" placeholder="No limit"/></div>
     <div class="btn-row" style="display:flex;gap:10px;margin-top:16px">
       <button class="pra-btn" id="confirmSaveSegmentBtn" style="flex:1">Save Segment</button>
       <button class="pra-btn pra-btn-ghost" id="cancelSaveSegmentBtn">Cancel</button>
@@ -925,6 +927,7 @@ function openEditSegment(seg) {
   editingSegment = { id: seg.id, preserved: [] };
   document.getElementById('editSegmentName').value = seg.name || '';
   document.getElementById('editSegmentMatch').value = filter.any ? 'any' : 'all';
+  document.getElementById('editSegmentLimit').value = Number(seg.limit) > 0 ? seg.limit : '';
   const rows = document.getElementById('editSegmentRows');
   rows.innerHTML = '';
   conds.forEach(c => { if (window.ConditionRowBuilder.canRepresent(c)) window.ConditionRowBuilder.addRow(rows, c); else editingSegment.preserved.push(c); });
@@ -957,7 +960,7 @@ document.getElementById('editSegmentSaveBtn').onclick = async () => {
   const btn = document.getElementById('editSegmentSaveBtn');
   btn.disabled = true; btn.textContent = 'Saving...';
   let r;
-  try { r = await fetch(`/api/segments/${editingSegment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter }) }); }
+  try { r = await fetch(`/api/segments/${editingSegment.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter, limit: Number(document.getElementById('editSegmentLimit').value) || null }) }); }
   catch { r = null; }
   btn.disabled = false; btn.textContent = 'Save Changes';
   if (!r || !r.ok) { const d = r ? await r.json().catch(() => ({})) : {}; return fail(d.error || 'Could not save.'); }
@@ -969,7 +972,8 @@ document.getElementById('editSegmentSaveBtn').onclick = async () => {
   // real count now (a live filter query) instead of showing the stale one.
   const countEl = document.querySelector(`#segmentsBody [data-count="${segment.id}"]`);
   if (countEl) countEl.textContent = '…';
-  const n = await fetchCount('segment', segment);
+  let n = await fetchCount('segment', segment);
+  if (typeof n === 'number' && Number(segment.limit) > 0) n = Math.min(n, Number(segment.limit));
   tableState.segment.prefetchedCounts?.set(segment.id, n ?? 0);
   if (countEl) countEl.textContent = typeof n === 'number' ? n.toLocaleString() : '—';
 };
@@ -1061,13 +1065,14 @@ document.getElementById('saveSegmentBtn').onclick = () => {
   activeFilter = buildFilterFromRows();
   if (!activeFilter) { showToast('Add at least one condition first', true); return; }
   document.getElementById('segmentName').value = '';
+  document.getElementById('segmentLimit').value = '';
   document.getElementById('saveSegmentModal').classList.add('show');
 };
 document.getElementById('cancelSaveSegmentBtn').onclick = () => document.getElementById('saveSegmentModal').classList.remove('show');
 document.getElementById('confirmSaveSegmentBtn').onclick = async () => {
   const name = document.getElementById('segmentName').value.trim();
   if (!name) { showToast('Segment name is required', true); return; }
-  const r = await fetch('/api/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter: activeFilter }) });
+  const r = await fetch('/api/segments', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filter: activeFilter, limit: Number(document.getElementById('segmentLimit').value) || null }) });
   if (!r.ok) { showToast('Could not save segment', true); return; }
   document.getElementById('saveSegmentModal').classList.remove('show');
   showToast('Segment saved');
