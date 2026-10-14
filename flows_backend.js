@@ -13,6 +13,8 @@ import { normalizePhoneForCapture } from "./phone_util.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { fetchChannelFeed, addVideoToPlaylist } from "./youtube_backend.js";
 import { addPeopleToAudience, endWindowAndTrim, normPhone } from "./facebook_backend.js";
+import { getBookingById, cancelBookingById } from "./scheduling_backend.js";
+import { getContactMessages } from "./message_index.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -23,8 +25,11 @@ export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
-  "youtube_add_to_playlist", "drip", "fb_audience_add", "fb_audience_remove",
+  "youtube_add_to_playlist", "drip", "fb_audience_add", "fb_audience_remove", "cancel_if_no_engagement",
 ];
+// Steps with two exits (yesStepId/noStepId) instead of one nextStepId.
+// cancel_if_no_engagement: yes = kept (engaged), no = cancelled.
+const BRANCH_STEP_TYPES = ["if_then", "cancel_if_no_engagement"];
 
 // send_email's Body is still just a flat string (not the block editor's
 // real HTML) -- escape it like real text first, so nothing a lead typed
@@ -399,7 +404,7 @@ async function advanceFlowRun(run, flow) {
       // skipped delay doesn't pause it. if_then has no single "next" to
       // fall through to, so a skipped one just always takes its YES path
       // (or NO if that's the only one wired) rather than stalling.
-      run.currentStepId = step.type === "if_then" ? (step.yesStepId || step.noStepId || null) : (step.nextStepId || null);
+      run.currentStepId = BRANCH_STEP_TYPES.includes(step.type) ? (step.yesStepId || step.noStepId || null) : (step.nextStepId || null);
       if (!run.currentStepId) { completeRun(run); return; }
       saveRun(run);
       continue;
@@ -417,6 +422,27 @@ async function advanceFlowRun(run, flow) {
       run.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
       saveRun(run);
       return; // pauses here -- advanceDueFlowRuns() resumes it
+    }
+
+    if (step.type === "cancel_if_no_engagement") {
+      // Parks the run until the cutoff before the meeting; advanceDueFlowRuns
+      // makes the keep/cancel call then (decideEngagementStep).
+      const booking = run.bookingId ? getBookingById(run.bookingId) : null;
+      if (booking && booking.status !== "confirmed") { completeRun(run); return; }
+      // No booking (not a booking_created flow), or booked inside the
+      // cutoff window (e.g. 30 min out with a 1 hour cutoff) -- they never
+      // had a chance to engage, so never cancel: straight to KEPT.
+      const deadline = booking ? engagementDeadlineMs(booking, step) : 0;
+      if (deadline > Date.now()) {
+        run.waitUntil = new Date(deadline).toISOString();
+        saveRun(run);
+        return;
+      }
+      run.history.push({ stepId: step.id, at: new Date().toISOString(), note: booking ? "booked inside the cutoff -- kept" : "no booking on this run -- nothing to cancel" });
+      run.currentStepId = step.yesStepId || null;
+      if (!run.currentStepId) { completeRun(run); return; }
+      saveRun(run);
+      continue;
     }
 
     if (step.type === "drip") {
@@ -742,10 +768,11 @@ async function advanceFlowRun(run, flow) {
   saveRun(run);
 }
 
-function startFlowRun(flow, contactId, triggerPayload) {
+function startFlowRun(flow, contactId, triggerPayload, bookingId) {
   const run = {
     id: randomUUID(), flowId: flow.id, contactId, status: "active",
     currentStepId: flow.startStepId || null, triggerPayload: triggerPayload || {},
+    ...(bookingId ? { bookingId } : {}),
     enteredAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     waitUntil: null, history: [],
   };
@@ -761,7 +788,7 @@ function startFlowRun(flow, contactId, triggerPayload) {
 // and scheduling_backend.js (after a booking resolves to a contact) --
 // same "fire after contact resolution" convention as fireTrigger/
 // fireWorkflowTrigger, just for this engine's own Flow set.
-export function fireFlowTrigger(type, { contactId, formId, eventTypeId, payload }) {
+export function fireFlowTrigger(type, { contactId, formId, eventTypeId, bookingId, payload }) {
   if (!TRIGGER_TYPES.includes(type) || !contactId) return;
   const flows = readJson(FLOWS_FILE, []).filter(f => f.active && f.trigger?.type === type);
   for (const flow of flows) {
@@ -770,8 +797,68 @@ export function fireFlowTrigger(type, { contactId, formId, eventTypeId, payload 
     if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
     if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
     if (type === "status_changed" && cfg.statusId) matches = cfg.statusId === payload?.status;
-    if (matches) startFlowRun(flow, contactId, payload || {});
+    if (matches) startFlowRun(flow, contactId, payload || {}, bookingId);
   }
+}
+
+// ── cancel_if_no_engagement ──────────────────────────────────────────────
+// config: { amount, unit, signals: { emailOpen, smsClick, emailReply,
+// smsReply }, notify }. Engagement counts from when the booking was made.
+function engagementDeadlineMs(booking, step) {
+  const c = step.config || {};
+  const amount = Number(c.amount) > 0 ? Number(c.amount) : 1;
+  const ms = c.unit === "minutes" ? amount * 60000 : c.unit === "days" ? amount * 86400000 : amount * 3600000;
+  return new Date(booking.startAt).getTime() - ms;
+}
+// -> the first signal found ("opened an email", ...) or null. Reads the
+// contact's own per-contact message file (getContactMessages), never the
+// full message log.
+export function findEngagementSince(contact, sinceMs, signals) {
+  const s = signals || {};
+  const after = (iso) => { const t = new Date(iso).getTime(); return t >= sinceMs; };
+  if (s.emailOpen !== false) {
+    const eng = contact.emailEngagement || {};
+    if ((eng.openedAt && after(eng.openedAt)) || (eng.clickedAt && after(eng.clickedAt))) return "opened an email";
+  }
+  if (s.smsClick !== false && contact.smsEngagement?.clickedAt && after(contact.smsEngagement.clickedAt)) return "clicked a texted link";
+  const messages = getContactMessages(contact.id);
+  for (const m of messages) {
+    if (m.direction === "inbound" && after(m.createdAt)) {
+      if (m.channel === "email" && s.emailReply !== false) return "replied by email";
+      if (m.channel === "sms" && s.smsReply !== false) return "replied by text";
+    }
+    if (s.emailOpen !== false && m.channel === "email" && m.direction === "outbound" &&
+        (m.statusHistory || []).some(h => (h.status === "opened" || h.status === "clicked") && h.at && after(h.at))) return "opened an email";
+  }
+  return null;
+}
+// Runs when a run parked at a cancel_if_no_engagement step hits its
+// cutoff. Returns false if it re-parked the run instead of deciding.
+async function decideEngagementStep(run, flow, step) {
+  const booking = run.bookingId ? getBookingById(run.bookingId) : null;
+  if (!booking || booking.status !== "confirmed") { completeRun(run); return false; }
+  const deadline = engagementDeadlineMs(booking, step);
+  // Cutoff moved later since the run parked (meeting rescheduled, or the
+  // step's cutoff shortened) -- wait for the new one.
+  if (deadline > Date.now() + 60000) { run.waitUntil = new Date(deadline).toISOString(); saveRun(run); return false; }
+  const contact = getContact(run.contactId);
+  const sinceMs = new Date(booking.createdAt || run.enteredAt).getTime();
+  const engaged = contact ? findEngagementSince(contact, sinceMs, step.config?.signals) : null;
+  const at = new Date().toISOString();
+  if (engaged) {
+    run.history.push({ stepId: step.id, at, note: `kept -- ${engaged}` });
+    run.currentStepId = step.yesStepId || null;
+  } else {
+    const cancelled = await cancelBookingById(booking.id, {
+      by: "auto_no_engagement",
+      byLabel: `the "${flow.name}" flow (no email open, link click, or reply before the cutoff)`,
+      notify: step.config?.notify !== false,
+    });
+    run.history.push({ stepId: step.id, at, note: cancelled ? "cancelled -- no engagement" : "booking was no longer confirmed" });
+    if (!cancelled) { completeRun(run); return false; }
+    run.currentStepId = step.noStepId || null;
+  }
+  return true;
 }
 
 // ── YouTube "new video" trigger. Called by scheduler.js every tick; each
@@ -869,6 +956,13 @@ export async function advanceDueFlowRuns() {
     if (!flow) continue;
     const delayStep = flow.steps[run.currentStepId];
     run.waitUntil = null;
+    if (delayStep?.type === "cancel_if_no_engagement") {
+      const decided = await decideEngagementStep(run, flow, delayStep).catch(e => { console.error("[flows] engagement check failed", run.id, e.message); run.waitUntil = new Date(Date.now() + 60000).toISOString(); saveRun(run); return false; });
+      if (!decided) continue;
+      if (!run.currentStepId) { completeRun(run); continue; }
+      await advanceFlowRun(run, flow);
+      continue;
+    }
     run.currentStepId = delayStep?.nextStepId || null;
     if (!run.currentStepId) { completeRun(run); continue; }
     await advanceFlowRun(run, flow);
@@ -1137,6 +1231,25 @@ export async function handleFlowsRequest(req, res, url) {
               run.waitUntil = new Date(base + (Number(ms) || 0)).toISOString();
               touched = true;
             }
+          }
+          if (touched) writeJson(RUNS_FILE, runs);
+        }
+        // Same idea for a cancel_if_no_engagement step whose cutoff changed:
+        // re-park waiting runs at the new "N before the meeting" time.
+        const changedCutoffStepIds = Object.keys(newSteps).filter(id => {
+          const oldStep = oldSteps[id], newStep = newSteps[id];
+          return oldStep?.type === "cancel_if_no_engagement" && newStep?.type === "cancel_if_no_engagement" &&
+            (oldStep.config?.amount !== newStep.config?.amount || oldStep.config?.unit !== newStep.config?.unit);
+        });
+        if (changedCutoffStepIds.length) {
+          const runs = readJson(RUNS_FILE, []);
+          let touched = false;
+          for (const run of runs) {
+            if (run.flowId !== flow.id || run.status !== "active" || !run.waitUntil || !changedCutoffStepIds.includes(run.currentStepId)) continue;
+            const booking = run.bookingId ? getBookingById(run.bookingId) : null;
+            if (!booking) continue;
+            run.waitUntil = new Date(Math.max(Date.now(), engagementDeadlineMs(booking, newSteps[run.currentStepId]))).toISOString();
+            touched = true;
           }
           if (touched) writeJson(RUNS_FILE, runs);
         }

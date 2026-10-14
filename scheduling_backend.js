@@ -429,14 +429,12 @@ const DEFAULT_BRANDING = {
 const DEFAULT_CONFIRMATION = { email: { blocks: [], theme: {}, subject: "", previewText: "", footerTemplateId: null }, sms: "" };
 
 // Sent whenever a booking is cancelled, whichever side does it (the
-// invitee's own "Need to cancel?" link, or staff cancelling from the CRM).
-// Deliberately a plain subject/body pair, not the full block-editor
-// DEFAULT_CONFIRMATION gets -- a cancellation notice is short by nature, and
-// this didn't exist as a feature at all before, so there's no legacy
-// customized-block content to stay compatible with. `enabled: false` skips
-// both channels together; there was never a working cancellation
-// notification before this, so no per-channel "instant" toggle either.
-const DEFAULT_CANCELLATION = { enabled: true, email: { subject: "", body: "" }, sms: "" };
+// invitee's own "Need to cancel?" link, staff cancelling from the CRM, or a
+// flow's cancel_if_no_engagement step). Same block-editor email shape as
+// DEFAULT_CONFIRMATION. `body` is the older plain-text version, still read
+// when an event type has no blocks saved yet. `enabled: false` skips both
+// channels together.
+const DEFAULT_CANCELLATION = { enabled: true, email: { subject: "", previewText: "", blocks: [], theme: {}, footerTemplateId: null, body: "" }, sms: "" };
 
 // The booking form's whole question list -- NOT just extras beyond a fixed
 // Name/Email/Phone/Notes, those are now ordinary entries in this same list
@@ -1044,11 +1042,8 @@ async function sendBookingConfirmation(booking, eventType, contact) {
   ]);
 }
 
-// Cancellation notice -- same token substitution as the confirmation send
-// (getBookingTokenValues/applyBookingTokens), but a single plain-text body
-// per channel instead of the confirmation's full block editor (see
-// DEFAULT_CANCELLATION's own comment for why). Called from both cancel
-// paths (the invitee's own link, and staff cancelling from the CRM) so
+// Cancellation notice -- same token substitution and block handling as
+// sendBookingEmail. Called from every cancel path via cancelBookingById, so
 // there's exactly one place this can drift from what's actually configured.
 async function sendCancellationNotification(booking, eventType, contact) {
   const cfg = eventType.cancellation || DEFAULT_CANCELLATION;
@@ -1057,17 +1052,49 @@ async function sendCancellationNotification(booking, eventType, contact) {
   const { when } = tokens;
   const customSubject = cfg.email?.subject ? applyMergeTags(applyBookingTokens(cfg.email.subject, tokens), contact) : "";
   const subject = customSubject || `Cancelled: ${eventType.name}`;
-  const customBody = cfg.email?.body ? applyMergeTags(applyBookingTokens(cfg.email.body, tokens), contact) : "";
-  const blocks = [{
-    id: "b1", type: "text",
-    html: customBody || `<p>Hi ${contact.first || "there"},</p><p>Your <b>${eventType.name}</b> for <b>${when}</b> has been cancelled.</p>`,
-  }];
+  const previewText = cfg.email?.previewText ? applyMergeTags(applyBookingTokens(cfg.email.previewText, tokens), contact) : undefined;
+  const customBlocks = (cfg.email?.blocks || []).length ? cfg.email.blocks : null;
+  const legacyBody = !customBlocks && cfg.email?.body ? applyMergeTags(applyBookingTokens(cfg.email.body, tokens), contact) : "";
+  const blocks = customBlocks
+    ? customBlocks.map(b => (b.type === "text" && b.html) ? { ...b, html: applyBookingTokens(b.html, tokens) } : b)
+    : [{
+        id: "b1", type: "text",
+        html: legacyBody || `<p>Hi ${contact.first || "there"},</p><p>Your <b>${eventType.name}</b> for <b>${when}</b> has been cancelled.</p>`,
+      }];
   const smsTemplate = cfg.sms || `Your ${eventType.name} for %WHEN% has been cancelled.`;
   const smsBody = applyMergeTags(applyBookingTokens(smsTemplate, tokens), contact);
   await Promise.all([
-    contact.email ? sendEmail({ to: contact.email, subject, blocks, theme: {}, footerTemplateId: null, contactId: contact.id, sourceType: "booking", sourceId: booking.id }).catch(() => {}) : Promise.resolve(),
+    contact.email ? sendEmail({
+      to: contact.email, subject, previewText, blocks,
+      theme: customBlocks ? (cfg.email.theme || {}) : {}, footerTemplateId: cfg.email?.footerTemplateId || null,
+      contactId: contact.id, sourceType: "booking", sourceId: booking.id,
+    }).catch(() => {}) : Promise.resolve(),
     contact.phone ? sendSms({ to: contact.phone, body: smsBody, contactId: contact.id, sourceType: "booking", sourceId: booking.id }).catch(() => {}) : Promise.resolve(),
   ]);
+}
+
+export function getBookingById(id) {
+  return readJson(BOOKINGS_FILE, []).find(b => b.id === id) || null;
+}
+
+// The one cancel path every caller goes through (invitee link, staff, a
+// flow step). `by` is the short code stored on the booking (cancelledBy);
+// byLabel is the human wording in the contact's Inbox thread. Returns the
+// cancelled booking, or null if it wasn't confirmed (already cancelled,
+// or never existed) -- so a double cancel never re-notifies.
+export async function cancelBookingById(bookingId, { by, byLabel, notify = true } = {}) {
+  const bookings = readJson(BOOKINGS_FILE, []);
+  const booking = bookings.find(b => b.id === bookingId);
+  if (!booking || booking.status !== "confirmed") return null;
+  booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
+  booking.cancelledBy = by;
+  writeJson(BOOKINGS_FILE, bookings);
+  const et = getEventTypes().find(e => e.id === booking.eventTypeId);
+  logBookingCancellation(booking, et, byLabel || by);
+  if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
+  const contact = getContactByIdFast(booking.contactId);
+  if (notify && et && contact) sendCancellationNotification(booking, et, contact).catch(() => {});
+  return booking;
 }
 
 export function reminderDueMs(reminder) {
@@ -1309,7 +1336,7 @@ export async function handleSchedulingRequest(req, res, url) {
     fireTrigger("booking_created", { contactId: contact.id, eventTypeId: et.id, bookingId: booking.id });
     fireWorkflowTrigger("booking_created", { contactId: contact.id, eventTypeId: et.id, bookingId: booking.id });
     fireFlowTrigger("booking_created", {
-      contactId: contact.id, eventTypeId: et.id,
+      contactId: contact.id, eventTypeId: et.id, bookingId: booking.id,
       // Spread first so the real booking fields always win a same-named
       // collision (e.g. a form question that happened to be labeled
       // "Email") -- formAnswers is book.html's own forwarded copy of a
@@ -1394,19 +1421,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const bookings = readJson(BOOKINGS_FILE, []);
     const booking = bookings.find(b => b.id === publicCancelMatch[1]);
     if (!booking || booking.cancelToken !== token) return sendJson(res, 404, { error: "Not found" });
-    if (booking.status === "confirmed") {
-      booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
-      booking.cancelledBy = "invitee";
-      writeJson(BOOKINGS_FILE, bookings);
-      const et = getEventTypes().find(e => e.id === booking.eventTypeId);
-      logBookingCancellation(booking, et, "the invitee (booking page)");
-      if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
-      // Fire-and-forget, same convention as sendBookingConfirmation's own
-      // caller -- the invitee just cancelled their own booking, no reason to
-      // hold this response open on an email/SMS send.
-      const contact = getContactByIdFast(booking.contactId);
-      if (et && contact) sendCancellationNotification(booking, et, contact).catch(() => {});
-    }
+    await cancelBookingById(booking.id, { by: "invitee", byLabel: "the invitee (booking page)" });
     return sendJson(res, 200, { ok: true });
   }
 
@@ -1598,16 +1613,7 @@ export async function handleSchedulingRequest(req, res, url) {
     const bookings = readJson(BOOKINGS_FILE, []);
     const booking = bookings.find(b => b.id === adminCancelMatch[1]);
     if (!booking) return sendJson(res, 404, { error: "Not found" });
-    if (booking.status === "confirmed") {
-      booking.status = "cancelled"; booking.cancelledAt = new Date().toISOString(); booking.updatedAt = new Date().toISOString();
-      booking.cancelledBy = "staff";
-      writeJson(BOOKINGS_FILE, bookings);
-      const et = getEventTypes().find(e => e.id === booking.eventTypeId);
-      logBookingCancellation(booking, et, "staff (CRM)");
-      if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
-      const contact = getContactByIdFast(booking.contactId);
-      if (et && contact) sendCancellationNotification(booking, et, contact).catch(() => {});
-    }
+    await cancelBookingById(booking.id, { by: "staff", byLabel: "staff (CRM)" });
     return sendJson(res, 200, { ok: true });
   }
   // Manual retry for a booking whose Google Calendar write failed (see

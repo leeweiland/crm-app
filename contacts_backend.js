@@ -165,11 +165,14 @@ export function suppressContactEmail(contactId, reason) { // reason: "bounced" |
   });
   if (updated) { try { syncContactFields(contactId, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
 }
-export function markContactVisitedPage(contactId, path) {
+// smsClick: the visit came from a link we texted them (el=sms-<slug>) --
+// stamped as smsEngagement.clickedAt, read by flows' cancel_if_no_engagement.
+export function markContactVisitedPage(contactId, path, { smsClick } = {}) {
   if (!contactId || !path) return;
   const updated = updateContactByField("id", contactId, c => {
     c.visitedPaths = c.visitedPaths || [];
     if (!c.visitedPaths.includes(path)) c.visitedPaths.push(path);
+    if (smsClick) c.smsEngagement = { ...(c.smsEngagement || {}), clickedAt: new Date().toISOString() };
     return c;
   });
   if (updated) { try { syncContactFields(contactId, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }

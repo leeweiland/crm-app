@@ -217,7 +217,8 @@ export async function handleTrackingRequest(req, res, url) {
     // "page_visit" automation/workflow triggers only make sense for a KNOWN
     // contact -- an anonymous visit has nothing to enroll or advance.
     if (cid) {
-      markContactVisitedPage(cid, parsed.path || "");
+      const visitCtx = parseVisitContext(parsed.search || "");
+      markContactVisitedPage(cid, parsed.path || "", { smsClick: visitCtx.isSmsClick });
       fireTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
       fireWorkflowTrigger("page_visit", { contactId: cid, path: parsed.path || "" });
       // Behavioral-trigger AI outbound -- an SMS-tagged (el=sms-<slug>) or
@@ -227,7 +228,6 @@ export async function handleTrackingRequest(req, res, url) {
       // anything else is a plain page visit. Cheap/synchronous, never
       // calls the model here -- only decides whether a later scheduler
       // tick should.
-      const visitCtx = parseVisitContext(parsed.search || "");
       const source = visitCtx.videoId ? "video_watch" : visitCtx.isSmsClick ? "sms_click" : "page_visit";
       queueBehavioralTrigger({ contactId: cid, source, context: { path: parsed.path || "", ...visitCtx } });
     }
