@@ -2,7 +2,7 @@ import { randomUUID, randomBytes } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, findContactMatch } from "./segments_shared.js";
 import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
-import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal } from "./automations_backend.js";
+import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal, dripClock } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
@@ -22,7 +22,7 @@ export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
-  "youtube_add_to_playlist",
+  "youtube_add_to_playlist", "drip",
 ];
 
 // send_email's Body is still just a flat string (not the block editor's
@@ -377,6 +377,17 @@ async function advanceFlowRun(run, flow) {
       run.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
       saveRun(run);
       return; // pauses here -- advanceDueFlowRuns() resumes it
+    }
+
+    if (step.type === "drip") {
+      // Joins this step's queue -- releaseFlowDripQueues lets config.perDay
+      // through per day. dripQueued also keeps recoverStaleFlowRuns from
+      // mistaking a queued run (no waitUntil) for an orphaned one.
+      run.waitUntil = null;
+      run.dripQueued = step.id;
+      run.dripQueuedAt = new Date().toISOString();
+      saveRun(run);
+      return;
     }
 
     if (step.type === "filter") {
@@ -742,8 +753,43 @@ export async function pollYoutubeFlows() {
   if (dirty) writeJson(YT_POLL_STATE_FILE, state);
 }
 
+// Drip step: same pacing as automations_backend.js's releaseDripQueues (at
+// most config.perDay per Alaska day, spread evenly across it, arrival order).
+// A released run gets waitUntil = now and leaves the drip on the same pass
+// below, exactly like a finished delay. Own state file -- this runs on the
+// scheduler thread, the automation one on the send worker.
+const FLOW_DRIP_STATE_FILE = "crm_flow_drip_state.json";
+function releaseFlowDripQueues() {
+  const flows = readJson(FLOWS_FILE, []).filter(f => f.active && Object.values(f.steps || {}).some(s => s.type === "drip"));
+  if (!flows.length) return;
+  const runs = readJson(RUNS_FILE, []);
+  const now = new Date();
+  const { day, fraction } = dripClock(now);
+  const state = readJson(FLOW_DRIP_STATE_FILE, {});
+  let changed = false;
+  for (const flow of flows) {
+    for (const step of Object.values(flow.steps).filter(s => s.type === "drip")) {
+      const key = `${flow.id}:${step.id}`;
+      const entry = state[key]?.day === day ? state[key] : { day, released: 0 };
+      // A drip toggled to skipped lets everyone already queued there go.
+      const allowed = step.skipped ? Infinity : Math.ceil(Math.max(0, Math.floor(Number(step.config?.perDay) || 0)) * fraction) - entry.released;
+      if (allowed <= 0) continue;
+      const queue = runs.filter(r => r.flowId === flow.id && r.status === "active" && r.currentStepId === step.id && r.dripQueued === step.id && !r.waitUntil)
+        .sort((a, b) => String(a.dripQueuedAt).localeCompare(String(b.dripQueuedAt)))
+        .slice(0, allowed);
+      if (!queue.length) continue;
+      for (const r of queue) { r.waitUntil = now.toISOString(); delete r.dripQueued; r.updatedAt = now.toISOString(); }
+      entry.released += queue.length;
+      state[key] = entry;
+      changed = true;
+    }
+  }
+  if (changed) { writeJson(RUNS_FILE, runs); writeJson(FLOW_DRIP_STATE_FILE, state); }
+}
+
 // Called by scheduler.js every tick -- resumes any run whose delay step has expired.
 export async function advanceDueFlowRuns() {
+  try { releaseFlowDripQueues(); } catch (e) { console.error("[flows] drip release failed", e.message); }
   const runs = readJson(RUNS_FILE, []);
   const due = runs.filter(r => r.status === "active" && r.waitUntil && new Date(r.waitUntil).getTime() <= Date.now());
   for (const run of due) {
@@ -773,7 +819,7 @@ export async function advanceDueFlowRuns() {
 const STALE_RUN_MS = 3 * 60 * 1000;
 export async function recoverStaleFlowRuns() {
   const runs = readJson(RUNS_FILE, []);
-  const stale = runs.filter(r => r.status === "active" && !r.waitUntil && Date.now() - new Date(r.enteredAt).getTime() > STALE_RUN_MS);
+  const stale = runs.filter(r => r.status === "active" && !r.waitUntil && !r.dripQueued && Date.now() - new Date(r.enteredAt).getTime() > STALE_RUN_MS);
   for (const run of stale) {
     const flow = readJson(FLOWS_FILE, []).find(f => f.id === run.flowId);
     if (!flow) { completeRun(run); continue; } // flow deleted since -- nothing left to resume

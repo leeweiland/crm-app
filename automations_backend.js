@@ -303,7 +303,7 @@ async function advanceEnrollment(enrollment, automation) {
 // thread that runs advanceDueEnrollments ever touches it.
 const DRIP_STATE_FILE = "crm_drip_state.json";
 const DRIP_TZ = "America/Anchorage";
-function dripClock(now) {
+export function dripClock(now) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: DRIP_TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
     .formatToParts(now).map(p => [p.type, p.value]));
   const secs = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
