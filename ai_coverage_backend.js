@@ -3,7 +3,7 @@ import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound,
+  generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound, sentCategoryForSourceType,
 } from "./ai_agents_backend.js";
 import { sendViaChannel } from "./ai_active_backend.js";
 
@@ -74,10 +74,13 @@ export async function maybeCoverInboundReply(contactId) {
 
     // Human takeover -- if the owner (back early, replying from their
     // phone) or anyone else has personally messaged this lead more
-    // recently than this engine's own last covering reply, stand down.
-    const lastCoverageSend = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType === SOURCE_TYPE);
+    // recently than the agent itself did (in ANY mode -- coverage, AI
+    // Active, test send), stand down. Used to compare against coverage
+    // sends only, so a teammate's email from weeks earlier blocked coverage
+    // forever even when the lead was replying to Kai's own AI Active email.
+    const lastAgentSend = [...journey].reverse().find((m) => m.direction === "outbound" && (sentCategoryForSourceType(m.sourceType) === "ai_agent" || m.sourceType === "ai_active_test"));
     const lastHumanOutbound = findLastHumanOutbound(journey);
-    if (lastHumanOutbound && (!lastCoverageSend || new Date(lastHumanOutbound.createdAt).getTime() > new Date(lastCoverageSend.createdAt).getTime())) return;
+    if (lastHumanOutbound && (!lastAgentSend || new Date(lastHumanOutbound.createdAt).getTime() > new Date(lastAgentSend.createdAt).getTime())) return;
 
     // Just the lead's literal latest message, not the whole journey
     // re-rendered into the user turn -- matches ai_active_backend.js's own
