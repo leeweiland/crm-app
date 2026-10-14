@@ -2,7 +2,7 @@ import { randomUUID, randomBytes } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, findContactMatch } from "./segments_shared.js";
 import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
-import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal, dripClock } from "./automations_backend.js";
+import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal, dripClock, dripAllowedSoFar } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
@@ -825,7 +825,8 @@ export async function pollYoutubeFlows() {
 }
 
 // Drip step: same pacing as automations_backend.js's releaseDripQueues (at
-// most config.perDay per Alaska day, spread evenly across it, arrival order).
+// most config.perDay per Alaska day, spread across it or all at a set time --
+// see dripAllowedSoFar -- in arrival order).
 // A released run gets waitUntil = now and leaves the drip on the same pass
 // below, exactly like a finished delay. Own state file -- this runs on the
 // scheduler thread, the automation one on the send worker.
@@ -835,7 +836,7 @@ function releaseFlowDripQueues() {
   if (!flows.length) return;
   const runs = readJson(RUNS_FILE, []);
   const now = new Date();
-  const { day, fraction } = dripClock(now);
+  const { day, secs } = dripClock(now);
   const state = readJson(FLOW_DRIP_STATE_FILE, {});
   let changed = false;
   for (const flow of flows) {
@@ -843,7 +844,7 @@ function releaseFlowDripQueues() {
       const key = `${flow.id}:${step.id}`;
       const entry = state[key]?.day === day ? state[key] : { day, released: 0 };
       // A drip toggled to skipped lets everyone already queued there go.
-      const allowed = step.skipped ? Infinity : Math.ceil(Math.max(0, Math.floor(Number(step.config?.perDay) || 0)) * fraction) - entry.released;
+      const allowed = step.skipped ? Infinity : dripAllowedSoFar(step.config, secs) - entry.released;
       if (allowed <= 0) continue;
       const queue = runs.filter(r => r.flowId === flow.id && r.status === "active" && r.currentStepId === step.id && r.dripQueued === step.id && !r.waitUntil)
         .sort((a, b) => String(a.dripQueuedAt).localeCompare(String(b.dripQueuedAt)))

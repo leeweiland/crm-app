@@ -294,10 +294,11 @@ async function advanceEnrollment(enrollment, automation) {
 }
 
 // ── Drip step ────────────────────────────────────────────────────────────
-// Lets at most config.perDay contacts through per Alaska calendar day, spread
-// evenly across the day (by noon, half the day's allowance has gone out) so
-// a big batch enrolled at once trickles out instead of hitting SES in one
-// burst. Released contacts are marked due (waitUntil = now) and moved past
+// Lets at most config.perDay contacts through per Alaska calendar day --
+// either spread evenly across the day (default; by noon, half the day's
+// allowance has gone out) or, with config.spread === false, the whole day's
+// allowance at config.releaseTime ("HH:MM", Anchorage). A big batch enrolled
+// at once trickles out instead of hitting SES in one burst. Released contacts are marked due (waitUntil = now) and moved past
 // the drip by advanceDueEnrollments, exactly like a finished Wait step.
 // Per-step "released today" counts live in a tiny state file; only the one
 // thread that runs advanceDueEnrollments ever touches it.
@@ -307,21 +308,29 @@ export function dripClock(now) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: DRIP_TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
     .formatToParts(now).map(p => [p.type, p.value]));
   const secs = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
-  return { day: `${parts.year}-${parts.month}-${parts.day}`, fraction: Math.min(1, secs / 86400) };
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, secs };
+}
+// How many of today's allowance may have gone out by this time of day.
+export function dripAllowedSoFar(config, secs) {
+  const perDay = Math.max(0, Math.floor(Number(config?.perDay) || 0));
+  if (config?.spread === false) {
+    const [h, m] = String(config.releaseTime || "09:00").split(":").map(Number);
+    return secs >= (h || 0) * 3600 + (m || 0) * 60 ? perDay : 0;
+  }
+  return Math.ceil(perDay * Math.min(1, secs / 86400));
 }
 function releaseDripQueues() {
   const automations = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && Object.values(a.steps || {}).some(s => s.type === "drip"));
   if (!automations.length) return;
   const now = new Date();
-  const { day, fraction } = dripClock(now);
+  const { day, secs } = dripClock(now);
   const state = readJson(DRIP_STATE_FILE, {});
   let stateChanged = false;
   for (const a of automations) {
     for (const step of Object.values(a.steps).filter(s => s.type === "drip")) {
       const key = `${a.id}:${step.id}`;
       const entry = state[key]?.day === day ? state[key] : { day, released: 0 };
-      const perDay = Math.max(0, Math.floor(Number(step.config?.perDay) || 0));
-      const allowed = Math.ceil(perDay * fraction) - entry.released;
+      const allowed = dripAllowedSoFar(step.config, secs) - entry.released;
       if (allowed <= 0) continue;
       const batch = listDripQueue(a.id, step.id, allowed);
       if (!batch.length) continue;

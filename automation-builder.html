@@ -365,10 +365,11 @@ function stepSummary(step) {
   }
   if (step.type === 'jump_to_automation') return `Add to: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
   if (step.type === 'end_automation') return `End: ${escapeHtml(allAutomations.find(a => a.id === step.config.automationId)?.name || '—')}`;
-  if (step.type === 'drip') return `Release ${Number(step.config.perDay) || 0} per day`;
+  if (step.type === 'drip') { const dc = step.config; return `Release ${Number(dc.perDay) || 0} per day${dc.spread === false ? ` at ${fmtDripTime(dc.releaseTime)} (Anchorage)` : ', spread through the day'}`; }
   if (step.type === 'goal') return step.config.status ? `Goal: status changes to ${escapeHtml(step.config.status)}` : 'Goal: any status change';
   return '';
 }
+function fmtDripTime(t) { const [h, m] = String(t || '09:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; }
 const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation', goal: 'Goal', drip: 'Drip' };
 let facebookIsConfigured = false;
 
@@ -959,7 +960,10 @@ function openStepConfigModal(step, isNew) {
   } else if (step.type === 'drip') {
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Everyone who reaches this step waits in line here. Only this many are let through per day (Alaska time), spread evenly across the day, in the order they arrived -- so a big batch trickles out instead of sending all at once.</div>
-      <div class="field"><label class="pra-label">Contacts per day</label><input class="pra-input" type="number" min="0" id="cfgDripPerDay" value="${Number(step.config.perDay) || 0}"/></div>`;
+      <div class="field"><label class="pra-label">Contacts per day</label><input class="pra-input" type="number" min="0" id="cfgDripPerDay" value="${Number(step.config.perDay) || 0}"/></div>
+      <div class="field"><label class="pra-label" style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="cfgDripSpread" ${step.config.spread === false ? '' : 'checked'}/> Spread evenly through the day</label></div>
+      <div class="field" id="cfgDripTimeField" style="display:${step.config.spread === false ? 'block' : 'none'}"><label class="pra-label">Release the whole day's batch at (Anchorage time)</label><input class="pra-input" type="time" id="cfgDripTime" value="${step.config.releaseTime || '09:00'}"/></div>`;
+    document.getElementById('cfgDripSpread').addEventListener('change', (e) => { document.getElementById('cfgDripTimeField').style.display = e.target.checked ? 'none' : 'block'; });
   } else if (step.type === 'goal') {
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">When a contact hits this goal, anyone still above it in this automation is moved straight down to here and continues with the next step. Contacts already past it aren't affected.</div>
@@ -974,7 +978,7 @@ function openStepConfigModal(step, isNew) {
     else if (step.type === 'add_to_facebook_audience') { step.config.audienceName = document.getElementById('cfgFbName').value.trim(); step.config.audienceId = document.getElementById('cfgFbId').value.trim(); }
     else if (step.type === 'condition') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
     else if (step.type === 'jump_to_automation' || step.type === 'end_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
-    else if (step.type === 'drip') { step.config = { perDay: Math.max(0, Math.floor(Number(document.getElementById('cfgDripPerDay').value) || 0)) }; }
+    else if (step.type === 'drip') { const spread = document.getElementById('cfgDripSpread').checked; step.config = { perDay: Math.max(0, Math.floor(Number(document.getElementById('cfgDripPerDay').value) || 0)), spread, releaseTime: document.getElementById('cfgDripTime').value || '09:00' }; }
     else if (step.type === 'goal') { step.config = { trigger: 'lead_status_change', status: document.getElementById('cfgGoalStatus').value || null }; }
     if (isNew) attachNewStep(step);
     closeModal('stepConfigModal');

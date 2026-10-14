@@ -384,7 +384,7 @@ function stepSummary(step) {
   if (step.type === 'filter') return conditionSummary(c.filter?.all?.[0], 'Continue only if');
   if (step.type === 'if_then') return conditionSummary(c.filter?.all?.[0], 'If');
   if (step.type === 'delay') return `Wait ${c.amount || 0} ${c.unit || 'minutes'}`;
-  if (step.type === 'drip') return `Release ${Number(c.perDay) || 0} per day`;
+  if (step.type === 'drip') { const dc = c; return `Release ${Number(dc.perDay) || 0} per day${dc.spread === false ? ` at ${fmtDripTime(dc.releaseTime)} (Anchorage)` : ', spread through the day'}`; }
   if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'sheet_upsert') return `Find/update row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.matchGroups || []).length} match rule${(c.matchGroups || []).length === 1 ? '' : 's'}, ${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
@@ -410,6 +410,7 @@ function stepSummary(step) {
   }
   return '';
 }
+function fmtDripTime(t) { const [h, m] = String(t || '09:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; }
 const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', sheet_upsert: 'Find/Update Row in Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist', drip: 'Drip', fb_audience_add: 'Add to Facebook Audience', fb_audience_remove: 'Remove from Facebook Audience' };
 
 function stepCardHtml(stepId, isLast) {
@@ -1099,7 +1100,10 @@ function openStepConfigModal(step, isNew) {
   } else if (step.type === 'drip') {
     body.innerHTML = `
       <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">Everyone who reaches this step waits in line here. Only this many are let through per day (Alaska time), spread evenly across the day, in the order they arrived -- so a big batch trickles out instead of all at once.</div>
-      <div class="field"><label class="pra-label">Contacts per day</label><input class="pra-input" type="number" min="0" id="cfgDripPerDay" value="${Number(step.config.perDay) || 0}"/></div>`;
+      <div class="field"><label class="pra-label">Contacts per day</label><input class="pra-input" type="number" min="0" id="cfgDripPerDay" value="${Number(step.config.perDay) || 0}"/></div>
+      <div class="field"><label class="pra-label" style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="cfgDripSpread" ${step.config.spread === false ? '' : 'checked'}/> Spread evenly through the day</label></div>
+      <div class="field" id="cfgDripTimeField" style="display:${step.config.spread === false ? 'block' : 'none'}"><label class="pra-label">Release the whole day's batch at (Anchorage time)</label><input class="pra-input" type="time" id="cfgDripTime" value="${step.config.releaseTime || '09:00'}"/></div>`;
+    document.getElementById('cfgDripSpread').addEventListener('change', (e) => { document.getElementById('cfgDripTimeField').style.display = e.target.checked ? 'none' : 'block'; });
   } else if (step.type === 'delay') {
     body.innerHTML = `
       <div class="field-row">
@@ -1567,7 +1571,7 @@ function openStepConfigModal(step, isNew) {
 
   document.getElementById('saveStepBtn').onclick = () => {
     if (step.type === 'filter' || step.type === 'if_then') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
-    else if (step.type === 'drip') { step.config = { perDay: Math.max(0, Math.floor(Number(document.getElementById('cfgDripPerDay').value) || 0)) }; }
+    else if (step.type === 'drip') { const spread = document.getElementById('cfgDripSpread').checked; step.config = { perDay: Math.max(0, Math.floor(Number(document.getElementById('cfgDripPerDay').value) || 0)), spread, releaseTime: document.getElementById('cfgDripTime').value || '09:00' }; }
     else if (step.type === 'delay') { step.config.amount = Number(document.getElementById('cfgAmount').value) || 1; step.config.unit = document.getElementById('cfgUnit').value; }
     else if (step.type === 'google_sheet') {
       step.config.spreadsheetId = sheetPicked.id;
