@@ -9,6 +9,10 @@ window.ConditionRowBuilder = (function () {
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
 
   let allStatuses = [], allTags = [], allLists = [], allCustomFields = [];
+  // SMS sequences for the "Has been in SMS sequence" condition -- fetched once here
+  // so every page using this builder gets them without passing them in.
+  let allSequences = [];
+  fetch('/api/workflows').then(r => r.ok ? r.json() : null).then(d => { allSequences = (d?.workflows || []).map(w => ({ id: w.id, name: w.name })); }).catch(() => {});
   function init(refData) {
     allStatuses = refData?.statuses || [];
     allTags = refData?.tags || [];
@@ -45,6 +49,7 @@ window.ConditionRowBuilder = (function () {
       <option value="visitedPage">Visited Webpage</option>
       <option value="firstSeenAt">Lead date (oldest of Hyros / Close / AC)</option>
       <option value="bookedAt">Booked date (most recent confirmed booking)</option>
+      ${allSequences.map(w => `<option value="smsSequence:${escapeHtml(w.id)}">Has been in SMS sequence: ${escapeHtml(w.name)}</option>`).join('')}
       ${(window.crmTeamUsers || []).filter(u => !u.archived).map(u => `<option value="staffActivity:${escapeHtml(u.id)}">Emailed / texted with ${escapeHtml(u.first || u.email)}</option>`).join('')}
       ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
     `;
@@ -63,6 +68,7 @@ window.ConditionRowBuilder = (function () {
     // opposite -- the second is what keeps another rep's leads out of a segment.
     if (field === "phone") return `<option value="exists">Is set (has a phone number)</option><option value="not_exists">Is not set</option>`;
     if (field === "smsInbound") return `<option value="not_within_last_days">Has NOT in the last (days)</option><option value="within_last_days">Has, in the last (days)</option>`;
+    if (field.startsWith("smsSequence:")) return `<option value="never">Has NOT (ever)</option><option value="ever">Has (ever)</option>`;
     if (field.startsWith("staffActivity:")) return `<option value="not_within_last_days">Has NOT in the last (days)</option><option value="within_last_days">Has, in the last (days)</option>`;
     if (ARRAY_FIELDS.includes(field)) {
       const legacy = (legacyOp === "includes") ? `<option value="includes">Includes (legacy)</option>` : (legacyOp === "excludes") ? `<option value="excludes">Excludes (legacy)</option>` : "";
@@ -132,7 +138,7 @@ window.ConditionRowBuilder = (function () {
   const MULTI_VALUE_OPS = ["any_of", "all_of", "not_any_of", "not_all_of"];
 
   function valueInputHtml(field, op) {
-    if (op === 'exists' || op === 'not_exists') return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
+    if (['exists', 'not_exists', 'ever', 'never'].includes(op)) return `<input class="pra-input" data-cond-value disabled placeholder="(no value needed)"/>`;
     // Checked before the plain single-value <select> branches below, so
     // "is any of"/"is not any of" on a SCALAR_MULTI_FIELDS field (status)
     // gets the same chip multi-picker as an ARRAY_FIELDS field, instead of
@@ -249,7 +255,7 @@ window.ConditionRowBuilder = (function () {
       const field = row.querySelector('[data-cond-field]').value;
       const op = row.querySelector('[data-cond-op]').value;
       let value;
-      if (op === 'exists' || op === 'not_exists') value = undefined;
+      if (['exists', 'not_exists', 'ever', 'never'].includes(op)) value = undefined;
       else if (MULTI_VALUE_OPS.includes(op)) value = row._msSelected || [];
       else if (op === 'between') {
         const from = row.querySelector('[data-cond-from]')?.value, to = row.querySelector('[data-cond-to]')?.value;
@@ -263,7 +269,7 @@ window.ConditionRowBuilder = (function () {
     // matchesSegment (segments_shared.js) matches it against ANY visited
     // path (every string contains ""), i.e. "visited any page at all" --
     // so it can't be dropped here the way every other blank condition is.
-    }).filter(c => c.op === 'exists' || c.op === 'not_exists' || (c.field === 'visitedPage' && c.op === 'contains') || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
+    }).filter(c => ['exists', 'not_exists', 'ever', 'never'].includes(c.op) || (c.field === 'visitedPage' && c.op === 'contains') || (Array.isArray(c.value) ? c.value.length > 0 : (c.value !== undefined && c.value !== '')));
     if (!conds.length) return null;
     return matchMode === 'any' ? { any: conds } : { all: conds };
   }
@@ -296,7 +302,7 @@ window.ConditionRowBuilder = (function () {
     if (![...opSel.options].some(o => o.value === cond.op)) return false;
     if (cond.op === 'between') return !!cond.value && typeof cond.value === 'object' && isLocalMidnight(cond.value.from) && isLocalMidnight(cond.value.to);
     if (MULTI_VALUE_OPS.includes(cond.op)) return Array.isArray(cond.value);
-    if (cond.op === 'exists' || cond.op === 'not_exists') return true;
+    if (['exists', 'not_exists', 'ever', 'never'].includes(cond.op)) return true;
     if (Array.isArray(cond.value)) return false;
     // A single-value <select> (status/type/tag/list/yes-no) can only show a
     // value it has an option for -- e.g. a tag or list since deleted would
@@ -309,6 +315,10 @@ window.ConditionRowBuilder = (function () {
   function describeCondition(cond) {
     const staffUser = cond.field.startsWith('staffActivity:') ? (window.crmTeamUsers || []).find(u => u.id === cond.field.slice(14)) : null;
     const fieldLabel = FIELD_LABELS[cond.field] || (staffUser ? `Emailed / texted with ${staffUser.first || staffUser.email}` : cond.field.startsWith('staffActivity:') ? 'Emailed / texted with a team member' : null) || (cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field);
+    if (cond.field.startsWith('smsSequence:')) {
+      const seq = allSequences.find(w => w.id === cond.field.slice(12));
+      return `${cond.op === 'never' ? 'Has NOT been' : 'Has been'} in SMS sequence ${escapeHtml(seq?.name || '(sequence)')}`;
+    }
     const opLabel = OP_LABELS[cond.op] || cond.op;
     const ownerName = (id) => { const u = (window.crmTeamUsers || []).find(x => x.id === id); return u ? `${u.first} ${u.last}`.trim() : id; };
     let valueLabel = cond.value;

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { resolveBulkContactIds } from "./segments_shared.js";
+import { resolveBulkContactIds, segmentMembers, SEGMENTS_FILE } from "./segments_shared.js";
 import { getAllContacts, getContactById } from "./contacts_db.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
@@ -290,8 +290,60 @@ function releaseWorkflowDripQueues(enrollments, workflows) {
   return released;
 }
 
+// "Contact is in segment" trigger (config: { segmentId, time "HH:MM" Anchorage }).
+// Once per Alaska day, at/after that time, everyone the segment currently
+// contains (its Limit applies -- e.g. 100 a day) is enrolled. The segment is
+// expected to exclude people already in this sequence, so each day picks up
+// the NEXT batch instead of the same one. All new enrollments are written in
+// one go rather than one full-file rewrite per contact.
+const WF_SEGMENT_TRIGGER_STATE_FILE = "crm_wf_segment_trigger_state.json";
+function runSegmentTriggers() {
+  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && getWorkflowTriggers(w).some(t => t.type === "segment_member" && t.config?.segmentId));
+  if (!workflows.length) return;
+  const { day, secs } = dripClock(new Date());
+  const state = readJson(WF_SEGMENT_TRIGGER_STATE_FILE, {});
+  let stateChanged = false;
+  const segments = readJson(SEGMENTS_FILE, []);
+  for (const w of workflows) {
+    getWorkflowTriggers(w).forEach((t, i) => {
+      if (t.type !== "segment_member" || !t.config?.segmentId) return;
+      const key = `${w.id}:${i}:${t.config.segmentId}`;
+      if (state[key] === day) return;
+      const [h, m] = String(t.config.time || "09:00").split(":").map(Number);
+      if (secs < (h || 0) * 3600 + (m || 0) * 60) return;
+      state[key] = day; stateChanged = true;
+      const segment = segments.find(s => s.id === t.config.segmentId);
+      if (!segment) return;
+      const ids = segmentMembers(segment).map(c => c.id);
+      const n = enrollContactsInWorkflowBatch(w, ids);
+      console.log(`[workflows] segment trigger: "${segment.name}" -> "${w.name}": ${n} enrolled`);
+    });
+  }
+  if (stateChanged) writeJson(WF_SEGMENT_TRIGGER_STATE_FILE, state);
+}
+// Same rules as enrollContactInWorkflow, many contacts, one read + one write.
+export function enrollContactsInWorkflowBatch(workflow, contactIds) {
+  if (!workflow.active || !contactIds.length) return 0;
+  const startIndex = firstNonGoalIndex(workflow, 0);
+  if (!workflow.steps[startIndex]) return 0;
+  const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
+  const active = new Set(enrollments.filter(e => e.workflowId === workflow.id && e.status === "active").map(e => e.contactId));
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const contactId of contactIds) {
+    if (workflow.recipientSettings?.runMode !== "multiple" && active.has(contactId)) continue;
+    const e = { id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: startIndex, stepEnteredAt: now,
+      enrolledAt: now, nextStepDueAt: null, completedAt: null, goalMetAt: null, bookingId: null };
+    scheduleStep(e, workflow, startIndex, now);
+    enrollments.push(e); active.add(contactId); n++;
+  }
+  if (n) writeJson(WF_ENROLLMENTS_FILE, enrollments);
+  return n;
+}
+
 // Called by scheduler.js every tick.
 export async function advanceDueWorkflowEnrollments() {
+  try { runSegmentTriggers(); } catch (e) { console.error("[workflows] segment trigger failed", e.message); }
   const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
   const workflows = readJson(WORKFLOWS_FILE, []);
   // Released ones are written back onto a FRESH read, patching only their own
@@ -535,8 +587,8 @@ export async function handleWorkflowsRequest(req, res, url) {
     if (!workflow.active) return sendJson(res, 400, { error: "This sequence is inactive -- turn it on before enrolling anyone." });
     const contactIds = resolveBulkContactIds(body);
     if (!contactIds.length) return sendJson(res, 400, { error: "No matching contacts to enroll" });
-    contactIds.forEach(id => enrollContactInWorkflow(workflow, id));
-    return sendJson(res, 200, { ok: true, enrolled: contactIds.length });
+    const enrolled = enrollContactsInWorkflowBatch(workflow, contactIds);
+    return sendJson(res, 200, { ok: true, enrolled });
   }
 
   const wfEnrollmentsMatch = p.match(/^\/api\/workflows\/([^/]+)\/enrollments$/);

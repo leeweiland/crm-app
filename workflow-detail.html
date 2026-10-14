@@ -155,11 +155,17 @@
         <option value="page_visit">Contact visits a page</option>
         <option value="form_submitted">Form is submitted</option>
         <option value="booking_created">Booking is created</option>
+        <option value="segment_member">Contact is in a segment (checked once a day)</option>
       </select>
     </div>
     <div class="field" id="triggerTargetField" style="display:none">
       <label class="pra-label" id="triggerTargetLabel">Target</label>
       <select class="pra-select" id="triggerTarget"></select>
+    </div>
+    <div class="field" id="triggerTimeField" style="display:none">
+      <label class="pra-label">Check the segment every day at (Anchorage time)</label>
+      <input class="pra-input" type="time" id="triggerTime" value="09:00"/>
+      <div class="pra-muted" style="font-size:.76rem;margin-top:6px">Everyone in the segment at that time is added (the segment's Limit caps how many). Give the segment a "Has NOT been in this SMS sequence" condition so each day takes the next batch.</div>
     </div>
     <div class="field" id="triggerPathField" style="display:none">
       <label class="pra-label">Path contains (leave blank for any page)</label>
@@ -243,7 +249,7 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function uid() { return 'wst' + Math.random().toString(36).slice(2, 10); }
 
 const workflowId = new URLSearchParams(location.search).get('id');
-let workflow = null, allLists = [], allTags = [], allEventTypes = [], allForms = [];
+let workflow = null, allLists = [], allTags = [], allEventTypes = [], allForms = [], allSegments = [];
 let saveTimer, pendingInsertAfterId;
 
 // Contacts are NOT preloaded here -- the full list is 176k+ rows (a ~13MB
@@ -253,13 +259,14 @@ let saveTimer, pendingInsertAfterId;
 // searches on demand instead (see below), same as the type-ahead pattern
 // inbox.html's Potential Contacts flow already switched to for the same reason.
 async function loadRefs() {
-  const [listsRes, tagsRes, eventTypesRes, formsRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/scheduling/admin/event-types'), fetch('/api/forms')
+  const [listsRes, tagsRes, eventTypesRes, formsRes, segmentsRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/scheduling/admin/event-types'), fetch('/api/forms'), fetch('/api/segments')
   ]);
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
   allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes : [];
   allForms = formsRes.ok ? (await formsRes.json()).forms : [];
+  allSegments = segmentsRes.ok ? ((await segmentsRes.json()).segments || []) : [];
 }
 
 let manualEnrollContactId = null, manualEnrollSearchTimer = null;
@@ -309,6 +316,7 @@ function trigLabel(trig) {
   if (trig.type === 'page_visit') return cfg.urlContains ? `Contact visits page containing "${escapeHtml(cfg.urlContains)}"` : 'Contact visits any page';
   if (trig.type === 'form_submitted') return cfg.formId ? `Form "${escapeHtml(allForms.find(f => f.id === cfg.formId)?.name || '—')}" is submitted` : 'Any form is submitted';
   if (trig.type === 'booking_created') return cfg.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === cfg.eventTypeId)?.name || '—')}" is created` : 'Any booking is created';
+  if (trig.type === 'segment_member') { const sg = allSegments.find(s => s.id === cfg.segmentId); const [h, m] = String(cfg.time || '09:00').split(':').map(Number); return `Contact is in segment "${escapeHtml(sg?.name || '—')}" (checked daily at ${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')}${h < 12 ? 'am' : 'pm'} Anchorage)`; }
   if (trig.type === 'email_opened') return 'Email is opened';
   if (trig.type === 'email_clicked') return 'Email link is clicked';
   return '';
@@ -690,9 +698,11 @@ function updateTriggerTargetField() {
   if (type === 'list_subscribe') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'List (any if blank)'; select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join(''); }
   else if (type === 'tag_added') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Tag (any if blank)'; select.innerHTML = '<option value="">Any tag</option>' + allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join(''); }
   else if (type === 'booking_created') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Event type (any if blank)'; select.innerHTML = '<option value="">Any event type</option>' + allEventTypes.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join(''); }
+  else if (type === 'segment_member') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Segment'; select.innerHTML = allSegments.map(s => `<option value="${s.id}">${escapeHtml(s.name)}${Number(s.limit) > 0 ? ` (limit ${s.limit})` : ''}</option>`).join(''); }
   else if (type === 'form_submitted') { field.style.display = 'block'; document.getElementById('triggerTargetLabel').textContent = 'Form (any if blank)'; select.innerHTML = '<option value="">Any form</option>' + allForms.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join(''); }
   else field.style.display = 'none';
   document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
+  document.getElementById('triggerTimeField').style.display = type === 'segment_member' ? 'block' : 'none';
 }
 document.getElementById('triggerType').addEventListener('change', updateTriggerTargetField);
 // null editingTriggerIndex means "adding a new trigger"; a number means
@@ -709,6 +719,7 @@ function openTriggerModal(index) {
   if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
   if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
+  if (trig.type === 'segment_member') { document.getElementById('triggerTarget').value = trig.config.segmentId || ''; document.getElementById('triggerTime').value = trig.config.time || '09:00'; }
   document.getElementById('deleteTriggerBtn').style.display = editingTriggerIndex !== null ? 'block' : 'none';
   openModal('triggerModal');
 }
@@ -723,7 +734,8 @@ document.getElementById('saveTriggerBtn').onclick = () => {
   const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
     : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
     : type === 'booking_created' ? { eventTypeId: target || null }
-    : type === 'form_submitted' ? { formId: target || null } : {};
+    : type === 'form_submitted' ? { formId: target || null }
+    : type === 'segment_member' ? { segmentId: target || null, time: document.getElementById('triggerTime').value || '09:00' } : {};
   if (!workflow.triggers) workflow.triggers = [];
   if (editingTriggerIndex !== null) workflow.triggers[editingTriggerIndex] = { type, config };
   else workflow.triggers.push({ type, config });

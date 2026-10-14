@@ -271,6 +271,13 @@ function evalCondition(contact, cond, payload) {
     return op === "within_last_days" ? recent : !recent;
   }
 
+  // "smsSequence:<workflowId>" with op "ever" / "never": has this contact
+  // ever been enrolled in that SMS sequence (any status, finished included)?
+  if (field.startsWith("smsSequence:") && (op === "ever" || op === "never")) {
+    const been = (smsSequenceIndex().get(field.slice("smsSequence:".length)) || new Set()).has(contact.id);
+    return op === "ever" ? been : !been;
+  }
+
   if (field === "visitedPage") {
     const paths = contact.visitedPaths || [];
     switch (op) {
@@ -372,6 +379,18 @@ function bookingIndex() {
 // segment.limit (when set) keeping the newest leads first -- same idea as a
 // Close smart view's limit. Every "who's in this segment" caller goes through
 // here so the count, the contact list and bulk-enroll all agree.
+// workflowId -> Set(contactId) of everyone ever enrolled. 30s memo -- a segment
+// pass asks once per contact.
+const WF_ENROLLMENTS_FILE_NAME = "crm_workflow_enrollments.json";
+let _wfIdx = null, _wfIdxAt = 0;
+function smsSequenceIndex() {
+  if (!_wfIdx || Date.now() - _wfIdxAt > 30000) {
+    const m = new Map();
+    for (const e of readJson(WF_ENROLLMENTS_FILE_NAME, [])) { if (!m.has(e.workflowId)) m.set(e.workflowId, new Set()); m.get(e.workflowId).add(e.contactId); }
+    _wfIdx = m; _wfIdxAt = Date.now();
+  }
+  return _wfIdx;
+}
 export function segmentMembers(segment, contacts) {
   const matched = (contacts || getAllContacts()).filter(c => matchesSegment(c, segment?.filter));
   const limit = Math.floor(Number(segment?.limit) || 0);
