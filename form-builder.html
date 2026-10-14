@@ -2141,8 +2141,7 @@ async function loadDropoffs() {
   const r = await fetch(`/api/forms/${form.id}/dropoffs${qs}`);
   if (!r.ok) { wrap.innerHTML = '<div class="pra-muted" style="padding:16px 0">Could not load drop-off data.</div>'; return; }
   const { steps, completed } = await r.json();
-  const rows = [...steps.map(s => ({ label: s.label, count: s.views })), { label: 'Completed', count: completed }];
-  const base = rows[0]?.count || 0;
+  const base = steps[0]?.views || 0;
   if (!base) {
     // Completions come from real submissions, so they can exist even when no
     // step views were recorded for the period -- say so instead of implying
@@ -2152,21 +2151,37 @@ async function loadDropoffs() {
       : '<div class="pra-muted" style="padding:16px 0">No visits recorded yet — this fills in once people start viewing the form.</div>';
     return;
   }
-  wrap.innerHTML = rows.map((row, i) => {
-    const pctOfStart = Math.round((row.count / base) * 100);
-    const prev = rows[i - 1];
-    const dropFromPrev = prev && prev.count > 0 ? Math.round((1 - row.count / prev.count) * 100) : 0;
-    const isCompleted = i === rows.length - 1;
+  // The % on each step is that step's own answer rate -- of the people who
+  // viewed it, how many actually answered and moved on (to the next step's
+  // view count, or to a real submission for the last step) -- not a share of
+  // the step-1 baseline. A step that's only reached by a few people (because
+  // earlier steps already thinned the crowd) can still show 100% here if
+  // everyone who DID see it answered it; that's the point -- it isolates
+  // friction on this specific step from upstream drop-off.
+  const nextCounts = [...steps.slice(1).map(s => s.views), completed];
+  const stepsHtml = steps.map((s, i) => {
+    const viewed = s.views;
+    const answered = nextCounts[i];
+    const pct = viewed > 0 ? Math.round((answered / viewed) * 100) : 0;
+    const notAnswered = 100 - pct;
     return `
-      <div class="do-row${isCompleted ? ' completed' : ''}">
+      <div class="do-row">
         <div class="do-top">
-          <span class="do-label">${escapeHtml(isCompleted ? 'Completed' : `Step ${i + 1}: ${row.label}`)}</span>
-          <span class="do-stats">${row.count} · ${pctOfStart}%</span>
+          <span class="do-label">${escapeHtml(`Step ${i + 1}: ${s.label}`)}</span>
+          <span class="do-stats">${pct}% answered &middot; ${answered}/${viewed}</span>
         </div>
-        <div class="do-bar-track"><div class="do-bar-fill" style="width:${pctOfStart}%"></div></div>
-        ${i > 0 && dropFromPrev > 0 ? `<div class="do-drop">&darr; ${dropFromPrev}% dropped off from the previous step</div>` : ''}
+        <div class="do-bar-track"><div class="do-bar-fill" style="width:${pct}%"></div></div>
+        ${notAnswered > 0 ? `<div class="do-drop">&darr; ${notAnswered}% didn't answer / continue</div>` : ''}
       </div>`;
   }).join('');
+  wrap.innerHTML = stepsHtml + `
+      <div class="do-row completed">
+        <div class="do-top">
+          <span class="do-label">Completed</span>
+          <span class="do-stats">${completed} total</span>
+        </div>
+        <div class="do-bar-track"><div class="do-bar-fill" style="width:${Math.round((completed / base) * 100)}%"></div></div>
+      </div>`;
 }
 
 // ── Left sidebar: Automate (Flows scoped to this form) ──────────────────
