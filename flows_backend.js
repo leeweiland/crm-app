@@ -12,6 +12,7 @@ import { claimByIdentity, getAdCaptureByIdentity } from "./tracking_backend.js";
 import { normalizePhoneForCapture } from "./phone_util.js";
 import { applyStatusOptOut } from "./compliance_backend.js";
 import { fetchChannelFeed, addVideoToPlaylist } from "./youtube_backend.js";
+import { addPeopleToAudience, endWindowAndTrim, normPhone } from "./facebook_backend.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -22,7 +23,7 @@ export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
-  "youtube_add_to_playlist", "drip",
+  "youtube_add_to_playlist", "drip", "fb_audience_add", "fb_audience_remove",
 ];
 
 // send_email's Body is still just a flat string (not the block editor's
@@ -285,6 +286,45 @@ async function readSheetTabForUpsert(spreadsheetId, sheetName) {
   const d = await r.json();
   if (!r.ok) throw new Error(d?.error?.message || "Sheets read failed");
   return { rows: d.values || [[]], accessToken };
+}
+
+// ── Facebook audience steps' log sheet: a row each time someone enters the
+// audience; REMOVED/STATUS get filled in on that row when they leave.
+export const AUDIENCE_SHEET_HEADERS = ["FIRST", "LAST", "EMAIL", "PHONE", "ADDED", "REMOVED", "STATUS"];
+export function audienceSheetDate(iso) {
+  return new Date(iso).toLocaleString("en-US", { timeZone: "America/Anchorage", dateStyle: "medium", timeStyle: "short" });
+}
+export function audienceSheetRow(m) {
+  return [m.first, m.last, m.email, m.phone, audienceSheetDate(m.addedAt), m.removedAt ? audienceSheetDate(m.removedAt) : "", m.removedAt ? "Removed" : "In audience"];
+}
+async function appendAudienceSheetRows(spreadsheetId, sheetName, members) {
+  const headers = await getSheetHeaders(spreadsheetId, sheetName);
+  if (!headers.some(h => String(h).trim())) await appendSheetRow(spreadsheetId, sheetName, AUDIENCE_SHEET_HEADERS, "RAW");
+  for (const m of members) await appendSheetRow(spreadsheetId, sheetName, audienceSheetRow(m), "RAW");
+}
+// updates: [{ email, phone, removedAt?, status }] -- each lands on that
+// person's most recent row that isn't already marked removed.
+async function markAudienceSheetRows(spreadsheetId, sheetName, updates) {
+  if (!updates.length) return;
+  const { rows, accessToken } = await readSheetTabForUpsert(spreadsheetId, sheetName);
+  const hdr = (rows[0] || []).map(h => String(h).trim().toUpperCase());
+  const [ei, pi, ri, si] = ["EMAIL", "PHONE", "REMOVED", "STATUS"].map(h => hdr.indexOf(h));
+  const writes = [];
+  for (const u of updates) {
+    let idx = -1;
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (ri >= 0 && String(r[ri] || "").trim()) continue;
+      const match = u.email
+        ? ei >= 0 && String(r[ei] || "").trim().toLowerCase() === u.email
+        : pi >= 0 && u.phone && String(r[pi] || "").replace(/\D/g, "") === u.phone;
+      if (match) idx = i;
+    }
+    if (idx < 0) continue;
+    if (ri >= 0 && u.removedAt) writes.push({ range: `'${sheetName}'!${columnLetter(ri + 1)}${idx + 1}`, values: [[audienceSheetDate(u.removedAt)]] });
+    if (si >= 0 && u.status) writes.push({ range: `'${sheetName}'!${columnLetter(si + 1)}${idx + 1}`, values: [[u.status]] });
+  }
+  if (writes.length) await batchUpdateSheetCells(spreadsheetId, writes, accessToken);
 }
 
 // {{first}}/{{email}}/{{customFields.x}} resolve against the contact;
@@ -650,6 +690,37 @@ async function advanceFlowRun(run, flow) {
         }
       } else {
         run.history[run.history.length - 1].error = "Missing playlist or video ID";
+      }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "fb_audience_add" || step.type === "fb_audience_remove") {
+      const cfg = step.config || {};
+      const hist = run.history[run.history.length - 1];
+      const person = contact ? { email: contact.email, phone: contact.phone, first: contact.first, last: contact.last, contactId: contact.id } : null;
+      const sheetOn = !!(cfg.spreadsheetId && cfg.sheetName);
+      if (!cfg.audienceId) hist.error = "No audience picked";
+      else if (!person || (!person.email && !person.phone)) hist.error = "Contact has no email or phone";
+      else {
+        try {
+          await withTimeout((async () => {
+            if (step.type === "fb_audience_add") {
+              const r = await addPeopleToAudience(cfg.audienceId, [person]);
+              if (!r.ok) { hist.error = r.reason; return; }
+              if (sheetOn && r.added.length) await appendAudienceSheetRows(cfg.spreadsheetId, cfg.sheetName, r.added);
+            } else {
+              const floor = Number(cfg.keepAtLeast ?? 200) || 0;
+              const r = await endWindowAndTrim(cfg.audienceId, person, floor);
+              if (!r.ok) { hist.error = r.reason; return; }
+              if (sheetOn) {
+                const updates = r.removed.map(m => ({ email: m.email, phone: m.phone, removedAt: m.removedAt, status: "Removed" }));
+                if (r.personKept) updates.push({ email: String(person.email || "").trim().toLowerCase(), phone: normPhone(person.phone), status: `Window over -- kept to stay at ${floor}` });
+                await markAudienceSheetRows(cfg.spreadsheetId, cfg.sheetName, updates);
+              }
+            }
+          })(), 60000, step.type);
+        } catch (e) {
+          hist.error = e.message;
+          console.error(`[flows] ${step.type} failed`, e.message);
+        }
       }
       run.currentStepId = step.nextStepId || null;
     } else {

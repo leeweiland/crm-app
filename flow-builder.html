@@ -266,6 +266,8 @@
       <button data-type="add_to_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.6"/><path d="M8 12h8M12 8v8" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add to ActiveCampaign</button>
       <button data-type="add_update_contact_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="10" cy="8.5" r="3.5" stroke="#fff" stroke-width="1.6"/><path d="M3.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="17.5" cy="8" r="4" stroke="#009bff" stroke-width="1.6"/><path d="M17.5 6.3v3.4M15.8 8h3.4" stroke="#009bff" stroke-width="1.4" stroke-linecap="round"/></svg>Add/Update Contact (ActiveCampaign)</button>
       <button data-type="youtube_add_to_playlist"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="3.5" stroke="#fff" stroke-width="1.6"/><path d="M10.2 9.6v4.8l4.2-2.4-4.2-2.4Z" fill="#009bff"/></svg>Add Video to YouTube Playlist</button>
+      <button data-type="fb_audience_add"><svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="9" r="3.2" stroke="#fff" stroke-width="1.6"/><path d="M3.5 19c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><path d="M18 8v6M15 11h6" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add to Facebook Audience</button>
+      <button data-type="fb_audience_remove"><svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="9" r="3.2" stroke="#fff" stroke-width="1.6"/><path d="M3.5 19c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><path d="M15 11h6" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Remove from Facebook Audience</button>
     </div>
     <button class="pra-btn pra-btn-ghost" style="width:100%;margin-top:14px" onclick="closeModal('typePickerModal')">Cancel</button>
   </div>
@@ -401,9 +403,14 @@ function stepSummary(step) {
   }
   if (step.type === 'add_update_contact_ac') return `Set ${['first', 'last', 'email', 'phone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} AC field(s)`;
   if (step.type === 'youtube_add_to_playlist') return `Add ${escapeHtml(c.videoId || '—')} to playlist "${escapeHtml(c.playlistTitle || c.playlistId || '—')}"`;
+  if (step.type === 'fb_audience_add' || step.type === 'fb_audience_remove') {
+    const aud = `"${escapeHtml(c.audienceName || c.audienceId || '—')}"`;
+    const sheet = c.spreadsheetId ? ` · log: ${escapeHtml(c.spreadsheetName || c.spreadsheetId)}${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}` : '';
+    return step.type === 'fb_audience_add' ? `Add to ${aud}${sheet}` : `Remove from ${aud} (keep at least ${Number(c.keepAtLeast ?? 200)})${sheet}`;
+  }
   return '';
 }
-const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', sheet_upsert: 'Find/Update Row in Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist', drip: 'Drip' };
+const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', sheet_upsert: 'Find/Update Row in Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist', drip: 'Drip', fb_audience_add: 'Add to Facebook Audience', fb_audience_remove: 'Remove from Facebook Audience' };
 
 function stepCardHtml(stepId, isLast) {
   const step = flow.steps[stepId];
@@ -867,6 +874,8 @@ function defaultConfig(type) {
   if (type === 'add_to_ac') return { acListId: '', acAutomationId: '' };
   if (type === 'add_update_contact_ac') return { first: '', last: '', email: '', phone: '', customFields: {} };
   if (type === 'youtube_add_to_playlist') return { playlistId: '', playlistTitle: '', videoId: '{{payload.videoId}}' };
+  if (type === 'fb_audience_add') return { audienceId: '', audienceName: '', spreadsheetId: '', spreadsheetName: '', sheetName: '' };
+  if (type === 'fb_audience_remove') return { audienceId: '', audienceName: '', keepAtLeast: 200, spreadsheetId: '', spreadsheetName: '', sheetName: '' };
   return {};
 }
 
@@ -1468,6 +1477,87 @@ function openStepConfigModal(step, isNew) {
       <div class="field"><label class="pra-label">Video ID</label><div class="token-input-wrap">${tokenEditorHtml(c.videoId || '', { placeholder: '{{payload.videoId}}', attrs: 'id="cfgYtVideoId"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
     `;
     loadYoutubePlaylists(c);
+  } else if (step.type === 'fb_audience_add' || step.type === 'fb_audience_remove') {
+    const c = step.config;
+    const isRemove = step.type === 'fb_audience_remove';
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">${isRemove
+        ? 'Marks this contact\'s window as over, then removes the oldest people whose window is over from the audience -- but never drops the audience below the number below (Facebook won\'t run ads to a list under ~100 matched people).'
+        : 'Adds this contact (email + phone, hashed) to a Facebook Custom Audience. Someone already in the audience isn\'t added twice.'}</div>
+      <div id="fbAudStatus" class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Loading audiences…</div>
+      <div class="field"><label class="pra-label">Audience</label><select class="pra-select" id="cfgFbAudience"><option value="${escapeHtml(c.audienceId || '')}">${escapeHtml(c.audienceName || c.audienceId || '—')}</option></select></div>
+      ${isRemove ? `<div class="field"><label class="pra-label">Always keep at least this many in the audience</label><input class="pra-input" type="number" min="0" id="cfgFbKeepAtLeast" value="${Number(c.keepAtLeast ?? 200)}"/></div>` : ''}
+      <div class="field">
+        <label class="pra-label">Log sheet (optional)</label>
+        <div class="pra-muted" style="font-size:.74rem;margin-bottom:6px">${isRemove ? 'Fills in REMOVED/STATUS on each removed person\'s row.' : 'Adds a row (FIRST, LAST, EMAIL, PHONE, ADDED, REMOVED, STATUS) when someone enters the audience.'}</div>
+        <div id="sheetPickedRow" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,0.04);border:1px solid var(--pra-border);border-radius:8px">
+            <span style="flex:1;font-size:.86rem" id="sheetPickedName"></span>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="changeSheetBtn">Change</button>
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="clearSheetBtn">None</button>
+          </div>
+        </div>
+        <div id="sheetSearchRow">
+          <input class="pra-input" id="cfgSheetSearch" placeholder="Search your Google Sheets by name…" autocomplete="off"/>
+          <div class="sheet-search-results" id="sheetSearchResults" style="display:none"></div>
+        </div>
+      </div>
+      <div class="field" id="sheetTabField" style="display:none"><label class="pra-label">Tab</label><select class="pra-select" id="cfgSheetTab"></select></div>
+    `;
+    (async () => {
+      const statusEl = document.getElementById('fbAudStatus');
+      const sel = document.getElementById('cfgFbAudience');
+      const r = await fetch('/api/facebook/audiences');
+      const d = await r.json().catch(() => ({}));
+      if (!statusEl.isConnected) return;
+      if (!r.ok || !d.audiences) { statusEl.textContent = `Couldn't load audiences: ${d.reason || 'Facebook not connected (Settings → Tracking)'}`; return; }
+      statusEl.style.display = 'none';
+      sel.innerHTML = `<option value="">Pick an audience…</option>` + d.audiences.map(a => `<option value="${escapeHtml(a.id)}" ${a.id === c.audienceId ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+    })();
+    async function loadTabs() {
+      document.getElementById('sheetTabField').style.display = 'block';
+      const tabSel = document.getElementById('cfgSheetTab');
+      tabSel.innerHTML = '<option>Loading…</option>';
+      const r = await fetch(`/api/flows/sheets/${sheetPicked.id}/tabs`);
+      const d = await r.json();
+      if (!r.ok || !d.tabs?.length) { tabSel.innerHTML = '<option value="">(could not load tabs)</option>'; return; }
+      tabSel.innerHTML = d.tabs.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+      tabSel.value = d.tabs.includes(sheetPicked.tab) ? sheetPicked.tab : d.tabs[0];
+      sheetPicked.tab = tabSel.value;
+    }
+    document.getElementById('cfgSheetTab').addEventListener('change', (e) => { sheetPicked.tab = e.target.value; });
+    function showPicked() {
+      document.getElementById('sheetPickedRow').style.display = 'block';
+      document.getElementById('sheetPickedName').textContent = sheetPicked.name || sheetPicked.id;
+      document.getElementById('sheetSearchRow').style.display = 'none';
+    }
+    function showSearch() {
+      document.getElementById('sheetPickedRow').style.display = 'none';
+      document.getElementById('sheetSearchRow').style.display = 'block';
+      document.getElementById('sheetTabField').style.display = 'none';
+    }
+    document.getElementById('changeSheetBtn').onclick = showSearch;
+    document.getElementById('clearSheetBtn').onclick = () => { sheetPicked.id = ''; sheetPicked.name = ''; sheetPicked.tab = ''; showSearch(); };
+    let searchTimer;
+    document.getElementById('cfgSheetSearch').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      const q = e.target.value.trim();
+      searchTimer = setTimeout(async () => {
+        const resultsEl = document.getElementById('sheetSearchResults');
+        resultsEl.style.display = 'block';
+        resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">Searching…</div>';
+        const r = await fetch('/api/flows/sheets/search?q=' + encodeURIComponent(q));
+        const d = await r.json();
+        if (!d.files?.length) { resultsEl.innerHTML = '<div class="pra-muted" style="font-size:.78rem;padding:8px">No spreadsheets found.</div>'; return; }
+        resultsEl.innerHTML = d.files.map(f => `<div class="sheet-search-result" data-id="${f.id}" data-name="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>`).join('');
+        resultsEl.querySelectorAll('[data-id]').forEach(row => row.onclick = () => {
+          sheetPicked.id = row.dataset.id; sheetPicked.name = row.dataset.name; sheetPicked.tab = '';
+          showPicked();
+          loadTabs();
+        });
+      }, 300);
+    });
+    if (sheetsIsConfigured && sheetPicked.id) { showPicked(); loadTabs(); } else showSearch();
   }
   // Wires the "+" token-insert button next to every free-text input/textarea
   // in whatever step-type body was just rendered -- harmless no-op for a
@@ -1547,6 +1637,15 @@ function openStepConfigModal(step, isNew) {
       step.config.playlistId = sel.value;
       step.config.playlistTitle = sel.value ? (sel.options[sel.selectedIndex]?.textContent || '').replace(/\s*\(\d+ videos?\)$/, '') : '';
       step.config.videoId = getTokenEditorValue(document.getElementById('cfgYtVideoId')).trim();
+    }
+    else if (step.type === 'fb_audience_add' || step.type === 'fb_audience_remove') {
+      const sel = document.getElementById('cfgFbAudience');
+      step.config.audienceId = sel.value;
+      step.config.audienceName = sel.value ? (sel.options[sel.selectedIndex]?.textContent || '') : '';
+      if (step.type === 'fb_audience_remove') step.config.keepAtLeast = Math.max(0, Math.floor(Number(document.getElementById('cfgFbKeepAtLeast').value) || 0));
+      step.config.spreadsheetId = sheetPicked.id;
+      step.config.spreadsheetName = sheetPicked.id ? sheetPicked.name : '';
+      step.config.sheetName = sheetPicked.id ? sheetPicked.tab : '';
     }
     if (isNew) attachNewStep(step);
     closeModal('stepConfigModal');
