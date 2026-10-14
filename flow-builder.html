@@ -392,7 +392,9 @@ function stepSummary(step) {
   }
   if (step.type === 'drip') { const dc = c; return `Release ${Number(dc.perDay) || 0} per day${dc.spread === false ? ` at ${fmtDripTime(dc.releaseTime)} (Anchorage)` : ', spread through the day'}`; }
   if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
-  if (step.type === 'sheet_upsert') return `Find/update row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.matchGroups || []).length} match rule${(c.matchGroups || []).length === 1 ? '' : 's'}, ${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
+  if (step.type === 'sheet_upsert') return c.alwaysAppend
+    ? `Always add a new row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`
+    : `Find/update row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.matchGroups || []).length} match rule${(c.matchGroups || []).length === 1 ? '' : 's'}, ${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
   if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
   if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
   if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} field(s)`;
@@ -1314,13 +1316,24 @@ function openStepConfigModal(step, isNew) {
         <select class="pra-select" id="cfgSheetTab"></select>
       </div>
       <datalist id="suHeaderOptions"></datalist>
-      <div class="pra-label" style="margin:14px 0 8px">Match this contact to a row by <span class="pra-muted" style="text-transform:none;font-weight:400">— matches if ANY rule below is fully satisfied (all its fields together); the most recently added matching row wins</span></div>
-      <div id="suMatchGroups"></div>
-      <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addMatchGroupBtn" style="margin-top:2px">+ Add Match Rule</button>
-      <div class="pra-label" style="margin:16px 0 8px">Columns to write <span class="pra-muted" style="text-transform:none;font-weight:400">— only written when this run actually has a value; left alone otherwise</span></div>
+      <label class="field" style="display:flex;align-items:center;gap:8px;margin:14px 0 0;cursor:pointer">
+        <input type="checkbox" id="cfgSuAlwaysAppend" ${step.config.alwaysAppend ? 'checked' : ''}/>
+        <span style="font-weight:400">Always add a new row (never find/update an existing one) <span class="pra-muted" style="font-weight:400">— for a running log where every run is its own event, e.g. a renewal or travel sale</span></span>
+      </label>
+      <div id="suMatchGroupsWrap">
+        <div class="pra-label" style="margin:14px 0 8px">Match this contact to a row by <span class="pra-muted" style="text-transform:none;font-weight:400">— matches if ANY rule below is fully satisfied (all its fields together); the most recently added matching row wins</span></div>
+        <div id="suMatchGroups"></div>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addMatchGroupBtn" style="margin-top:2px">+ Add Match Rule</button>
+      </div>
+      <div class="pra-label" style="margin:16px 0 8px">Columns to write <span class="pra-muted" style="text-transform:none;font-weight:400">— only written when this run actually has a value; left alone otherwise (ignored on the always-append path above except to fill the new row)</span></div>
       <div id="suColRows"></div>
       <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" id="addSuColBtn" style="margin-top:6px">+ Add Column</button>
     `;
+    function syncAlwaysAppendUi() {
+      document.getElementById('suMatchGroupsWrap').style.display = document.getElementById('cfgSuAlwaysAppend').checked ? 'none' : '';
+    }
+    document.getElementById('cfgSuAlwaysAppend').addEventListener('change', syncAlwaysAppendUi);
+    syncAlwaysAppendUi();
 
     const CONTACT_FIELD_OPTIONS = [
       { value: 'email', label: 'Email' }, { value: 'phone', label: 'Phone' },
@@ -1639,6 +1652,7 @@ function openStepConfigModal(step, isNew) {
       step.config.spreadsheetId = sheetPicked.id;
       step.config.spreadsheetName = sheetPicked.name;
       step.config.sheetName = sheetPicked.tab || '';
+      step.config.alwaysAppend = document.getElementById('cfgSuAlwaysAppend').checked;
       step.config.matchGroups = [...document.querySelectorAll('#suMatchGroups [data-match-group]')].map(groupEl => ({
         fields: [...groupEl.querySelectorAll('[data-match-field]')].map(fieldEl => ({
           contactField: fieldEl.querySelector('[data-match-contact-field]').value,

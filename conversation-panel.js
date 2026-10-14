@@ -1581,6 +1581,28 @@
       }
       const statusSel = container.querySelector('#chatStatusSelect');
       if (statusSel) {
+        function openChatEnrollPopup(forceKind) {
+          if (!contactId) return;
+          const prevStatus = getContact()?.status;
+          statusSel.value = prevStatus || '';
+          window.EnrollPopup.open(contactId, {
+            forceKind,
+            onCommitted: () => {
+              showToast('Status updated');
+              statusSel.value = 'ENROLLED';
+              statusSel.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle('ENROLLED') : '');
+              const c = getContact(); if (c) c.status = 'ENROLLED';
+              config.onStatusChanged?.(contactId, 'ENROLLED');
+            },
+          });
+        }
+        // See enroll-popup.js's own top comment -- a native <select> never
+        // fires 'change' for re-picking the option it's already showing, so
+        // this is the only way an already-Enrolled contact can log a
+        // renewal/travel sale from this same control.
+        statusSel.addEventListener('dblclick', () => {
+          if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openChatEnrollPopup('renewal');
+        });
         statusSel.addEventListener('change', (e) => {
           const status = e.target.value, prevStatus = getContact()?.status;
           if (!contactId) return;
@@ -1590,19 +1612,7 @@
           // own Save succeeds; see enroll-popup.js's own top comment). If
           // that never happens (cancelled, clicked away), this select is
           // already showing the right thing -- there's nothing to undo.
-          if (String(status).toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
-            e.target.value = prevStatus || '';
-            window.EnrollPopup.open(contactId, {
-              onCommitted: () => {
-                showToast('Status updated');
-                e.target.value = 'ENROLLED';
-                e.target.setAttribute('style', config.statusGlowStyle ? config.statusGlowStyle('ENROLLED') : '');
-                const c = getContact(); if (c) c.status = 'ENROLLED';
-                config.onStatusChanged?.(contactId, 'ENROLLED');
-              },
-            });
-            return;
-          }
+          if (String(status).toUpperCase() === 'ENROLLED' && window.EnrollPopup) { openChatEnrollPopup(); return; }
           // Optimistic, same reasoning as inline-edit.js's own status-change
           // fix -- a contact PATCH costs ~5s on the server, which used to
           // mean the glow style and onStatusChanged both sat waiting on that

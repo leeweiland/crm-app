@@ -596,7 +596,12 @@ async function advanceFlowRun(run, flow) {
           await withTimeout((async () => {
             const { rows, accessToken } = await readSheetTabForUpsert(cfg.spreadsheetId, cfg.sheetName);
             const hdr = (rows[0] || []).map(c => String(c).trim().toLowerCase());
-            const rowIndex = findSheetUpsertRow(rows, contact, cfg.matchGroups || []);
+            // alwaysAppend: a renewal/travel sale is its own event, not a
+            // correction to a prior row -- every run is a fresh row, found-row
+            // matching never even runs (so there's nothing to accidentally
+            // overwrite on a sheet meant to be a running log, e.g. ONLINE/GYM
+            // RENEWALS & PAYOFFS).
+            const rowIndex = cfg.alwaysAppend ? -1 : findSheetUpsertRow(rows, contact, cfg.matchGroups || []);
             // Only a column this run actually resolved to something gets
             // written -- an empty template result never blanks a cell that
             // already has data in it (matched row), and just leaves that

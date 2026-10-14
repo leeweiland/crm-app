@@ -63,6 +63,23 @@ window.EnrollPopup = (function () {
   // whatever it was BEFORE calling this, so nothing anywhere shows
   // "Enrolled" prematurely. opts.onCommitted() is how the caller finds out
   // it's real and can now show it.
+  const KIND_LABELS = { new: "New Enrollment", renewal: "Renewal", travel: "Travel" };
+  const KIND_TITLES = { new: "Record Enrollment", renewal: "Record Renewal", travel: "Record Travel Booking" };
+  // What each kind does on Save, spelled out right under the toggle so it's
+  // never a surprise which sheet is about to get a new row -- see each
+  // kind's own flow (Flows list: "3 ENROLLMENT FORM" / "3 RENEWAL FORM" /
+  // "3 TRAVEL FORM") for the actual write.
+  const KIND_SUBTITLES = {
+    new: "updates their row in the CALLS TRACKING sheet (ONLINE/GYM tab).",
+    renewal: "adds a new row to the CALLS TRACKING sheet's ONLINE/GYM RENEWALS &amp; PAYOFFS tab.",
+    travel: "adds a new row to the CALLS TRACKING sheet's ONLINE/GYM TRAVEL tab.",
+  };
+
+  // opts.forceKind: callers that open this for an already-Enrolled contact
+  // (the status select can't fire a real change event for re-picking the
+  // value it's already showing -- see the dblclick handlers that call this
+  // with forceKind set) skip the "New" default entirely, since a brand-new
+  // enrollment on someone already enrolled is never the intent there.
   async function open(contactId, opts = {}) {
     close();
     let contact, sheetOptions;
@@ -78,6 +95,10 @@ window.EnrollPopup = (function () {
 
     const initialSheet = contact.programType === "gym" ? "gym" : "online"; // defaults to online when unset -- both stay one click away
     const today = todayLocalDateInput();
+    // Already enrolled -> this is never a first-time enrollment, so default
+    // to Renewal instead (still just a default -- Travel/New stay one click
+    // away via the toggle).
+    const initialKind = opts.forceKind || (String(contact.status || "").toUpperCase() === "ENROLLED" ? "renewal" : "new");
 
     backdropEl = document.createElement("div");
     // NOT .modal-backdrop -- see crm-design-system.css's own comment on
@@ -86,9 +107,18 @@ window.EnrollPopup = (function () {
     backdropEl.className = "enroll-modal-backdrop show";
     backdropEl.innerHTML = `
       <div class="pra-panel modal-box">
-        <div class="pra-h2" style="margin-bottom:4px">Record Enrollment</div>
-        <div class="pra-muted" style="font-size:.82rem;margin-bottom:16px">${esc([contact.first, contact.last].filter(Boolean).join(" ") || "This contact")} -- updates their row in the CALLS TRACKING sheet.</div>
+        <div class="pra-h2" style="margin-bottom:4px" id="epTitle">${KIND_TITLES[initialKind]}</div>
+        <div class="pra-muted" style="font-size:.82rem;margin-bottom:12px">${esc([contact.first, contact.last].filter(Boolean).join(" ") || "This contact")} -- <span id="epSubtitle">${KIND_SUBTITLES[initialKind]}</span></div>
 
+        <div class="field">
+          <label class="pra-label">Type</label>
+          <div class="enroll-kind-toggle" role="radiogroup" aria-label="Enrollment type">
+            ${Object.entries(KIND_LABELS).map(([k, label]) => `
+              <label class="enroll-kind-option${k === initialKind ? " checked" : ""}">
+                <input type="radio" name="epKind" value="${k}" ${k === initialKind ? "checked" : ""}/>${esc(label)}
+              </label>`).join("")}
+          </div>
+        </div>
         <div class="field">
           <label class="pra-label">Sheet</label>
           <div style="display:flex;gap:16px">
@@ -134,6 +164,16 @@ window.EnrollPopup = (function () {
     `;
     document.body.appendChild(backdropEl);
 
+    let selectedKind = initialKind;
+    const titleEl = backdropEl.querySelector("#epTitle");
+    const subtitleEl = backdropEl.querySelector("#epSubtitle");
+    backdropEl.querySelectorAll('input[name="epKind"]').forEach(r => r.addEventListener("change", () => {
+      selectedKind = r.value;
+      titleEl.textContent = KIND_TITLES[selectedKind];
+      subtitleEl.innerHTML = KIND_SUBTITLES[selectedKind];
+      backdropEl.querySelectorAll(".enroll-kind-option").forEach(o => o.classList.toggle("checked", o.querySelector("input").checked));
+    }));
+
     const programSel = backdropEl.querySelector("#epProgram");
     const endDateEl = backdropEl.querySelector("#epEndDate");
     let endDateTouched = false;
@@ -161,7 +201,8 @@ window.EnrollPopup = (function () {
     // lose this" moment. Backdrop click ("click away") goes through the
     // exact same gate as the Cancel button, not a silent close.
     function requestClose() {
-      if (confirm("Are you sure you don't want to enroll this contact?")) close();
+      const verb = selectedKind === "renewal" ? "record this renewal" : selectedKind === "travel" ? "record this travel booking" : "enroll this contact";
+      if (confirm(`Are you sure you don't want to ${verb}?`)) close();
     }
     backdropEl.querySelector("#epCancelBtn").onclick = requestClose;
     backdropEl.addEventListener("click", (e) => { if (e.target === backdropEl) requestClose(); });
@@ -176,6 +217,12 @@ window.EnrollPopup = (function () {
       // customFields) so this never wipes out unrelated custom fields
       // already set on the contact.
       const customFieldsPatch = {
+        // Which of the 3 flows (Flows list: "3 ENROLLMENT FORM" / "3 RENEWAL
+        // FORM" / "3 TRAVEL FORM") actually does the sheet write -- all three
+        // share the same status->ENROLLED trigger, and each one's own leading
+        // filter step reads this field to decide whether it's the one that
+        // should run (see seed_renewal_travel_flows.js).
+        enrollKind: selectedKind,
         enrollProgramType: backdropEl.querySelector('input[name="epSheet"]:checked').value,
         enrollProgram: programSel.value,
         enrollAmountPaid: backdropEl.querySelector("#epAmount").value,
@@ -195,8 +242,8 @@ window.EnrollPopup = (function () {
         // picked in this popup.
         const r = await fetch(`/api/contacts/${contactId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "ENROLLED", programType: customFieldsPatch.enrollProgramType, customFieldsPatch }) });
         if (!r.ok) { btn.disabled = false; msg.textContent = "Could not save"; return; }
-        toast("Enrolled -- recording the sale in the sheet now");
-        opts.onCommitted && opts.onCommitted();
+        toast(selectedKind === "renewal" ? "Renewal recorded -- adding it to the sheet now" : selectedKind === "travel" ? "Travel booking recorded -- adding it to the sheet now" : "Enrolled -- recording the sale in the sheet now");
+        opts.onCommitted && opts.onCommitted(selectedKind);
         close();
       } catch { btn.disabled = false; msg.textContent = "Could not reach the server"; }
     };

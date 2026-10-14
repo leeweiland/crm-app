@@ -419,6 +419,16 @@ body { margin: 0; }
    the instant someone clicked outside it. */
 .modal-backdrop, .enroll-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; box-sizing: border-box; font-family: var(--font-primary); font-weight: 700; color: var(--pra-white); }
 .modal-backdrop.show, .enroll-modal-backdrop.show { display: flex; }
+/* enroll-popup.js's New/Renewal/Travel toggle -- a segmented control, not a
+   <select>, specifically so all 3 choices are visible and legible at once
+   (this is the one thing in the whole popup that must never be easy to miss
+   or misread, since it decides which sheet gets written). */
+.enroll-kind-toggle { display: flex; gap: 0; border: 1px solid var(--pra-border); border-radius: 8px; overflow: hidden; }
+.enroll-kind-option { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 6px; font-size: .84rem; font-weight: 700; text-align: center; cursor: pointer; color: var(--pra-dim); background: rgba(255,255,255,0.03); border-right: 1px solid var(--pra-border); transition: background .12s, color .12s; }
+.enroll-kind-option:last-child { border-right: none; }
+.enroll-kind-option input { position: absolute; opacity: 0; pointer-events: none; }
+.enroll-kind-option.checked { background: var(--pra-blue); color: var(--pra-white); }
+.enroll-kind-option:not(.checked):hover { background: rgba(255,255,255,0.08); color: var(--pra-white); }
 /* max-height set twice on purpose: vh first as a fallback for browsers
    without dvh support, dvh second (wins when supported) -- mobile browsers
    report 100vh as the LARGEST possible viewport (address bar hidden), so a

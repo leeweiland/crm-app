@@ -1091,11 +1091,32 @@ function wireConvoRow(row) {
   const statusSel = row.querySelector('.convo-status-select');
   if (statusSel) {
     statusSel.addEventListener('click', (e) => e.stopPropagation());
+    // ENROLLED is intercepted here, same as every other status control --
+    // see enroll-popup.js's own top comment for why the popup (not this
+    // select) is what actually sets status to Enrolled.
+    function openSidebarEnrollPopup(forceKind) {
+      const convo = c();
+      if (!convo?.contactId) return;
+      const prevStatus = convo.contact?.status;
+      statusSel.value = prevStatus || '';
+      statusSel.setAttribute('style', avatarStyle(prevStatus));
+      window.EnrollPopup.open(convo.contactId, {
+        forceKind,
+        onCommitted: () => {
+          if (convo.contact) convo.contact.status = 'ENROLLED';
+          statusSel.value = 'ENROLLED';
+          statusSel.setAttribute('style', avatarStyle('ENROLLED'));
+          showToast('Status updated');
+          loadConversations();
+        },
+      });
+    }
     statusSel.addEventListener('change', async (e) => {
       e.stopPropagation();
       const status = e.target.value;
       const convo = c();
       if (!convo?.contactId) return;
+      if (status.toUpperCase() === 'ENROLLED' && window.EnrollPopup) { openSidebarEnrollPopup(); return; }
       await fetch('/api/contacts/' + convo.contactId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
       showToast('Status updated');
       if (convo.contact) convo.contact.status = status;
@@ -1108,6 +1129,14 @@ function wireConvoRow(row) {
       // `conversations` array. dropConvoFromSidebar above already handles
       // the instant case; this is the reconcile for everything else.
       loadConversations();
+    });
+    // See inline-edit.js/conversation-panel.js's own comment on this same
+    // trick -- re-picking the option a native <select> is already showing
+    // never fires 'change' at all, so an already-Enrolled row's only way to
+    // log a renewal/travel sale here is this double-click.
+    statusSel.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openSidebarEnrollPopup('renewal');
     });
   }
   row.querySelector('[data-pin]')?.addEventListener('click', async (e) => {
@@ -1556,31 +1585,38 @@ async function openContactOverlay(contactId) {
   const statusSel = document.getElementById('ovStatus');
   statusSel.innerHTML = '<option value=""></option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}" ${overlayContact.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
   statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(overlayContact.status)};${statusSelectWidthRule(overlayContact.status)}`);
+  function openOverlayEnrollPopup(forceKind) {
+    const prevStatus = overlayContact.status;
+    statusSel.value = prevStatus || '';
+    statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(prevStatus)};${statusSelectWidthRule(prevStatus)}`);
+    window.EnrollPopup.open(contactId, {
+      forceKind,
+      onCommitted: () => {
+        overlayContact.status = 'ENROLLED';
+        statusSel.value = 'ENROLLED';
+        statusSel.setAttribute('style', `margin-top:6px;${avatarStyle('ENROLLED')};${statusSelectWidthRule('ENROLLED')}`);
+        showToast('Saved');
+        loadRefs().then(() => loadConversations()).catch(() => {});
+      },
+    });
+  }
   statusSel.onchange = () => {
-    const newStatus = statusSel.value, prevStatus = overlayContact.status;
+    const newStatus = statusSel.value;
     // ENROLLED is intercepted here and never reaches overlaySaver.flush()'s
     // own PATCH at all -- reverted right back to whatever it already
     // showed, and the popup becomes the only thing that can actually set
     // status to Enrolled (once its own Save succeeds; see enroll-popup.js's
     // own top comment for why that's deferred this far). Every OTHER
     // status still saves the normal way, unaffected.
-    if (newStatus.toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
-      statusSel.value = prevStatus || '';
-      statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(prevStatus)};${statusSelectWidthRule(prevStatus)}`);
-      window.EnrollPopup.open(contactId, {
-        onCommitted: () => {
-          overlayContact.status = 'ENROLLED';
-          statusSel.value = 'ENROLLED';
-          statusSel.setAttribute('style', `margin-top:6px;${avatarStyle('ENROLLED')};${statusSelectWidthRule('ENROLLED')}`);
-          showToast('Saved');
-          loadRefs().then(() => loadConversations()).catch(() => {});
-        },
-      });
-      return;
-    }
+    if (newStatus.toUpperCase() === 'ENROLLED' && window.EnrollPopup) { openOverlayEnrollPopup(); return; }
     statusSel.setAttribute('style', `margin-top:6px;${avatarStyle(newStatus)};${statusSelectWidthRule(newStatus)}`);
     overlaySaver.flush();
   };
+  // A native <select> never fires 'change' for re-picking the option it's
+  // already showing -- the ONLY way an already-Enrolled contact can log a
+  // renewal/travel sale through this control otherwise. Double-click reopens
+  // the popup directly, defaulting its toggle to Renewal (see enroll-popup.js).
+  statusSel.ondblclick = () => { if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openOverlayEnrollPopup('renewal'); };
   document.getElementById('ovFirst').value = overlayContact.first || '';
   document.getElementById('ovLast').value = overlayContact.last || '';
   document.getElementById('ovAccount').value = overlayContact.accountName || '';

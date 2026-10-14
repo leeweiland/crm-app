@@ -471,23 +471,31 @@ document.getElementById('deleteBtn').onclick = async () => {
   // set status to Enrolled (once its own Save succeeds; see
   // enroll-popup.js's own top comment for why that's deferred this far).
   // Every OTHER status still saves the normal way, unaffected.
+  function openDetailEnrollPopup(forceKind) {
+    const prevStatus = contact.status;
+    statusSel.value = prevStatus || '';
+    applyStatusGlow(prevStatus);
+    window.EnrollPopup.open(contactId, {
+      forceKind,
+      onCommitted: () => {
+        contact.status = 'ENROLLED';
+        statusSel.value = 'ENROLLED';
+        applyStatusGlow('ENROLLED');
+        panelInstance?.render();
+        showToast('Saved');
+      },
+    });
+  }
   statusSel.addEventListener('change', () => {
-    const newStatus = statusSel.value, prevStatus = contact.status;
-    if (newStatus.toUpperCase() === 'ENROLLED' && window.EnrollPopup) {
-      statusSel.value = prevStatus || '';
-      applyStatusGlow(prevStatus);
-      window.EnrollPopup.open(contactId, {
-        onCommitted: () => {
-          contact.status = 'ENROLLED';
-          statusSel.value = 'ENROLLED';
-          applyStatusGlow('ENROLLED');
-          panelInstance?.render();
-          showToast('Saved');
-        },
-      });
-      return;
-    }
+    const newStatus = statusSel.value;
+    if (newStatus.toUpperCase() === 'ENROLLED' && window.EnrollPopup) { openDetailEnrollPopup(); return; }
     applyStatusGlow(newStatus);
+  });
+  // See enroll-popup.js's own top comment -- a native <select> never fires
+  // 'change' for re-picking the option it's already showing, so this is the
+  // only way an already-Enrolled contact can log a renewal/travel sale here.
+  statusSel.addEventListener('dblclick', () => {
+    if (statusSel.value.toUpperCase() === 'ENROLLED' && window.EnrollPopup) openDetailEnrollPopup('renewal');
   });
   saver.watch([statusSel]);
   document.getElementById('fEmailOptOut').checked = !!contact.emailOptOut;
