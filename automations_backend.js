@@ -531,8 +531,11 @@ export async function handleAutomationsRequest(req, res, url) {
       // contacts waiting on their original due date). Detect a changed Wait
       // step's amount/unit here (matched by step id, which is stable --
       // steps are keyed by id, not array position, so no index-shift risk)
-      // and re-anchor everyone currently sitting at that step to now + the
-      // new duration.
+      // and re-anchor everyone currently sitting at that step to the time
+      // THEY entered it + the new duration -- each person keeps their own
+      // timer (shortening 10,000 days to 1 day releases someone 1 day after
+      // they arrived, not everyone together 1 day after the edit). Anyone
+      // who has already waited longer than the new duration is due now.
       if ("steps" in body && body.steps && typeof body.steps === "object") {
         const oldSteps = automation.steps || {};
         const newSteps = body.steps;
@@ -549,7 +552,9 @@ export async function handleAutomationsRequest(req, res, url) {
               const ms = step.config.unit === "days" ? step.config.amount * 86400000
                 : step.config.unit === "hours" ? step.config.amount * 3600000
                 : step.config.amount * 60000;
-              enrollment.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
+              const entered = [...(enrollment.history || [])].reverse().find(h => h.stepId === enrollment.currentStepId)?.at;
+              const base = entered && !isNaN(new Date(entered)) ? new Date(entered).getTime() : Date.now();
+              enrollment.waitUntil = new Date(base + (Number(ms) || 0)).toISOString();
               touched.push(enrollment);
             }
           }

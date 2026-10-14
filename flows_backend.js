@@ -1110,7 +1110,7 @@ export async function handleFlowsRequest(req, res, url) {
       // waiting on their original due date) -- Flows never got the same
       // fix. Detect a changed Delay step's amount/unit here (matched by
       // step id, stable across saves) and re-anchor every run currently
-      // sitting at that step to now + the new duration.
+      // sitting at that step to when IT entered the step + the new duration.
       if ("steps" in body && body.steps && typeof body.steps === "object") {
         const oldSteps = flow.steps || {};
         const newSteps = body.steps;
@@ -1128,7 +1128,12 @@ export async function handleFlowsRequest(req, res, url) {
               const ms = step.config.unit === "days" ? step.config.amount * 86400000
                 : step.config.unit === "hours" ? step.config.amount * 3600000
                 : step.config.amount * 60000;
-              run.waitUntil = new Date(Date.now() + (Number(ms) || 0)).toISOString();
+              // From when THIS run reached the delay, not from the edit --
+              // each run keeps its own timer (see automations_backend.js's
+              // identical wait-step re-anchor).
+              const entered = [...(run.history || [])].reverse().find(h => h.stepId === run.currentStepId)?.at;
+              const base = entered && !isNaN(new Date(entered)) ? new Date(entered).getTime() : Date.now();
+              run.waitUntil = new Date(base + (Number(ms) || 0)).toISOString();
               touched = true;
             }
           }

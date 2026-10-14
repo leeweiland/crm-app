@@ -162,7 +162,7 @@ export function enrollContactInWorkflow(workflow, contactId, context) {
   const startIndex = firstNonGoalIndex(workflow, 0);
   if (!workflow.steps[startIndex]) return;
   const enrollment = {
-    id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: startIndex,
+    id: randomUUID(), workflowId: workflow.id, contactId, status: "active", currentStepIndex: startIndex, stepEnteredAt: new Date().toISOString(),
     enrolledAt: new Date().toISOString(), nextStepDueAt: computeStepDueDate(workflow, new Date().toISOString(), workflow.steps[startIndex]),
     completedAt: null, goalMetAt: null, bookingId: context?.bookingId || null,
   };
@@ -228,6 +228,7 @@ export function checkConversionGoal(trigger, contactId) {
       e.goalMetAt = now;
       e.stepRetryCount = 0;
       e.currentStepIndex = nextIndex;
+      e.stepEnteredAt = now;
       if (w.steps[nextIndex]) e.nextStepDueAt = computeStepDueDate(w, now, w.steps[nextIndex]);
       else { e.status = "goal_met"; e.nextStepDueAt = null; } // goal was the last step
       saveWfEnrollment(e);
@@ -288,6 +289,7 @@ export async function advanceDueWorkflowEnrollments() {
     const nextIndex = firstNonGoalIndex(workflow, enrollment.currentStepIndex + 1);
     const nextStep = workflow.steps[nextIndex];
     enrollment.currentStepIndex = nextIndex;
+    enrollment.stepEnteredAt = new Date().toISOString();
     if (enrollment.status === "active") {
       if (nextStep) {
         // Relative to now (when this step just fired), not the original
@@ -397,8 +399,8 @@ export async function handleWorkflowsRequest(req, res, url) {
       // here (matched by id at the same array index, so an unrelated
       // insert/delete elsewhere in the same save doesn't get misread as a
       // delay edit) and re-anchor everyone currently sitting at that step to
-      // "now" + the new delay, the same computation a step normally gets
-      // when it first fires.
+      // the time THEY entered it + the new delay (each contact keeps its own
+      // timer), the same computation a step normally gets when it first fires.
       if ("steps" in body && Array.isArray(body.steps)) {
         const oldSteps = workflow.steps || [];
         const newSteps = body.steps;
@@ -416,7 +418,19 @@ export async function handleWorkflowsRequest(req, res, url) {
           let touched = false;
           for (const enrollment of enrollments) {
             if (enrollment.workflowId === workflow.id && enrollment.status === "active" && changedWaitIndexes.includes(enrollment.currentStepIndex)) {
-              enrollment.nextStepDueAt = computeStepDueDate(effectiveWorkflow, new Date().toISOString(), newSteps[enrollment.currentStepIndex]);
+              // From when THIS contact reached the wait, not from the edit --
+              // each contact keeps its own timer. Enrollments from before
+              // stepEnteredAt existed: back out their entry time from the old
+              // due date and the old duration.
+              let entered = enrollment.stepEnteredAt;
+              if (!entered && enrollment.nextStepDueAt) {
+                const old = oldSteps[enrollment.currentStepIndex];
+                const amt = Number(old.delayValue ?? old.dayOffset ?? 0);
+                const unit = old.delayUnit || "days";
+                const ms = unit in SUB_DAY_UNIT_MS ? amt * SUB_DAY_UNIT_MS[unit] : (unit === "weeks" ? amt * 7 : unit === "months" ? amt * 30 : amt) * 86400000;
+                entered = new Date(Math.min(Date.now(), new Date(enrollment.nextStepDueAt).getTime() - ms)).toISOString();
+              }
+              enrollment.nextStepDueAt = computeStepDueDate(effectiveWorkflow, entered || new Date().toISOString(), newSteps[enrollment.currentStepIndex]);
               touched = true;
             }
           }
