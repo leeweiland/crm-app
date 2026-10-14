@@ -7,7 +7,7 @@ import { getAllContacts, getContactById } from "./contacts_db.js";
 import { getContactMessages, getSourceMessages, removeContactMessagesByIds, recomputeConversationSummary } from "./message_index.js";
 import { logMessage } from "./message_log.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
-import { BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
+import { BLACKLIST_STATUS_LABEL, blacklistContact } from "./compliance_backend.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -118,6 +118,7 @@ If you do find yourself needing to reason or plan before landing on the actual r
 WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of a message, on its own, as your entire response:
 - \`[[NO_RESPONSE_NEEDED: <short reason>]]\` -- the lead's last message doesn't need a reply (e.g. just "thanks", an automated/system notification, or the conversation has already reached a clear conclusion).
 - \`[[ESCALATE: <short reason>]]\` -- this needs a human, not a suggested reply: a complaint, a refund request, a medical question, or anything else outside a normal sales conversation.
+- \`[[BLACKLIST]]\` -- the lead is hostile toward you or the business: cussing AT you, threats, slurs, harassment, or sexual comments. Never reply to these. Casual swearing not aimed at you ("this shit's been wrecking my back") does NOT count.
 
 BUYING SIGNALS -- if the lead is asking how to pay, asking to start, confirming a tier, asking about kickoff, or otherwise signaling they're ready to enroll, still draft the reply normally but end your entire response with \`[[BUYING_SIGNAL]]\` on its own line after the message -- that's the moment a human closer should take over, not a moment to keep running the AI.`;
 
@@ -216,7 +217,9 @@ function formatJourneyLines(journey) {
   return journey
     .slice(-60) // most recent 60 events is plenty of context; keeps the prompt bounded
     .map((m) => {
-      const dir = m.direction === "inbound" ? "FROM LEAD" : m.direction === "outbound" ? "TO LEAD" : m.direction || "";
+      // Bulk sends are labeled so the model never mistakes a campaign/
+      // automation blast for its own (or a teammate's) reply.
+      const dir = m.direction === "inbound" ? "FROM LEAD" : m.direction === "outbound" ? (isConversationalOutbound(m) ? "TO LEAD" : "TO LEAD [automated bulk send -- not a reply in this conversation]") : m.direction || "";
       const when = (m.createdAt || m.at || "").slice(0, 16);
       const label = m.subject || m.sourceType || m.channel;
       const body = plainJourneyText(m.bodyPreview || m.body || "").slice(0, 300);
@@ -396,6 +399,30 @@ export function findLastHumanOutbound(journey) {
   return [...journey].reverse().find((m) => m.direction === "outbound" && isHumanOutbound(m.sourceType));
 }
 
+// Campaigns, email automations, SMS sequences, booking reminders -- bulk
+// sends that aren't a reply to anything the lead said. Receiving one never
+// means the lead was "responded to": confirmed live, leads who replied to
+// Kai (one asking "yes send me the link") sat unanswered because an
+// automation blast landing afterward made the conversation look handled.
+export function isConversationalOutbound(m) {
+  if (m.direction !== "outbound") return false;
+  const cat = sentCategoryForSourceType(m.sourceType);
+  return cat === "human" || cat === "ai_agent" || cat === "legacy_import" || m.sourceType === "gmail_sent" || m.sourceType === "ai_active_test";
+}
+// The latest message that's actually part of the conversation (anything the
+// lead sent, or a real reply from a person/agent) -- bulk sends skipped.
+export function lastConversationalMessage(journey) {
+  for (let i = journey.length - 1; i >= 0; i--) {
+    if (journey[i].direction === "inbound" || isConversationalOutbound(journey[i])) return journey[i];
+  }
+  return null;
+}
+// The lead's latest message if nobody has actually answered it yet, else null.
+export function findUnansweredInbound(journey) {
+  const last = lastConversationalMessage(journey);
+  return last && last.direction === "inbound" ? last : null;
+}
+
 // A human personally sent the last outbound message (not the AI) within
 // this window -- they're actively on this lead, don't suggest anything.
 const RECENTLY_HUMAN_HANDLED_MS = 6 * 60 * 60 * 1000;
@@ -435,6 +462,9 @@ function parseAgentOutput(raw) {
   // second pattern in each `||` only requires the marker at the very END
   // of the text (matching the observed leak shape), and discards
   // everything before it rather than showing/sending it.
+  // Matched anywhere, not just anchored -- a hostile lead must never get a
+  // reply, even one the model wrapped around the marker by mistake.
+  if (/\[\[BLACKLIST\b[^\]]*\]\]/i.test(text)) return { blacklist: true };
   const noResponse = text.match(/^\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]$/i) || text.match(/\[\[NO_RESPONSE_NEEDED:?\s*(.*?)\]\]\s*$/i);
   if (noResponse) {
     if (noResponse.index > 0) console.error(`[ai-agent-reply] NO_RESPONSE_NEEDED marker found after ${noResponse.index} chars of leaked reasoning text -- check RESPONSE_FORMAT_INSTRUCTIONS compliance`);
@@ -563,6 +593,15 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
     console.error(`[ai-agent-reply] stop_reason=${data.stop_reason} agent=${agent?.id} contact=${contactId} textLen=${textBlock?.text?.length ?? 0}`);
   }
   const result = parseAgentOutput(textBlock?.text || "");
+  // Autonomous modes blacklist on the spot (status + Settings' auto opt-out,
+  // same path as picking BLACKLIST by hand) and send nothing. AI Assist has
+  // a human in front of it, so it surfaces as an escalation for them to act on.
+  if (result.blacklist) {
+    if (!autoSend || !contactId) return { escalate: "Hostile message -- blacklist this contact." };
+    blacklistContact(contactId);
+    console.log(`[ai-agent-reply] agent ${agent?.id} blacklisted contact ${contactId} (hostile message)`);
+    return { skip: true, blacklisted: true, reason: "Hostile message -- contact blacklisted." };
+  }
   if (result.text) result.text = applyPricingMarker(result.text, agent);
   // Only for a genuinely autonomous send (AI Active/Coverage/Behavioral
   // Triggers -- autoSend true) -- nobody's watching those live the way a
@@ -606,13 +645,13 @@ function whyNotToGenerate(contact, journey) {
   if (contact.status && TERMINAL_STATUSES.has(contact.status)) {
     return `Status is "${contact.status}" -- conversation is already resolved.`;
   }
-  const last = journey.length ? journey.at(-1) : null;
-  const lastHumanOutbound = [...journey].reverse().find((m) => m.direction === "outbound" && m.sourceType && m.sourceType !== "ai_agent");
-  if (lastHumanOutbound) {
-    const isLatestOverall = !last || new Date(lastHumanOutbound.createdAt).getTime() >= new Date(last.createdAt).getTime();
-    if (isLatestOverall && Date.now() - new Date(lastHumanOutbound.createdAt).getTime() < RECENTLY_HUMAN_HANDLED_MS) {
-      return "A staff member just personally messaged this lead -- they're actively on it.";
-    }
+  // Bulk sends skipped (see isConversationalOutbound) -- a campaign/
+  // automation/sequence blast is neither a staff member taking over nor a
+  // follow-up.
+  const last = lastConversationalMessage(journey);
+  const lastHumanOutbound = findLastHumanOutbound(journey);
+  if (lastHumanOutbound && last === lastHumanOutbound && Date.now() - new Date(lastHumanOutbound.createdAt).getTime() < RECENTLY_HUMAN_HANDLED_MS) {
+    return "A staff member just personally messaged this lead -- they're actively on it.";
   }
   if (last && last.direction !== "inbound" && Date.now() - new Date(last.createdAt).getTime() < RECENT_FOLLOWUP_COOLDOWN_MS) {
     return "Already followed up recently -- give it more time before nudging again.";
@@ -621,7 +660,7 @@ function whyNotToGenerate(contact, journey) {
 }
 
 function buildPromptForState(journey) {
-  const last = journey.length ? journey.at(-1) : null;
+  const last = lastConversationalMessage(journey);
   if (!last) return { last: null, promptText: "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)" };
   const lastText = plainJourneyText(last.body || last.bodyPreview || "");
   if (last.direction === "inbound") return { last, promptText: lastText };

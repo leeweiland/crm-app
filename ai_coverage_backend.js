@@ -3,7 +3,7 @@ import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, isExcludable, findLastHumanOutbound,
+  generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound,
 } from "./ai_agents_backend.js";
 import { sendViaChannel } from "./ai_active_backend.js";
 
@@ -67,8 +67,10 @@ export async function maybeCoverInboundReply(contactId) {
     if (isExcludable(contact)) return;
 
     const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    const lastMsg = journey.length ? journey.at(-1) : null;
-    if (!lastMsg || lastMsg.direction !== "inbound") return; // sanity -- this should always be the message that was just logged
+    // Their latest message nobody has actually answered -- a campaign/
+    // automation/sequence blast landing after it doesn't count as an answer.
+    const lastMsg = findUnansweredInbound(journey);
+    if (!lastMsg) return;
 
     // Human takeover -- if the owner (back early, replying from their
     // phone) or anyone else has personally messaged this lead more

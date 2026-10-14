@@ -175,6 +175,7 @@ async function generateColdOpenForChannel(agent, contact, cfg, channel) {
   let promptText = `(${customPrompt || defaultPrompt} Write this fully in the voice/tone already defined above for this agent -- don't fall back to a generic marketing-copywriting structure or tone that isn't consistent with it.)`;
   if (channel === "email") promptText += "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)";
   const result = await generateAgentReply(agent, contact.id, promptText, { autoSend: true, senderName: agent.name });
+  if (result.blacklisted) return { ok: false, blacklisted: true, reason: result.reason };
   if (result.skip || result.escalate || !result.text) return { ok: false, reason: result.skip ? "Model judged no-go (skip)." : result.escalate ? "Model escalated instead of drafting a cold-open." : "No text produced." };
   let subject = null, body = result.text;
   if (channel === "email") {
@@ -195,6 +196,7 @@ export async function generateColdOpen(agent, contact, cfg, forceChannel = null)
   const reasons = [];
   for (const channel of channels) {
     const r = await generateColdOpenForChannel(agent, contact, cfg, channel);
+    if (r.blacklisted) return { sendable: false, reason: r.reason };
     if (r.ok) openers.push({ channel: r.channel, subject: r.subject, body: r.body });
     else reasons.push(`${channel}: ${r.reason}`);
   }
@@ -830,6 +832,7 @@ export async function processAiActiveBatches() {
             if (hasNewInbound) {
               st.lastSeenInboundAt[channel] = lastInbound.createdAt;
               const result = await generateAgentReply(agent, contact.id, lastInbound.body || lastInbound.bodyPreview || "", { autoSend: true, senderName: agent.name });
+              if (result.blacklisted) { st.state = "done"; continue; } // loop's own state check breaks out next -- no follow-up on the other channel
               if (result.skip) {
                 anyChannelStillActive = true;
                 nextTimes.push(now + randomDelayMs(cfg.waitTimeRange));
@@ -854,6 +857,7 @@ export async function processAiActiveBatches() {
             // stops the other from still following up on its own cadence.
             if ((st.followUpCount[channel] || 0) >= maxFollowUps) continue; // this channel is done; the other may not be
             const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name, skipGrounding: true });
+            if (result.blacklisted) { st.state = "done"; continue; }
             if (!result.skip && !result.escalate && result.text) {
               await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
               st.followUpCount[channel] = (st.followUpCount[channel] || 0) + 1;

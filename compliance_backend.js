@@ -209,6 +209,28 @@ export function containsTriggerWord(text, keywords) {
 // sees the new message instead of it sitting quietly in the Hidden tab.
 // BLACKLIST never reverses this way, by design -- see applyStatusOptOut's
 // own comment on that being permanent, no reverse trigger, ever.
+// Same effect as a human picking BLACKLIST in the status dropdown: status
+// set, applyStatusOptOut runs (opt-outs/hide per Settings), sidebar synced.
+// Shared by the SMS trigger-word path below and an AI agent's [[BLACKLIST]]
+// marker (ai_agents_backend.js).
+export function blacklistContact(contactId) {
+  const contact = getContactById(contactId);
+  if (!contact || contact.status === BLACKLIST_STATUS_LABEL) return;
+  const updated = updateContactByField("id", contactId, c => {
+    c.status = BLACKLIST_STATUS_LABEL;
+    c.updatedAt = new Date().toISOString();
+    applyStatusOptOut(c);
+    return c;
+  });
+  // Status changed but this doesn't go through contacts_backend.js's
+  // PATCH handler (the usual place that syncs a status change to the
+  // sidebar's SQLite snapshot) -- without this, the Blacklist filter
+  // tab and every other view keeps showing the OLD status until
+  // something else happens to touch this contact. Confirmed live:
+  // this was silently missing and the filter tab stayed empty.
+  try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+}
+
 export function checkAutoTriggers(contactId) {
   if (!contactId) return;
   const settings = getComplianceSettings();
@@ -223,21 +245,7 @@ export function checkAutoTriggers(contactId) {
   if (!contact) return;
 
   if (isBlacklistTrigger) {
-    if (contact.status !== BLACKLIST_STATUS_LABEL) {
-      const updated = updateContactByField("id", contactId, c => {
-        c.status = BLACKLIST_STATUS_LABEL;
-        c.updatedAt = new Date().toISOString();
-        applyStatusOptOut(c);
-        return c;
-      });
-      // Status changed but this doesn't go through contacts_backend.js's
-      // PATCH handler (the usual place that syncs a status change to the
-      // sidebar's SQLite snapshot) -- without this, the Blacklist filter
-      // tab and every other view keeps showing the OLD status until
-      // something else happens to touch this contact. Confirmed live:
-      // this was silently missing and the filter tab stayed empty.
-      try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
-    }
+    blacklistContact(contactId);
     return;
   }
 
