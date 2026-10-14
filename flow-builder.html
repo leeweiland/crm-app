@@ -341,16 +341,17 @@ function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 
 const flowId = new URLSearchParams(location.search).get('id');
 let flow = null, runCounts = {};
-let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [], allAcLists = [], allAcAutomations = [], allAcCustomFields = [], acIsConfigured = false;
+let allLists = [], allTags = [], allStatuses = [], allForms = [], allEventTypes = [], allAutomations = [], allWorkflows = [], allCustomFields = [], sheetsIsConfigured = false, allConversionEvents = [], allAcLists = [], allAcAutomations = [], allAcCustomFields = [], acIsConfigured = false, allFooters = [];
 let saveTimer, editingStepId = null, pendingAddPath = null, pendingAddAfter = null, pendingAddBefore = null;
 
 async function loadRefs() {
-  const [listsRes, tagsRes, statusesRes, formsRes, eventTypesRes, autosRes, wfRes, fieldsRes, sheetsRes, convRes, acRes] = await Promise.all([
+  const [listsRes, tagsRes, statusesRes, formsRes, eventTypesRes, autosRes, wfRes, fieldsRes, sheetsRes, convRes, acRes, footersRes] = await Promise.all([
     fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/forms'),
     fetch('/api/scheduling/admin/event-types'), fetch('/api/automations'), fetch('/api/workflows'),
     fetch('/api/custom-fields?entityType=contact'), fetch('/api/flows/sheets-status'), fetch('/api/conversions/settings'),
-    fetch('/api/flows/ac-refs'),
+    fetch('/api/flows/ac-refs'), fetch('/api/footer-templates'),
   ]);
+  allFooters = footersRes.ok ? (await footersRes.json()).templates || [] : [];
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
   allStatuses = (await statusesRes.json()).statuses;
@@ -1504,6 +1505,7 @@ function openStepConfigModal(step, isNew) {
         <div class="pra-muted" style="font-size:.74rem;margin-bottom:4px">Click a field below to insert it as a formatted question/answer pair (bold label, the value, a blank line) -- or select text and hit <b>B</b> to bold it yourself.</div>
         <div class="token-input-wrap">${tokenEditorHtml(c.body || '', { placeholder: '{{payload.First Name}} {{payload.Last Name}}\n{{payload.Email}}\n{{payload.Phone}}', multiline: true, attrs: 'id="cfgEmailBody"', expand: true })}<button class="token-bold-btn" type="button" data-bold-btn title="Bold selected text">B</button><button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div>
       </div>
+      <div class="field"><label class="pra-label">Footer</label><select class="pra-select" id="cfgEmailFooter"><option value="">${escapeHtml((() => { const d = allFooters.find(f => f.isDefault); return d ? `${d.name} (default)` : 'No footer'; })())}</option>${allFooters.map(f => `<option value="${f.id}" ${c.footerTemplateId === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select></div>
     `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
@@ -1688,6 +1690,7 @@ function openStepConfigModal(step, isNew) {
       step.config.from = getTokenEditorValue(document.getElementById('cfgEmailFrom')).trim();
       step.config.subject = getTokenEditorValue(document.getElementById('cfgEmailSubject')).trim();
       step.config.body = getTokenEditorValue(document.getElementById('cfgEmailBody'));
+      step.config.footerTemplateId = document.getElementById('cfgEmailFooter').value || null;
     }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
     else if (step.type === 'add_to_list') { step.config.listId = document.getElementById('cfgList').value; }

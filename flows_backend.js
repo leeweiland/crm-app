@@ -654,7 +654,7 @@ async function advanceFlowRun(run, flow) {
           await withTimeout(sendEmail({
             to, subject: subjectResolved, blocks: [{ type: "text", html: bodyHtml }],
             contactId: contact?.id || null, sourceType: "flow_step", sourceId: `${flow.id}:${step.id}`,
-            from: fromResolved || undefined,
+            from: fromResolved || undefined, footerTemplateId: cfg.footerTemplateId || undefined,
           }), 20000, "send_email").catch(e => console.error("[flows] send_email failed", e.message));
         }
       }
