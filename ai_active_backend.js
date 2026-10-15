@@ -6,7 +6,7 @@ import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound,
+  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound, inboundMessageText,
 } from "./ai_agents_backend.js";
 import { resolveContactTimezone } from "./contact_timezone.js";
 import { applyMergeTags } from "./block_editor_shared.js";
@@ -500,6 +500,63 @@ function mergeSafeWrite(file, ours) {
   writeJson(file, merged);
 }
 
+// ── Coverage follow-ups (2026-10-15). AI Coverage (ai_coverage_backend.js)
+// answers a lead's inbound reply the moment it lands, but it was stateless
+// by design, so once a lead went quiet after Kai's answer nothing ever
+// nudged them again -- confirmed live over 48h: 30 of 45 covered leads
+// never replied to Kai's first message and never heard from him again,
+// including one who'd already said "yeah" to investing and been sent the
+// application link. Rather than a second follow-up engine, coverage now
+// enrolls each conversation it starts into ONE per-agent "coverage" batch
+// (batch.coverage === true -- no segment, never topped up, never auto-
+// completed) as an ordinary waiting_reply state, and processAiActiveBatches
+// below works it exactly like an AI Active conversation from then on: the
+// same maxFollowUps/followUpWaitTimeRange cadence, the same per-channel
+// reply/follow-up loop, the same human-takeover and reactivation rules.
+// Once a state exists, coverage's own instant-reply path stands down for
+// that lead (see maybeCoverInboundReply) so the two never both answer the
+// same message.
+function findCoverageBatch(batches, agentId) {
+  return batches.find((b) => b.agentId === agentId && b.coverage) || null;
+}
+export function findCoverageState(agentId, contactId) {
+  const batch = findCoverageBatch(readJson(AI_ACTIVE_BATCHES_FILE, []), agentId);
+  if (!batch) return null;
+  return readJson(AI_ACTIVE_STATES_FILE, []).find((s) => s.batchId === batch.id && s.contactId === contactId) || null;
+}
+// Called right after coverage sends its own reply on `channel` to the
+// lead's inbound at `inboundAt` -- records that inbound as already answered
+// (lastSeenInboundAt) so the engine's next tick doesn't answer it a second
+// time, and schedules the first no-reply follow-up on the agent's own
+// follow-up cadence.
+export function trackCoverageReply(agent, contactId, channel, inboundAt) {
+  const nowIso = new Date().toISOString();
+  const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
+  let batch = findCoverageBatch(batches, agent.id);
+  if (!batch) {
+    batch = {
+      id: randomUUID(), agentId: agent.id, coverage: true,
+      segmentIds: [], segmentNames: ["AI Coverage"], batchSize: null,
+      contactIds: [], excludedCount: 0,
+      status: "running", createdAt: nowIso, startedAt: nowIso,
+    };
+    mergeSafeWrite(AI_ACTIVE_BATCHES_FILE, [batch]);
+  }
+  const cfg = agent.activeConfig || {};
+  const existing = readJson(AI_ACTIVE_STATES_FILE, []).find((s) => s.batchId === batch.id && s.contactId === contactId);
+  const st = existing || { id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId, createdAt: nowIso };
+  const seen = (st.lastSeenInboundAt && typeof st.lastSeenInboundAt === "object") ? st.lastSeenInboundAt : {};
+  const counts = (st.followUpCount && typeof st.followUpCount === "object") ? st.followUpCount : {};
+  st.state = "waiting_reply";
+  st.lastSeenInboundAt = { ...seen, [channel]: inboundAt };
+  st.followUpCount = { ...counts, [channel]: 0 }; // a fresh reply resets this channel's cadence, same as the engine does
+  st.lastActionAt = nowIso;
+  st.nextActionAt = new Date(Date.now() + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange)).toISOString();
+  st.updatedAt = nowIso;
+  mergeSafeWrite(AI_ACTIVE_STATES_FILE, [st]);
+  return st;
+}
+
 // How often a continuous batch actually re-scans the segment for newly-
 // matching contacts. NOT every scheduler tick (30s) -- buildCandidateList
 // does a full readJson(CONTACTS_FILE) + per-contact segment match, and an
@@ -536,7 +593,9 @@ export async function topUpContinuousBatches() {
     const segments = ids.map((id) => allSegments.find((s) => s.id === id)).filter(Boolean);
     if (!segments.length) continue;
 
-    let batch = batches.find((b) => b.agentId === agent.id && b.continuous);
+    // Never the agent's coverage batch (see trackCoverageReply) -- that one
+    // has no segment and is only ever fed by coverage itself.
+    let batch = batches.find((b) => b.agentId === agent.id && b.continuous && !b.coverage);
     if (!batch) {
       batch = {
         id: randomUUID(), agentId: agent.id, continuous: true,
@@ -686,7 +745,10 @@ export async function processAiActiveBatches() {
     // real automatic follow-ups -- but its ongoing sends still need to stay
     // out of real Activity/reporting counts, same reasoning as the initial
     // one-off send itself.
-    const sourceType = batch.isTestBatch ? "ai_active_test" : "ai_active";
+    // A coverage batch's sends stay tagged ai_coverage so Activity/reporting
+    // keep attributing them to the mode that actually started the
+    // conversation (see trackCoverageReply).
+    const sourceType = batch.isTestBatch ? "ai_active_test" : batch.coverage ? "ai_coverage" : "ai_active";
 
     // Cold-open volume cap (cfg.coldOpenPerHour, unset/0 = unlimited, same
     // as before this existed) -- every "queued" state used to fire its
@@ -711,7 +773,18 @@ export async function processAiActiveBatches() {
       const exclReason = isExcludable(contact);
       if (exclReason) { st.state = contact.status && TERMINAL_STATUSES.has(contact.status) ? "done" : "opted_out"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
 
-      if (!isStillTargeted(contact, agent, allSegments)) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
+      if (batch.coverage) {
+        // Coverage has no segment -- its standing "is Kai still allowed to
+        // talk to this person" check is the same one maybeCoverInboundReply
+        // applies on the way in: the agent still covers this lead's owner
+        // (or "unassigned"), and an owned lead's owner is still Away.
+        const coverIds = agent.targeting?.coverForUserIds || [];
+        if (!coverIds.includes(contact.ownerId || "unassigned")) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
+        if (contact.ownerId) {
+          const owner = readJson(USERS_FILE, []).find((u) => u.id === contact.ownerId);
+          if (!owner || !owner.away || !owner.canUseAiActive) { st.state = "human_takeover"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
+        }
+      } else if (!isStillTargeted(contact, agent, allSegments)) { st.state = "done"; st.updatedAt = new Date().toISOString(); changed = true; continue; }
 
       // Defense-in-depth against topUpContinuousBatches enrolling the same
       // contact twice in a race (two overlapping ticks each seeing a
@@ -831,7 +904,7 @@ export async function processAiActiveBatches() {
             }
             if (hasNewInbound) {
               st.lastSeenInboundAt[channel] = lastInbound.createdAt;
-              const result = await generateAgentReply(agent, contact.id, lastInbound.body || lastInbound.bodyPreview || "", { autoSend: true, senderName: agent.name });
+              const result = await generateAgentReply(agent, contact.id, inboundMessageText(lastInbound), { autoSend: true, senderName: agent.name });
               if (result.blacklisted) { st.state = "done"; continue; } // loop's own state check breaks out next -- no follow-up on the other channel
               if (result.skip) {
                 anyChannelStillActive = true;
@@ -856,6 +929,13 @@ export async function processAiActiveBatches() {
             // MAX_FOLLOWUPS) so one channel exhausting its follow-ups never
             // stops the other from still following up on its own cadence.
             if ((st.followUpCount[channel] || 0) >= maxFollowUps) continue; // this channel is done; the other may not be
+            // Follow-ups respect the Cold-Open Schedule window too (a reply
+            // to something the lead just sent still goes out any time). A
+            // 1-2 day follow-up cadence lands at whatever hour the clock
+            // says, so without this a lead who texted at 9pm got nudged at
+            // 3am. Outside the window: keep the state active and look again
+            // in 30 minutes -- not a skipped follow-up, a delayed one.
+            if (!isWithinSendWindow(agent, contact, now)) { anyChannelStillActive = true; nextTimes.push(now + 30 * 60 * 1000); continue; }
             const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name, skipGrounding: true });
             if (result.blacklisted) { st.state = "done"; continue; }
             if (!result.skip && !result.escalate && result.text) {
@@ -883,7 +963,7 @@ export async function processAiActiveBatches() {
     // lets topUpContinuousBatches keep enrolling newly-matching contacts
     // into it indefinitely; completing it the moment it's briefly empty
     // would silently turn "continuous" back into a one-shot batch.
-    const stillActive = batch.continuous || states.some((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state));
+    const stillActive = batch.continuous || batch.coverage || states.some((s) => s.batchId === batch.id && ["queued", "waiting_reply"].includes(s.state));
     if (!stillActive) {
       const batches2 = readJson(AI_ACTIVE_BATCHES_FILE, []);
       const b2 = batches2.find((b) => b.id === batch.id);

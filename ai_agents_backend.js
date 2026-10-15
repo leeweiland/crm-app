@@ -203,6 +203,48 @@ function plainJourneyText(s) {
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/\s+/g, " ").trim();
 }
+// What the lead actually typed, minus the quoted copy of OUR email their
+// mail client pasted underneath it. Confirmed live (2026-10-14): Josh
+// replied "STRENGTH NINJA" from a phone client that appends
+// "-------- Original message -------- From: lee@... Subject: 6 elements of
+// strength ..." -- the model read the whole thing as one of Lee's bulk
+// emails and answered [[NO_RESPONSE_NEEDED]], so a real reply went
+// unanswered. Cuts at the HTML containers Gmail/Outlook/Apple wrap quotes
+// in, then at the plain-text separators ("On ... wrote:", "From: ... Sent:",
+// Yahoo's own tagline). Falls back to the full text if cutting would leave
+// nothing, so a message that's ONLY a quote is never blanked out.
+const QUOTE_CUT_HTML = [
+  /<div[^>]*class="[^"]*gmail_quote[^"]*"[\s\S]*$/i,
+  /<blockquote[\s\S]*$/i,
+  /<div[^>]*id="(divRplyFwdMsg|appendonsend)"[\s\S]*$/i,
+  /<hr[^>]*>\s*(?:<[^>]+>\s*)*From:[\s\S]*$/i,
+];
+const QUOTE_CUT_TEXT = [
+  /-{3,}\s*(Original|Forwarded) message\s*-{3,}[\s\S]*$/i,
+  /-{3,}\s*Original Message\s*-{3,}[\s\S]*$/,
+  /\bOn\s.{5,160}?\bwrote:[\s\S]*$/,
+  /\bFrom:\s.{3,160}?\b(Sent|Date|To):[\s\S]*$/,
+  /\bYahoo Mail: Search, organi[sz]e, conquer[\s\S]*$/,
+  /\bSent from (my )?(iPhone|iPad|Galaxy|Samsung|Android|Yahoo|Outlook)[\s\S]*$/i,
+];
+export function stripQuotedReply(html) {
+  let s = String(html || "");
+  for (const re of QUOTE_CUT_HTML) s = s.replace(re, "");
+  let t = plainJourneyText(s);
+  for (const re of QUOTE_CUT_TEXT) t = t.replace(re, "");
+  return t.trim();
+}
+// The one place every autonomous mode (coverage, AI Active, AI Assist's
+// draft, the journey block itself) gets a lead message's text from -- an
+// inbound email goes through stripQuotedReply, everything else is just the
+// plain text it always was.
+export function inboundMessageText(m) {
+  if (m.direction === "inbound" && m.channel === "email") {
+    const t = stripQuotedReply(m.body || "");
+    if (t) return t;
+  }
+  return plainJourneyText(m.body || m.bodyPreview || "");
+}
 // Split out of formatCustomerJourney (2026-10-05) so generateAgentReply can
 // cache everything except the newest message instead of re-sending (and
 // re-billing, at full uncached price) this lead's ENTIRE history on every
@@ -222,7 +264,10 @@ function formatJourneyLines(journey) {
       const dir = m.direction === "inbound" ? "FROM LEAD" : m.direction === "outbound" ? (isConversationalOutbound(m) ? "TO LEAD" : "TO LEAD [automated bulk send -- not a reply in this conversation]") : m.direction || "";
       const when = (m.createdAt || m.at || "").slice(0, 16);
       const label = m.subject || m.sourceType || m.channel;
-      const body = plainJourneyText(m.bodyPreview || m.body || "").slice(0, 300);
+      // Inbound email goes through the quote stripper (see
+      // inboundMessageText) -- bodyPreview is cut at 140 chars so for a
+      // quoting client it's mostly the quote header anyway.
+      const body = (m.direction === "inbound" && m.channel === "email" ? inboundMessageText(m) : plainJourneyText(m.bodyPreview || m.body || "")).slice(0, 300);
       return `[${when}] ${m.channel}${dir ? " " + dir : ""} — ${label}${body ? ": " + body : ""}`;
     });
 }
@@ -662,7 +707,7 @@ function whyNotToGenerate(contact, journey) {
 function buildPromptForState(journey) {
   const last = lastConversationalMessage(journey);
   if (!last) return { last: null, promptText: "(No prior messages with this lead yet. Draft an appropriate opening outreach message to them, based on their info and your role.)" };
-  const lastText = plainJourneyText(last.body || last.bodyPreview || "");
+  const lastText = inboundMessageText(last);
   if (last.direction === "inbound") return { last, promptText: lastText };
   return { last, promptText: `(The lead hasn't replied since our last message to them: "${lastText}". Draft an appropriate follow-up to re-engage them.)` };
 }

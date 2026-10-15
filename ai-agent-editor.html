@@ -1804,7 +1804,9 @@ async function loadBatchList(agentId) {
     // isTestBatch rows (created behind the scenes by a real test-send so
     // replies get real automatic follow-ups -- see ai_agents_backend.js's
     // /test-send) aren't a real campaign and shouldn't clutter this list.
-    const mine = (batches || []).filter(b => b.agentId === agentId && !b.isTestBatch);
+    // Same for the coverage batch (ai_active_backend.js's trackCoverageReply)
+    // -- it's how Coverage replies get follow-ups, not a segment campaign.
+    const mine = (batches || []).filter(b => b.agentId === agentId && !b.isTestBatch && !b.coverage);
     if (!mine.length) { el.innerHTML = '<span class="pra-muted">Not running -- turn this agent Active with at least one segment selected above to start continuous coverage.</span>'; return; }
     const stats = {};
     for (const k of STAT_KEYS) stats[k] = mine.reduce((sum, b) => sum + (b.stats[k] || 0), 0);

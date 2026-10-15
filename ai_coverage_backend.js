@@ -3,9 +3,9 @@ import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound, sentCategoryForSourceType,
+  generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound, sentCategoryForSourceType, inboundMessageText,
 } from "./ai_agents_backend.js";
-import { sendViaChannel } from "./ai_active_backend.js";
+import { sendViaChannel, findCoverageState, trackCoverageReply } from "./ai_active_backend.js";
 
 // ── AI Coverage -- the fourth autonomous mode: while a specific teammate
 // is marked Away (Inbox's self-service toggle, gated by canUseAiActive in
@@ -66,6 +66,20 @@ export async function maybeCoverInboundReply(contactId) {
 
     if (isExcludable(contact)) return;
 
+    // Once this lead's conversation is tracked for follow-ups (see
+    // ai_active_backend.js's trackCoverageReply), the batch engine owns
+    // every later reply AND the no-reply follow-ups -- it answers a new
+    // inbound on its next tick (plus the agent's own waitTimeRange), and
+    // its own lastSeenInboundAt cursor is what prevents a double answer.
+    // Replying here as well would be exactly that double answer. A state
+    // that's "done" (follow-ups used up) is still the engine's: its
+    // reactivation pass picks a genuinely new inbound back up itself.
+    // Anything else (escalated, hot_handoff, human_takeover, opted_out) is
+    // the engine standing down, so this instant path handles the reply the
+    // way it always has, and trackCoverageReply below re-arms the state.
+    const tracked = findCoverageState(agent.id, contactId);
+    if (tracked && ["queued", "waiting_reply", "done"].includes(tracked.state)) return;
+
     const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     // Their latest message nobody has actually answered -- a campaign/
     // automation/sequence blast landing after it doesn't count as an answer.
@@ -93,7 +107,9 @@ export async function maybeCoverInboundReply(contactId) {
     // sequence came out of exactly this path. The system prompt (same for
     // every autonomous mode) already carries full conversation context;
     // the user turn only needs to be the one thing to actually respond to.
-    const promptText = introLine + "\n\n" + (lastMsg.body || lastMsg.bodyPreview || "");
+    // Plain text, quoted copy of our own email cut off (inboundMessageText)
+    // -- this used to hand the model the raw inbound HTML.
+    const promptText = introLine + "\n\n" + inboundMessageText(lastMsg);
     const channel = lastMsg.channel === "sms" ? "sms" : "email";
     const channelInstruction = channel === "email"
       ? "\n\n(Format your reply -- unless it's a [[NO_RESPONSE_NEEDED]] / [[ESCALATE]] marker -- as exactly:\nSUBJECT: <subject line>\nBODY:\n<email body>)"
@@ -106,7 +122,9 @@ export async function maybeCoverInboundReply(contactId) {
       const m = result.text.match(/^SUBJECT:\s*(.*)\n+BODY:\s*([\s\S]*)$/i);
       if (m) { subject = m[1].trim(); body = m[2].trim(); }
     }
-    await sendViaChannel(contact, channel, body, agent.id, subject, SOURCE_TYPE, agent.activeConfig?.emailSenderId);
+    const sent = await sendViaChannel(contact, channel, body, agent.id, subject, SOURCE_TYPE, agent.activeConfig?.emailSenderId);
+    if (sent && sent.ok === false) return; // nothing went out -- nothing to follow up on
+    trackCoverageReply(agent, contactId, channel, lastMsg.createdAt);
   } catch (err) {
     console.error(`[ai-coverage] contact ${contactId} failed:`, err.message);
   }
