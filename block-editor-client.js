@@ -434,6 +434,33 @@ window.BlockEditor = (function () {
       reader.readAsDataURL(file);
     }
 
+    // Drop an image file from the desktop straight onto an image block (in the
+    // email canvas) or onto the sidebar's Image preview / Upload Image area --
+    // same upload as the button. Only reacts to real files, so dragging blocks
+    // around to reorder them is unaffected.
+    function wireImageFileDrop(el, block, isFooter, statusEl) {
+      if (!el) return;
+      const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+      el.addEventListener('dragover', (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; el.classList.add('be-file-over'); });
+      el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('be-file-over'); });
+      el.addEventListener('drop', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault(); e.stopPropagation();
+        el.classList.remove('be-file-over');
+        const file = [...e.dataTransfer.files].find(f => ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(f.type));
+        if (!file) { if (statusEl) statusEl.textContent = 'That file is not a PNG, JPG, GIF or WebP image.'; return; }
+        uploadImageFile(file,
+          () => { if (statusEl) statusEl.textContent = 'Uploading...'; },
+          (err, url) => {
+            if (err) { if (statusEl) statusEl.textContent = err; return; }
+            block.src = url;
+            render();
+            if (selectedId === block.id) renderStylePanel();
+            notifyChange(isFooter);
+          });
+      });
+    }
+
     function newBlock(type) {
       return type === 'text' ? { id: uid(), type, html: 'New text block', style: {} }
         : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: {}, linkAction: null }
@@ -564,9 +591,11 @@ window.BlockEditor = (function () {
         ${block.type === 'image' ? `
           <div class="field">
             <label class="pra-label">Image</label>
+            <div id="imgDropArea" class="be-img-drop-area">
             ${block.src ? `<img src="${block.src}" style="max-width:100%;border-radius:4px;margin-bottom:6px;display:block"/>` : ''}
             <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" id="imgUpload" style="display:none"/>
-            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="imgUploadBtn" style="width:100%">Upload Image</button>
+            <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="imgUploadBtn" style="width:100%">Upload Image (or drop a file here)</button>
+            </div>
             <div class="pra-muted" id="imgUploadStatus" style="font-size:.72rem;margin-top:4px;min-height:1em"></div>
           </div>
           <div class="field"><label class="pra-label">Image URL</label><input class="pra-input" type="text" id="imgSrc" value="${block.src || ''}"/></div>
@@ -600,6 +629,7 @@ window.BlockEditor = (function () {
         const uploadInput = stylePanel.querySelector('#imgUpload');
         const uploadStatus = stylePanel.querySelector('#imgUploadStatus');
         uploadBtn.addEventListener('click', () => uploadInput.click());
+        wireImageFileDrop(stylePanel.querySelector('#imgDropArea'), block, isFooter, uploadStatus);
         uploadInput.addEventListener('change', () => {
           uploadImageFile(uploadInput.files[0],
             () => { uploadStatus.textContent = 'Uploading...'; },
@@ -662,7 +692,7 @@ window.BlockEditor = (function () {
     // show up; only the sidebar's own Upload Image button re-uploads it.
     function blockBodyPreviewHtml(b) {
       if (b.type !== 'image') return renderBlockHtml(b);
-      if (!b.src) return `<div class="be-image-upload-placeholder" data-upload-for="${b.id}">${ICON.image}<span>Click to upload image</span></div>`;
+      if (!b.src) return `<div class="be-image-upload-placeholder" data-upload-for="${b.id}">${ICON.image}<span>Click or drop an image here</span></div>`;
       return renderBlockHtml(b);
     }
 
@@ -751,6 +781,10 @@ window.BlockEditor = (function () {
         });
       });
 
+      canvas.querySelectorAll('.be-block').forEach(el => {
+        const fb = findBlock(el.dataset.id);
+        if (fb.block?.type === 'image') wireImageFileDrop(el, fb.block, fb.isFooter, null);
+      });
       canvas.querySelectorAll('.be-block').forEach(el => {
         el.addEventListener('click', (e) => {
           // A linked image or button is a live <a> in the canvas preview --

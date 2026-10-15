@@ -553,6 +553,9 @@ body { margin: 0; }
 .be-image-upload-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 36px 16px; margin: 10px; border: 2px dashed #cfcfcf; border-radius: 6px; color: #888; cursor: pointer; }
 .be-image-upload-placeholder:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
 .be-image-upload-placeholder span { font-size: .82rem; }
+/* An image file being dragged over an image block / the sidebar's image area */
+.be-block.be-file-over, .be-img-drop-area.be-file-over { outline: 2px dashed var(--pra-blue); outline-offset: 2px; background: rgba(0,155,255,0.08); }
+.be-img-drop-area { border-radius: 6px; }
 .be-image-replace-wrap { cursor: pointer; position: relative; }
 .be-image-replace-wrap:hover::after { content: 'Click to replace'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.45); color: #fff; font-size: .8rem; font-family: Arial, Helvetica, sans-serif; }
 .be-footer-section { border-top: 1px dashed #ddd; }
