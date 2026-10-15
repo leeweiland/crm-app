@@ -969,6 +969,13 @@ export async function processAiActiveBatches() {
             // follow-ups two minutes apart. st.nudgeNow is a one-shot
             // bypass set by hand when a backlog is pushed through early.
             const lastKaiAt = new Date(kaiSendsHere.at(-1).createdAt).getTime();
+            // ...and spoken on since the lead's latest message. A channel
+            // Kai last used before the lead's most recent reply isn't the
+            // live conversation -- confirmed live: a lead who replied to
+            // Kai's EMAIL got a follow-up TEXT because Kai had cold-texted
+            // him weeks earlier.
+            const lastInboundAny = [...journey].reverse().find((m) => m.direction === "inbound");
+            if (lastInboundAny && new Date(lastInboundAny.createdAt).getTime() > lastKaiAt) continue;
             const minGap = minDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange);
             if (now - lastKaiAt < minGap && !st.nudgeNow) { anyChannelStillActive = true; nextTimes.push(lastKaiAt + minGap); continue; }
             // Follow-ups respect the Cold-Open Schedule window too (a reply
@@ -978,7 +985,13 @@ export async function processAiActiveBatches() {
             // 3am. Outside the window: keep the state active and look again
             // in 30 minutes -- not a skipped follow-up, a delayed one.
             if (!isWithinSendWindow(agent, contact, now)) { anyChannelStillActive = true; nextTimes.push(now + 30 * 60 * 1000); continue; }
-            const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name, skipGrounding: true });
+            // The instruction defers to the prompt's own FOLLOW-UPS section
+            // -- it used to suggest "offer a couple concrete options, e.g.
+            // 'is it more like X, or...'", which is exactly the either/or
+            // the prompt's first rule forbids, and real follow-ups went out
+            // that way (confirmed live).
+            const followUpNo = (st.followUpCount[channel] || 0) + 1;
+            const result = await generateAgentReply(agent, contact.id, `(The lead hasn't replied to your last ${channel === "sms" ? "text" : "email"} yet. This is follow-up #${followUpNo} of ${maxFollowUps} -- write it per your FOLLOW-UPS rules: short, continues YOUR last message, ONE fully open question with no options or either/or, no "checking in". If your last message contained an application or booking link, ask whether it went through and include the same link again.)`, { autoSend: true, senderName: agent.name, skipGrounding: true });
             if (result.blacklisted) { st.state = "done"; continue; }
             if (!result.skip && !result.escalate && result.text) {
               const sent = await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
