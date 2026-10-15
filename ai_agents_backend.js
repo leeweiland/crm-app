@@ -554,6 +554,30 @@ export function applyPricingMarker(text, agent) {
   return text.replaceAll("[[SHOW_PRICING]]", extractPricingScript(agent?.systemPrompt));
 }
 
+// Every price-looking number in a draft that isn't one the agent's own
+// prompt actually states. Confirmed live twice in one day: "pricing ranges
+// 3k-18k" and "full programs run 4000 to 18000" went out to real leads --
+// the prompt says 4100/6100/8100/15100 (and 3100), nothing else. The
+// allowed set is read from the prompt itself (every number >= 1000 in it)
+// so a price change in the editor never needs a code change here. Years
+// are allowed so "in 2027" never trips it.
+function allowedPriceNumbers(agent) {
+  const nums = new Set();
+  for (const m of String(agent?.systemPrompt || "").matchAll(/\b(\d{1,3}(?:,\d{3})+|\d{4,6})\b/g)) nums.add(m[1].replace(/,/g, ""));
+  return nums;
+}
+export function findInventedPrices(text, agent) {
+  const allowed = allowedPriceNumbers(agent);
+  const ok = (raw) => { const n = String(raw).replace(/,/g, ""); return allowed.has(n) || /^(19|20)\d\d$/.test(n); };
+  const bad = new Set();
+  const s = String(text || "");
+  for (const m of s.matchAll(/\b\d+(?:\.\d+)?\s*k\b/gi)) bad.add(m[0]);                       // "3k", "18k"
+  for (const m of s.matchAll(/\$\s*(\d[\d,]*)/g)) if (!ok(m[1])) bad.add(m[0]);                // "$5,000"
+  for (const m of s.matchAll(/\b(\d[\d,]*)\s*(?:usd|dollars|bucks)\b/gi)) if (!ok(m[1])) bad.add(m[0]);
+  for (const m of s.matchAll(/\b(\d{4,6})\s*(?:to|-|–)\s*(\d{4,6})\b/g)) if (!ok(m[1]) || !ok(m[2])) bad.add(m[0]); // "4000 to 18000"
+  return [...bad];
+}
+
 // Non-streaming version of the chat call -- used for on-demand generation
 // (no one's watching a UI stream it in), where only the final parsed
 // result matters. Returns { text, buyingSignal } on a normal reply,
@@ -602,6 +626,10 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
   // `dynamic` return used to carry; see the system array below.
   const { cached } = buildAgentSystemPromptParts(agent, "", autoSend, senderName);
 
+  // One model call; `messages` varies only for the invented-price retry
+  // below, everything in `system` (and therefore every cache breakpoint)
+  // is identical across both calls.
+  const ask = async (messages) => {
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
@@ -623,7 +651,7 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
         { type: "text", text: journeyPrefixCached || "(no contact)", cache_control: { type: "ephemeral" } },
         { type: "text", text: journeyLatestUncached + "\n" + grounding },
       ],
-      messages: [{ role: "user", content: userText }],
+      messages,
     }),
   });
   if (!anthropicRes.ok) throw new Error(`Anthropic error ${anthropicRes.status}: ${await anthropicRes.text()}`);
@@ -637,7 +665,30 @@ export async function generateAgentReply(agent, contactId, userText, { autoSend 
   if (data.stop_reason && data.stop_reason !== "end_turn") {
     console.error(`[ai-agent-reply] stop_reason=${data.stop_reason} agent=${agent?.id} contact=${contactId} textLen=${textBlock?.text?.length ?? 0}`);
   }
-  const result = parseAgentOutput(textBlock?.text || "");
+  return textBlock?.text || "";
+  };
+  let rawText = await ask([{ role: "user", content: userText }]);
+  let result = parseAgentOutput(rawText);
+  // A made-up price is worse than no reply -- one retry with the draft and
+  // the exact offending numbers in front of the model, then give up on this
+  // message rather than send it (see findInventedPrices).
+  if (result.text) {
+    const invented = findInventedPrices(result.text, agent);
+    if (invented.length) {
+      console.error(`[ai-agent-reply] invented price (${invented.join(", ")}) agent=${agent?.id} contact=${contactId} -- retrying once`);
+      rawText = await ask([
+        { role: "user", content: userText },
+        { role: "assistant", content: rawText },
+        { role: "user", content: `(Your draft contains a price that does not exist: ${invented.join(", ")}. The ONLY prices are the ones written in the PRICING section of your instructions -- never estimate, round, or invent a number. Rewrite the same message using only those exact numbers, or leave the number out entirely. Output only the message.)` },
+      ]);
+      result = parseAgentOutput(rawText);
+      const still = result.text ? findInventedPrices(result.text, agent) : [];
+      if (still.length) {
+        console.error(`[ai-agent-reply] invented price persisted (${still.join(", ")}) agent=${agent?.id} contact=${contactId} -- not sending`);
+        return { skip: true, reason: `Draft contained a price that doesn't exist (${still.join(", ")}).` };
+      }
+    }
+  }
   // Autonomous modes blacklist on the spot (status + Settings' auto opt-out,
   // same path as picking BLACKLIST by hand) and send nothing. AI Assist has
   // a human in front of it, so it surfaces as an escalation for them to act on.

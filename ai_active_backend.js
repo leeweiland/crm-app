@@ -6,7 +6,7 @@ import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound, inboundMessageText,
+  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound, inboundMessageText, sentCategoryForSourceType,
 } from "./ai_agents_backend.js";
 import { resolveContactTimezone } from "./contact_timezone.js";
 import { applyMergeTags } from "./block_editor_shared.js";
@@ -85,13 +85,22 @@ function messageBufferMs(cfg) {
   if (!b || b.value == null || b.value === "") return DEFAULT_MESSAGE_BUFFER_MS;
   return (Number(b.value) || 0) * (WAIT_UNIT_MS[b.unit] || WAIT_UNIT_MS.seconds);
 }
-export function randomDelayMs(waitTimeRange) {
+export function minDelayMs(waitTimeRange) {
   const range = waitTimeRange || {};
   const minMult = WAIT_UNIT_MS[range.minUnit || range.unit] || WAIT_UNIT_MS.hours;
+  return (Number(range.min ?? range.minHours) || 4) * minMult;
+}
+export function randomDelayMs(waitTimeRange) {
+  const range = waitTimeRange || {};
   const maxMult = WAIT_UNIT_MS[range.maxUnit || range.unit] || WAIT_UNIT_MS.hours;
-  const loMs = (Number(range.min ?? range.minHours) || 4) * minMult;
+  const loMs = minDelayMs(range);
   const hiMs = Math.max(loMs, (Number(range.max ?? range.maxHours) || 24) * maxMult);
   return loMs + Math.random() * (hiMs - loMs);
+}
+// Kai's own sends on one channel of an already-sorted journey -- what the
+// follow-up cadence below is measured from.
+function agentSendsOnChannel(chJourney) {
+  return chJourney.filter((m) => m.direction === "outbound" && (sentCategoryForSourceType(m.sourceType) === "ai_agent" || m.sourceType === "ai_active_test"));
 }
 
 // sourceType defaults to "ai_active" (this file's own callers) but is
@@ -272,7 +281,11 @@ function stripModelSignoff(text) {
 function stripChannelLabelLeak(text) {
   return String(text || "")
     .replace(/^\s*subject:\s*.*\n+(?:body:\s*)?/i, "")
-    .replace(/^\s*(?:sms|text):\s*/i, "");
+    .replace(/^\s*(?:sms|text):\s*/i, "")
+    // The customer-journey line format itself ("[2026-10-15T19:42] sms TO
+    // LEAD — ai_coverage: ...") -- confirmed live: a follow-up text went out
+    // starting with a literal "sms TO LEAD — ".
+    .replace(/^\s*(?:\[\d{4}-[^\]]*\]\s*)?(?:sms|email)\s+(?:to|from)\s+lead(?:\s*\[[^\]]*\])?\s*[—–-]+\s*(?:(?:ai_coverage|ai_active|ai_active_test|inbox|manual|sms|email)\s*:\s*)?/i, "");
 }
 // No more multi-bubble replies -- [[SPLIT]] is no longer a prompt
 // instruction (removed from the agent's MESSAGE FORMAT rules), but the
@@ -547,6 +560,18 @@ export function trackCoverageReply(agent, contactId, channel, inboundAt) {
   const st = existing || { id: randomUUID(), batchId: batch.id, agentId: agent.id, contactId, createdAt: nowIso };
   const seen = (st.lastSeenInboundAt && typeof st.lastSeenInboundAt === "object") ? st.lastSeenInboundAt : {};
   const counts = (st.followUpCount && typeof st.followUpCount === "object") ? st.followUpCount : {};
+  // Everything the lead has ever sent, on EITHER channel, is already
+  // "seen" as of this moment -- coverage has just answered the latest of
+  // it. Confirmed live on the first coverage batch: with only the
+  // answered channel's cursor set, the engine found a months-old inbound
+  // email on the other channel, treated it as unanswered, generated a
+  // reply to it, then (on the 30s-2min re-check that a skipped reply
+  // schedules) sent a second round of follow-ups.
+  const journey = getContactMessages(contactId).filter((m) => CONVERSATION_CHANNELS.includes(m.channel)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  for (const ch of ["sms", "email"]) {
+    const last = latestOnChannel(journey.filter((m) => m.direction === "inbound"), ch);
+    if (last && (!seen[ch] || new Date(last.createdAt) > new Date(seen[ch]))) seen[ch] = last.createdAt;
+  }
   st.state = "waiting_reply";
   st.lastSeenInboundAt = { ...seen, [channel]: inboundAt };
   st.followUpCount = { ...counts, [channel]: 0 }; // a fresh reply resets this channel's cadence, same as the engine does
@@ -929,6 +954,23 @@ export async function processAiActiveBatches() {
             // MAX_FOLLOWUPS) so one channel exhausting its follow-ups never
             // stops the other from still following up on its own cadence.
             if ((st.followUpCount[channel] || 0) >= maxFollowUps) continue; // this channel is done; the other may not be
+            // Only a channel Kai has actually spoken on gets a no-reply
+            // follow-up. chJourney being non-empty isn't that: a lead's
+            // history carries campaign/automation blasts on channels Kai
+            // never used (confirmed live: SMS-only coverage conversations
+            // got a Kai follow-up EMAIL because of old campaign emails).
+            const kaiSendsHere = agentSendsOnChannel(chJourney);
+            if (!kaiSendsHere.length) continue;
+            // The cadence is measured from Kai's own last message on this
+            // channel (journey truth, not just nextActionAt) -- any channel
+            // can pull nextActionAt earlier (a skipped reply re-checks in
+            // 30s-2min), and before this the follow-up branch re-fired on
+            // every such revisit. Confirmed live: three leads got two
+            // follow-ups two minutes apart. st.nudgeNow is a one-shot
+            // bypass set by hand when a backlog is pushed through early.
+            const lastKaiAt = new Date(kaiSendsHere.at(-1).createdAt).getTime();
+            const minGap = minDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange);
+            if (now - lastKaiAt < minGap && !st.nudgeNow) { anyChannelStillActive = true; nextTimes.push(lastKaiAt + minGap); continue; }
             // Follow-ups respect the Cold-Open Schedule window too (a reply
             // to something the lead just sent still goes out any time). A
             // 1-2 day follow-up cadence lands at whatever hour the clock
@@ -939,13 +981,17 @@ export async function processAiActiveBatches() {
             const result = await generateAgentReply(agent, contact.id, "(The lead hasn't replied yet. Send a brief follow-up that continues the SAME thing you just asked -- a different angle on it, not a generic \"still there?\" check-in and not a new topic. Example: if you asked what's held them back, a follow-up could offer a couple concrete options, e.g. \"is it more like X, or is it more recent than that?\")", { autoSend: true, senderName: agent.name, skipGrounding: true });
             if (result.blacklisted) { st.state = "done"; continue; }
             if (!result.skip && !result.escalate && result.text) {
-              await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
+              const sent = await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
+              // null = no address on this channel, ok:false = provider
+              // refused -- neither is a follow-up that happened.
+              if (sent === null || sent?.ok === false) continue;
               st.followUpCount[channel] = (st.followUpCount[channel] || 0) + 1;
               st.lastActionAt = new Date().toISOString();
               anyChannelStillActive = true;
               nextTimes.push(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange));
             }
           }
+          delete st.nudgeNow; // one-shot, whether or not anything went out
           if (st.state === "waiting_reply") {
             st.state = anyChannelStillActive ? "waiting_reply" : "done";
             if (anyChannelStillActive) st.nextActionAt = new Date(Math.min(...nextTimes)).toISOString();
