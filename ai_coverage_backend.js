@@ -5,7 +5,7 @@ import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
   generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound, sentCategoryForSourceType, inboundMessageText,
 } from "./ai_agents_backend.js";
-import { sendViaChannel, findCoverageState, trackCoverageReply } from "./ai_active_backend.js";
+import { sendViaChannel, findCoverageState, trackCoverageReply, wakeStatesForInbound } from "./ai_active_backend.js";
 
 // ── AI Coverage -- the fourth autonomous mode: while a specific teammate
 // is marked Away (Inbox's self-service toggle, gated by canUseAiActive in
@@ -41,6 +41,10 @@ function findCoveringAgent(agents, ownerId) {
 // and logged here so a coverage failure never breaks the actual inbound-
 // message-logging path it's hooked onto).
 export async function maybeCoverInboundReply(contactId) {
+  // Every inbound SMS/email lands here (sms_backend / gmail_backend), so
+  // this is where a tracked conversation -- coverage's or AI Active's --
+  // gets pulled forward to be answered on the engine's next tick.
+  try { wakeStatesForInbound(contactId); } catch (e) { console.error("[ai-coverage] wakeStatesForInbound failed:", e.message); }
   try {
     const contact = getContactById(contactId);
     if (!contact) return;

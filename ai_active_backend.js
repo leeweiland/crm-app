@@ -537,6 +537,28 @@ export function findCoverageState(agentId, contactId) {
   if (!batch) return null;
   return readJson(AI_ACTIVE_STATES_FILE, []).find((s) => s.batchId === batch.id && s.contactId === contactId) || null;
 }
+// A lead's reply makes their conversation due NOW, whatever nextActionAt
+// says. The engine only ever looks at due states, and after a follow-up
+// nextActionAt sits 1-2 days out -- confirmed live: a lead answered a
+// follow-up with "how much is your program?" and would have waited five
+// hours for the reply. Called from the inbound ingest path (via
+// maybeCoverInboundReply, which every inbound SMS/email already goes
+// through) for every batch's states, not just coverage's -- AI Active has
+// the same gap.
+export function wakeStatesForInbound(contactId) {
+  const states = readJson(AI_ACTIVE_STATES_FILE, []);
+  const now = new Date();
+  const woken = [];
+  for (const st of states) {
+    if (st.contactId !== contactId || st.state !== "waiting_reply") continue;
+    if (new Date(st.nextActionAt || 0) <= now) continue;
+    st.nextActionAt = now.toISOString();
+    st.updatedAt = st.nextActionAt;
+    woken.push(st);
+  }
+  if (woken.length) mergeSafeWrite(AI_ACTIVE_STATES_FILE, woken);
+  return woken.length;
+}
 // Called right after coverage sends its own reply on `channel` to the
 // lead's inbound at `inboundAt` -- records that inbound as already answered
 // (lastSeenInboundAt) so the engine's next tick doesn't answer it a second
