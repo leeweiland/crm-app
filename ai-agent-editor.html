@@ -201,8 +201,13 @@
                   <span class="toggle-label" id="fNotifyBuyingSignalLabel">Notify Inbox sidebar on a detected buying signal</span>
                 </div>
               </div>
-              <div class="editor-row" style="margin-bottom:0">
+              <div class="editor-row">
                 <textarea id="fSystemPrompt"></textarea>
+              </div>
+              <div class="editor-row" style="margin-bottom:0">
+                <label for="fPlaybook">Sales Playbook</label>
+                <div class="pra-muted" style="font-size:.72rem;margin-bottom:6px">Sent to the agent with every message, after the prompt above. Where the two disagree, the prompt wins.</div>
+                <textarea id="fPlaybook"></textarea>
               </div>
             </div>
           </div>
@@ -946,7 +951,9 @@ initMultiselect('msStatuses', 'Select status(es)…');
 async function loadEditor() {
   const r = await fetch(`/api/ai-agents/${editingAgentId}`);
   if (!r.ok) { location.href = '/ai-agents.html'; return; }
-  const agent = (await r.json()).agent;
+  const loaded = await r.json();
+  const agent = loaded.agent;
+  document.getElementById('fPlaybook').value = (agent.playbook && agent.playbook.trim()) ? agent.playbook : (loaded.defaultPlaybook || '');
   document.title = (agent.name || 'AI Agent') + ' — CRM';
   document.getElementById('fName').value = agent.name || '';
   document.getElementById('fDescription').value = agent.description || '';
@@ -1148,6 +1155,7 @@ function currentAgentDraft() {
     name: document.getElementById('fName').value.trim() || 'Untitled Agent',
     description: document.getElementById('fDescription').value.trim(),
     systemPrompt: document.getElementById('fSystemPrompt').value,
+    playbook: document.getElementById('fPlaybook').value,
   };
 }
 // Shared by the delayed reply and the automatic no-reply follow-up below --
@@ -1644,6 +1652,7 @@ function buildAgentPayload() {
     aiAssist: getToggle('fAiAssistToggle'),
     notifyOnBuyingSignal: getToggle('fNotifyBuyingSignalToggle'),
     systemPrompt: document.getElementById('fSystemPrompt').value,
+    playbook: document.getElementById('fPlaybook').value,
     targeting: { programTypes, statuses, coverForUserIds },
     activeConfig: {
       segmentIds: getSelectedSegmentIds(),
@@ -1735,7 +1744,7 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fBatchSize', 'fColdOpenPerHour', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fName', 'fDescription', 'fSystemPrompt', 'fPlaybook', 'fBatchSize', 'fColdOpenPerHour', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
     'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
     'fReengageSmsPrompt', 'fReengageEmailPrompt', 'fReengageEmailVerbatimSubject',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
