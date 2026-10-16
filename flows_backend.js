@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { matchesSegment, findContactMatch } from "./segments_shared.js";
+import { matchesSegment, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
 import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal, dripClock, dripAllowedSoFar } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
@@ -562,7 +562,9 @@ async function advanceFlowRun(run, flow) {
           if (resolved) workingContact[field] = (field === "email" || field === "programType") ? resolved.toLowerCase() : resolved;
         }
       }
-      if (cfg.statusId) workingContact.status = cfg.statusId;
+      // statusOnlyForward: e.g. an "application started" flow must never knock
+      // an already BOOKED/ENROLLED contact back down to APPLICATION.
+      if (cfg.statusId) { if (cfg.statusOnlyForward) applyAdvancingStatus(workingContact, cfg.statusId); else workingContact.status = cfg.statusId; }
       // A flow that moves someone to BLACKLIST gets the same opt-outs,
       // hidden conversation, and Blacklist-sheet row a manual status change
       // does -- applyStatusOptOut's own contract is "any path", but this one

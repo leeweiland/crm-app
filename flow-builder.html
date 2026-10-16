@@ -1647,7 +1647,9 @@ function openStepConfigModal(step, isNew) {
       <div class="field-row"><div class="field"><label class="pra-label">Email</label><div class="token-input-wrap">${tokenEditorHtml(c.email || '', { placeholder: '{{payload.Email}}', attrs: 'id="cfgEmail"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Phone</label><div class="token-input-wrap">${tokenEditorHtml(c.phone || '', { placeholder: '{{payload.Phone}}', attrs: 'id="cfgPhone"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
       <div class="field-row">
         <div class="field"><label class="pra-label">Type</label><div class="token-input-wrap">${tokenEditorHtml(c.programType || '', { placeholder: 'ONLINE or GYM', attrs: 'id="cfgProgramType"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div>
-        <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="cfgAucStatus">${statusOptions}</select></div>
+        <div class="field"><label class="pra-label">Status</label><select class="pra-select" id="cfgAucStatus">${statusOptions}</select>
+          <label class="pra-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;font-weight:400;letter-spacing:0;font-size:.78rem;margin-top:6px"><input type="checkbox" id="cfgAucStatusForward" ${c.statusOnlyForward ? 'checked' : ''}/> Only move status forward (never back down the status order)</label>
+        </div>
       </div>
       <div class="pra-label" style="margin:12px 0 6px">Additional contact methods (optional)</div>
       <div class="field-row"><div class="field"><label class="pra-label">Extra email</label><div class="token-input-wrap">${tokenEditorHtml(c.altEmail || '', { placeholder: '{{payload.Secondary Email}}', attrs: 'id="cfgAltEmail"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div><div class="field"><label class="pra-label">Extra phone</label><div class="token-input-wrap">${tokenEditorHtml(c.altPhone || '', { placeholder: '{{payload.Secondary Phone}}', attrs: 'id="cfgAltPhone"' })}<button class="token-insert-btn" type="button" data-token-btn title="Insert data">+</button></div></div></div>
@@ -1823,6 +1825,7 @@ function openStepConfigModal(step, isNew) {
       step.config.phone = getTokenEditorValue(document.getElementById('cfgPhone')).trim();
       step.config.programType = getTokenEditorValue(document.getElementById('cfgProgramType')).trim();
       step.config.statusId = document.getElementById('cfgAucStatus').value;
+      step.config.statusOnlyForward = document.getElementById('cfgAucStatusForward').checked;
       step.config.altEmail = getTokenEditorValue(document.getElementById('cfgAltEmail')).trim();
       step.config.altPhone = getTokenEditorValue(document.getElementById('cfgAltPhone')).trim();
       const customFields = {};
