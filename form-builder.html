@@ -291,6 +291,20 @@
               <div class="field"><label class="pra-label">Redirect URL (optional)</label><input class="pra-input" id="setRedirectUrl" placeholder="https://pacificrimathletics.com/thank-you"/></div>
               <div class="field"><label class="pra-label">Default status for new contacts</label><select class="pra-select" id="setDefaultStatus"><option value="">(none)</option></select></div>
               <div class="field">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer" id="setCaptureUnfinishedRow">
+                  <div class="toggle-switch" id="setCaptureUnfinished"></div>
+                  <label class="pra-label" style="margin:0;cursor:pointer">Capture unfinished submissions</label>
+                </div>
+                <div id="setUnfinishedMinutesRow" style="display:none;margin-top:8px">
+                  <div style="display:flex;align-items:center;gap:8px;font-size:.8rem">
+                    <span class="pra-muted">After</span>
+                    <input class="pra-input" type="number" min="1" step="1" id="setUnfinishedMinutes" style="width:70px"/>
+                    <span class="pra-muted">minutes with no clicks</span>
+                  </div>
+                </div>
+                <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">Saves answers as people go. If they stop before submitting (or booking the calendar step) and have given an email or phone, flows set to "Form is started but not finished" run with their answers so far.</div>
+              </div>
+              <div class="field">
                 <label class="pra-label">Add tags on submit</label>
                 <select class="pra-select picker-add-select" id="setTagAdd"></select>
                 <div class="chip-multiselect picker-chips" id="setTagsChips"></div>
@@ -1901,6 +1915,9 @@ function renderSettings() {
   const statusSel = document.getElementById('setDefaultStatus');
   statusSel.innerHTML = '<option value="">(none)</option>' + allStatuses.map(s => `<option value="${escapeHtml(s.label)}">${escapeHtml(s.label)}</option>`).join('');
   statusSel.value = form.settings.defaultStatus || '';
+  document.getElementById('setCaptureUnfinished').classList.toggle('on', !!form.settings.captureUnfinished);
+  document.getElementById('setUnfinishedMinutesRow').style.display = form.settings.captureUnfinished ? 'block' : 'none';
+  document.getElementById('setUnfinishedMinutes').value = Number(form.settings.unfinishedMinutes) > 0 ? form.settings.unfinishedMinutes : 5;
 
   renderPicker('tag', allTags, form.settings.addTagIds, 'setTagAdd', 'setTagsChips', ids => { form.settings.addTagIds = ids; saveDebounced(); renderSettings(); });
   renderPicker('list', allLists, form.settings.addListIds, 'setListAdd', 'setListsChips', ids => { form.settings.addListIds = ids; saveDebounced(); renderSettings(); });
@@ -1913,6 +1930,15 @@ function renderSettings() {
   });
 });
 document.getElementById('setDefaultStatus').addEventListener('change', e => { form.settings.defaultStatus = e.target.value; saveDebounced(); });
+document.getElementById('setCaptureUnfinishedRow').addEventListener('click', () => {
+  form.settings.captureUnfinished = !form.settings.captureUnfinished;
+  if (form.settings.captureUnfinished && !(Number(form.settings.unfinishedMinutes) > 0)) form.settings.unfinishedMinutes = 5;
+  saveDebounced(); renderSettings();
+});
+document.getElementById('setUnfinishedMinutes').addEventListener('input', e => {
+  const n = Math.round(Number(e.target.value));
+  if (n > 0) { form.settings.unfinishedMinutes = n; saveDebounced(); }
+});
 
 // ── Header: View link + Embed modal ─────────────────────────────────────
 document.querySelectorAll('[data-embed-tab]').forEach(btn => btn.onclick = () => {

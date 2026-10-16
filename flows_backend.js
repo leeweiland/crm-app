@@ -20,7 +20,7 @@ export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
 const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migrated below
 
-export const TRIGGER_TYPES = ["webhook", "form_submitted", "booking_created", "youtube_new_video", "status_changed"];
+export const TRIGGER_TYPES = ["webhook", "form_submitted", "form_abandoned", "booking_created", "youtube_new_video", "status_changed"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
@@ -600,7 +600,7 @@ async function advanceFlowRun(run, flow) {
       // here can never recursively re-trigger a status_changed flow. Adding
       // it here "for consistency" would reopen that cross-flow cycle.
       if (workingContact.status !== prevStatus) {
-        checkConversionGoal("lead_status_change", workingContact.id);
+        checkConversionGoal("lead_status_change", workingContact.id, workingContact.status);
         checkAutomationGoal("lead_status_change", workingContact.id, workingContact.status);
       }
       run.currentStepId = step.nextStepId || null;
@@ -834,7 +834,7 @@ export function fireFlowTrigger(type, { contactId, formId, eventTypeId, bookingI
   for (const flow of flows) {
     const cfg = flow.trigger.config || {};
     let matches = true;
-    if (type === "form_submitted" && cfg.formId) matches = cfg.formId === formId;
+    if ((type === "form_submitted" || type === "form_abandoned") && cfg.formId) matches = cfg.formId === formId;
     if (type === "booking_created" && cfg.eventTypeId) matches = cfg.eventTypeId === eventTypeId;
     if (type === "status_changed" && cfg.statusId) matches = cfg.statusId === payload?.status;
     if (matches) startFlowRun(flow, contactId, payload || {}, bookingId);
@@ -1380,9 +1380,16 @@ export async function handleFlowsRequest(req, res, url) {
     if (type === "webhook") {
       return sendJson(res, 200, { samples: flow.trigger.config?.samples || [] });
     }
-    if (type === "form_submitted") {
+    // form_abandoned ("started but not finished") carries the same answer
+    // shape as a submission, so its samples are that form's real unfinished
+    // captures first, topped up with its completed submissions.
+    if (type === "form_submitted" || type === "form_abandoned") {
       const forms = readJson("crm_forms.json", []);
       let responses = readJson("crm_form_responses.json", []);
+      if (type === "form_abandoned") {
+        const unfinished = readJson("crm_form_partials.json", []).filter(x => x.status === "abandoned").map(x => ({ formId: x.formId, answers: x.answers || {}, timezone: x.timezone, submittedAt: x.firedAt || x.lastActivityAt }));
+        responses = [...unfinished, ...responses];
+      }
       const formId = flow.trigger.config?.formId;
       if (formId) responses = responses.filter(r => r.formId === formId);
       responses = responses.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)).slice(0, 5);

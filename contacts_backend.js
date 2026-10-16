@@ -556,7 +556,7 @@ export async function handleContactsRequest(req, res, url) {
       // asymmetry by adding the same call there -- it would reopen exactly
       // the cross-flow trigger cycle this boundary exists to prevent.
       if (updated.status !== prevStatus) {
-        checkConversionGoal("lead_status_change", updated.id);
+        checkConversionGoal("lead_status_change", updated.id, updated.status);
         checkAutomationGoal("lead_status_change", updated.id, updated.status);
         // Deferred, not called inline -- fireFlowTrigger's own startFlowRun/
         // advanceFlowRun synchronously rewrites crm_flow_runs.json (twice,

@@ -202,6 +202,7 @@
       <select class="pra-select" id="triggerType">
         <option value="webhook">A webhook is received (Framer, etc.)</option>
         <option value="form_submitted">Form is submitted</option>
+        <option value="form_abandoned">Form is started but not finished</option>
         <option value="booking_created">Booking is created</option>
         <option value="youtube_new_video">A new video is uploaded to a YouTube channel</option>
         <option value="status_changed">A contact's status changes</option>
@@ -522,7 +523,7 @@ function renderChainHtml(startId, path) {
   return html;
 }
 
-const TRIGGER_LABELS = { webhook: 'A webhook is received', form_submitted: 'Form is submitted', booking_created: 'Booking is created', youtube_new_video: 'A new video is uploaded to a YouTube channel', status_changed: "A contact's status changes" };
+const TRIGGER_LABELS = { webhook: 'A webhook is received', form_submitted: 'Form is submitted', form_abandoned: 'Form is started but not finished', booking_created: 'Booking is created', youtube_new_video: 'A new video is uploaded to a YouTube channel', status_changed: "A contact's status changes" };
 function render() {
   document.getElementById('flowName').value = flow.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (flow.active ? ' on' : '');
@@ -532,6 +533,7 @@ function render() {
   const trig = flow.trigger || { type: 'webhook', config: {} };
   let trigLabel = TRIGGER_LABELS[trig.type] || '';
   if (trig.type === 'form_submitted') trigLabel = trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted';
+  if (trig.type === 'form_abandoned') trigLabel = trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is started but not finished` : 'Any form is started but not finished';
   if (trig.type === 'booking_created') trigLabel = trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created';
   if (trig.type === 'youtube_new_video') trigLabel = trig.config?.channelId ? `New video on YouTube channel ${escapeHtml(trig.config.channelId)}` : 'A new video is uploaded to a YouTube channel (pick the channel)';
   if (trig.type === 'status_changed') trigLabel = trig.config?.statusId ? `Status changes to "${escapeHtml(trig.config.statusId)}"` : 'A contact\'s status changes to anything';
@@ -767,7 +769,7 @@ function openTriggerModal() {
   document.getElementById('sampleDataResultAlt').innerHTML = '';
   document.getElementById('triggerType').value = trig.type;
   updateTriggerFields();
-  if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
+  if (trig.type === 'form_submitted' || trig.type === 'form_abandoned') document.getElementById('triggerTarget').value = trig.config.formId || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
   if (trig.type === 'status_changed') document.getElementById('triggerTarget').value = trig.config.statusId || '';
   if (trig.type === 'youtube_new_video') document.getElementById('youtubeChannelId').value = trig.config.channelId || '';
@@ -784,9 +786,9 @@ function updateTriggerFields() {
   const label = document.getElementById('triggerTargetLabel');
   const select = document.getElementById('triggerTarget');
   document.getElementById('webhookConfigFields').style.display = type === 'webhook' ? 'block' : 'none';
-  document.getElementById('nonWebhookSampleFields').style.display = (type === 'form_submitted' || type === 'booking_created' || type === 'youtube_new_video') ? 'block' : 'none';
+  document.getElementById('nonWebhookSampleFields').style.display = (type === 'form_submitted' || type === 'form_abandoned' || type === 'booking_created' || type === 'youtube_new_video') ? 'block' : 'none';
   document.getElementById('youtubeConfigFields').style.display = type === 'youtube_new_video' ? 'block' : 'none';
-  if (type === 'form_submitted') {
+  if (type === 'form_submitted' || type === 'form_abandoned') {
     field.style.display = 'block'; label.textContent = 'Form (any if left blank)';
     select.innerHTML = '<option value="">Any form</option>' + allForms.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
   } else if (type === 'booking_created') {
@@ -804,7 +806,7 @@ document.getElementById('saveTriggerBtn').onclick = async () => {
   const type = document.getElementById('triggerType').value;
   const target = document.getElementById('triggerTarget').value;
   const oldConfig = flow.trigger?.config || {};
-  let config = type === 'form_submitted' ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : type === 'status_changed' ? { statusId: target || null } : type === 'youtube_new_video' ? { channelId: document.getElementById('youtubeChannelId').value.trim() } : {};
+  let config = (type === 'form_submitted' || type === 'form_abandoned') ? { formId: target || null } : type === 'booking_created' ? { eventTypeId: target || null } : type === 'status_changed' ? { statusId: target || null } : type === 'youtube_new_video' ? { channelId: document.getElementById('youtubeChannelId').value.trim() } : {};
   if (type === 'webhook') {
     config = { webhookToken: flow.trigger?.type === 'webhook' ? oldConfig.webhookToken : undefined };
   }
@@ -1054,7 +1056,7 @@ function suggestSheetToken(header) {
     // the moment the row is written -- e.g. "BOOKED WHEN" in the existing ONLINE BOOKINGS sheet step
     bookedwhen: '{{timestamp}}', datebooked: '{{timestamp}}', bookedon: '{{timestamp}}', dateadded: '{{timestamp}}', timestamp: '{{timestamp}}', submitted: '{{timestamp}}', datesubmitted: '{{timestamp}}' };
   if (CONTACT[h]) return CONTACT[h];
-  if (type === 'booking_created' || type === 'form_submitted') {
+  if (type === 'booking_created' || type === 'form_submitted' || type === 'form_abandoned') {
     if (h === 'timezone' || h === 'tz' || h === 'timezonename') return '{{payload.Timezone}}';
   }
   if (type === 'booking_created') {
@@ -1271,7 +1273,7 @@ function openStepConfigModal(step, isNew) {
     // elsewhere in this modal to have loaded them first. Re-renders the
     // Field select in place, preserving whatever's currently chosen, and is
     // a no-op if this step's modal has since been closed/swapped.
-    if (flow.trigger?.type === 'form_submitted' && !cachedFormFields.length) {
+    if ((flow.trigger?.type === 'form_submitted' || flow.trigger?.type === 'form_abandoned') && !cachedFormFields.length) {
       fetchRawSamples().then(() => {
         if (editingStepId !== step.id || !document.getElementById('cfgField')) return;
         fieldSel.insertAdjacentHTML('beforeend', formFieldOptionsHtml());
@@ -2689,7 +2691,7 @@ canvasWrap.addEventListener('touchend', (e) => {
   // a form_submitted flow's step cards show "Question: Type" on first load
   // instead of the raw code, without waiting for something else in the
   // builder (e.g. opening the token picker) to have fetched it first.
-  if (flow.trigger?.type === 'form_submitted') fetchRawSamples().then(render);
+  if (flow.trigger?.type === 'form_submitted' || flow.trigger?.type === 'form_abandoned') fetchRawSamples().then(render);
 })();
 </script>
 </body>

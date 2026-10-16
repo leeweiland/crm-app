@@ -4,7 +4,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
-import { getAllContacts, writeAllContacts } from "./contacts_db.js";
+import { getAllContacts, writeAllContacts, createContact } from "./contacts_db.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
@@ -12,7 +12,7 @@ import { fireFlowTrigger } from "./flows_backend.js";
 import { clientIp, lookupIpLocation, claimVisitorHistory } from "./tracking_backend.js";
 import { normalizePhoneForRequest } from "./phone_util.js";
 import { EVENT_TYPES_FILE, BOOKINGS_FILE, eventTypeHasSlug } from "./scheduling_backend.js";
-import { syncContactFields } from "./sqlite_inbox.js";
+import { syncContactFields, getContactRawByEmail } from "./sqlite_inbox.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,6 +29,11 @@ export const RESPONSES_FILE = "crm_form_responses.json";
 // reporting.html's own date-range picker uses -- so the Drop-offs tab's
 // period filter buckets consistently with every other report in the app.
 export const STEP_VIEWS_FILE = "crm_form_step_views.json";
+// "Started but not finished" captures -- one record per visitor session
+// (public-form.html's sid) per form, see the /progress endpoint and
+// processUnfinishedForms below.
+export const PARTIALS_FILE = "crm_form_partials.json";
+const DEFAULT_UNFINISHED_MINUTES = 5;
 // The first Drop-offs release (Sep 13, 10:33 AKDT) stored each step's visitors as
 // a plain ARRAY of ids; the date-range picker shipped two hours later switched
 // to { id: "YYYY-MM-DD" } objects with no migration. A step still holding the
@@ -278,6 +283,7 @@ function publicForm(form) {
       submitButtonText: form.settings.submitButtonText,
       confirmationMessage: form.settings.confirmationMessage,
       redirectUrl: form.settings.redirectUrl,
+      captureUnfinished: !!form.settings.captureUnfinished,
     },
   };
 }
@@ -570,13 +576,71 @@ export async function handleFormsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true });
   }
 
+  // Saves a visitor's answers-so-far while they're still on the form (only
+  // when the form's "capture unfinished" setting is on). Every Next/Back/
+  // answer change sends the answers; any other click just bumps
+  // lastActivityAt. processUnfinishedForms (scheduler) fires the
+  // form_abandoned flow trigger once they've gone quiet for the form's
+  // configured minutes without submitting or booking.
+  const progressMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/progress$/);
+  if (progressMatch && req.method === "POST") {
+    const form = readJson(FORMS_FILE, []).find(f => f.id === progressMatch[1]);
+    const body = await readJsonBody(req).catch(() => ({}));
+    const { sid, answers, vid, timezone, nextHidden } = body || {};
+    if (form && form.status === "published" && form.settings?.captureUnfinished && typeof sid === "string" && sid && sid.length <= 100) {
+      const now = new Date().toISOString();
+      let cleaned = null;
+      if (answers && typeof answers === "object") {
+        cleaned = {};
+        for (const f of form.fields) {
+          if (!ANSWERABLE_TYPES.includes(f.type)) continue;
+          const v = answers[f.id];
+          if (v === undefined || v === null || v === "") continue;
+          cleaned[f.id] = Array.isArray(v) ? v.slice(0, 50).map(x => String(x).slice(0, 500)) : String(v).slice(0, 5000);
+        }
+      }
+      const partials = readJson(PARTIALS_FILE, []);
+      let rec = partials.find(x => x.formId === form.id && x.sid === sid);
+      if (!rec) {
+        rec = { id: randomUUID(), formId: form.id, sid, vid: typeof vid === "string" ? vid.slice(0, 100) : null, answers: {}, startedAt: now, status: "open" };
+        partials.push(rec);
+      }
+      if (rec.status === "open") {
+        if (cleaned) {
+          // Phone normalized once per new value (same as submit), not on
+          // every ping.
+          for (const pf of form.fields.filter(ff => ff.type === "phone")) {
+            if (!cleaned[pf.id]) continue;
+            if (rec.rawPhone === cleaned[pf.id] && rec.answers?.[pf.id]) { cleaned[pf.id] = rec.answers[pf.id]; continue; }
+            rec.rawPhone = cleaned[pf.id];
+            cleaned[pf.id] = await normalizePhoneForRequest(req, cleaned[pf.id]).catch(() => cleaned[pf.id]);
+          }
+          rec.answers = cleaned;
+        }
+        if (typeof timezone === "string" && timezone.length < 64) rec.timezone = timezone;
+        if (typeof nextHidden === "boolean") rec.blocked = nextHidden;
+        rec.lastActivityAt = now;
+        // Closed records older than 30 days and open ones idle 7+ days are
+        // dropped so this file stays small. Re-read so a scheduler tick's
+        // write in the meantime isn't lost.
+        const cutoffClosed = Date.now() - 30 * 86400000, cutoffOpen = Date.now() - 7 * 86400000;
+        const fresh = readJson(PARTIALS_FILE, []);
+        const idx = fresh.findIndex(x => x.id === rec.id);
+        if (idx >= 0) { if (fresh[idx].status === "open") fresh[idx] = rec; } else fresh.push(rec);
+        writeJson(PARTIALS_FILE, fresh.filter(x => new Date(x.lastActivityAt || x.startedAt).getTime() > (x.status === "open" ? cutoffOpen : cutoffClosed)));
+      }
+    }
+    return sendJson(res, 200, { ok: true });
+  }
+
   const submitMatch = p.match(/^\/api\/public\/forms\/([^/]+)\/submit$/);
   if (submitMatch && req.method === "POST") {
     const forms = readJson(FORMS_FILE, []);
     const form = forms.find(f => f.id === submitMatch[1]);
     if (!form || form.status !== "published") return sendJson(res, 404, { error: "Form not found" });
     selfHealFieldCodes(form, forms);
-    const { answers, vid, bookedIdentity, timezone: rawTimezone } = await readJsonBody(req);
+    const { answers, vid, bookedIdentity, timezone: rawTimezone, sid } = await readJsonBody(req);
+    if (typeof sid === "string" && sid) markPartialCompleted(form.id, sid);
     // IANA name ("Europe/London") from the visitor's browser -- validated
     // since this is an unauthenticated body that ends up in a Sheet/email.
     let timezone = "";
@@ -672,14 +736,7 @@ export async function handleFormsRequest(req, res, url) {
         // picker (flows_backend.js's /samples, flow-builder.html) filters
         // the label-keyed duplicates back out so it only ever offers the
         // stable one.
-        const labeledAnswers = {};
-        form.fields.forEach(f => {
-          if (ANSWERABLE_TYPES.includes(f.type) && cleanAnswers[f.id] !== undefined && cleanAnswers[f.id] !== "") {
-            const val = Array.isArray(cleanAnswers[f.id]) ? cleanAnswers[f.id].join(", ") : cleanAnswers[f.id];
-            labeledAnswers[f.code || slugField(f)] = val;
-            if (f.label) labeledAnswers[f.label] = val;
-          }
-        });
+        const labeledAnswers = labeledAnswersFor(form, cleanAnswers);
         // Not an answerable question, so it's added here -- never over a
         // real question a form happens to have labeled "Timezone".
         if (timezone && !("Timezone" in labeledAnswers)) labeledAnswers["Timezone"] = timezone;
@@ -866,4 +923,125 @@ export async function handleFormsRequest(req, res, url) {
   }
 
   return false;
+}
+
+// The {{payload.X}} shape a form_submitted flow gets -- dual-keyed by
+// f.code and f.label (see the submit handler's comment on why).
+function labeledAnswersFor(form, answers) {
+  const labeledAnswers = {};
+  form.fields.forEach(f => {
+    if (ANSWERABLE_TYPES.includes(f.type) && answers[f.id] !== undefined && answers[f.id] !== "") {
+      const val = Array.isArray(answers[f.id]) ? answers[f.id].join(", ") : answers[f.id];
+      labeledAnswers[f.code || slugField(f)] = val;
+      if (f.label) labeledAnswers[f.label] = val;
+    }
+  });
+  return labeledAnswers;
+}
+
+function markPartialCompleted(formId, sid) {
+  try {
+    const partials = readJson(PARTIALS_FILE, []);
+    const rec = partials.find(x => x.formId === formId && x.sid === sid);
+    if (!rec || rec.status !== "open") return;
+    rec.status = "completed"; rec.closedAt = new Date().toISOString();
+    writeJson(PARTIALS_FILE, partials);
+  } catch (e) { console.error("[forms] mark partial completed failed", e.message); }
+}
+
+// Name/email/phone out of a capture: real identity field types first,
+// falling back to a short_text whose stable code is first_name/last_name
+// (1 GYM APP's original name questions).
+function partialIdentity(form, answers) {
+  const byType = t => form.fields.find(f => f.type === t);
+  const byCode = c => form.fields.find(f => f.code === c);
+  const val = f => (f && answers[f.id] ? String(answers[f.id]).trim() : "");
+  return {
+    email: val(byType("email")).toLowerCase(),
+    phone: val(byType("phone")),
+    first: val(byType("first_name") || byCode("first_name")),
+    last: val(byType("last_name") || byCode("last_name")),
+  };
+}
+// Matches an existing contact (fast email index first, then the full
+// email/phone match) or creates a bare one. Never touches status/lists --
+// the flow's own Add/Update Contact step decides those.
+function findOrCreateContactForPartial({ email, phone, first, last }) {
+  const fast = email ? getContactRawByEmail(email) : null;
+  if (fast) return fast;
+  const existing = findContactMatch(getAllContacts(), email, phone);
+  if (existing) return existing;
+  const contact = {
+    id: randomUUID(), type: "lead", accountName: "", first, last, email, phone,
+    status: "", tags: [], listIds: [], customFields: {},
+    source: "form", ownerId: null, emailOptOut: false, smsOptOut: false,
+    externalIds: { acContactId: null, closeLeadId: null },
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+  createContact(contact);
+  try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
+  return contact;
+}
+// Submitted this form, or booked its calendar step's event type, since they
+// started -- e.g. finished on another device, or the submit raced the timer.
+function finishedSince(form, contactId, startedAt) {
+  const since = new Date(startedAt).getTime() - 60000;
+  if (readJson(RESPONSES_FILE, []).some(r => r.formId === form.id && r.contactId === contactId && new Date(r.submittedAt).getTime() >= since)) return true;
+  const slugs = form.fields.filter(f => f.type === "calendar" && f.eventTypeSlug).map(f => f.eventTypeSlug);
+  if (!slugs.length) return false;
+  const etIds = readJson(EVENT_TYPES_FILE, []).filter(e => slugs.some(sl => eventTypeHasSlug(e, sl))).map(e => e.id);
+  return readJson(BOOKINGS_FILE, []).some(b => b.contactId === contactId && etIds.includes(b.eventTypeId) && new Date(b.createdAt).getTime() >= since);
+}
+
+// Scheduler tick: every open capture idle for its form's minutes (default
+// 5) is closed out -- "abandoned" (flow fired), "completed" (they finished
+// after all), "no_contact" (never got as far as an email/phone), or
+// "blocked" (stopped at a disqualified step; never sent to a flow).
+export async function processUnfinishedForms() {
+  const partials = readJson(PARTIALS_FILE, []);
+  const open = partials.filter(x => x.status === "open");
+  if (!open.length) return;
+  const forms = readJson(FORMS_FILE, []);
+  const now = Date.now();
+  const updates = new Map();
+  for (const rec of open) {
+    const form = forms.find(f => f.id === rec.formId);
+    if (!form || !form.settings?.captureUnfinished) continue;
+    const minutes = Number(form.settings.unfinishedMinutes) > 0 ? Number(form.settings.unfinishedMinutes) : DEFAULT_UNFINISHED_MINUTES;
+    if (now - new Date(rec.lastActivityAt || rec.startedAt).getTime() < minutes * 60000) continue;
+    const closedAt = new Date().toISOString();
+    if (rec.blocked) { updates.set(rec.id, { status: "blocked", closedAt }); continue; }
+    const answers = rec.answers || {};
+    const identity = partialIdentity(form, answers);
+    if (!identity.email && !identity.phone) { updates.set(rec.id, { status: "no_contact", closedAt }); continue; }
+    try {
+      const contact = findOrCreateContactForPartial(identity);
+      if (finishedSince(form, contact.id, rec.startedAt)) { updates.set(rec.id, { status: "completed", closedAt, contactId: contact.id }); continue; }
+      const payload = labeledAnswersFor(form, answers);
+      if (rec.timezone && !("Timezone" in payload)) payload["Timezone"] = rec.timezone;
+      fireFlowTrigger("form_abandoned", { contactId: contact.id, formId: form.id, payload });
+      updates.set(rec.id, { status: "abandoned", closedAt, firedAt: closedAt, contactId: contact.id });
+      // Best-effort extras -- never block or undo the flow above.
+      try {
+        if (rec.vid) claimVisitorHistory(rec.vid, contact.id);
+        const answerLines = form.fields
+          .filter(f => ANSWERABLE_TYPES.includes(f.type) && answers[f.id] !== undefined && answers[f.id] !== "")
+          .map(f => `${f.label || f.type}: ${Array.isArray(answers[f.id]) ? answers[f.id].join(", ") : answers[f.id]}`);
+        logMessage({
+          channel: "form", direction: "inbound", contactId: contact.id,
+          sourceType: "form", sourceId: form.id,
+          subject: `Form started, not finished: ${form.name}`, body: answerLines.join("\n\n"), bodyPreview: answerLines.join(" \u00b7 ").slice(0, 200),
+          status: "received",
+        });
+      } catch (e) { console.error("[forms] unfinished capture inbox log failed", rec.id, e.message); }
+    } catch (e) {
+      console.error("[forms] unfinished capture failed", rec.id, e.message);
+    }
+  }
+  if (!updates.size) return;
+  // Patched onto a fresh read -- the /progress endpoint may have written
+  // this file while this tick ran.
+  const fresh = readJson(PARTIALS_FILE, []);
+  for (const x of fresh) { const u = updates.get(x.id); if (u && x.status === "open") Object.assign(x, u); }
+  writeJson(PARTIALS_FILE, fresh);
 }

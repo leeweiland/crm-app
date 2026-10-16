@@ -258,10 +258,12 @@ let saveTimer, pendingInsertAfterId;
 // Promise.all as everything else loadRefs() needs). Manual enrollment
 // searches on demand instead (see below), same as the type-ahead pattern
 // inbox.html's Potential Contacts flow already switched to for the same reason.
+let allStatuses = [];
 async function loadRefs() {
-  const [listsRes, tagsRes, eventTypesRes, formsRes, segmentsRes] = await Promise.all([
-    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/scheduling/admin/event-types'), fetch('/api/forms'), fetch('/api/segments')
+  const [listsRes, tagsRes, eventTypesRes, formsRes, segmentsRes, statusesRes] = await Promise.all([
+    fetch('/api/lists'), fetch('/api/tags'), fetch('/api/scheduling/admin/event-types'), fetch('/api/forms'), fetch('/api/segments'), fetch('/api/statuses')
   ]);
+  allStatuses = statusesRes.ok ? ((await statusesRes.json()).statuses || []) : [];
   allLists = (await listsRes.json()).lists;
   allTags = (await tagsRes.json()).tags;
   allEventTypes = eventTypesRes.ok ? (await eventTypesRes.json()).eventTypes : [];
@@ -404,6 +406,7 @@ function renderCanvasContent() {
       <div class="step-delay-row">
         <span class="step-delay-label">Goal</span>
         <select class="step-unit-select" data-goal-for="${step.id}" style="flex:1;min-width:0">${GOAL_TYPES.map(g => `<option value="${g.key}" ${g.key === (step.config?.trigger || 'incoming_sms') ? 'selected' : ''}>${g.label}</option>`).join('')}</select>
+        ${(step.config?.trigger === 'lead_status_change') ? `<select class="step-unit-select" data-goal-status-for="${step.id}" style="flex:1;min-width:0;margin-left:6px"><option value="">to any status</option>${allStatuses.map(st => `<option value="${escapeHtml(st.label)}" ${step.config?.status === st.label ? 'selected' : ''}>to ${escapeHtml(st.label)}</option>`).join('')}</select>` : ''}
         <span class="${count ? '' : 'pra-muted'}" style="font-size:.76rem;margin-left:8px${count ? ';color:#009bff;font-weight:700' : ''}">${countLabel}</span>
       </div>
       <div class="pra-muted" style="font-size:.74rem;margin-top:6px">Anyone still above this step when this happens jumps straight down to here and continues with the next step.</div>
@@ -604,6 +607,13 @@ function renderCanvasContent() {
     if (!step) return;
     step.config = { trigger: sel.value };
     saveDebounced();
+    renderCanvas();
+  }));
+  canvas.querySelectorAll('[data-goal-status-for]').forEach(sel => sel.addEventListener('change', () => {
+    const step = workflow.steps.find(s => s.id === sel.dataset.goalStatusFor);
+    if (!step) return;
+    step.config = { ...step.config, status: sel.value || undefined };
+    saveDebounced();
   }));
   canvas.querySelectorAll('[data-unit-for]').forEach(sel => sel.addEventListener('change', () => {
     commitDelay(sel.dataset.unitFor, step => { step.delayUnit = sel.value; });
@@ -756,10 +766,10 @@ document.getElementById('manualEnrollBtn').onclick = async () => {
 
 // ── Goals ────────────────────────────────────────────────────────────────
 const GOAL_TYPES = [
-  { key: 'incoming_email', label: 'Incoming email (not yet wired -- no inbound email channel)' },
+  { key: 'incoming_email', label: 'Incoming email' },
   { key: 'incoming_sms', label: 'Incoming SMS' },
   { key: 'incoming_call', label: 'Incoming call (not yet wired -- no call tracking)' },
-  { key: 'meeting_booked', label: 'Meeting booked (not yet wired -- no calendar integration)' },
+  { key: 'meeting_booked', label: 'Meeting booked' },
   { key: 'lead_status_change', label: 'Lead status change' },
   { key: 'outcome_met', label: 'Outcome met (not yet wired)' },
 ];

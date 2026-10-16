@@ -295,6 +295,29 @@ function stepViewSid() {
     return v;
   } catch { return Math.random().toString(36).slice(2) + Date.now(); }
 }
+// ── "Started but not finished" capture (form setting captureUnfinished) --
+// answers-so-far are saved as they go; the server fires the form's
+// "started but not finished" flows once they've been idle for the form's
+// minutes setting without submitting/booking. Activity = any click/key
+// here, or focus moving into the calendar's iframe (window blur), or the
+// calendar posting a resize (it does on every date/time pick).
+let progressTimer = null, lastProgressAt = 0;
+function sendProgress(withAnswers) {
+  if (!form?.settings?.captureUnfinished) return;
+  if (withAnswers && !Object.keys(answers).length) return;
+  lastProgressAt = Date.now();
+  const fields = steps[stepIndex] || [];
+  fetch(`/api/public/forms/${formId}/progress`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+    body: JSON.stringify({ sid: stepViewSid(), vid: visitorId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, nextHidden: !!matchingRule(fields, 'hide_next'), ...(withAnswers ? { answers } : {}) }),
+  }).catch(() => {});
+}
+function saveProgressSoon() { clearTimeout(progressTimer); progressTimer = setTimeout(() => sendProgress(true), 1500); }
+function pingActivity() { if (lastProgressAt && Date.now() - lastProgressAt > 20000) sendProgress(false); }
+['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, pingActivity, { passive: true }));
+window.addEventListener('blur', pingActivity);
+window.addEventListener('message', (e) => { if (e.data && e.data.type === 'bk-resize') pingActivity(); });
+
 const pingedSteps = new Set();
 function pingStepView(idx) {
   if (pingedSteps.has(idx)) return;
@@ -616,6 +639,7 @@ function bindStepInputs() {
         answers[id] = el.value;
       }
       updateNextVisibility();
+      saveProgressSoon();
       // Clears a "This field is required." error the moment it's actually
       // fixed -- without this it just sat there stale (still reading
       // "required" even once answered) until the next click on Next
@@ -802,6 +826,7 @@ function bookCalendarStep() {
 function renderStep() {
   clearTimeout(autoAdvanceTimer);
   pingStepView(stepIndex);
+  sendProgress(true);
   const fields = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
   const card = document.getElementById('pfCard');
@@ -848,7 +873,8 @@ function renderStep() {
 async function submit() {
   const btn = document.getElementById('pfNext');
   btn.disabled = true; btn.textContent = 'Submitting…';
-  const body = JSON.stringify({ answers, vid: visitorId, bookedIdentity, timezone: bookedIdentity?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone });
+  clearTimeout(progressTimer);
+  const body = JSON.stringify({ answers, vid: visitorId, bookedIdentity, sid: stepViewSid(), timezone: bookedIdentity?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone });
 
   // form.settings.redirectUrl is a static setting, already known from when
   // this form first loaded -- not something the submit response computes.

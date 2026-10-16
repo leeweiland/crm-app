@@ -215,14 +215,21 @@ export function fireWorkflowTrigger(type, { contactId, listId, tagId, path, form
 // pulled down to the goal step and carries on with whatever follows it --
 // skipping everything between (same behavior as automations_backend.js's
 // goal step). A contact already past the goal is left alone.
-export function checkConversionGoal(trigger, contactId) {
+// statusValue: the contact's new status, for lead_status_change -- a goal
+// with config.status only fires on that one status (e.g. BOOKED); without
+// one it fires on any status change, same as before.
+function goalMatches(step, trigger, statusValue) {
+  if (step.type !== "goal" || step.config?.trigger !== trigger) return false;
+  return trigger !== "lead_status_change" || !step.config?.status || step.config.status === statusValue;
+}
+export function checkConversionGoal(trigger, contactId, statusValue) {
   if (!contactId || !CONVERSION_GOAL_TYPES.includes(trigger)) return;
-  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && (w.steps || []).some(s => s.type === "goal" && s.config?.trigger === trigger));
+  const workflows = readJson(WORKFLOWS_FILE, []).filter(w => w.active && (w.steps || []).some(s => goalMatches(s, trigger, statusValue)));
   if (!workflows.length) return;
   const enrollments = readJson(WF_ENROLLMENTS_FILE, []);
   for (const w of workflows) {
     for (const e of enrollments.filter(x => x.workflowId === w.id && x.contactId === contactId && x.status === "active")) {
-      const goalIdx = w.steps.findIndex((s, i) => i > e.currentStepIndex && s.type === "goal" && s.config?.trigger === trigger);
+      const goalIdx = w.steps.findIndex((s, i) => i > e.currentStepIndex && goalMatches(s, trigger, statusValue));
       if (goalIdx === -1) continue;
       const nextIndex = firstNonGoalIndex(w, goalIdx + 1);
       const now = new Date().toISOString();
