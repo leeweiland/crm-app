@@ -24,6 +24,10 @@ import { DATA_DIR } from "./auth_backend.js";
 const DB_PATH = join(DATA_DIR, "crm_prototype.db");
 const MACHINE_WINDOW_MS = 3 * 60 * 1000;
 const MIN_PERSONAL_WEIGHT = 3; // fewer real engagements than this -> no personal hour yet
+// The list-wide fallback hour only kicks in once there's real volume behind
+// it -- right after launch a handful of opens would otherwise decide when
+// EVERY contact without personal history gets held until.
+const MIN_GLOBAL_WEIGHT = 200;
 const WEIGHTS = { opened: 1, clicked: 2 };
 const FLUSH_DELAY_MS = 2000;
 export const PREDICTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -101,7 +105,8 @@ export function bestSendHours(contactIds) {
   }
   const hours = new Map();
   for (const [c, w] of per) if (totals.get(c) >= MIN_PERSONAL_WEIGHT) hours.set(c, peakHour(w));
-  return { hours, globalHour: peakHour(global) };
+  const globalTotal = global.reduce((a, b) => a + b, 0);
+  return { hours, globalHour: globalTotal >= MIN_GLOBAL_WEIGHT ? peakHour(global) : null };
 }
 export function bestSendHourFor(contactId) {
   const { hours, globalHour } = bestSendHours([contactId]);
