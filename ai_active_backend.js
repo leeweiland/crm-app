@@ -576,7 +576,7 @@ export function wakeStatesForInbound(contactId) {
 // (lastSeenInboundAt) so the engine's next tick doesn't answer it a second
 // time, and schedules the first no-reply follow-up on the agent's own
 // follow-up cadence.
-export function trackCoverageReply(agent, contactId, channel, inboundAt, { close = false } = {}) {
+export function trackCoverageReply(agent, contactId, channel, inboundAt) {
   const nowIso = new Date().toISOString();
   const batches = readJson(AI_ACTIVE_BATCHES_FILE, []);
   let batch = findCoverageBatch(batches, agent.id);
@@ -606,9 +606,7 @@ export function trackCoverageReply(agent, contactId, channel, inboundAt, { close
     const last = latestOnChannel(journey.filter((m) => m.direction === "inbound"), ch);
     if (last && (!seen[ch] || new Date(last.createdAt) > new Date(seen[ch]))) seen[ch] = last.createdAt;
   }
-  // [[CLOSE]] replies are tracked as "done" -- no follow-ups, but the
-  // engine's reactivation pass still answers them if they write back.
-  st.state = close ? "done" : "waiting_reply";
+  st.state = "waiting_reply";
   st.lastSeenInboundAt = { ...seen, [channel]: inboundAt };
   st.followUpCount = { ...counts, [channel]: 0 }; // a fresh reply resets this channel's cadence, same as the engine does
   st.lastActionAt = nowIso;
@@ -976,11 +974,6 @@ export async function processAiActiveBatches() {
                 await sendViaChannel(contact, channel, result.text, agent.id, undefined, sourceType, cfg.emailSenderId);
                 st.lastActionAt = new Date().toISOString();
                 if (result.buyingSignal) { st.state = "hot_handoff"; }
-                // [[CLOSE]]: the lead bowed out and this was the gracious
-                // last word -- no follow-ups. "done" (not a dead end): the
-                // reactivation pass at the top picks it back up the moment
-                // they write again.
-                else if (result.close) { st.state = "done"; }
                 else {
                   st.followUpCount[channel] = 0; // fresh reply resets this channel's own follow-up cadence
                   anyChannelStillActive = true;
@@ -1041,7 +1034,6 @@ export async function processAiActiveBatches() {
               if (sent === null || sent?.ok === false) continue;
               st.followUpCount[channel] = (st.followUpCount[channel] || 0) + 1;
               st.lastActionAt = new Date().toISOString();
-              if (result.close) { st.state = "done"; continue; }
               anyChannelStillActive = true;
               nextTimes.push(now + randomDelayMs(cfg.followUpWaitTimeRange || cfg.waitTimeRange));
             }

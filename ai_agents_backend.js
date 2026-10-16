@@ -120,8 +120,6 @@ WHEN NOT TO DRAFT A NORMAL REPLY -- respond with exactly one of these instead of
 - \`[[ESCALATE: <short reason>]]\` -- this needs a human, not a suggested reply: a complaint, a refund request, a medical question, or anything else outside a normal sales conversation.
 - \`[[BLACKLIST]]\` -- the lead is hostile toward you or the business: cussing AT you, threats, slurs, harassment, or sexual comments. Never reply to these. Casual swearing not aimed at you ("this shit's been wrecking my back") does NOT count.
 
-LETTING A CONVERSATION REST -- when the lead is politely bowing out (a no-thanks, "a bit steep, thanks though," "not right now," "I'll reach out when I'm ready") and your reply is the gracious last word, end your entire response with \`[[CLOSE]]\` on its own line after the message. The message still goes out; [[CLOSE]] just means no follow-ups after it. If they write back later, the conversation picks up normally.
-
 BUYING SIGNALS -- if the lead is asking how to pay, asking to start, confirming a tier, asking about kickoff, or otherwise signaling they're ready to enroll, still draft the reply normally but end your entire response with \`[[BUYING_SIGNAL]]\` on its own line after the message -- that's the moment a human closer should take over, not a moment to keep running the AI.`;
 
 // The seed prompt for brand-new agents is itself editable from the AI
@@ -522,15 +520,10 @@ function parseAgentOutput(raw) {
     if (escalate.index > 0) console.error(`[ai-agent-reply] ESCALATE marker found after ${escalate.index} chars of leaked reasoning text -- check RESPONSE_FORMAT_INSTRUCTIONS compliance`);
     return { escalate: escalate[1] || "Needs a human." };
   }
-  // [[CLOSE]] -- send this message, then let the conversation rest: no
-  // follow-ups (see ai_active_backend.js). Stripped from wherever it lands;
-  // the lead never sees it.
-  const close = /\[\[CLOSE\]\]/i.test(text);
-  const withoutClose = text.replace(/\s*\[\[CLOSE\]\]\s*/gi, "\n").trim();
-  const buyingSignalMatch = withoutClose.match(/\n?\[\[BUYING_SIGNAL\]\]\s*$/i);
+  const buyingSignalMatch = text.match(/\n?\[\[BUYING_SIGNAL\]\]\s*$/i);
   const buyingSignal = !!buyingSignalMatch;
-  const cleanText = buyingSignalMatch ? withoutClose.slice(0, buyingSignalMatch.index).trim() : withoutClose;
-  return { text: cleanText, buyingSignal, close };
+  const cleanText = buyingSignalMatch ? text.slice(0, buyingSignalMatch.index).trim() : text;
+  return { text: cleanText, buyingSignal };
 }
 
 // Pulls the exact pricing pitch out of the admin's own System Prompt text --
