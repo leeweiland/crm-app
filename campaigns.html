@@ -142,7 +142,7 @@ function campaignSearchText(c) {
 // concurrent batches in the background (see sendCampaignNow), so this is
 // the only feedback of whether it's actually moving or stuck.
 function statusLabel(c) {
-  if (c.status === 'sending' && c.sendProgress) return `sending ${c.sendProgress.sent}/${c.sendProgress.total}`;
+  if (c.status === 'sending' && c.sendProgress) return `sending ${c.sendProgress.sent}/${c.sendProgress.total}${c.sendProgress.predictive ? ' · predictive' : ''}`;
   if (c.status === 'send_error') return 'error';
   return c.status;
 }

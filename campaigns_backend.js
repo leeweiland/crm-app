@@ -1,3 +1,4 @@
+import { bestSendHours, releaseAtForHour } from "./send_time_db.js";
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
@@ -13,7 +14,7 @@ import { getSendWorker } from "./send_worker_handle.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
-const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients"];
+const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients", "predictiveSend"];
 function campaignSnapshotFields(campaign) {
   const out = {};
   for (const k of VERSIONED_FIELDS) out[k] = campaign[k];
@@ -238,6 +239,25 @@ export async function runCampaignSendLoop(campaignId) {
   // above (not an extra read) -- see the comment on applyCampaignProgressUpdate
   // for why this is no longer re-derived every batch.
   let acceptedCount = contacted.size;
+  // Predictive sending: each recipient's release time is their best
+  // engagement hour (send_time_db.js) after the moment the send started --
+  // anchored on predictiveStartedAt (persisted by sendCampaignNow), not
+  // "now", so a deploy/restart mid-window recomputes the SAME schedule
+  // instead of pushing everyone another day out. Sorted so the loop can
+  // send everything due, then idle until the next release.
+  const releaseAt = new Map();
+  if (campaign.predictiveSend) {
+    const base = Date.parse(campaign.predictiveStartedAt) || Date.now();
+    const { hours, globalHour } = bestSendHours(remaining.map(c => c.id));
+    for (const c of remaining) releaseAt.set(c.id, releaseAtForHour(base, hours.has(c.id) ? hours.get(c.id) : globalHour));
+    remaining.sort((a, b) => releaseAt.get(a.id) - releaseAt.get(b.id));
+    console.log(`[campaign send] ${campaignId} predictive: ${hours.size}/${remaining.length} recipients have a personal hour, fallback hour ${globalHour ?? "none (send now)"}`);
+  }
+  const postProgress = (sendProgress) => {
+    const progressWorker = getBackgroundWorker();
+    if (progressWorker) progressWorker.postMessage({ type: "update_campaign_progress", campaignId, sendProgress });
+    else applyCampaignProgressUpdate(campaignId, sendProgress);
+  };
 
   try {
     let sentThisRun = 0;
@@ -247,7 +267,7 @@ export async function runCampaignSendLoop(campaignId) {
       // sendEmail is a real network round-trip, and awaiting them fully
       // sequentially meant total time scaled linearly with recipient
       // count, nowhere close to what this SES account can actually sustain.
-      for (let i = 0; i < remaining.length; i += SENDING_CONCURRENCY) {
+      for (let i = 0; i < remaining.length; ) {
         // Re-read fresh every batch (not just trust the in-memory
         // `campaign` from when this run started) -- this is how Cancel
         // actually stops an in-flight send: flipping status away from
@@ -260,7 +280,19 @@ export async function runCampaignSendLoop(campaignId) {
           console.log(`[campaign send] ${campaignId} stopping -- status is now "${live?.status ?? "(deleted)"}", not "sending"`);
           return;
         }
-        const batch = remaining.slice(i, i + SENDING_CONCURRENCY);
+        // Predictive: next recipient isn't due yet -- idle in <=60s steps,
+        // re-checking cancel each time, and re-post progress so updatedAt
+        // stays fresh (the stuck-send rescue fires on 3 minutes of silence).
+        const nextAt = releaseAt.get(remaining[i].id) || 0;
+        if (nextAt > Date.now()) {
+          await sleep(Math.min(60000, nextAt - Date.now()));
+          postProgress({ total: acceptedCount + (remaining.length - i), sent: acceptedCount, predictive: true, nextReleaseAt: new Date(nextAt).toISOString() });
+          continue;
+        }
+        const now = Date.now();
+        let batchEnd = i;
+        while (batchEnd < remaining.length && batchEnd - i < SENDING_CONCURRENCY && (releaseAt.get(remaining[batchEnd].id) || 0) <= now) batchEnd++;
+        const batch = remaining.slice(i, batchEnd);
         const batchStartedAt = Date.now();
         // Collected here instead of each sendEmail() call logging itself
         // immediately -- confirmed live via /proc/pressure/io that the
@@ -287,10 +319,8 @@ export async function runCampaignSendLoop(campaignId) {
         logMessagesBatch(batchLog);
         sentThisRun += batch.length;
         acceptedCount += batchLog.filter((r) => r.providerMessageId).length;
-        const sendProgress = { total: acceptedCount + Math.max(0, remaining.length - (i + batch.length)), sent: acceptedCount };
-        const progressWorker = getBackgroundWorker();
-        if (progressWorker) progressWorker.postMessage({ type: "update_campaign_progress", campaignId, sendProgress });
-        else applyCampaignProgressUpdate(campaignId, sendProgress);
+        i += batch.length;
+        postProgress({ total: acceptedCount + Math.max(0, remaining.length - i), sent: acceptedCount, ...(campaign.predictiveSend ? { predictive: true } : {}) });
         // Pad this batch's own wall-clock time up to what SENDING_CONCURRENCY
         // sends should minimally take at the account's real rate limit,
         // rather than assuming SES call latency alone keeps us under it --
@@ -345,6 +375,9 @@ export function sendCampaignNow(campaignId) {
   const contacted = alreadyContactedIds(campaignId);
   const remaining = allRecipients.filter(c => !contacted.has(c.id));
   campaign.status = "sending";
+  // Anchor for predictive sending's 24h window -- set once, kept across
+  // resumes (see runCampaignSendLoop).
+  if (campaign.predictiveSend && !campaign.predictiveStartedAt) campaign.predictiveStartedAt = new Date().toISOString();
   // One real, read-derived count here -- happens once per send/resume
   // click, not once per batch, so it's fine to pay for ground truth here
   // (same reasoning as runCampaignSendLoop's own final-write below).

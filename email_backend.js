@@ -470,7 +470,8 @@ export function processSesNotificationMessage(raw) {
     const eventType = msg.eventType || msg.notificationType;
     const statusMap = { Delivery: "delivered", Open: "opened", Click: "clicked", Bounce: "bounced", Complaint: "complained" };
     if (providerMessageId && statusMap[eventType]) {
-      const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType]);
+      const eventAtMs = Date.parse(msg.open?.timestamp || msg.click?.timestamp || "");
+      const row = updateMessageStatusByProviderId(providerMessageId, statusMap[eventType], undefined, Number.isFinite(eventAtMs) ? eventAtMs : undefined);
       // Skip the whole block (contact write + both trigger systems) when
       // THIS SPECIFIC MESSAGE was already marked opened/clicked before this
       // call -- confirmed live (2026-10-04) as a major, previously-unnoticed

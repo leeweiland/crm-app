@@ -16,6 +16,7 @@ import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_share
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 import { getMessagesForSource } from "./message_log.js";
+import { bestSendHourFor, releaseAtForHour } from "./send_time_db.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
 
 // Which booking a step's %EVENTNAME%/%WHEN%/etc tokens refer to: the exact
@@ -61,6 +62,36 @@ export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "em
 export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal", "drip"];
 
 function getContact(id) { return getContactById(id); }
+function waitStepMs(step) {
+  const c = step?.config || {};
+  return c.unit === "days" ? c.amount * 86400000 : c.unit === "hours" ? c.amount * 3600000 : c.amount * 60000;
+}
+// Predictive sending for an automation email (2026-10-16). Returns the
+// moment to hold this send until, or null to send now. Never holds:
+//   - the toggle is off for this step (predictiveSend === false; default on);
+//   - it's this contact's FIRST email in this automation (no other
+//     send_email step in their history) -- first touches go out immediately;
+//   - the wait(s) since their previous email in this automation add up to
+//     under a day -- a "wait 1/2/3 hours" follow-up keeps its exact timing.
+// Read off the enrollment's own history, so it follows the path this
+// contact actually took through any branches. Otherwise: hold until the
+// contact's best engagement hour (see send_time_db.js), within 24 hours.
+function predictiveHoldUntil(enrollment, automation, step) {
+  if (step.config?.predictiveSend === false) return null;
+  const hist = enrollment.history || [];
+  let waitedMs = 0, hadPriorEmail = false;
+  for (let i = hist.length - 2; i >= 0; i--) { // -1 is this step's own entry
+    const s = automation.steps[hist[i].stepId];
+    if (!s) continue;
+    if (s.type === "send_email" && s.id !== step.id) { hadPriorEmail = true; break; }
+    if (s.type === "wait") waitedMs += Number(waitStepMs(s)) || 0;
+  }
+  if (!hadPriorEmail || waitedMs < 86400000) return null;
+  const now = Date.now();
+  const at = releaseAtForHour(now, bestSendHourFor(enrollment.contactId));
+  return at > now + 60000 ? new Date(at).toISOString() : null;
+}
+
 function saveEnrollment(enrollment) { dbSaveEnrollment(enrollment); }
 function completeEnrollment(enrollment) {
   enrollment.status = "completed";
@@ -210,6 +241,20 @@ async function advanceEnrollment(enrollment, automation) {
     }
 
     if (step.type === "send_email") {
+      // Predictive hold: parks the enrollment ON this step with waitUntil set
+      // (same mechanism the send-retry below uses). advanceDueEnrollments
+      // re-runs a due send_email step rather than skipping it, and
+      // predictiveHeldStepId makes that second pass send instead of holding again.
+      if (enrollment.predictiveHeldStepId === step.id) delete enrollment.predictiveHeldStepId;
+      else {
+        const holdUntil = predictiveHoldUntil(enrollment, automation, step);
+        if (holdUntil) {
+          enrollment.waitUntil = holdUntil;
+          enrollment.predictiveHeldStepId = step.id;
+          saveEnrollment(enrollment);
+          return;
+        }
+      }
       const contact = getContact(enrollment.contactId);
       if (contact) {
         let subject = step.config.subject || "";

@@ -408,8 +408,21 @@ function stepCardHtml(stepId, isLast) {
         <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
       ${cardOpener}
+      ${step.type === 'send_email' ? predictiveToggleHtml(step) : ''}
     </div>
   `;
+}
+// Predictive sending toggle (default ON; stored as predictiveSend:false only
+// when switched off). The runtime still sends immediately when this is the
+// contact's first email in the automation, or when the waits since their
+// previous email add up to under a day -- see predictiveHoldUntil in
+// automations_backend.js. The hint shows which of those applies here.
+function predictiveToggleHtml(step) {
+  const on = step.config.predictiveSend !== false;
+  const first = emailNumbers.get(step.id) === 1;
+  const hint = first ? 'first email — always sends immediately' : on ? 'best hour per contact (waits under 1 day send on time)' : 'off';
+  return `<label data-predictive="${step.id}" style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:.74rem;color:var(--pra-dim);cursor:pointer">
+    <input type="checkbox" ${on ? 'checked' : ''} ${first ? 'disabled' : ''} style="margin:0"> Predictive sending <span style="opacity:.8">· ${hint}</span></label>`;
 }
 
 // Same insert-step-btn affordance renderChainHtml already uses between two
@@ -554,7 +567,7 @@ function renderCanvasContent() {
   const addTriggerBtn = document.getElementById('addTriggerBtn');
   if (addTriggerBtn) addTriggerBtn.onclick = () => openTriggerModal(null);
   canvas.querySelectorAll('[data-open-step]').forEach(card => card.addEventListener('click', (e) => {
-    if (e.target.closest('[data-delete]')) return;
+    if (e.target.closest('[data-delete], [data-predictive]')) return;
     // A send-email step's opener is a real <a href> -- a plain left-click
     // still opens the editor in place (preventDefault stops the actual
     // navigation), but Ctrl/Cmd/Shift-click or a genuine middle-click
@@ -565,6 +578,17 @@ function renderCanvasContent() {
     editStep(card.dataset.openStep);
   }));
   canvas.querySelectorAll('[data-delete]').forEach(btn => btn.onclick = (e) => { e.stopPropagation(); deleteStep(btn.dataset.delete); });
+  canvas.querySelectorAll('[data-predictive]').forEach(lbl => {
+    lbl.onclick = (e) => e.stopPropagation();
+    const box = lbl.querySelector('input');
+    box.onchange = () => {
+      const step = automation.steps[lbl.dataset.predictive];
+      if (!step) return;
+      if (box.checked) delete step.config.predictiveSend; else step.config.predictiveSend = false;
+      saveAutomation();
+      render();
+    };
+  });
   canvas.querySelectorAll('[data-path]').forEach(btn => btn.onclick = () => {
     pendingAddPath = btn.dataset.path;
     pendingAddAfter = btn.dataset.after || null;
@@ -1259,7 +1283,7 @@ canvasWrap.addEventListener('touchstart', (e) => {
   // still arm panning -- touchmove below only commits to it past a small
   // move threshold, so a plain tap (no threshold crossed) still reaches
   // the card's own click handler and opens it as before.
-  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, [data-delete], [data-path]')) return;
+  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, [data-delete], [data-path], [data-predictive]')) return;
   if (e.touches.length === 1) {
     panning = true; touchMoved = false; canvasWrap.classList.add('panning');
     panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY; panOrigX = panX; panOrigY = panY;

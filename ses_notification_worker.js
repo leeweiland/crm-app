@@ -123,13 +123,14 @@ async function runBulkDrain(batchSize) {
       const parsed = rows.map((row) => {
         try {
           const msg = JSON.parse(row.payload.raw);
-          return { row, providerMessageId: msg.mail?.messageId, status: STATUS_MAP[msg.eventType || msg.notificationType] };
+          const eventAtMs = Date.parse(msg.open?.timestamp || msg.click?.timestamp || "");
+          return { row, providerMessageId: msg.mail?.messageId, status: STATUS_MAP[msg.eventType || msg.notificationType], eventAtMs: Number.isFinite(eventAtMs) ? eventAtMs : undefined };
         } catch (e) { return { row, parseError: e }; }
       });
       const updateIndices = [];
       const updates = [];
       parsed.forEach((p, i) => {
-        if (!p.parseError && p.providerMessageId && p.status) { updateIndices.push(i); updates.push({ providerMessageId: p.providerMessageId, status: p.status }); }
+        if (!p.parseError && p.providerMessageId && p.status) { updateIndices.push(i); updates.push({ providerMessageId: p.providerMessageId, status: p.status, eventAtMs: p.eventAtMs }); }
       });
       const results = updates.length ? updateMessageStatusesByProviderIdBatch(updates) : [];
       const foundByIndex = new Map();

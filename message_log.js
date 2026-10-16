@@ -4,6 +4,7 @@ import { join } from "path";
 import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, appendToJsonObjectsFast, readJson, DATA_DIR } from "./auth_backend.js";
 import { appendContactMessage, appendContactMessageStatusEvent, appendContactMessageStatusEventsBatch, getContactMessages, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
+import { recordEngagementHour } from "./send_time_db.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
 import { noteSmsRow, noteSmsStatusChange } from "./sms_stats.js";
@@ -346,7 +347,9 @@ function enrichLegacyEntry(entry) {
   return entry;
 }
 
-export function updateMessageStatusByProviderId(providerMessageId, status, extra) {
+// eventAtMs: when the recipient actually engaged (the SES event's own
+// timestamp) -- feeds predictive sending's per-contact best hour.
+export function updateMessageStatusByProviderId(providerMessageId, status, extra, eventAtMs) {
   if (!providerMessageId) return null;
   const entry = enrichLegacyEntry(getProviderIndexCached()[providerMessageId]);
   if (!entry) return null;
@@ -365,6 +368,7 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   // before.
   appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, providerMessageId, { ...entry, status, openCount, clickCount });
   const found = { ...entry, id: entry.id, status, isRepeat };
+  if (status === "opened" || status === "clicked") recordEngagementHour(entry.contactId, status, eventAtMs, Date.parse(entry.createdAt));
   recomputeConversationSummary(entry.contactId);
   // Skipped specifically for "delivered" (2026-10-06) -- confirmed live
   // this is the actual cause of the SES-notification worker timing out on
@@ -416,7 +420,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
   const overlayEvents = [];
   const results = new Array(updates.length).fill(null);
   for (let i = 0; i < updates.length; i++) {
-    const { providerMessageId, status, extra } = updates[i];
+    const { providerMessageId, status, extra, eventAtMs } = updates[i];
     if (!providerMessageId) continue;
     const entry = indexPatch[providerMessageId] || enrichLegacyEntry(index[providerMessageId]);
     if (!entry) continue;
@@ -428,6 +432,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
     indexPatch[providerMessageId] = updatedEntry; // repeats of the SAME id within one batch see their own prior update
     overlayEvents.push({ contactId: entry.contactId, id: entry.id, patch: { status }, historyAdd: { status, at: new Date().toISOString(), ...(extra || {}) } });
     results[i] = { ...entry, id: entry.id, status, isRepeat, _oldStatus: oldStatus };
+    if (status === "opened" || status === "clicked") recordEngagementHour(entry.contactId, status, eventAtMs, Date.parse(entry.createdAt));
   }
   if (Object.keys(indexPatch).length) appendToJsonObjectsFast(PROVIDER_ID_INDEX_FILE, indexPatch);
   if (overlayEvents.length) appendContactMessageStatusEventsBatch(overlayEvents);
@@ -474,6 +479,7 @@ export function updateMessageById(id, patch) {
   // (recording links, etc.) would defeat that on every such call.
   if (patch.status && patch.status !== entry.status) appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, id, { ...entry, status: patch.status });
   const found = { ...entry, id, ...patch };
+  if (patch.status === "opened" || patch.status === "clicked") recordEngagementHour(entry.contactId, patch.status, Date.now(), Date.parse(entry.createdAt));
   recomputeConversationSummary(entry.contactId);
   if (found.sourceType && found.sourceId) updateSourceMessageStatus(found.sourceType, found.sourceId, id, patch);
   if (patch.status) recordDailyStatsTransition(found, oldStatus, patch.status);

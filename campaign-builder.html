@@ -42,6 +42,11 @@
           <label class="pra-label">Preview text</label>
           <input class="pra-input" id="previewTextInput" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
         </div>
+        <label class="field" style="margin-top:10px;display:flex;align-items:center;gap:8px;cursor:pointer" title="Each recipient gets this email at the hour they usually open email, within 24 hours of sending. Contacts without enough history yet get the list-wide best hour.">
+          <input type="checkbox" id="predictiveSendInput"/>
+          <span class="pra-label" style="margin:0">Predictive sending</span>
+          <span style="font-size:.78rem;color:var(--pra-dim)">deliver at each person's best hour, within 24h</span>
+        </label>
       </div>
 
       <div class="cb-layout">
@@ -298,7 +303,7 @@ function saveDebounced() {
 async function saveCampaign(opts) {
   const r = await fetch('/api/campaigns/' + campaign.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients }),
+    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (r.ok && !opts?.keepalive) updateRecipientCount();
@@ -325,6 +330,7 @@ window.addEventListener('beforeunload', () => {
 document.getElementById('campaignName').addEventListener('input', (e) => { campaign.name = e.target.value; saveDebounced(); });
 document.getElementById('subjectInput').addEventListener('input', (e) => { campaign.subject = e.target.value; saveDebounced(); });
 document.getElementById('previewTextInput').addEventListener('input', (e) => { campaign.previewText = e.target.value; saveDebounced(); });
+document.getElementById('predictiveSendInput').addEventListener('change', (e) => { campaign.predictiveSend = e.target.checked; saveDebounced(); });
 document.getElementById('segmentSelect').addEventListener('change', (e) => { campaign.recipients.segmentId = e.target.value || null; saveDebounced(); updateRecipientCount(); });
 document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); updateEditorFooter(); });
 function currentFooter() {
@@ -434,6 +440,7 @@ async function loadCampaign() {
   document.getElementById('campaignName').value = campaign.name;
   document.getElementById('subjectInput').value = campaign.subject || '';
   document.getElementById('previewTextInput').value = campaign.previewText || '';
+  document.getElementById('predictiveSendInput').checked = !!campaign.predictiveSend;
   document.getElementById('statusPill').textContent = campaign.status;
   const editable = !['sending', 'sent'].includes(campaign.status);
   document.querySelectorAll('.cb-layout input, .cb-layout select, .cb-layout button').forEach(el => { if (el.id !== 'testEmailInput' && el.id !== 'testSendBtn') el.disabled = !editable; });
