@@ -294,10 +294,22 @@ function stripChannelLabelLeak(text) {
 function stripSplitMarker(text) {
   return String(text || "").replaceAll("[[SPLIT]]", " ").replace(/\s{2,}/g, " ").trim();
 }
+// Email bodies go out one sentence per line with a blank line between, per
+// Lee's direction -- enforced here rather than trusted to the prompt, which
+// already asked for it and still got single-block emails. Only touches a
+// body with no line breaks of its own (the pricing script and anything the
+// model already laid out are left exactly as written). Splits after . ? !
+// followed by a space, so a URL like pacificrimathletics.com/gym never
+// breaks.
+function emailSentencePerLine(text) {
+  if (/\n/.test(text)) return text;
+  return text.replace(/([.?!])\s+(?=\S)/g, "$1\n\n");
+}
 export async function sendViaChannel(contact, channel, rawText, agentId, subject, sourceType = "ai_active", senderId = null) {
   const text = stripSplitMarker(stripChannelLabelLeak(stripModelSignoff(stripForeignPreamble(rawText))));
   if (channel === "email" && contact.email) {
-    const { text: cleaned, gifUrl } = extractGifMarker(text);
+    const { text: gifStripped, gifUrl } = extractGifMarker(text);
+    const cleaned = emailSentencePerLine(gifStripped);
     const gifHtml = gifUrl ? `<div><img src="${gifUrl}" alt="" style="max-width:320px"/></div>` : "";
     // Full footer (photo, name/title, address, unsubscribe) every time --
     // cold-open AND every reply -- per explicit direction, not just the
