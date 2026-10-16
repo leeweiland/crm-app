@@ -6,7 +6,7 @@ import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import {
   AI_AGENTS_FILE, TERMINAL_STATUSES, CONVERSATION_CHANNELS,
-  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound, inboundMessageText, sentCategoryForSourceType,
+  generateAgentReply, contactMatchesTargeting, isExcludable, findLastHumanOutbound, inboundMessageText, sentCategoryForSourceType, isHumanOutbound,
 } from "./ai_agents_backend.js";
 import { resolveContactTimezone } from "./contact_timezone.js";
 import { applyMergeTags } from "./block_editor_shared.js";
@@ -84,6 +84,25 @@ function messageBufferMs(cfg) {
   const b = cfg.messageBuffer;
   if (!b || b.value == null || b.value === "") return DEFAULT_MESSAGE_BUFFER_MS;
   return (Number(b.value) || 0) * (WAIT_UNIT_MS[b.unit] || WAIT_UNIT_MS.seconds);
+}
+// How long an agent stands down for a lead after anyone on the team messages
+// them personally (Inbox send, or their own Gmail -- see isHumanOutbound).
+// Per Lee (2026-10-16): when a human connects, the agent doesn't reply or
+// follow up until this long after the human's LAST message -- 45 days unless
+// the agent's Timing settings say otherwise.
+const DEFAULT_HUMAN_BUFFER = { value: 45, unit: "days" };
+export function humanBufferMs(cfg) {
+  const b = cfg?.humanTakeoverBuffer || DEFAULT_HUMAN_BUFFER;
+  const v = Number.isFinite(Number(b.value)) && b.value !== "" && b.value !== null ? Number(b.value) : DEFAULT_HUMAN_BUFFER.value;
+  return Math.max(0, v) * (WAIT_UNIT_MS[b.unit] || WAIT_UNIT_MS.days);
+}
+// The moment this lead stops being off-limits because of a human, or null
+// if no human has messaged them inside the buffer.
+export function humanBufferUntil(journey, cfg, now = Date.now()) {
+  const h = findLastHumanOutbound(journey);
+  if (!h) return null;
+  const until = new Date(h.createdAt).getTime() + humanBufferMs(cfg);
+  return until > now ? until : null;
 }
 export function minDelayMs(waitTimeRange) {
   const range = waitTimeRange || {};
@@ -887,11 +906,25 @@ export async function processAiActiveBatches() {
       // anything -- confirmed live: a batch of 9 came back 0 sent, 9
       // human_takeover. Old campaign history has no bearing on whether
       // AI Active should send its own first message.
-      if (st.state === "waiting_reply") {
-        const lastHumanOutbound = findLastHumanOutbound(journey);
-        if (lastHumanOutbound && st.lastActionAt && new Date(lastHumanOutbound.createdAt).getTime() > new Date(st.lastActionAt).getTime()) {
-          st.state = "human_takeover"; st.updatedAt = new Date().toISOString(); changed = true; continue;
+      // Replaced (2026-10-16): a human's message used to end the agent's
+      // conversation for good (state "human_takeover"). Now any team message
+      // inside the buffer (humanBufferMs, default 45 days) puts the lead on
+      // hold instead: no replies, no follow-ups, no cold open, until the
+      // buffer runs out after the human's LAST message. Everything the lead
+      // said up to now is the human's to answer, so it's marked seen, and
+      // the follow-up count starts fresh for when the agent picks back up.
+      const heldUntil = humanBufferUntil(journey, cfg, now);
+      if (heldUntil) {
+        if (typeof st.lastSeenInboundAt !== "object" || !st.lastSeenInboundAt) st.lastSeenInboundAt = {};
+        for (const ch of ["sms", "email"]) {
+          const lastIn = latestOnChannel(journey.filter((m) => m.direction === "inbound"), ch);
+          if (lastIn) st.lastSeenInboundAt[ch] = lastIn.createdAt;
         }
+        st.followUpCount = {};
+        st.nextActionAt = new Date(heldUntil).toISOString();
+        st.updatedAt = new Date().toISOString();
+        changed = true;
+        continue;
       }
 
       try {
@@ -1005,7 +1038,11 @@ export async function processAiActiveBatches() {
             // history carries campaign/automation blasts on channels Kai
             // never used (confirmed live: SMS-only coverage conversations
             // got a Kai follow-up EMAIL because of old campaign emails).
-            const kaiSendsHere = agentSendsOnChannel(chJourney);
+            // A team member's message counts as "ours" here too: after a
+            // human handled the lead and the buffer ran out, the agent
+            // follows up on THAT conversation instead of treating the
+            // lead's replies to the human as unanswered.
+            const kaiSendsHere = chJourney.filter((m) => agentSendsOnChannel([m]).length || (m.direction === "outbound" && isHumanOutbound(m.sourceType)));
             if (!kaiSendsHere.length) continue;
             // The cadence is measured from Kai's own last message on this
             // channel (journey truth, not just nextActionAt) -- any channel

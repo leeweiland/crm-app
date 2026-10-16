@@ -19,18 +19,11 @@ const SALES_CACHE_PATH = join(__dirname, "data", "sales_convos_cache.json");
 // a handful of full real closed-won conversations. Retrieval (below) adds
 // *more* relevant material on top of this per-message, it doesn't replace
 // it -- an agent should never be pricing purely from memory/retrieval alone.
-const PLAYBOOK = readFileSync(join(__dirname, "data", "alexis_playbook.md"), "utf8");
-// The sales playbook is editable per agent from the editor's System Prompt
-// section (agent.playbook), right under the prompt itself -- it's fed to the
-// model on every message, so it has to be as visible and editable as the
-// prompt is. Confirmed live: it carried an old price list nobody could see
-// from the editor, and those prices leaked into real replies. An agent that
-// has never saved its own copy falls back to the file; one that saved it
-// blank gets no playbook at all (its prompt already carries everything --
-// Kai's was merged into his prompt so the two can't drift apart again).
-function agentPlaybook(agent) {
-  return typeof agent?.playbook === "string" ? agent.playbook : PLAYBOOK;
-}
+// (2026-10-16) There used to be a separate "Alexis sales playbook"
+// (data/alexis_playbook.md) sent with every message after the agent's own
+// prompt. It drifted out of sync with the prompt -- an old price list in it
+// leaked into real replies -- so it was merged into Kai's prompt and removed.
+// The agent's System Prompt is now the one source of truth for how it sells.
 const FEW_SHOT = JSON.parse(readFileSync(join(__dirname, "data", "few_shot_examples.json"), "utf8"));
 function formatExampleConvo(example) {
   const lines = example.conversation.map((e) => {
@@ -377,9 +370,7 @@ ${promptForModel}
 
 ${RESPONSE_FORMAT_INSTRUCTIONS}
 
-Below is supplementary grounding: real objection-handling phrasing/technique from actual closed-won conversations, and a handful of full real conversations. The pricing above is authoritative -- never use a number from here (or anywhere) that contradicts it.
-
-${agentPlaybook(agent)}
+Below are a handful of full real conversations from closed-won enrollments, for tone and phrasing only. Their prices, discounts, and promos are years out of date -- the pricing above is the only pricing that exists; never use a number, discount, or promo from these.
 
 ${FEW_SHOT_BLOCK}
 `;
@@ -1415,14 +1406,12 @@ async function handleAiAgentsCrud(req, res, url) {
     const agent = agents.find(a => a.id === agentMatch[1]);
     if (req.method === "GET") {
       if (!agent) return sendJson(res, 404, { error: "Agent not found" });
-      // defaultPlaybook prefills the editor's playbook box for an agent
-      // that hasn't saved its own copy yet (see agentPlaybook).
-      return sendJson(res, 200, { agent, defaultPlaybook: PLAYBOOK });
+      return sendJson(res, 200, { agent });
     }
     if (req.method === "PATCH") {
       if (!agent) return sendJson(res, 404, { error: "Agent not found" });
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "systemPrompt", "playbook", "notifyOnBuyingSignal", "active", "aiAssist", "targeting", "activeConfig"]) {
+      for (const k of ["name", "description", "systemPrompt", "notifyOnBuyingSignal", "active", "aiAssist", "targeting", "activeConfig"]) {
         if (k in body) agent[k] = body[k];
       }
       agent.updatedAt = new Date().toISOString();

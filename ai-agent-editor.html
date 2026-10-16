@@ -201,13 +201,8 @@
                   <span class="toggle-label" id="fNotifyBuyingSignalLabel">Notify Inbox sidebar on a detected buying signal</span>
                 </div>
               </div>
-              <div class="editor-row">
-                <textarea id="fSystemPrompt"></textarea>
-              </div>
               <div class="editor-row" style="margin-bottom:0">
-                <label for="fPlaybook">Sales Playbook</label>
-                <div class="pra-muted" style="font-size:.72rem;margin-bottom:6px">Sent to the agent with every message, after the prompt above. Where the two disagree, the prompt wins. Leave it empty to send no playbook.</div>
-                <textarea id="fPlaybook"></textarea>
+                <textarea id="fSystemPrompt"></textarea>
               </div>
             </div>
           </div>
@@ -378,6 +373,17 @@
                 <div class="editor-row">
                   <label>Max follow-ups if the lead never replies</label>
                   <input type="number" id="fMaxFollowUps" min="0" max="20" step="1" value="3" style="max-width:120px"/>
+                </div>
+                <div class="editor-row">
+                  <label>Stand down after a human messages the lead</label>
+                  <div style="display:flex;gap:6px;max-width:260px">
+                    <input type="number" id="fHumanBuffer" min="0" step="1" value="45" style="flex:1"/>
+                    <select id="fHumanBufferUnit" style="flex:1">
+                      <option value="hours">Hours</option>
+                      <option value="days">Days</option>
+                    </select>
+                  </div>
+                  <div class="pra-muted" style="font-size:.72rem;margin-top:4px">When anyone on the team texts or emails a lead (from the Inbox or their own Gmail), this agent goes quiet for that lead -- no replies, no follow-ups -- until this long after the team's last message.</div>
                 </div>
               </div>
             </div>
@@ -951,11 +957,7 @@ initMultiselect('msStatuses', 'Select status(es)…');
 async function loadEditor() {
   const r = await fetch(`/api/ai-agents/${editingAgentId}`);
   if (!r.ok) { location.href = '/ai-agents.html'; return; }
-  const loaded = await r.json();
-  const agent = loaded.agent;
-  // A saved playbook -- even an empty one -- is shown as saved; only an
-  // agent that never saved one gets the default text prefilled.
-  document.getElementById('fPlaybook').value = typeof agent.playbook === 'string' ? agent.playbook : (loaded.defaultPlaybook || '');
+  const agent = (await r.json()).agent;
   document.title = (agent.name || 'AI Agent') + ' — CRM';
   document.getElementById('fName').value = agent.name || '';
   document.getElementById('fDescription').value = agent.description || '';
@@ -985,6 +987,9 @@ async function loadEditor() {
   document.getElementById('fFollowUpWaitMinUnit').value = fuWait.minUnit || 'minutes';
   document.getElementById('fFollowUpWaitMaxUnit').value = fuWait.maxUnit || 'minutes';
   document.getElementById('fMaxFollowUps').value = Number.isFinite(cfg.maxFollowUps) ? cfg.maxFollowUps : 3;
+  const hb = cfg.humanTakeoverBuffer || {};
+  document.getElementById('fHumanBuffer').value = Number.isFinite(hb.value) ? hb.value : 45;
+  document.getElementById('fHumanBufferUnit').value = hb.unit === 'hours' ? 'hours' : 'days';
   const reengage = cfg.reengagement || {};
   setToggle('fReengageSmsToggle', reengage.sms?.enabled);
   document.getElementById('fReengageSmsPrompt').value = reengage.sms?.prompt || '';
@@ -1157,7 +1162,6 @@ function currentAgentDraft() {
     name: document.getElementById('fName').value.trim() || 'Untitled Agent',
     description: document.getElementById('fDescription').value.trim(),
     systemPrompt: document.getElementById('fSystemPrompt').value,
-    playbook: document.getElementById('fPlaybook').value,
   };
 }
 // Shared by the delayed reply and the automatic no-reply follow-up below --
@@ -1654,7 +1658,6 @@ function buildAgentPayload() {
     aiAssist: getToggle('fAiAssistToggle'),
     notifyOnBuyingSignal: getToggle('fNotifyBuyingSignalToggle'),
     systemPrompt: document.getElementById('fSystemPrompt').value,
-    playbook: document.getElementById('fPlaybook').value,
     targeting: { programTypes, statuses, coverForUserIds },
     activeConfig: {
       segmentIds: getSelectedSegmentIds(),
@@ -1681,6 +1684,10 @@ function buildAgentPayload() {
         maxUnit: document.getElementById('fFollowUpWaitMaxUnit').value || 'minutes',
       } : null,
       maxFollowUps: Number(document.getElementById('fMaxFollowUps').value) || 0,
+      humanTakeoverBuffer: {
+        value: document.getElementById('fHumanBuffer').value === '' ? 45 : Math.max(0, Number(document.getElementById('fHumanBuffer').value) || 0),
+        unit: document.getElementById('fHumanBufferUnit').value === 'hours' ? 'hours' : 'days',
+      },
       reengagement: {
         sms: { enabled: getToggle('fReengageSmsToggle'), prompt: document.getElementById('fReengageSmsPrompt').value, verbatim: getToggle('fReengageSmsVerbatimToggle') },
         email: { enabled: getToggle('fReengageEmailToggle'), prompt: document.getElementById('fReengageEmailPrompt').value, verbatim: getToggle('fReengageEmailVerbatimToggle'), verbatimSubject: document.getElementById('fReengageEmailVerbatimSubject').value },
@@ -1746,8 +1753,8 @@ function scheduleAutosave() {
 }
 function wireAutosave() {
   [
-    'fName', 'fDescription', 'fSystemPrompt', 'fPlaybook', 'fBatchSize', 'fColdOpenPerHour', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
-    'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps',
+    'fName', 'fDescription', 'fSystemPrompt', 'fBatchSize', 'fColdOpenPerHour', 'fEmailSender', 'fMessageBuffer', 'fMessageBufferUnit', 'fWaitMin', 'fWaitMax', 'fWaitMinUnit', 'fWaitMaxUnit',
+    'fFollowUpWaitMin', 'fFollowUpWaitMax', 'fFollowUpWaitMinUnit', 'fFollowUpWaitMaxUnit', 'fMaxFollowUps', 'fHumanBuffer', 'fHumanBufferUnit',
     'fReengageSmsPrompt', 'fReengageEmailPrompt', 'fReengageEmailVerbatimSubject',
     'btSourcePageVisit', 'btSourceSmsClick', 'btSourceVideoWatch', 'btSourceEmailOpen', 'btSourceEmailClick',
     'btWaitMin', 'btWaitMinUnit', 'btWaitMax', 'btWaitMaxUnit', 'btCapCount', 'btCapWindowValue', 'btCapWindowUnit', 'btRevisitDelayValue', 'btRevisitDelayUnit',

@@ -3,9 +3,9 @@ import { getContactById } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
-  generateAgentReply, isExcludable, findLastHumanOutbound, findUnansweredInbound, sentCategoryForSourceType, inboundMessageText,
+  generateAgentReply, isExcludable, findUnansweredInbound, inboundMessageText,
 } from "./ai_agents_backend.js";
-import { sendViaChannel, findCoverageState, trackCoverageReply, wakeStatesForInbound } from "./ai_active_backend.js";
+import { sendViaChannel, findCoverageState, trackCoverageReply, wakeStatesForInbound, humanBufferUntil } from "./ai_active_backend.js";
 
 // ── AI Coverage -- the fourth autonomous mode: while a specific teammate
 // is marked Away (Inbox's self-service toggle, gated by canUseAiActive in
@@ -90,15 +90,13 @@ export async function maybeCoverInboundReply(contactId) {
     const lastMsg = findUnansweredInbound(journey);
     if (!lastMsg) return;
 
-    // Human takeover -- if the owner (back early, replying from their
-    // phone) or anyone else has personally messaged this lead more
-    // recently than the agent itself did (in ANY mode -- coverage, AI
-    // Active, test send), stand down. Used to compare against coverage
-    // sends only, so a teammate's email from weeks earlier blocked coverage
-    // forever even when the lead was replying to Kai's own AI Active email.
-    const lastAgentSend = [...journey].reverse().find((m) => m.direction === "outbound" && (sentCategoryForSourceType(m.sourceType) === "ai_agent" || m.sourceType === "ai_active_test"));
-    const lastHumanOutbound = findLastHumanOutbound(journey);
-    if (lastHumanOutbound && (!lastAgentSend || new Date(lastHumanOutbound.createdAt).getTime() > new Date(lastAgentSend.createdAt).getTime())) return;
+    // Human takeover -- anyone on the team who's personally texted or
+    // emailed this lead inside the agent's buffer (humanBufferMs, default 45
+    // days after the human's LAST message) owns the conversation; the agent
+    // stays out of it entirely. (Used to be "a human messaged more recently
+    // than the agent did", which never expired -- a teammate's message from
+    // a year ago blocked coverage forever.)
+    if (humanBufferUntil(journey, agent.activeConfig || {})) return;
 
     // Just the lead's literal latest message, not the whole journey
     // re-rendered into the user turn -- matches ai_active_backend.js's own
