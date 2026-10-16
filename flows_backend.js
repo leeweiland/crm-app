@@ -383,7 +383,18 @@ function resolveTemplate(str, { contact, payload, timestamp }) {
       // Payload keys are always flat (the raw webhook body / form answers /
       // booking fields) -- no further dot-splitting, so a field literally
       // named e.g. "Company.Name" still matches as one key, not a nested lookup.
-      const val = payload?.[path.slice("payload.".length)];
+      const key = path.slice("payload.".length);
+      let val = payload?.[key];
+      // A label typed with a double space is saved with a non-breaking space
+      // in it, and resolveTemplateInHtml turns the token's NBSP into a plain
+      // space -- so the token and the payload's label key stop matching
+      // exactly and the answer silently blanked. Compare NBSP-insensitively.
+      if (val === undefined && payload) {
+        const norm = (s) => String(s).split(String.fromCharCode(160)).join(" ");
+        const want = norm(key);
+        const hit = Object.keys(payload).find(k => norm(k) === want);
+        if (hit !== undefined) val = payload[hit];
+      }
       return val === undefined || val === null ? "" : String(val);
     }
     const parts = path.split(".");
