@@ -301,12 +301,24 @@ function stripSplitMarker(text) {
 // model already laid out are left exactly as written). Splits after . ? !
 // followed by a space, so a URL like pacificrimathletics.com/gym never
 // breaks.
+// The prompt shows sample replies, and the model sometimes copies one
+// INCLUDING its quotation marks -- confirmed live: an email went out as
+// "thanks for the update. message me if that ever changes." with the quotes.
+// Strips one pair of quotes only when they wrap the entire message and
+// nothing inside is quoted (so a message that legitimately quotes the lead
+// mid-sentence is left alone).
+function stripWrappingQuotes(text) {
+  const t = String(text || "").trim();
+  const m = t.match(/^["“]([\s\S]*)["”]$/);
+  if (!m || /["“”]/.test(m[1])) return t;
+  return m[1].trim();
+}
 function emailSentencePerLine(text) {
   if (/\n/.test(text)) return text;
   return text.replace(/([.?!])\s+(?=\S)/g, "$1\n\n");
 }
 export async function sendViaChannel(contact, channel, rawText, agentId, subject, sourceType = "ai_active", senderId = null) {
-  const text = stripSplitMarker(stripChannelLabelLeak(stripModelSignoff(stripForeignPreamble(rawText))));
+  const text = stripWrappingQuotes(stripSplitMarker(stripChannelLabelLeak(stripModelSignoff(stripForeignPreamble(rawText)))));
   if (channel === "email" && contact.email) {
     const { text: gifStripped, gifUrl } = extractGifMarker(text);
     const cleaned = emailSentencePerLine(gifStripped);

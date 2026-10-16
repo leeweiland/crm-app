@@ -206,7 +206,7 @@
               </div>
               <div class="editor-row" style="margin-bottom:0">
                 <label for="fPlaybook">Sales Playbook</label>
-                <div class="pra-muted" style="font-size:.72rem;margin-bottom:6px">Sent to the agent with every message, after the prompt above. Where the two disagree, the prompt wins.</div>
+                <div class="pra-muted" style="font-size:.72rem;margin-bottom:6px">Sent to the agent with every message, after the prompt above. Where the two disagree, the prompt wins. Leave it empty to send no playbook.</div>
                 <textarea id="fPlaybook"></textarea>
               </div>
             </div>
@@ -953,7 +953,9 @@ async function loadEditor() {
   if (!r.ok) { location.href = '/ai-agents.html'; return; }
   const loaded = await r.json();
   const agent = loaded.agent;
-  document.getElementById('fPlaybook').value = (agent.playbook && agent.playbook.trim()) ? agent.playbook : (loaded.defaultPlaybook || '');
+  // A saved playbook -- even an empty one -- is shown as saved; only an
+  // agent that never saved one gets the default text prefilled.
+  document.getElementById('fPlaybook').value = typeof agent.playbook === 'string' ? agent.playbook : (loaded.defaultPlaybook || '');
   document.title = (agent.name || 'AI Agent') + ' — CRM';
   document.getElementById('fName').value = agent.name || '';
   document.getElementById('fDescription').value = agent.description || '';

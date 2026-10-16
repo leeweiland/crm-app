@@ -25,9 +25,11 @@ const PLAYBOOK = readFileSync(join(__dirname, "data", "alexis_playbook.md"), "ut
 // model on every message, so it has to be as visible and editable as the
 // prompt is. Confirmed live: it carried an old price list nobody could see
 // from the editor, and those prices leaked into real replies. An agent that
-// has never saved its own copy (or saved it blank) falls back to the file.
+// has never saved its own copy falls back to the file; one that saved it
+// blank gets no playbook at all (its prompt already carries everything --
+// Kai's was merged into his prompt so the two can't drift apart again).
 function agentPlaybook(agent) {
-  return typeof agent?.playbook === "string" && agent.playbook.trim() ? agent.playbook : PLAYBOOK;
+  return typeof agent?.playbook === "string" ? agent.playbook : PLAYBOOK;
 }
 const FEW_SHOT = JSON.parse(readFileSync(join(__dirname, "data", "few_shot_examples.json"), "utf8"));
 function formatExampleConvo(example) {
