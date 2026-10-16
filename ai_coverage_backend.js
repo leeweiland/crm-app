@@ -128,7 +128,7 @@ export async function maybeCoverInboundReply(contactId) {
     }
     const sent = await sendViaChannel(contact, channel, body, agent.id, subject, SOURCE_TYPE, agent.activeConfig?.emailSenderId);
     if (sent && sent.ok === false) return; // nothing went out -- nothing to follow up on
-    trackCoverageReply(agent, contactId, channel, lastMsg.createdAt);
+    trackCoverageReply(agent, contactId, channel, lastMsg.createdAt, { close: !!result.close });
   } catch (err) {
     console.error(`[ai-coverage] contact ${contactId} failed:`, err.message);
   }
