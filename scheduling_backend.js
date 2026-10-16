@@ -572,6 +572,39 @@ function formatFormAnswers(formAnswers, fieldLabels) {
     // the only real separation a plain-text calendar description can show.
     .map(([label, v]) => `${label}:\n${v}`).join("\n\n");
 }
+// A standalone calendar (e.g. the gym session page, booked after a separate
+// application form) gets no answers handed to it the way an in-form
+// calendar step does (public-form.html's bookingWidgetUrl). et.linkedFormId
+// fills that gap: the contact's latest submission of that form is turned
+// into the same dual-keyed formAnswers/formAnswerLabels shape that step
+// sends, so %INTAKEANSWERS%, flow {{payload.X}} tokens and the staff
+// notification all work the same way. Identity fields are skipped, same
+// as bookingWidgetUrl (the booking already carries name/email/phone).
+const LINKED_FORM_SKIP_TYPES = ["statement", "headline", "image", "video", "calendar", "page_break", "email", "phone", "first_name", "last_name"];
+export function eventTypeLinkedForm(et) {
+  const forms = readJson("crm_forms.json", []);
+  if (et.linkedFormId) return forms.find(f => f.id === et.linkedFormId) || null;
+  return forms.find(f => (f.fields || []).some(fl => fl.type === "calendar" && eventTypeHasSlug(et, fl.eventTypeSlug))) || null;
+}
+export function linkedFormAnswers(et, contactId) {
+  if (!et.linkedFormId || !contactId) return null;
+  const form = readJson("crm_forms.json", []).find(f => f.id === et.linkedFormId);
+  if (!form) return null;
+  const latest = readJson("crm_form_responses.json", [])
+    .filter(r => r.formId === form.id && r.contactId === contactId)
+    .sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)))[0];
+  if (!latest) return null;
+  const formAnswers = {}, formAnswerLabels = {};
+  for (const f of form.fields || []) {
+    if (LINKED_FORM_SKIP_TYPES.includes(f.type)) continue;
+    const v = (latest.answers || {})[f.id];
+    if (v === undefined || v === null || v === "") continue;
+    const flat = Array.isArray(v) ? v.join(", ") : v;
+    formAnswers[f.code || f.id] = flat;
+    if (f.label) { formAnswers[f.label] = flat; formAnswerLabels[f.code || f.id] = f.label; }
+  }
+  return Object.keys(formAnswers).length ? { formAnswers, formAnswerLabels } : null;
+}
 // Same rule as forms_backend.js's validateAnswers -- a required question
 // with no answer blocks the booking, checked server-side since the public
 // booking form is unauthenticated and easy to hit directly. Email is
@@ -1305,6 +1338,12 @@ export async function handleSchedulingRequest(req, res, url) {
     // (the ad click that brought them here, etc.) to the contact just
     // created/matched -- see claimVisitorHistory's own comment.
     if (contact?.id && vid) claimVisitorHistory(vid, contact.id);
+    let bookingFormAnswers = formAnswers && typeof formAnswers === "object" && Object.keys(formAnswers).length ? formAnswers : null;
+    let bookingFormAnswerLabels = formAnswerLabels && typeof formAnswerLabels === "object" ? formAnswerLabels : {};
+    if (!bookingFormAnswers) {
+      const linked = linkedFormAnswers(et, contact?.id);
+      if (linked) { bookingFormAnswers = linked.formAnswers; bookingFormAnswerLabels = linked.formAnswerLabels; }
+    }
     const start = new Date(bookedStartAt);
     const end = new Date(start.getTime() + et.durationMinutes * 60000);
     // Generated up front (not inline in the booking object below) so the
@@ -1326,13 +1365,13 @@ export async function handleSchedulingRequest(req, res, url) {
       // endpoint finds these for "Pull Sample Data" to show as pickable
       // {{payload.X}} tokens -- otherwise they'd only ever exist for the
       // instant a flow run actually fires, with no way to discover them.
-      formAnswers: formAnswers && typeof formAnswers === "object" ? formAnswers : {},
+      formAnswers: bookingFormAnswers || {},
       // code->label snapshot (see book.html's prefillFormAnswerLabels) --
       // ONLY for flows_backend.js's /samples picker to show a real question
       // instead of a raw stable code. Never part of the actual trigger
       // payload (that's formAnswers above), so it can never be mistaken
       // for an answer by resolveTemplate.
-      formAnswerLabels: formAnswerLabels && typeof formAnswerLabels === "object" ? formAnswerLabels : {},
+      formAnswerLabels: bookingFormAnswerLabels,
       startAt: start.toISOString(), endAt: end.toISOString(),
       timezone: timezone || eventTypeAvailability(et, calendar).timezone,
       status: "confirmed", calendarEventId: null, calendarId: calendar.email || getCalendarId(), calendarError: null,
@@ -1376,7 +1415,7 @@ export async function handleSchedulingRequest(req, res, url) {
       // this event can reference {{payload.Career}} etc. directly instead
       // of only the one combined Notes blob.
       payload: {
-        ...(formAnswers && typeof formAnswers === "object" ? formAnswers : {}),
+        ...(bookingFormAnswers || {}),
         "Event Type": et.name, "When": when, "Name": name, "Email": booking.email, "Phone": booking.phone, "Notes": notes || "",
         // "When" is rendered in the INVITEE's timezone. Timezone names it (e.g.
         // "Europe/London"); Calendar Time is the same moment on the staff
@@ -1582,7 +1621,7 @@ export async function handleSchedulingRequest(req, res, url) {
     // so formatFormAnswers' own dedup (drop the code-keyed duplicate when a
     // label exists) runs here identically to how it runs for a real booking.
     const NON_ANSWERABLE_FORM_TYPES = ["statement", "headline", "image", "video", "calendar", "page_break"];
-    const embeddingForm = readJson("crm_forms.json", []).find(f => (f.fields || []).some(fl => fl.type === "calendar" && eventTypeHasSlug(et, fl.eventTypeSlug)));
+    const embeddingForm = eventTypeLinkedForm("linkedFormId" in body ? { ...et, linkedFormId: body.linkedFormId } : et);
     const formAnswers = {}, formAnswerLabels = {};
     (embeddingForm?.fields || []).filter(fl => !NON_ANSWERABLE_FORM_TYPES.includes(fl.type)).forEach((fl, i) => {
       const sample = `Sample ${i + 1}`;
@@ -1615,7 +1654,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability", "linkedFormId"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       const slugBefore = et.slug;
       if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);

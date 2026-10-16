@@ -236,6 +236,11 @@
               <input class="pra-input" id="fNotifyEmails" placeholder="you@pacificrimathletics.com, alexis@..."/>
               <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4">One email, with everything -- the application's other answers, the booked time, and every question here.</div>
             </div>
+            <div class="field">
+              <label class="pra-label">Application form</label>
+              <select class="pra-select" id="fLinkedForm"><option value="">None</option></select>
+              <div class="pra-muted" style="font-size:.7rem;margin-top:6px;line-height:1.4" id="fLinkedFormHint"></div>
+            </div>
             <div class="field"><label class="pra-label">Booking link</label>
               <div class="link-row" style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--pra-dim)"><code id="fSlug" style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px"></code></div>
             </div>
@@ -878,6 +883,7 @@ async function refreshCalendarPreview() {
       template: draft.calendarDescriptionTemplate || '',
       titleTemplate: draft.calendarTitleTemplate || '',
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar,
+      linkedFormId: draft.linkedFormId || '',
     }),
   });
   const d = r.ok ? await r.json() : null;
@@ -1062,7 +1068,7 @@ async function saveNow() {
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
       calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
-      notifyEmails: draft.notifyEmails, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders, availability: draft.availability,
+      notifyEmails: draft.notifyEmails, linkedFormId: draft.linkedFormId || null, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders, availability: draft.availability,
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate, calendarTitleTemplate: draft.calendarTitleTemplate,
     }),
   });
@@ -1078,6 +1084,39 @@ async function saveNow() {
     renderCalendar();
   }
 }
+
+// Application form: the form whose answers get attached to this event
+// type's bookings (calendar event %INTAKEANSWERS%, flow {{payload}} tokens,
+// the staff notification). A form that has this calendar built in as a
+// step always passes its answers along; the setting is for a standalone
+// calendar booked after a separate form (pulls that contact's latest
+// submission), and is shown either way so the link is visible.
+let allForms = [];
+async function loadLinkedFormOptions() {
+  const r = await fetch('/api/forms');
+  allForms = r.ok ? ((await r.json()).forms || []) : [];
+  const sel = document.getElementById('fLinkedForm');
+  sel.innerHTML = '<option value="">None</option>' + allForms.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name || 'Untitled form')}</option>`).join('');
+  sel.value = draft.linkedFormId || '';
+  renderLinkedFormHint();
+}
+function renderLinkedFormHint() {
+  const slugs = [draft.slug, ...(draft.previousSlugs || [])];
+  const embedding = allForms.filter(f => (f.fields || []).some(fl => fl.type === 'calendar' && slugs.includes(fl.eventTypeSlug)));
+  const linked = allForms.find(f => f.id === draft.linkedFormId);
+  const parts = [];
+  if (embedding.length) parts.push(`This calendar is a step inside ${embedding.map(f => `"${escapeHtml(f.name)}"`).join(', ')}, so answers from that form always come through with the booking.`);
+  if (linked && !embedding.some(f => f.id === linked.id)) parts.push(`When someone books here, their latest "${escapeHtml(linked.name)}" answers are attached to the booking: the calendar event (%INTAKEANSWERS%), flow {{payload}} tokens and booking notifications.`);
+  else if (linked) parts.push('Bookings made from the direct link (not through the form) also pick up their latest answers from it.');
+  if (!parts.length) parts.push("Pick the form people fill out before booking, and their answers get attached to the booking -- calendar event, flows and notifications.");
+  document.getElementById('fLinkedFormHint').innerHTML = parts.join(' ');
+}
+document.getElementById('fLinkedForm').addEventListener('change', () => {
+  draft.linkedFormId = document.getElementById('fLinkedForm').value || null;
+  renderLinkedFormHint();
+  saveDebounced();
+  refreshCalendarPreviewDebounced();
+});
 
 async function loadStatuses() {
   const r = await fetch('/api/statuses');
@@ -1231,6 +1270,7 @@ async function init() {
   snapToFirstAvailableMonth();
   renderCalendar();
   await loadStatuses();
+  await loadLinkedFormOptions();
   if (new URLSearchParams(location.search).get('embed') === '1') openEmbedModal();
 }
 
