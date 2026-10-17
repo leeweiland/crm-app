@@ -153,6 +153,13 @@ const qs = new URLSearchParams(location.search);
 // Calendly-style, and carries every other answer through onto the actual
 // calendar event via the notes field (see submitBooking below).
 const prefillName = qs.get('prefillName') || '';
+// First/last arrive separately from the form; prefillName alone (an older
+// cached form page) is split on its first space. Each name box is hidden
+// only when it actually has a value -- hiding last name with nothing in it
+// made every in-form booking fail "Last name is required" with no box to fix it.
+const [splitFirst = '', ...splitRest] = prefillName.trim().split(/\s+/);
+const prefillFirst = qs.has('prefillFirst') || qs.has('prefillLast') ? (qs.get('prefillFirst') || '') : splitFirst;
+const prefillLast = qs.has('prefillFirst') || qs.has('prefillLast') ? (qs.get('prefillLast') || '') : splitRest.join(' ');
 const prefillEmail = qs.get('prefillEmail') || '';
 const prefillPhone = qs.get('prefillPhone') || '';
 const prefillFormAnswers = qs.get('formAnswers') || '';
@@ -384,13 +391,14 @@ function renderPicker() {
 // silently prefilled here instead of asked a second time.
 const QUESTION_DEFAULT_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Question', long_text: 'Question', dropdown: 'Question' };
 function questionPrefill(q) {
-  if (q.type === 'first_name' && prefillName) return prefillName;
+  if (q.type === 'first_name' && prefillFirst) return prefillFirst;
+  if (q.type === 'last_name' && prefillLast) return prefillLast;
   if (q.type === 'email' && prefillEmail) return prefillEmail;
   if (q.type === 'phone' && prefillPhone) return prefillPhone;
   return '';
 }
 function questionHidden(q) {
-  return (q.type === 'first_name' || q.type === 'last_name') && !!prefillName || (q.type === 'email' && !!prefillEmail) || (q.type === 'phone' && !!prefillPhone);
+  return (q.type === 'first_name' && !!prefillFirst) || (q.type === 'last_name' && !!prefillLast) || (q.type === 'email' && !!prefillEmail) || (q.type === 'phone' && !!prefillPhone);
 }
 function questionFieldHtml(q) {
   const suffix = q.required || q.type === 'email' ? '' : ' (optional)';

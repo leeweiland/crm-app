@@ -368,6 +368,8 @@ function bookingWidgetUrl(f) {
   const lastField = form.fields.find(ff => ff.type === 'last_name');
   const name = [firstField, lastField].map(ff => ff && answers[ff.id]).filter(Boolean).join(' ');
   if (name) url.searchParams.set('prefillName', name);
+  if (firstField && answers[firstField.id]) url.searchParams.set('prefillFirst', answers[firstField.id]);
+  if (lastField && answers[lastField.id]) url.searchParams.set('prefillLast', answers[lastField.id]);
   if (emailField && answers[emailField.id]) url.searchParams.set('prefillEmail', answers[emailField.id]);
   if (phoneField && answers[phoneField.id]) url.searchParams.set('prefillPhone', answers[phoneField.id]);
   const carriedIds = new Set([emailField?.id, phoneField?.id, firstField?.id, lastField?.id, f.id]);
