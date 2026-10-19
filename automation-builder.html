@@ -87,6 +87,8 @@
         <a class="pra-link" href="/automations.html" id="backLink">&larr; Back to Email Automations</a>
         <div class="ab-header" style="margin-top:14px">
           <input class="ab-name-input" id="autoName"/>
+          <label class="pra-muted" for="allFootersSel" style="font-size:.8rem">Footer</label>
+          <select class="pra-select" id="allFootersSel" title="Sets the footer on every email in this automation" style="width:auto;min-width:160px"></select>
           <button class="active-toggle" id="activeToggle"></button>
           <span class="pra-muted" id="activeLabel" style="font-size:.8rem">Inactive</span>
           <button class="pra-btn pra-btn-ghost pra-btn-sm" id="viewContactsBtn">View Contacts</button>
@@ -507,6 +509,7 @@ function renderCanvasContent() {
   document.getElementById('autoName').value = automation.name;
   document.getElementById('activeToggle').className = 'active-toggle' + (automation.active ? ' on' : '');
   document.getElementById('activeLabel').textContent = automation.active ? 'Active' : 'Inactive';
+  renderAllFootersSelect();
 
   const canvas = document.getElementById('canvas');
   function triggerLabel(trig) {
@@ -635,6 +638,26 @@ window.addEventListener('beforeunload', () => {
 });
 
 document.getElementById('autoName').addEventListener('input', (e) => { automation.name = e.target.value; saveDebounced(); });
+// Header footer picker: shows the footer every email shares, or "Mixed"
+// when they differ; picking one sets it on every send_email step at once.
+// "" is the same "use the default footer" value the per-email picker uses.
+function renderAllFootersSelect() {
+  const sel = document.getElementById('allFootersSel');
+  const emails = Object.values(automation.steps || {}).filter(s => s.type === 'send_email');
+  const used = new Set(emails.map(s => s.config?.footerTemplateId || ''));
+  const common = used.size === 1 ? [...used][0] : null;
+  sel.innerHTML = (common === null ? `<option value="__mixed" selected disabled>${emails.length ? 'Mixed' : 'No emails'}</option>` : '')
+    + `<option value="">${escapeHtml(defaultFooterLabel())}</option>`
+    + allFooters.map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+  if (common !== null) sel.value = common;
+  sel.disabled = !emails.length;
+}
+document.getElementById('allFootersSel').onchange = (e) => {
+  const value = e.target.value;
+  if (value === '__mixed') return;
+  for (const s of Object.values(automation.steps || {})) if (s.type === 'send_email') s.config.footerTemplateId = value || null;
+  render(); saveDebounced();
+};
 document.getElementById('activeToggle').onclick = async () => {
   automation.active = !automation.active;
   await fetch(`/api/automations/${automation.id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: automation.active }) });
