@@ -642,7 +642,10 @@ export async function handleEmailRequest(req, res, url) {
   }
 
   if (p === "/api/email/unsubscribe" && req.method === "GET") {
-    const contactId = url.searchParams.get("c");
+    // Cut at any stray "?"/"&"/"#": links already sitting in inboxes carry
+    // c=<id>?e=email-<slug> (see tagHtmlLinksWithSource), which never
+    // matched a contact.
+    const contactId = String(url.searchParams.get("c") || "").split(/[?&#]/)[0].trim();
     const contact = getContactById(contactId);
     if (contact) {
       // Only emailOptOut -- never contact.status. Same reasoning as

@@ -212,6 +212,11 @@ export function tagHtmlLinksWithSource(html, value, paramName = "el") {
   if (!value) return html;
   return String(html || "").replace(/href="([^"]+)"/g, (match, url) => {
     if (url.startsWith("mailto:") || url.startsWith("#")) return match;
+    // Unsubscribe links are never tagged. %unsubscribe% is still a
+    // placeholder here (email_backend.js swaps in the real URL afterward),
+    // so the tag landed as "%unsubscribe%?e=..." and the final link became
+    // "...unsubscribe?c=<id>?e=..." -- a contact id no unsubscribe could match.
+    if (/^%unsubscribe%/i.test(url) || url.includes("/api/email/unsubscribe")) return match;
     return `href="${appendSourceTag(url, value, paramName)}"`;
   });
 }
