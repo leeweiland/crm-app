@@ -781,6 +781,23 @@ export async function handleFormsRequest(req, res, url) {
     return sendJson(res, 200, { ok: true, form });
   }
 
+  // Copies everything but identity/history -- the copy starts as a draft
+  // with no responses, so it can't start feeding contacts/flows until it's
+  // deliberately published. Field ids and codes are kept as-is: codes map
+  // answers onto contact custom fields, so a copy writing into the SAME
+  // custom fields as its original is the point, not a collision.
+  const formDupMatch = p.match(/^\/api\/forms\/([^/]+)\/duplicate$/);
+  if (formDupMatch && req.method === "POST") {
+    const forms = readJson(FORMS_FILE, []);
+    const source = forms.find(f => f.id === formDupMatch[1]);
+    if (!source) return sendJson(res, 404, { error: "Form not found" });
+    const now = new Date().toISOString();
+    const copy = { ...JSON.parse(JSON.stringify(source)), id: randomUUID(), name: `Copy of ${source.name}`, status: "draft", createdAt: now, updatedAt: now };
+    forms.push(copy);
+    writeJson(FORMS_FILE, forms);
+    return sendJson(res, 200, { ok: true, form: copy });
+  }
+
   const formMatch = p.match(/^\/api\/forms\/([^/]+)$/);
   if (formMatch) {
     const forms = readJson(FORMS_FILE, []);

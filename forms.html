@@ -123,10 +123,17 @@ function renderFormsTable() {
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/form-builder.html?id=${f.id}" onclick="event.stopPropagation()">Edit</a>
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/f/${f.id}" target="_blank" onclick="event.stopPropagation()">View</a>
         <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/form-builder.html?id=${f.id}&embed=1" onclick="event.stopPropagation()">Embed</a>
+        <button class="pra-btn pra-btn-ghost pra-btn-sm" data-dup="${f.id}">Copy</button>
         <button class="pra-btn pra-btn-sm pra-btn-danger" data-del="${f.id}">Delete</button>
       </td>
     </tr>
   `).join('');
+  document.querySelectorAll('[data-dup]').forEach(btn => btn.onclick = async (e) => {
+    e.stopPropagation();
+    const r = await fetch(`/api/forms/${btn.dataset.dup}/duplicate`, { method: 'POST' });
+    const d = await r.json();
+    if (r.ok) location.href = '/form-builder.html?id=' + d.form.id;
+  });
   document.querySelectorAll('[data-del]').forEach(btn => btn.onclick = async (e) => {
     e.stopPropagation();
     if (!confirm('Delete this form and all its responses?')) return;

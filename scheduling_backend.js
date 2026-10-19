@@ -1647,6 +1647,24 @@ export async function handleSchedulingRequest(req, res, url) {
     }
   }
 
+  // Copies the whole event type under a fresh id and its own unique
+  // /book/<slug>. Starts inactive so a half-configured duplicate isn't
+  // publicly bookable until it's been reviewed and switched on; drops
+  // previousSlugs so old links of the ORIGINAL keep resolving to the original.
+  const etDupMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)\/duplicate$/);
+  if (etDupMatch && req.method === "POST") {
+    const eventTypes = getEventTypes();
+    const source = eventTypes.find(e => e.id === etDupMatch[1]);
+    if (!source) return sendJson(res, 404, { error: "Event type not found" });
+    const now = new Date().toISOString();
+    const copy = { ...JSON.parse(JSON.stringify(source)), id: randomUUID(), name: `Copy of ${source.name}`, active: false, createdAt: now, updatedAt: now };
+    delete copy.previousSlugs;
+    copy.slug = uniqueSlug(`${source.slug}-copy`, eventTypes, copy.id);
+    eventTypes.push(copy);
+    writeJson(EVENT_TYPES_FILE, eventTypes);
+    return sendJson(res, 200, { ok: true, eventType: copy });
+  }
+
   const etMatch = p.match(/^\/api\/scheduling\/admin\/event-types\/([^/]+)$/);
   if (etMatch) {
     const eventTypes = getEventTypes();
