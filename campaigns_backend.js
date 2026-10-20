@@ -1,6 +1,8 @@
 import { bestSendHours, releaseAtForHour } from "./send_time_db.js";
 import { randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { statSync } from "fs";
+import { join } from "path";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, DATA_DIR } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
 import { segmentMembers } from "./segments_shared.js";
 import { getAllContacts } from "./contacts_db.js";
@@ -70,7 +72,24 @@ const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
 // CRM. The per-source file is right for every status except plain
 // "delivered" (see above), so a message SES accepted that hasn't bounced,
 // complained, or failed counts as delivered (SES delivers ~99% of these).
+// Recomputed only when the campaign's message file or its status overlay
+// actually changed (one statSync each) -- the Campaigns list asks for every
+// sent campaign's stats on each load, and almost none of them change
+// between loads.
+const _statsCache = new Map();
+function statsCacheKey(campaignId) {
+  const m = (dir) => { try { const st = statSync(join(DATA_DIR, dir, `campaign__${campaignId}.json`)); return `${st.mtimeMs}:${st.size}`; } catch { return "-"; } };
+  return `${m("msg_by_source")}|${m("msg_by_source_status")}`;
+}
 function rollupStats(campaignId) {
+  const key = statsCacheKey(campaignId);
+  const hit = _statsCache.get(campaignId);
+  if (hit && hit.key === key) return { ...hit.stats };
+  const stats = computeRollupStats(campaignId);
+  _statsCache.set(campaignId, { key, stats });
+  return { ...stats };
+}
+function computeRollupStats(campaignId) {
   const messages = getMessagesForSource("campaign", campaignId);
   const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 };
   for (const m of messages) {

@@ -303,7 +303,12 @@ async function loadCampaigns(isPoll = false) {
   // re-applied over the snapshot on every render. The snapshot only ever
   // shows for a campaign whose live stats haven't loaded yet.
   const live = loadCampaigns._live || (loadCampaigns._live = {});
-  const statsTargets = isPoll ? allCampaigns.filter(c => c.status === 'sending') : allCampaigns.filter(c => c.status === 'sent' || c.status === 'sending');
+  // 2026-10-20: GET /api/campaigns already returns live, cached stats for
+  // every sent campaign, so a full load no longer fires one extra stats
+  // request per sent campaign (~47 at once) -- only a campaign mid-send is
+  // fetched separately (its list entry carries progress, not stats).
+  allCampaigns.forEach(c => { if (c.status === 'sent' && c.stats) live[c.id] = c.stats; });
+  const statsTargets = allCampaigns.filter(c => c.status === 'sending');
   const liveStats = await Promise.all(statsTargets.map(c => fetch(`/api/reporting/campaigns/${c.id}`).then(res => res.ok ? res.json() : null).catch(() => null)));
   statsTargets.forEach((c, i) => { if (liveStats[i]?.stats) live[c.id] = liveStats[i].stats; });
   allCampaigns.forEach(c => { if (live[c.id]) c.stats = live[c.id]; });
