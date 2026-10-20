@@ -39,13 +39,16 @@ import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
 // skipped for any status, so it's cross-referenced as the real source of
 // truth per message, same fix as campaigns_backend.js's rollupStats.
 const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
+// 2026-10-20: no longer reads crm_provider_id_index.json -- at 286MB, parsing
+// it per request (the Campaigns list fires one per sent campaign) froze and
+// OOM-crashed the CRM. Same rule as campaigns_backend.js's rollupStats: an
+// SES-accepted message that hasn't bounced/complained/failed is delivered.
 function statsFromMessages(messages) {
-  const index = readJson(PROVIDER_ID_INDEX_FILE, {});
   const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, complained: 0, failed: 0 };
   for (const m of messages) {
-    const status = (m.providerMessageId && index[m.providerMessageId]?.status) || m.status;
+    const status = m.status;
     if (["sent", "delivered", "opened", "clicked"].includes(status)) stats.sent++;
-    if (["delivered", "opened", "clicked"].includes(status)) stats.delivered++;
+    if (["delivered", "opened", "clicked"].includes(status) || (status === "sent" && m.providerMessageId)) stats.delivered++;
     if (["opened", "clicked"].includes(status)) stats.opened++;
     if (status === "clicked") stats.clicked++;
     if (status === "bounced") stats.bounced++;

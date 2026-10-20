@@ -64,14 +64,19 @@ function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
 // bounced/complained/failed flags (unaffected by the skip), just not for
 // delivered/opened/clicked, where the index's status wins.
 const PROVIDER_ID_INDEX_FILE = "crm_provider_id_index.json";
+// 2026-10-20: no longer reads crm_provider_id_index.json. That file reached
+// 286MB, and the Campaigns list called this once per sent campaign (~47),
+// each a full parse on the main thread -- it froze and then OOM-crashed the
+// CRM. The per-source file is right for every status except plain
+// "delivered" (see above), so a message SES accepted that hasn't bounced,
+// complained, or failed counts as delivered (SES delivers ~99% of these).
 function rollupStats(campaignId) {
   const messages = getMessagesForSource("campaign", campaignId);
-  const index = readJson(PROVIDER_ID_INDEX_FILE, {});
   const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 };
   for (const m of messages) {
-    const status = (m.providerMessageId && index[m.providerMessageId]?.status) || m.status;
+    const status = m.status;
     if (["sent", "delivered", "opened", "clicked"].includes(status)) stats.sent++;
-    if (["delivered", "opened", "clicked"].includes(status)) stats.delivered++;
+    if (["delivered", "opened", "clicked"].includes(status) || (status === "sent" && m.providerMessageId)) stats.delivered++;
     if (["opened", "clicked"].includes(status)) stats.opened++;
     if (status === "clicked") stats.clicked++;
     if (status === "bounced") stats.bounced++;
