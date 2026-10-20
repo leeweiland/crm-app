@@ -179,7 +179,14 @@ export function logMessagesBatch(fieldsList) {
   const rows = fieldsList.map(buildMessageRow);
   const offsets = appendJsonRecordsFast(MESSAGE_LOG_FILE, rows);
   appendSourceMessagesBatch(rows);
-  rows.forEach((row, i) => persistRowSideEffects(row, offsets[i]));
+  // Per row: one contact's bookkeeping failing (a damaged per-contact file,
+  // etc.) must not throw out of a campaign send's batch flush -- that used to
+  // stop the WHOLE send (2026-10-20). The message itself is already in the
+  // main + per-source logs above, so it still counts as sent/contacted.
+  rows.forEach((row, i) => {
+    try { persistRowSideEffects(row, offsets[i]); }
+    catch (e) { console.error(`[message_log] side effects failed for ${row.contactId || "?"} (${row.id}):`, e.message); }
+  });
   return rows;
 }
 // compliance_backend.js already imports logMessage (for its own

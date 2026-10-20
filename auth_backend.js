@@ -597,6 +597,17 @@ export function appendJsonRecordFast(file, record) {
       readSync(fd, tailBuf, 0, tailLen, size - tailLen);
       let end = tailLen - 1;
       while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      // An empty (0-byte or whitespace-only) file is just "no records yet" --
+      // start the array fresh instead of throwing. Confirmed live 2026-10-20:
+      // a per-contact message file left at 0 bytes since an earlier crash
+      // stopped a 19k-recipient campaign send 6,024 recipients in.
+      if (end < 0 && size <= 64) {
+        ftruncateSync(fd, 0);
+        const fresh = Buffer.from("[" + json + "]", "utf8");
+        writeSync(fd, fresh, 0, fresh.length, 0);
+        result = { offset: 1, length: Buffer.byteLength(json, "utf8") };
+        return;
+      }
       if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecordFast: ${file} does not end with ']'`);
       const bodyEnd = size - (tailLen - end);
 
@@ -661,6 +672,20 @@ export function appendJsonRecordsFast(file, records) {
       readSync(fd, tailBuf, 0, tailLen, size - tailLen);
       let end = tailLen - 1;
       while (end >= 0 && (tailBuf[end] === 0x20 || tailBuf[end] === 0x0a || tailBuf[end] === 0x0d || tailBuf[end] === 0x09)) end--;
+      // Empty file = no records yet (see appendJsonRecordFast).
+      if (end < 0 && size <= 64) {
+        ftruncateSync(fd, 0);
+        const fresh = Buffer.from("[" + jsons.join(",") + "]", "utf8");
+        writeSync(fd, fresh, 0, fresh.length, 0);
+        results = [];
+        let pos = 1;
+        for (const j of jsons) {
+          const length = Buffer.byteLength(j, "utf8");
+          results.push({ offset: pos, length });
+          pos += length + 1;
+        }
+        return;
+      }
       if (end < 0 || tailBuf[end] !== 0x5d) throw new Error(`appendJsonRecordsFast: ${file} does not end with ']'`);
       const bodyEnd = size - (tailLen - end);
 
