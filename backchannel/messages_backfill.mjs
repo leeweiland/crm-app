@@ -35,6 +35,11 @@ const pg = createRequire(path.join(APP_DIR, "package.json"))("pg");
 try { os.setPriority(0, 19); } catch { /* best effort */ }
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
+// This copy's own sessions only: don't wait for each commit's WAL flush (the
+// measured bottleneck -- every insert sat in WALWrite), and give index
+// builds real memory. A crash could lose the last moments of copied rows,
+// which re-running the copy restores; the CRM's own writes are unaffected.
+pool.on("connect", (client) => { client.query("SET synchronous_commit TO off; SET maintenance_work_mem TO '1GB'").catch(() => {}); });
 const STATE_FILE = path.join(DATA_DIR, "_messages_backfill_state.json");
 const CONTACT_DIR = path.join(DATA_DIR, "msg_by_contact");
 const STATUS_DIR = path.join(DATA_DIR, "msg_by_contact_status");
@@ -112,6 +117,12 @@ function placeholders(n) {
   return out.join(",");
 }
 const UPSERT_SET = MESSAGE_COLUMNS.filter(c => c !== "id").map(c => `${c}=excluded.${c}`).join(", ");
+// BACKFILL_NO_KEY=1: the bulk copy runs with the primary key dropped (each
+// insert into a 13M-entry random-uuid index was a random disk read on a
+// 128MB-cache server -- the measured bottleneck). finish removes the few
+// duplicate ids (first copy wins, same as ON CONFLICT DO NOTHING) and
+// rebuilds the key in one sorted pass.
+const NO_KEY = process.env.BACKFILL_NO_KEY === "1";
 async function writeRows(rows, { upsert = false } = {}) {
   if (!rows.length) return 0;
   const tests = await testContactIds();
@@ -120,7 +131,7 @@ async function writeRows(rows, { upsert = false } = {}) {
     const chunk = rows.slice(i, i + BATCH_ROWS);
     const params = chunk.flatMap(m => messageToParams(m, tests.has(m.contactId)));
     const r = await pool.query(
-      `INSERT INTO messages (${MESSAGE_COLUMNS.join(", ")}) VALUES ${placeholders(chunk.length)} ON CONFLICT (id) DO ${upsert ? `UPDATE SET ${UPSERT_SET}` : "NOTHING"}`,
+      `INSERT INTO messages (${MESSAGE_COLUMNS.join(", ")}) VALUES ${placeholders(chunk.length)}${NO_KEY ? "" : ` ON CONFLICT (id) DO ${upsert ? `UPDATE SET ${UPSERT_SET}` : "NOTHING"}`}`,
       params
     );
     written += r.rowCount;
@@ -196,6 +207,27 @@ async function phaseUnmatched() {
   log(`unmatched done: ${scanned} rows scanned, ${found.length} with no contact, ${written} inserted`);
 }
 
+// A slice of the contact files (--from/--to, by sorted position), for running
+// several copies side by side. Keeps no resume state: re-running a slice is
+// harmless (rows already copied are skipped).
+async function phaseContactsRange() {
+  const files = readdirSync(CONTACT_DIR).filter(f => f.endsWith(".json")).sort();
+  const from = Number(args.from), to = Math.min(Number(args.to), files.length);
+  let pending = [], seen = 0, written = 0;
+  log(`range ${from}-${to}: starting`);
+  for (let i = from; i < to; i++) {
+    const contactId = files[i].slice(0, -5);
+    let rows;
+    try { rows = contactMessagesFromFiles(contactId); } catch (e) { log(`  skip ${files[i]}: ${e.message}`); continue; }
+    for (const m of rows) if (m && m.id) pending.push(m.contactId ? m : { ...m, contactId });
+    seen += rows.length;
+    if (pending.length >= BATCH_ROWS) { written += await writeRows(pending); pending = []; }
+    if ((i - from) % 2000 === 0) log(`  range ${from}-${to}: at ${i}, ${seen} rows read, ${written} written`);
+  }
+  written += await writeRows(pending);
+  log(`range ${from}-${to} done: ${seen} rows read, ${written} inserted`);
+}
+
 // Contacts whose file holds messages but who have no rows in Postgres (an
 // earlier run skipped damaged files) -- copied now, salvaging what's readable.
 async function phaseMissing() {
@@ -218,6 +250,15 @@ async function phaseMissing() {
 }
 
 async function phaseFinish() {
+  const hasKey = (await pool.query(`SELECT 1 FROM pg_constraint WHERE conrelid = 'messages'::regclass AND contype = 'p'`)).rows.length;
+  if (!hasKey) {
+    let t = Date.now();
+    const d = await pool.query(`DELETE FROM messages WHERE seq IN (SELECT seq FROM (SELECT seq, row_number() OVER (PARTITION BY id ORDER BY seq) AS rn FROM messages) x WHERE rn > 1)`);
+    log(`  removed ${d.rowCount} duplicate ids (${((Date.now() - t) / 1000).toFixed(0)}s)`);
+    t = Date.now();
+    await pool.query(`ALTER TABLE messages ADD PRIMARY KEY (id)`);
+    log(`  primary key rebuilt (${((Date.now() - t) / 1000).toFixed(0)}s)`);
+  }
   for (const sql of schema.INDEXES_SQL) { const t = Date.now(); await pool.query(sql); log(`  ${sql.split(" ON ")[0]} (${((Date.now() - t) / 1000).toFixed(0)}s)`); }
   let t = Date.now();
   await pool.query(schema.REBUILD_DAILY_STATS_SQL);
@@ -335,7 +376,7 @@ async function phaseVerify() {
 }
 
 const phase = process.argv[2];
-const phases = { schema: phaseSchema, contacts: phaseContacts, missing: phaseMissing, unmatched: phaseUnmatched, finish: phaseFinish, catchup: phaseCatchup, verify: phaseVerify };
+const phases = { schema: phaseSchema, contacts: phaseContacts, range: phaseContactsRange, missing: phaseMissing, unmatched: phaseUnmatched, finish: phaseFinish, catchup: phaseCatchup, verify: phaseVerify };
 if (!phases[phase]) { console.error(`usage: messages_backfill.mjs <${Object.keys(phases).join("|")}>`); process.exit(2); }
 try { await phases[phase](); }
 catch (e) { log(`FAILED in ${phase}:`, e.stack || e.message); process.exitCode = 1; }
