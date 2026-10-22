@@ -559,7 +559,17 @@ export function updateMessageById(id, patch) {
 export function isKnownProviderMessageId(providerMessageId) {
   if (!providerMessageId) return false;
   if (MESSAGES_PG) return !!mdb.getMessageByProviderId(providerMessageId);
+  if (providerIndexUnreadable()) return false;
   return !!getProviderIndexCached()[providerMessageId];
+}
+// File mode only: the provider index is past 300MB, where reading it costs
+// minutes of CPU (2026-10-22: Gmail/AC sync doing that on every conversation
+// open froze the main thread -- 96% of it, per a live CPU profile). The
+// syncs whose whole point is de-duplication skip while this is true; in
+// Postgres mode the check is an indexed lookup and they run normally.
+export function providerIndexUnreadable() {
+  if (MESSAGES_PG) return false;
+  try { return statSync(join(DATA_DIR, PROVIDER_ID_INDEX_FILE)).size >= 300 * 1024 * 1024; } catch { return false; }
 }
 // The Close/AC/Hyros import merges (import_backend.js, hyros_backend.js)
 // read the whole main log, pushed new rows onto it and wrote it back. In pg

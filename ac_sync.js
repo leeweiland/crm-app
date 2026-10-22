@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { readJson, writeJson, appendToJsonObjectFast, DATA_DIR } from "./auth_backend.js";
 import { getAllContacts, getContactById } from "./contacts_db.js";
-import { logMessage, isKnownProviderMessageId } from "./message_log.js";
+import { logMessage, isKnownProviderMessageId, providerIndexUnreadable } from "./message_log.js";
 import { MESSAGES_PG } from "./messages_db.js";
 import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
 import { acConfigured, fetchAcOneToOneCampaigns, fetchAcContactActivities, acCampaignName, AC_BASE } from "./import_backend.js";
@@ -159,6 +159,9 @@ async function getOneToOneCampaigns() {
 // minute once something looped it across a real batch of contacts.
 export async function syncAcEngagementForContact(contactId, preloadedContact) {
   if (!acConfigured() || !contactId) return;
+  // Its duplicate check can't read the file-mode provider index right now
+  // (see providerIndexUnreadable) -- running anyway would only re-log AC sends.
+  if (providerIndexUnreadable()) return;
   const contact = preloadedContact !== undefined ? preloadedContact : getContactById(contactId);
   const acContactId = contact?.externalIds?.acContactId;
   if (!acContactId || !contact.email) return;

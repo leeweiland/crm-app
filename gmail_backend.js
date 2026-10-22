@@ -1,6 +1,6 @@
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
 import { getAllContacts, getContactById } from "./contacts_db.js";
-import { logMessage, isKnownProviderMessageId } from "./message_log.js";
+import { logMessage, isKnownProviderMessageId, providerIndexUnreadable } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
@@ -543,6 +543,7 @@ async function fetchAndProcessGmailQuery(user, accessToken, q) {
 // diff might have missed (a paused poller, a capped backlog -- see
 // MAX_MESSAGES_PER_TICK) at the moment someone would actually notice a gap.
 export async function reconcileRecentGmailForContact(contactId, windowDays = 14) {
+  if (providerIndexUnreadable()) return { skipped: "provider index unreadable" };
   const contact = getContactById(contactId);
   const emails = [contact?.email, ...(contact?.altEmails || [])].filter(Boolean);
   if (!emails.length) return;
@@ -568,6 +569,7 @@ export async function reconcileRecentGmailForContact(contactId, windowDays = 14)
 // (the reported gap is specifically missing outbound replies), not a
 // history-of-everything trawl.
 export async function reconcileRecentOutboundGmail(hours = 24) {
+  if (providerIndexUnreadable()) return { skipped: "provider index unreadable" };
   const users = readJson(USERS_FILE, []).filter(u => u.gmailRefreshToken);
   const results = [];
   for (const user of users) {
