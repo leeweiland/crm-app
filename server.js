@@ -45,7 +45,7 @@ import { setAutomationNotificationWorker } from "./automation_notification_worke
 import { setSequenceNotificationWorker } from "./sequence_notification_worker_handle.js";
 import { readJson, DATA_DIR, removeStaleTmpFiles } from "./auth_backend.js";
 import { RECORDS_PG, importRecordFilesOnce } from "./records_db.js";
-import { loadContactsCache, getAllContacts } from "./contacts_db.js";
+import { loadContactsCache, getAllContacts, useContactsFromPostgres, ensureContactIndexes } from "./contacts_db.js";
 import { sqliteInboxAvailable, contactsIndexCount, backfillContactsIndex, backfillRenewalDates } from "./sqlite_inbox.js";
 import { runRecentInternationalPhoneFix } from "./phone_backfill.js";
 import { seedKickoffForms } from "./seed_kickoff_forms.js";
@@ -158,7 +158,12 @@ function warmCaches() {
 // contacts synchronously against this cache, not the JSON file directly.
 // Fatal if this fails -- unlike the try/catch'd steps below, there's no
 // safe fallback behavior for "contacts never loaded."
-await loadContactsCache();
+// CONTACTS_STORE=pg (2026-10-22): no contacts copy on this thread either --
+// reads go straight to Postgres (contacts_db.js "Remote mode").
+if (process.env.CONTACTS_STORE === "pg") {
+  await useContactsFromPostgres("main");
+  ensureContactIndexes().catch(e => console.error("[contacts_db] index setup failed:", e.message));
+} else await loadContactsCache();
 // RECORDS_STORE=pg: the first boot copies page visits / bookings / flow runs
 // from their JSON files into Postgres, before warmCaches() or any worker
 // can read them (records_db.js). A no-op on every later boot.

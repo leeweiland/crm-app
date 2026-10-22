@@ -1,5 +1,5 @@
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getAllContacts, getContactById, contactsRemoteMode, findContactIdByEmailOrAlt } from "./contacts_db.js";
 import { logMessage, isKnownProviderMessageId, providerIndexUnreadable } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
@@ -433,6 +433,8 @@ function getContactIdByEmail(email) {
     const id = findContactIdByEmail(email);
     if (id) return id;
   }
+  // No contacts copy on this thread: one indexed lookup per new sender.
+  if (contactsRemoteMode()) return findContactIdByEmailOrAlt(email);
   if (!contactsByEmailCache || Date.now() - contactsByEmailCacheBuiltAt > CONTACTS_EMAIL_CACHE_TTL_MS) {
     contactsByEmailCache = new Map();
     for (const c of getAllContacts()) {

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
-import { getAllContacts, getContactById, queueContactTagChange } from "./contacts_db.js";
+import { getAllContacts, getContactById, queueContactTagChange, getContactsMapByIds } from "./contacts_db.js";
 // Enrollments live in SQLite now (2026-10-08) -- see automation_enrollments_db.js
 // for why the JSON file they used to live in was the single largest cost
 // behind every email open taking 20+ seconds to process.
@@ -720,8 +720,8 @@ export async function handleAutomationsRequest(req, res, url) {
   const enrollmentsMatch = p.match(/^\/api\/automations\/([^/]+)\/enrollments$/);
   if (enrollmentsMatch && req.method === "GET") {
     const enrollments = listEnrollments({ automationId: enrollmentsMatch[1] });
-    const contacts = getAllContacts();
-    const withContacts = enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null }));
+    const contactsById = getContactsMapByIds(enrollments.map(e => e.contactId));
+    const withContacts = enrollments.map(e => ({ ...e, contact: contactsById.get(e.contactId) || null }));
     return sendJson(res, 200, { enrollments: withContacts });
   }
 

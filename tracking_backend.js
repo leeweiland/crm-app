@@ -5,7 +5,7 @@ import { getPublicBaseUrl } from "./integrations_backend.js";
 import { markContactVisitedPage } from "./contacts_backend.js";
 import { queueBehavioralTrigger, parseVisitContext } from "./behavioral_triggers_backend.js";
 import { findContactMatch } from "./segments_shared.js";
-import { getAllContacts } from "./contacts_db.js";
+import { getAllContacts, findContactMatchDb } from "./contacts_db.js";
 import { isPgRecordFile, claimVisits } from "./records_db.js";
 
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
@@ -294,8 +294,7 @@ export async function handleTrackingRequest(req, res, url) {
     const phone = parsed.phone ? String(parsed.phone).trim() : "";
     if (vid && (email || phone)) {
       recordVisitorIdentity(vid, email, phone, sanitizeClickIds(parsed.clickIds), sanitizeAdParams(parsed.adParams));
-      const contacts = getAllContacts();
-      const match = findContactMatch(contacts, email, phone);
+      const match = findContactMatchDb(email, phone);
       if (match) claimVisitorHistory(vid, match.id);
     }
     res.writeHead(204, { "Access-Control-Allow-Origin": "*" }); res.end();

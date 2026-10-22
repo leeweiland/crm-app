@@ -1,7 +1,7 @@
 import { randomUUID, randomBytes } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
-import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
+import { getAllContacts, createContact, updateContactByField, getContactsMapByIds, findContactMatchDb } from "./contacts_db.js";
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal, dripClock, dripAllowedSoFar } from "./automations_backend.js";
 import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
 import { pushConversionEvent } from "./conversions_backend.js";
@@ -515,8 +515,7 @@ async function advanceFlowRun(run, flow) {
       if (!workingContact) {
         const resolvedEmail = cfg.email ? resolveTemplate(cfg.email, ctx).toLowerCase() : "";
         const resolvedPhone = cfg.phone ? resolveTemplate(cfg.phone, ctx) : "";
-        const contacts = getAllContacts();
-        workingContact = findContactMatch(contacts, resolvedEmail, resolvedPhone);
+        workingContact = findContactMatchDb(resolvedEmail, resolvedPhone);
         if (!workingContact) {
           workingContact = {
             id: randomUUID(), type: "contact", accountName: "",
@@ -1358,9 +1357,9 @@ export async function handleFlowsRequest(req, res, url) {
   const runsMatch = p.match(/^\/api\/flows\/([^/]+)\/runs$/);
   if (runsMatch && req.method === "GET") {
     const runs = readJson(RUNS_FILE, []).filter(r => r.flowId === runsMatch[1]).sort((a, b) => new Date(b.enteredAt) - new Date(a.enteredAt)).slice(0, 100);
-    const contacts = getAllContacts();
+    const contactsById = getContactsMapByIds(runs.map(r => r.contactId));
     const withContact = runs.map(r => {
-      const c = contacts.find(c => c.id === r.contactId);
+      const c = contactsById.get(r.contactId);
       return { ...r, contact: c ? { first: c.first, last: c.last, email: c.email } : null };
     });
     return sendJson(res, 200, { runs: withContact });

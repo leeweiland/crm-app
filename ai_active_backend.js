@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE } from "./auth_backend.js";
 import { SEGMENTS_FILE, matchesSegment } from "./segments_shared.js";
-import { getAllContacts } from "./contacts_db.js";
+import { getAllContacts, getContactsMapByIds, filterContacts } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import { getContactByIdFast } from "./sqlite_inbox.js";
 import {
@@ -55,8 +55,7 @@ const MAX_FOLLOWUPS = 3; // fallback default when an agent has no cfg.maxFollowU
 // segment PLUS a "new leads since <date>, ongoing" segment) in one Start
 // instead of needing one batch per segment.
 function buildCandidateList(segments, batchSize, targeting) {
-  const contacts = getAllContacts();
-  const matching = contacts.filter((c) => segments.some((s) => matchesSegment(c, s.filter)) && contactMatchesTargeting(c, targeting));
+  const matching = filterContacts((c) => segments.some((s) => matchesSegment(c, s.filter)) && contactMatchesTargeting(c, targeting));
   const excluded = [];
   const candidates = [];
   for (const c of matching) {
@@ -440,9 +439,9 @@ export async function handleAiActiveRequest(req, res, url) {
     const batch = batches.find((b) => b.id === detailMatch[1]);
     if (!batch) return sendJson(res, 404, { error: "Batch not found" });
     const states = readJson(AI_ACTIVE_STATES_FILE, []).filter((s) => s.batchId === batch.id);
-    const contacts = getAllContacts();
+    const contactsById = getContactsMapByIds(states.map((s) => s.contactId));
     const rows = states.map((s) => {
-      const c = contacts.find((x) => x.id === s.contactId);
+      const c = contactsById.get(s.contactId);
       return { ...s, contactName: c ? `${c.first} ${c.last}`.trim() : "(deleted contact)", contactEmail: c?.email, contactPhone: c?.phone };
     });
     return sendJson(res, 200, { batch: { ...batch, stats: batchStats(batch.id, states) }, states: rows });

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { resolveBulkContactIds, segmentMembers, SEGMENTS_FILE } from "./segments_shared.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getAllContacts, getContactById, getContactsMapByIds } from "./contacts_db.js";
 import { applyMergeTags } from "./block_editor_shared.js";
 import { sendSms } from "./sms_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
@@ -634,8 +634,8 @@ export async function handleWorkflowsRequest(req, res, url) {
   const wfEnrollmentsMatch = p.match(/^\/api\/workflows\/([^/]+)\/enrollments$/);
   if (wfEnrollmentsMatch && req.method === "GET") {
     const enrollments = readJson(WF_ENROLLMENTS_FILE, []).filter(e => e.workflowId === wfEnrollmentsMatch[1]);
-    const contacts = getAllContacts();
-    return sendJson(res, 200, { enrollments: enrollments.map(e => ({ ...e, contact: contacts.find(c => c.id === e.contactId) || null })) });
+    const contactsById = getContactsMapByIds(enrollments.map(e => e.contactId));
+    return sendJson(res, 200, { enrollments: enrollments.map(e => ({ ...e, contact: contactsById.get(e.contactId) || null })) });
   }
 
   // Unenroll one contact -- marks the enrollment cancelled rather than

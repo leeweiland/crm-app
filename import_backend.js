@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, scanJsonArrayFieldSets, appendJsonRecords } from "./auth_backend.js";
 import { findContactMatch, markFirstSeen } from "./segments_shared.js";
-import { getAllContacts, getContactById, createContact, updateContactByField, writeAllContacts } from "./contacts_db.js";
+import { getAllContacts, getContactById, createContact, updateContactByField, writeAllContacts, findContactMatchDb, findContactByExternalId, filterContacts, getContactsMapByIds, updateContactById } from "./contacts_db.js";
 import { readImportLog, writeImportLog } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE, NOTES_FILE } from "./inbox_backend.js";
 import { recheckStopStatus, isStopKeyword, BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
@@ -316,8 +316,8 @@ export async function processCloseAltBackfillBatch() {
   const state = readJson(CLOSE_ALT_BACKFILL_STATE_FILE, { nextIndex: 0, processed: 0, updated: 0, errors: 0, done: false });
   if (state.done) return;
 
-  const contacts = getAllContacts();
-  const targets = contacts.filter(c => c.externalIds?.closeLeadId);
+  const targets = filterContacts(c => c.externalIds?.closeLeadId, { sql: "external_ids ? 'closeLeadId'" })
+    .sort((a, b) => a.id.localeCompare(b.id)); // stable order across ticks (nextIndex resumes into it)
   if (state.nextIndex >= targets.length) {
     state.done = true;
     writeJson(CLOSE_ALT_BACKFILL_STATE_FILE, state);
@@ -331,7 +331,7 @@ export async function processCloseAltBackfillBatch() {
   let contactsChanged = false;
   for (; i < targets.length && Date.now() - t0 < CLOSE_ALT_BACKFILL_BATCH_MS; i++) {
     try {
-      if (await backfillOneContactAltFields(targets[i])) { state.updated++; contactsChanged = true; }
+      if (await backfillOneContactAltFields(targets[i])) { state.updated++; contactsChanged = true; updateContactById(targets[i].id, () => targets[i]); }
     } catch (e) {
       state.errors++;
       console.error(`[close-alt-backfill] contact ${targets[i].id} failed:`, e.message);
@@ -340,7 +340,6 @@ export async function processCloseAltBackfillBatch() {
     await new Promise(res => setTimeout(res, CLOSE_ALT_BACKFILL_DELAY_MS));
   }
   state.nextIndex = i;
-  if (contactsChanged) writeAllContacts(contacts);
   writeJson(CLOSE_ALT_BACKFILL_STATE_FILE, state);
   console.log(`[close-alt-backfill] ${state.nextIndex}/${targets.length} processed (+${i - startIndex} this tick), ${state.updated} updated so far`);
 }
@@ -383,25 +382,26 @@ export async function processStopStatusRecoveryBatch() {
   const state = readJson(STOP_STATUS_RECOVERY_STATE_FILE, { results: {}, applied: false });
   if (state.applied) return;
 
-  const contacts = getAllContacts();
-  const targets = contacts.filter(c => c.status === "STOP" && c.externalIds?.closeLeadId);
+  const targets = filterContacts(c => c.status === "STOP" && c.externalIds?.closeLeadId, { sql: "status = 'STOP'" });
   const todo = targets.filter(c => !(c.id in state.results));
 
   // Every lookup is resolved -- apply once, in a single pass, then never
   // run again (state.applied gates the top of this function).
   if (!todo.length) {
     let changed = 0;
-    for (const c of contacts) {
+    const recovered = [];
+    for (const c of getContactsMapByIds(Object.keys(state.results)).values()) {
       const r = state.results[c.id];
       if (r?.prevStatus && r.prevStatus !== "STOP" && c.status === "STOP") {
         c.status = r.prevStatus;
         c.updatedAt = new Date().toISOString();
         changed++;
+        recovered.push(c);
+        updateContactById(c.id, () => c);
       }
     }
     if (changed) {
-      writeAllContacts(contacts);
-      for (const c of contacts) {
+      for (const c of recovered) {
         const r = state.results[c.id];
         if (r?.prevStatus && r.prevStatus !== "STOP") {
           try { syncContactFields(c.id, c); } catch (e) { console.error("[stop-recovery] sqlite sync failed for", c.id, e.message); }
@@ -716,9 +716,9 @@ export async function mergeAcContactActivities(contact, acContactId, existingIds
 // exists from a Framer form submission or manual entry, so importing
 // doesn't create a second copy of someone already in the system).
 export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
-  const contacts = getAllContacts();
   const email = (acContact.email || "").toLowerCase();
-  let contact = contacts.find(c => c.externalIds?.acContactId === acContact.id) || findContactMatch(contacts, email, acContact.phone);
+  let contact = findContactByExternalId("acContactId", acContact.id) || findContactMatchDb(email, acContact.phone);
+  const isNew = !contact;
   if (contact) {
     contact.first = acContact.firstName || contact.first;
     contact.last = acContact.lastName || contact.last;
@@ -735,10 +735,9 @@ export async function upsertFromAc(acContact, defaultStatus, tagMap, listMap) {
       firstSeenAt: acContact.cdate || new Date().toISOString(),
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
-    contacts.push(contact);
   }
   if (tagMap && listMap) await enrichAcContact(contact, acContact.id, tagMap, listMap);
-  writeAllContacts(contacts);
+  if (isNew) createContact(contact); else updateContactById(contact.id, () => contact); // just this contact, not all 176k
   try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }
@@ -757,7 +756,7 @@ export function formatCloseAddress(addr) {
   return [addr.address_1, addr.address_2, addr.city, addr.state, addr.zipcode, addr.country].filter(Boolean).join(", ");
 }
 export function upsertFromCloseLead(lead, defaultStatus) {
-  const contacts = getAllContacts();
+  const created = []; // made earlier in this same call, not saved yet
   const nested = lead.contacts?.length ? lead.contacts : [{ name: lead.display_name, emails: [], phones: [] }];
   const leadAddress = (lead.addresses || []).map(formatCloseAddress).filter(Boolean).join(" | ");
   let count = 0;
@@ -767,7 +766,11 @@ export function upsertFromCloseLead(lead, defaultStatus) {
     const phone = nc.phones?.[0]?.phone || "";
     const parts = (nc.name || lead.display_name || "").trim().split(/\s+/);
     const first = parts[0] || "", last = parts.slice(1).join(" ");
-    let contact = contacts.find(c => c.externalIds?.closeLeadId === lead.id && c.email === email) || findContactMatch(contacts, email, phone);
+    const sameLead = (c) => c.externalIds?.closeLeadId === lead.id && c.email === email;
+    let contact = created.find(sameLead)
+      || filterContacts(sameLead, { sql: "external_ids @> $1::jsonb", params: [JSON.stringify({ closeLeadId: lead.id })] })[0]
+      || findContactMatch(created, email, phone) || findContactMatchDb(email, phone);
+    if (contact && touched.some(t => t.id === contact.id)) contact = touched.find(t => t.id === contact.id);
     if (contact) {
       contact.accountName = lead.display_name || contact.accountName;
       contact.status = lead.status_label || contact.status;
@@ -784,7 +787,7 @@ export function upsertFromCloseLead(lead, defaultStatus) {
         firstSeenAt: lead.date_created || new Date().toISOString(),
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
-      contacts.push(contact);
+      created.push(contact);
     }
     // Never downgrades an existing true back to false -- once blocked from
     // SMS by status, a later re-import with a stale/different status label
@@ -796,9 +799,10 @@ export function upsertFromCloseLead(lead, defaultStatus) {
     // must not get silently cleared by a later re-import.
     if (nc.emails?.[0]?.is_unsubscribed) contact.emailOptOut = true;
     count++;
-    touched.push(contact);
+    if (!touched.includes(contact)) touched.push(contact);
   });
-  writeAllContacts(contacts);
+  // Just the contacts this lead touched, not all 176k.
+  for (const c of touched) { if (created.includes(c)) createContact(c); else updateContactById(c.id, () => c); }
   for (const c of touched) { try { syncContactFields(c.id, c); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
   return { count, contacts: touched };
 }
@@ -1190,8 +1194,7 @@ export async function handleImportRequest(req, res, url) {
   // lead existed yet.
   if (p === "/api/import/backfill-status" && req.method === "POST") {
     if (!closeConfigured()) return sendJson(res, 400, { error: "CLOSE_API_KEY isn't set yet." });
-    const all = getAllContacts();
-    const statusTargets = all.filter(c => ["ac_import", "hyros_import"].includes(c.source) && (!c.status || (!c.first && !c.last)));
+    const statusTargets = filterContacts(c => ["ac_import", "hyros_import"].includes(c.source) && (!c.status || (!c.first && !c.last)), { sql: "source IN ('ac_import', 'hyros_import')" });
     let statusUpdated = 0;
     for (const contact of statusTargets) {
       const before = `${contact.status}|${contact.first}`;
@@ -1202,7 +1205,7 @@ export async function handleImportRequest(req, res, url) {
     // covers every Close-linked contact regardless of source, including
     // ones the status pass above just linked and ones already linked
     // before this feature existed.
-    const fieldTargets = getAllContacts().filter(c => c.externalIds?.closeLeadId);
+    const fieldTargets = filterContacts(c => c.externalIds?.closeLeadId, { sql: "external_ids ? 'closeLeadId'" });
     let fieldsUpdated = 0;
     for (const contact of fieldTargets) {
       const lead = await fetchCloseLeadById(contact.externalIds.closeLeadId);
@@ -1362,16 +1365,17 @@ export async function handleImportRequest(req, res, url) {
   if (p === "/api/import/manual" && req.method === "POST") {
     const { records, defaultStatus } = await readJsonBody(req);
     if (!Array.isArray(records) || !records.length) return sendJson(res, 400, { error: "No records to import" });
-    const contacts = getAllContacts();
     let imported = 0, skipped = 0;
     const errors = [];
     const touched = [];
+    const created = new Set(); // rows earlier in this same import can be matched by later ones
     records.forEach((r, i) => {
       try {
         const email = (r.email || "").trim().toLowerCase();
         const phone = (r.phone || "").trim();
         if (!email && !phone) { skipped++; return; }
-        let contact = findContactMatch(contacts, email, phone);
+        let contact = findContactMatch(touched, email, phone) || findContactMatchDb(email, phone);
+        if (contact) contact = touched.find(t => t.id === contact.id) || contact;
         if (contact) {
           if (r.first) contact.first = r.first;
           if (r.last) contact.last = r.last;
@@ -1389,13 +1393,14 @@ export async function handleImportRequest(req, res, url) {
             externalIds: { acContactId: null, closeLeadId: null },
             createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
           };
-          contacts.push(contact);
+          created.add(contact);
         }
-        touched.push(contact);
+        if (!touched.includes(contact)) touched.push(contact);
         imported++;
       } catch (e) { errors.push({ row: i, message: e.message }); }
     });
-    writeAllContacts(contacts);
+    // Just the imported rows, not all 176k.
+    for (const c of touched) { if (created.has(c)) createContact(c); else updateContactById(c.id, () => c); }
     for (const c of touched) { try { syncContactFields(c.id, c); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
     return sendJson(res, 200, { ok: true, imported, skipped, errors });
   }

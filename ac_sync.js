@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { readJson, writeJson, appendToJsonObjectFast, DATA_DIR } from "./auth_backend.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getAllContacts, getContactById, filterContacts } from "./contacts_db.js";
 import { logMessage, isKnownProviderMessageId, providerIndexUnreadable } from "./message_log.js";
 import { MESSAGES_PG } from "./messages_db.js";
 import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
@@ -358,7 +358,9 @@ export async function processAcNightlySyncBatch() {
   if (!inProgress && (acNightlySyncLocalHour() !== AC_NIGHTLY_SYNC_HOUR || state.lastCompletedDate === today)) return;
 
   if (!inProgress || !_nightlySyncTargetsCache) {
-    _nightlySyncTargetsCache = getAllContacts().filter(c => c.externalIds?.acContactId);
+    // ids only (each contact is read fresh when its turn comes), stable order across ticks
+    _nightlySyncTargetsCache = filterContacts(c => c.externalIds?.acContactId, { sql: "external_ids ? 'acContactId'" })
+      .map(c => ({ id: c.id })).sort((a, b) => a.id.localeCompare(b.id));
   }
   const targets = _nightlySyncTargetsCache;
   if (state.nextIndex >= targets.length) {
@@ -375,7 +377,7 @@ export async function processAcNightlySyncBatch() {
   let errors = 0;
   while (state.nextIndex < targets.length && Date.now() - t0 < AC_NIGHTLY_SYNC_BATCH_MS) {
     const target = targets[state.nextIndex];
-    try { await syncAcEngagementForContact(target.id, target); }
+    try { await syncAcEngagementForContact(target.id); }
     catch (e) { errors++; console.error(`[ac-nightly-sync] contact ${target.id} failed:`, e.message); }
     state.nextIndex++;
     await new Promise(res => setTimeout(res, AC_NIGHTLY_SYNC_DELAY_MS));
@@ -645,8 +647,9 @@ export async function pollAcEngagementIfDue() {
   if (!startingNewPass && !(state.nextIndex > 0)) return; // not due, and no in-progress pass to resume
 
   if (!_engagementCandidatesCache) {
-    const contacts = getAllContacts();
-    _engagementCandidatesCache = contacts.filter((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked));
+    // Just the fields the loop below reads, in a stable order across ticks.
+    _engagementCandidatesCache = filterContacts((c) => c.externalIds?.acContactId && !(c.emailEngagement?.opened && c.emailEngagement?.clicked), { sql: "external_ids ? 'acContactId'" })
+      .map((c) => ({ id: c.id, externalIds: c.externalIds, emailEngagement: c.emailEngagement })).sort((a, b) => a.id.localeCompare(b.id));
   }
   const candidates = _engagementCandidatesCache;
   const cutoff = Date.now() - AC_ENGAGEMENT_LOOKBACK_MS;

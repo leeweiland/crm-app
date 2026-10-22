@@ -4,7 +4,7 @@ import { getDailyStatsInRange, getContactMessages } from "./message_index.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { AUTOMATIONS_FILE } from "./automations_backend.js";
 import { WORKFLOWS_FILE } from "./workflows_backend.js";
-import { getAllContacts, getAllContactsNoCopy } from "./contacts_db.js";
+import { getAllContacts, getAllContactsNoCopy, filterContacts } from "./contacts_db.js";
 // Inside report_worker.js's process (REPORT_WORKER=1) reports read the shared
 // contacts cache directly instead of a full copy each time -- every report
 // here only reads contacts, never changes them. Anywhere else: a copy, as before.
@@ -111,7 +111,7 @@ function excludeTestContacts(messages) {
   // Falls back to computing live only on a cold start, before the
   // scheduler's first tick has populated that cache yet.
   const cached = getCachedTestContactIds();
-  const testIds = new Set(cached ?? (REPORTS_PG ? rpg.testContactIds() : getAllContacts().filter(c => c.testContact).map(c => c.id)));
+  const testIds = new Set(cached ?? (REPORTS_PG ? rpg.testContactIds() : filterContacts(c => c.testContact, { sql: "extra->>'testContact' = 'true'" }).map(c => c.id)));
   return messages.filter(m => !testIds.has(m.contactId));
 }
 

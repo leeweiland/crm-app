@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, updateAllJsonArrayRecordsByField } from "./auth_backend.js";
-import { getAllContacts, getContactById, updateContactByField, deleteContact } from "./contacts_db.js";
+import { getAllContacts, getContactById, updateContactByField, deleteContact, forEachContact, getContactsMapByIds } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
 import { MESSAGES_PG, reassignContactMessages } from "./messages_db.js";
 import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
@@ -38,7 +38,9 @@ function visitSignals(contactId, visits) {
 // first, falling back to the fuzzy name+IP/location signal only when
 // neither email nor phone already ties the pair together.
 export function scanForPossibleDuplicates() {
-  const contacts = getAllContacts();
+  // Just the fields compared below, streamed in chunks.
+  const contacts = [];
+  forEachContact((c) => contacts.push({ id: c.id, first: c.first, last: c.last, email: c.email, phone: c.phone }));
   const visits = readJson(PAGE_VISITS_FILE, []);
   const existing = readJson(POSSIBLE_DUPLICATES_FILE, []);
   const alreadyFlagged = new Set(existing.map(d => [d.contactAId, d.contactBId].sort().join("|")));
@@ -112,9 +114,9 @@ export const POSSIBLE_VISITOR_MATCHES_FILE = "crm_possible_visitor_matches.json"
 // pass over the visits log builds ip/location -> contactIds indexes, and
 // looks each orphan's own signals up in O(1) against those instead.
 export function scanForPossibleVisitorMatches() {
-  const contacts = getAllContacts();
-  const contactsById = new Map(contacts.map(c => [c.id, c]));
   const visits = readJson(PAGE_VISITS_FILE, []);
+  // Only ever used to ask "does this contact still exist".
+  const contactsById = getContactsMapByIds(visits.map(v => v.contactId));
   const existing = readJson(POSSIBLE_VISITOR_MATCHES_FILE, []);
   const alreadyFlagged = new Set(existing.map(m => `${m.visitorId}|${m.contactId}`));
 

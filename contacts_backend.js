@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
-import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact, queueContactEngagementUpdate, onEngagementFlush } from "./contacts_db.js";
+import { getAllContacts, getContactById, createContact, updateContactByField, updateContactsByIds, updateContactsByIdSet, updateAllContactsByField, removeValuesFromContactsArrayField, deleteContact, queueContactEngagementUpdate, onEngagementFlush, findContactMatchDb, forEachContact, filterContacts, countArrayFieldValues } from "./contacts_db.js";
 import { renewalForContact, syncContactFields, syncContactFieldsBatch, getContactByIdSqlite, deleteContactIndex, queryContactsSqlite, contactsIndexCount, backfillContactsIndex, sqliteInboxAvailable, tagCountsSqlite, listCountsSqlite } from "./sqlite_inbox.js";
 import { CONTACTS_FILE, SEGMENTS_FILE, matchesSegment, segmentMembers, findContactMatch, resolveBulkContactIds } from "./segments_shared.js";
 import { fireTrigger, checkAutomationGoal } from "./automations_backend.js";
@@ -44,36 +44,32 @@ const COUNTS_CACHE_TTL_MS = 3 * 60 * 1000;
 // piggybacks on whichever of those already paid the cost) specifically so a
 // single cache refresh never reads this file more than once.
 function computeAllCounts() {
-  let contacts = null;
-  const getContacts = () => contacts || (contacts = getAllContacts());
-  const tags = tagCountsSqlite() || (() => {
-    const counts = {};
-    for (const c of getContacts()) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
-    return counts;
-  })();
-  const lists = listCountsSqlite() || (() => {
-    const counts = {};
-    for (const c of getContacts()) {
+  const sqliteTags = tagCountsSqlite();
+  const sqliteLists = listCountsSqlite();
+  const tags = sqliteTags || {};
+  const lists = sqliteLists || {};
+  const segmentList = readJson(SEGMENTS_FILE, []);
+  const segments = {};
+  for (const s of segmentList) segments[s.id] = 0;
+  // testContact IDs, for reporting_backend.js's excludeTestContacts (was a
+  // full contacts read per campaign report request -- piggybacks on this
+  // pass instead).
+  const testContactIds = [];
+  // One streaming pass over contacts (chunks, never all of them in memory
+  // at once): segment counts always, tag/list counts only when their SQLite
+  // fast path is unavailable.
+  forEachContact((c) => {
+    if (!sqliteTags) for (const tagId of c.tags || []) tags[tagId] = (tags[tagId] || 0) + 1;
+    if (!sqliteLists) {
       for (const listId of c.listIds || []) {
-        const entry = counts[listId] || (counts[listId] = { total: 0, subscribed: 0 });
+        const entry = lists[listId] || (lists[listId] = { total: 0, subscribed: 0 });
         entry.total++;
         if (!c.emailOptOut) entry.subscribed++;
       }
     }
-    return counts;
-  })();
-  const segmentList = readJson(SEGMENTS_FILE, []);
-  const segments = {};
-  for (const s of segmentList) segments[s.id] = 0;
-  for (const c of getContacts()) for (const s of segmentList) if (matchesSegment(c, s.filter)) segments[s.id]++;
-  // testContact IDs, for reporting_backend.js's excludeTestContacts -- was
-  // its own full readJson(CONTACTS_FILE, []) on every single campaign/
-  // automation/workflow report request (confirmed live as the dominant cost
-  // of the Email Campaigns list page: 8 campaigns on screen fired 8 of these
-  // requests, each paying the same ~1.5s full-file stream). Piggybacks on
-  // getContacts() here instead -- costs nothing extra since segments above
-  // already forces that same read.
-  const testContactIds = getContacts().filter(c => c.testContact).map(c => c.id);
+    for (const s of segmentList) if (matchesSegment(c, s.filter)) segments[s.id]++;
+    if (c.testContact) testContactIds.push(c.id);
+  });
   return { tags, lists, segments, testContactIds, computedAt: new Date().toISOString() };
 }
 // Called from scheduler.js's tick -- cheap staleness check every 30s, only
@@ -411,8 +407,9 @@ export async function handleContactsRequest(req, res, url) {
     // pressure. See git history around this date for the attempted fix and
     // its revert. Still the only path for advancedFilter, and the fallback
     // if the sqlite index isn't available for some reason.
-    const contacts = getAllContacts();
-    let filtered = contacts;
+    // Streamed through (never every contact in memory at once); same
+    // filters as always, applied in the same order.
+    let filtered = filterContacts(() => true);
     if (q) filtered = filtered.filter(c =>
       `${c.first} ${c.last}`.toLowerCase().includes(q) ||
       (c.email || "").toLowerCase().includes(q) ||
@@ -456,13 +453,12 @@ export async function handleContactsRequest(req, res, url) {
     // own comment below) -- creating one new contact doesn't need the
     // other 176k rewritten just to append/patch one, so this now uses the
     // same streaming append/in-place-patch primitives PATCH already does.
-    const contacts = getAllContacts();
     // Same "email or phone already means the same person" rule every other
     // creation path in this app follows (forms, bookings, imports) --
     // manual "+ Add Contact" was the one place that didn't, so typing in an
     // email/phone that already belonged to someone silently created a
     // second record instead of updating the one that already exists.
-    let record = findContactMatch(contacts, body.email, body.phone);
+    let record = findContactMatchDb(body.email, body.phone);
     if (record) {
       const contactId = record.id;
       record = updateContactByField("id", contactId, (contact) => {
@@ -672,15 +668,7 @@ export async function handleContactsRequest(req, res, url) {
     if (cached?.lists) return sendJson(res, 200, { counts: cached.lists });
     const fast = listCountsSqlite();
     if (fast) return sendJson(res, 200, { counts: fast });
-    const contacts = getAllContacts();
-    const counts = {};
-    for (const c of contacts) {
-      for (const listId of c.listIds || []) {
-        const entry = counts[listId] || (counts[listId] = { total: 0, subscribed: 0 });
-        entry.total++;
-        if (!c.emailOptOut) entry.subscribed++;
-      }
-    }
+    const counts = countArrayFieldValues("listIds");
     return sendJson(res, 200, { counts });
   }
   const listMatch = p.match(/^\/api\/lists\/([^/]+)$/);
@@ -727,9 +715,7 @@ export async function handleContactsRequest(req, res, url) {
     if (cached?.tags) return sendJson(res, 200, { counts: cached.tags });
     const fast = tagCountsSqlite();
     if (fast) return sendJson(res, 200, { counts: fast });
-    const contacts = getAllContacts();
-    const counts = {};
-    for (const c of contacts) for (const tagId of c.tags || []) counts[tagId] = (counts[tagId] || 0) + 1;
+    const counts = Object.fromEntries(Object.entries(countArrayFieldValues("tags")).map(([id, e]) => [id, e.total]));
     return sendJson(res, 200, { counts });
   }
   if (p === "/api/tags" && req.method === "POST") {
@@ -821,10 +807,9 @@ export async function handleContactsRequest(req, res, url) {
     const cached = readJson(COUNTS_CACHE_FILE, null);
     if (cached?.segments) return sendJson(res, 200, { counts: cached.segments });
     const segments = readJson(SEGMENTS_FILE, []);
-    const contacts = getAllContacts();
     const counts = {};
     for (const s of segments) counts[s.id] = 0;
-    for (const c of contacts) for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++;
+    forEachContact((c) => { for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++; });
     return sendJson(res, 200, { counts });
   }
   const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);

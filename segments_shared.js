@@ -6,7 +6,7 @@
 // cycle. Pure data/functions only, no side effects, safe for anything to
 // import.
 import { readJson } from "./auth_backend.js";
-import { getAllContacts } from "./contacts_db.js";
+import { getAllContacts, filterContacts } from "./contacts_db.js";
 import { smsStatsIndex } from "./sms_stats.js";
 
 export const CONTACTS_FILE = "crm_contacts.json";
@@ -392,7 +392,7 @@ function smsSequenceIndex() {
   return _wfIdx;
 }
 export function segmentMembers(segment, contacts) {
-  const matched = (contacts || getAllContacts()).filter(c => matchesSegment(c, segment?.filter));
+  const matched = contacts ? contacts.filter(c => matchesSegment(c, segment?.filter)) : filterContacts(c => matchesSegment(c, segment?.filter));
   const limit = Math.floor(Number(segment?.limit) || 0);
   if (limit <= 0 || matched.length <= limit) return matched;
   return matched.sort((a, b) => (leadDateMs(b) || 0) - (leadDateMs(a) || 0)).slice(0, limit);
@@ -422,7 +422,7 @@ export function resolveBulkContactIds(body) {
     return segmentMembers(segment).map(c => c.id);
   }
   if (body.tagId) {
-    return getAllContacts().filter(c => (c.tags || []).includes(body.tagId)).map(c => c.id);
+    return filterContacts(c => (c.tags || []).includes(body.tagId), { sql: "tags @> ARRAY[$1]::text[]", params: [body.tagId] }).map(c => c.id);
   }
   return [];
 }

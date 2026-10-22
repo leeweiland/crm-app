@@ -24,7 +24,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
 import { MESSAGES_PG, getContactMessages as getContactMessagesPg } from "./messages_db.js";
-import { getAllContacts, getContactById, getContactsByIds } from "./contacts_db.js";
+import { getAllContacts, getContactById, getContactsByIds, getContactsMapByIds } from "./contacts_db.js";
 
 // Declared locally rather than imported from scheduling_backend.js, which
 // already imports syncContactFields from THIS file -- that import would be
@@ -565,7 +565,7 @@ function resyncRowsWithStaleStatus(staleLabels, logTag, includeNull) {
   const nullClause = includeNull ? " OR status IS NULL" : "";
   const staleRows = db.prepare(`SELECT contact_id FROM conversations WHERE status IN (${placeholders})${nullClause} LIMIT ${STALE_ROW_REPAIR_LIMIT}`).all(...staleLabels);
   if (!staleRows.length) return; // the common case forever after this repair actually finishes
-  const contactsById = new Map(getAllContacts().map(c => [c.id, c]));
+  const contactsById = getContactsMapByIds(staleRows.map(r => r.contact_id));
   const t0 = Date.now();
   let fixed = 0, missing = 0;
   for (const row of staleRows) {

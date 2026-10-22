@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getAllContacts, getContactById, getContactsMapByIds } from "./contacts_db.js";
 import { getContactMessages, getSourceMessages, removeContactMessagesByIds, recomputeConversationSummary } from "./message_index.js";
 import { logMessage } from "./message_log.js";
 import { retrieveFromCache, formatChunksForPrompt, invalidateCache } from "./data/retrieval.js";
@@ -1291,8 +1291,7 @@ async function handleAiAgentsCrud(req, res, url) {
     // since deleted, hence "(unknown contact)") were drowning out this
     // agent's real ~217 sends and defeating the whole point of this list.
     const sends = AGENT_SOURCE_TYPES.filter((st) => st !== "ai_active_test").flatMap((st) => getSourceMessages(st, agentId)).filter((m) => m.contactId);
-    const contacts = getAllContacts();
-    const contactById = new Map(contacts.map((c) => [c.id, c]));
+    const contactById = getContactsMapByIds(sends.map((m) => m.contactId));
 
     if (mode === "allOutbound") {
       const sorted = [...sends].sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0));

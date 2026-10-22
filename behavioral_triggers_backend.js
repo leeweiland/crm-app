@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, sendJson, getSessionUser } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./segments_shared.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getAllContacts, getContactById, getContactsMapByIds } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
 import {
   AI_AGENTS_FILE, CONVERSATION_CHANNELS,
@@ -155,12 +155,12 @@ export async function processBehavioralTriggers() {
   if (!due.length) return;
 
   const agents = readJson(AI_AGENTS_FILE, []);
-  const contacts = getAllContacts();
+  const contactsById = getContactsMapByIds(due.map((t) => t.contactId));
   let changed = false;
 
   for (const trigger of due) {
     const agent = agents.find((a) => a.id === trigger.agentId);
-    const contact = contacts.find((c) => c.id === trigger.contactId);
+    const contact = contactsById.get(trigger.contactId);
     if (!agent || !agent.active || !contact) { trigger.status = "cancelled"; trigger.updatedAt = new Date().toISOString(); changed = true; continue; }
     const exclReason = isExcludable(contact);
     if (exclReason) { trigger.status = "opted_out"; trigger.updatedAt = new Date().toISOString(); changed = true; continue; }
@@ -238,14 +238,15 @@ export async function handleBehavioralTriggersRequest(req, res, url) {
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
   const agentId = url.searchParams.get("agentId");
   const triggers = readJson(BEHAVIOR_TRIGGERS_FILE, []).filter((t) => !agentId || t.agentId === agentId);
-  const contacts = getAllContacts();
   const byStatus = {};
   for (const t of triggers) byStatus[t.status] = (byStatus[t.status] || 0) + 1;
-  const recent = [...triggers]
+  const latest = [...triggers]
     .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
-    .slice(0, 50)
+    .slice(0, 50);
+  const contactsById = getContactsMapByIds(latest.map((t) => t.contactId));
+  const recent = latest
     .map((t) => {
-      const c = contacts.find((x) => x.id === t.contactId);
+      const c = contactsById.get(t.contactId);
       return { ...t, contactName: c ? `${c.first} ${c.last}`.trim() : "(deleted contact)" };
     });
   return sendJson(res, 200, { total: triggers.length, byStatus, recent });

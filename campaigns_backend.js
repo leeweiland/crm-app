@@ -5,7 +5,7 @@ import { join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, DATA_DIR } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
 import { segmentMembers } from "./segments_shared.js";
-import { getAllContacts } from "./contacts_db.js";
+import { getAllContacts, filterContacts } from "./contacts_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { getMessagesForSource, logMessagesBatch } from "./message_log.js";
 import { MESSAGES_PG, sourceStatusCounts } from "./messages_db.js";
@@ -36,12 +36,17 @@ function campaignSnapshotFields(campaign) {
 // (doesn't restrict), so leaving Tags blank while using Lists+Segment still
 // works as expected.
 function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
-  const contacts = getAllContacts();
   const segment = segmentId ? readJson(SEGMENTS_FILE, []).find(s => s.id === segmentId) : null;
   // A segment with a limit is a fixed set of members (segmentMembers), not just a per-contact test.
-  const limitedIds = segment && Number(segment.limit) > 0 ? new Set(segmentMembers(segment, contacts).map(c => c.id)) : null;
+  const limitedIds = segment && Number(segment.limit) > 0 ? new Set(segmentMembers(segment).map(c => c.id)) : null;
   const hasFilters = (listIds?.length) || (tagIds?.length) || segment;
-  return contacts.filter(c => {
+  // Postgres narrows to emailable contacts in the chosen lists/tags first;
+  // the exact rule below still decides every one.
+  const params = [];
+  let pre = "NOT email_opt_out AND coalesce(email, '') <> ''";
+  if (listIds?.length) { params.push(listIds); pre += ` AND list_ids && $${params.length}::text[]`; }
+  if (tagIds?.length) { params.push(tagIds); pre += ` AND tags && $${params.length}::text[]`; }
+  return filterContacts(c => {
     if (c.emailOptOut || !c.email) return false;
     if (excludeListIds?.length && (c.listIds || []).some(id => excludeListIds.includes(id))) return false;
     if (!hasFilters) return true; // no targeting = everyone (minus opt-outs/exclusions above)
@@ -49,7 +54,7 @@ function resolveRecipients({ listIds, tagIds, segmentId, excludeListIds }) {
     if (tagIds?.length && !(c.tags || []).some(id => tagIds.includes(id))) return false;
     if (segment && (limitedIds ? !limitedIds.has(c.id) : !matchesSegment(c, segment.filter))) return false;
     return true;
-  });
+  }, { sql: pre, params });
 }
 
 // message_log.js's updateMessageStatusByProviderId deliberately NEVER

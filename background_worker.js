@@ -34,7 +34,7 @@ import { processTwilioStatusUpdate, processTwilioInboundMessage } from "./sms_ba
 import { processSesNotificationMessage } from "./email_backend.js";
 import { computeAndCacheAllCounts } from "./contacts_backend.js";
 import { runCampaignSendLoop, applyCampaignProgressUpdate } from "./campaigns_backend.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { loadContactsCache, useContactsFromPostgres } from "./contacts_db.js";
 
 // worker_threads gives this file its own V8 heap and its own module
 // registry entirely separate from the main thread's -- contacts_db.js's
@@ -43,7 +43,10 @@ import { loadContactsCache } from "./contacts_db.js";
 // populates. Every one of the 17 scheduler phases (and the webhook
 // processing below) reads contacts through that cache, so it must be loaded
 // here too, independently, before any of them run.
-await loadContactsCache();
+// CONTACTS_STORE=pg: no copy here either (the scheduler's whole-list jobs
+// stream contacts in chunks -- forEachContact/filterContacts).
+if (process.env.CONTACTS_STORE === "pg") await useContactsFromPostgres("background-worker");
+else await loadContactsCache();
 
 const TICK_MS = 30 * 1000;
 setInterval(guardedTick, TICK_MS);

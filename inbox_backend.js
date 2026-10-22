@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, updateJsonArrayRecordByField, appendJsonRecordFast, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { findContactMatch } from "./segments_shared.js";
-import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
+import { getAllContacts, createContact, updateContactByField, getContactsMapByIds, findContactMatchDb, filterContacts } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE, logMessage, contactIdsForMessageIds } from "./message_log.js";
 import * as mdb from "./messages_db.js";
 import { MESSAGES_PG } from "./messages_db.js";
@@ -88,10 +88,10 @@ export async function sendDueScheduledMessages() {
   const all = readJson(SCHEDULED_MESSAGES_FILE, []);
   const due = all.filter(m => m.status === "scheduled" && new Date(m.scheduledAt).getTime() <= Date.now());
   if (!due.length) return;
-  const contacts = getAllContacts();
+  const contactsById = getContactsMapByIds(due.map(m => m.contactId));
   const teamUsers = readJson(USERS_FILE, []);
   for (const m of due) {
-    const contact = contacts.find(c => c.id === m.contactId);
+    const contact = contactsById.get(m.contactId);
     let status = "failed", failReason = null;
     if (!contact) {
       failReason = "Contact no longer exists";
@@ -169,8 +169,9 @@ export const TASKS_FILE = "crm_tasks.json";
 export const NOTES_FILE = "crm_notes.json";
 export { CONVERSATION_META_FILE };
 
-function withContact(item, contacts) {
-  return { ...item, contact: item.contactId ? contacts.find(c => c.id === item.contactId) || null : null };
+// contactsById: a Map from getContactsMapByIds (never all contacts).
+function withContact(item, contactsById) {
+  return { ...item, contact: item.contactId ? contactsById.get(item.contactId) || null : null };
 }
 
 // Close-style unified Inbox -- no telephony/call-recording integration in
@@ -253,9 +254,7 @@ export async function handleInboxRequest(req, res, url) {
     // of messages the user never scrolls to.
     const PAGE_SIZE = 30;
     const offset = Math.max(0, parseInt(url.searchParams.get("offset"), 10) || 0);
-    const allContacts = getAllContacts();
-    const ownedContacts = allContacts
-      .filter((c) => c.ownerId === userId)
+    const ownedContacts = filterContacts((c) => c.ownerId === userId, { sql: "owner_id = $1", params: [userId] })
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
       .slice(0, OWNED_CONTACT_SCAN_CAP);
     // Confirmed live: scoping purely by contact ownership silently dropped
@@ -268,10 +267,9 @@ export async function handleInboxRequest(req, res, url) {
     // not a scan of every contact in the system.
     const personalContactIds = new Set(getSourceMessages("inbox", userId).map((m) => m.contactId).filter(Boolean));
     const ownedIds = new Set(ownedContacts.map((c) => c.id));
-    const extraContacts = [...personalContactIds]
-      .filter((id) => !ownedIds.has(id))
-      .map((id) => allContacts.find((c) => c.id === id))
-      .filter(Boolean);
+    const extraIds = [...personalContactIds].filter((id) => !ownedIds.has(id));
+    const extraById = getContactsMapByIds(extraIds);
+    const extraContacts = extraIds.map((id) => extraById.get(id)).filter(Boolean);
     const contacts = ownedContacts.concat(extraContacts);
     const items = [];
     for (const c of contacts) {
@@ -420,7 +418,6 @@ export async function handleInboxRequest(req, res, url) {
     }
     if (bucket === "everyContact") return sendJson(res, 200, { conversations: [], total: 0, hasMore: false }); // sqlite unavailable -- no JSON-fold fallback for this bucket (would mean folding all ~176k contacts in JS on every request)
     const _t0 = Date.now();
-    const contacts = getAllContacts();
     // Reads the persisted per-contact summary index (kept incrementally up
     // to date by message_index.js on every send/receive) instead of folding
     // the whole message log on every request -- that fold was memory-safe
@@ -434,7 +431,7 @@ export async function handleInboxRequest(req, res, url) {
       ? allRows.filter(g => g.lastByChannel?.[channel]).map(g => ({ ...g, last: g.lastByChannel[channel] }))
       : allRows;
 
-    const contactById = new Map(contacts.map(c => [c.id, c]));
+    const contactById = getContactsMapByIds(allRows.map(g => g.contactId));
     const metaByContactId = getConvoMetaMap();
     const bookedContactIds = upcomingBookedContactIds();
     const conversations = rowsForChannel.map(g => {
@@ -762,7 +759,6 @@ export async function handleInboxRequest(req, res, url) {
     const tab = url.searchParams.get("tab") || "primary";
     // view: 'new' (default, not yet handled) | 'past' (marked done) | 'all'
     const view = url.searchParams.get("view") || "new";
-    const contacts = getAllContacts();
     const calls = readJson(CALLS_FILE, []).map(c => ({ ...c, itemType: "call", at: c.createdAt, done: !!c.inboxDone }));
     const tasks = readJson(TASKS_FILE, []).map(t => ({ ...t, itemType: t.type, at: t.dueAt || t.createdAt }));
 
@@ -809,7 +805,8 @@ export async function handleInboxRequest(req, res, url) {
     if (view === "new") items = items.filter(i => !i.done);
     else if (view === "past") items = items.filter(i => i.done);
 
-    items = items.map(i => withContact(i, contacts)).sort((a, b) => new Date(b.at) - new Date(a.at));
+    const contactsById = getContactsMapByIds(items.map(i => i.contactId));
+    items = items.map(i => withContact(i, contactsById)).sort((a, b) => new Date(b.at) - new Date(a.at));
     return sendJson(res, 200, { items });
   }
 
@@ -877,13 +874,12 @@ export async function handleInboxRequest(req, res, url) {
     const phone = row.channel === "sms" ? theirAddress : null;
     const email = row.channel === "email" ? theirAddress : null;
 
-    const contacts = getAllContacts();
     // Same person can show up as TWO separate Potential Contacts rows (one
     // per channel -- an unmatched SMS row and an unmatched email row),
     // confirmed minutes apart. Without this check each confirm created its
     // own new contact instead of recognizing the other channel's contact
     // already exists, silently producing duplicates every time.
-    let contact = findContactMatch(contacts, email, phone);
+    let contact = findContactMatchDb(email, phone);
     let isNewContact = false;
     if (contact) {
       if (!contact.email && email) contact.email = email.toLowerCase();
@@ -936,8 +932,9 @@ export async function handleInboxRequest(req, res, url) {
   }
 
   if (p === "/api/calls" && req.method === "GET") {
-    const contacts = getAllContacts();
-    const calls = readJson(CALLS_FILE, []).map(c => withContact(c, contacts)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const rawCalls = readJson(CALLS_FILE, []);
+    const contactsById = getContactsMapByIds(rawCalls.map(c => c.contactId));
+    const calls = rawCalls.map(c => withContact(c, contactsById)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     return sendJson(res, 200, { calls });
   }
   if (p === "/api/calls" && req.method === "POST") {
@@ -955,8 +952,9 @@ export async function handleInboxRequest(req, res, url) {
   }
 
   if (p === "/api/tasks" && req.method === "GET") {
-    const contacts = getAllContacts();
-    const tasks = readJson(TASKS_FILE, []).map(t => withContact(t, contacts)).sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
+    const rawTasks = readJson(TASKS_FILE, []);
+    const contactsById = getContactsMapByIds(rawTasks.map(t => t.contactId));
+    const tasks = rawTasks.map(t => withContact(t, contactsById)).sort((a, b) => new Date(a.dueAt || a.createdAt) - new Date(b.dueAt || b.createdAt));
     return sendJson(res, 200, { tasks });
   }
   if (p === "/api/tasks" && req.method === "POST") {

@@ -42,7 +42,7 @@
 // -- the JSON never actually protected against it, because the JSON was
 // itself only a replica of what this cache held.
 import { randomUUID } from "crypto";
-import { statSync } from "fs";
+import { statSync, openSync, writeSync, closeSync, renameSync } from "fs";
 import { threadId } from "worker_threads";
 import { join } from "path";
 import pg from "pg";
@@ -378,6 +378,139 @@ export function findContactByPhoneDigits(phone) {
   }
   return c ? applyPending(c) : null;
 }
+
+// ── Targeted reads instead of getAllContacts() (2026-10-22) ────────────────
+// With CONTACTS_STORE=pg the main thread and background_worker.js hold no
+// copy either, so "all contacts, then filter in JS" becomes one of these.
+// Same results in both modes: a `prefilter` ({ sql, params }, a WHERE clause
+// over the contacts table using $1..$n) only narrows what's fetched -- it
+// must match a SUPERSET of the contacts wanted, and the JS predicate the
+// caller passes is still applied to every candidate, so it alone decides.
+
+// Every contact (or every prefilter match) in chunks of CHUNK, never all of
+// them in memory at once. Cache mode iterates the cache (copies, as always).
+const CHUNK = 5000;
+export function forEachContact(fn, prefilter) {
+  assertLoaded();
+  if (!_remote) { for (const c of _cache) fn(clone(c)); return; }
+  if (_pendingFull) { for (const c of remoteAll()) fn(c); return; }
+  const where = prefilter?.sql ? `AND (${prefilter.sql})` : "";
+  const params = prefilter?.params || [];
+  let after = "";
+  for (;;) {
+    const rows = _remote(`SELECT * FROM contacts WHERE id > $${params.length + 1} ${where} ORDER BY id LIMIT ${CHUNK}`, [...params, after]);
+    for (const r of rows) { if (!_overlay.has(r.id)) fn(applyPending(rowToContact(r))); }
+    if (rows.length < CHUNK) break;
+    after = rows[rows.length - 1].id;
+  }
+  // Rows this thread wrote but Postgres hasn't committed yet.
+  for (const o of _overlay.values()) if (o.c) fn(applyPending(clone(o.c)));
+}
+export function filterContacts(predicate, prefilter) {
+  const out = [];
+  forEachContact((c) => { if (predicate(c)) out.push(c); }, prefilter);
+  return out;
+}
+// id -> contact for a list of ids (missing ids simply absent).
+export function getContactsMapByIds(ids) {
+  assertLoaded();
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (!_remote) { const m = new Map(); for (const id of unique) { const c = _byId.get(id); if (c) m.set(id, clone(c)); } return m; }
+  const m = new Map();
+  for (let i = 0; i < unique.length; i += CHUNK) for (const [id, c] of remoteById(unique.slice(i, i + CHUNK))) m.set(id, c);
+  return m;
+}
+
+// segments_shared.js's findContactMatch rule, without every contact in
+// memory: email (or an alt / Hyros-origin email) or the last 10 phone
+// digits (or an alt / Hyros phone). Postgres side uses the
+// contact_identity_keys GIN index (ensureContactIndexes); the exact JS rule
+// below still decides. Several matches: the oldest contact wins
+// (deterministic -- the cache's answer depended on load order).
+const lower = (s) => String(s || "").toLowerCase();
+const lastTen = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+function matchesIdentity(c, normEmail, normPhone) {
+  return (normEmail && lower(c.email) === normEmail && !!c.email) ||
+    (normPhone && lastTen(c.phone) === normPhone) ||
+    (normEmail && (c.altEmails || []).some(e => lower(e) === normEmail)) ||
+    (normEmail && lower(c.hyrosOriginLead?.email) === normEmail && !!c.hyrosOriginLead?.email) ||
+    (normPhone && (c.hyrosPhones || []).some(p => lastTen(p) === normPhone)) ||
+    (normPhone && (c.altPhones || []).some(p => lastTen(p) === normPhone));
+}
+export function findContactMatchDb(email, phone) {
+  assertLoaded();
+  const normEmail = String(email || "").trim().toLowerCase();
+  const normPhone = lastTen(phone);
+  if (!normEmail && !normPhone) return null;
+  if (!_remote) { const c = _cache.find(x => matchesIdentity(x, normEmail, normPhone)); return c ? clone(c) : null; }
+  for (const o of _overlay.values()) if (o.c && matchesIdentity(o.c, normEmail, normPhone)) return applyPending(clone(o.c));
+  const keys = [...(normEmail ? [`e:${normEmail}`] : []), ...(normPhone ? [`p:${normPhone}`] : [])];
+  const rows = _remote(
+    `SELECT * FROM contacts WHERE contact_identity_keys(email, phone, extra) && $1::text[] ORDER BY created_at NULLS LAST, id LIMIT 50`, [keys]
+  );
+  for (const r of rows) {
+    if (_overlay.has(r.id)) continue;
+    const c = rowToContact(r);
+    if (matchesIdentity(c, normEmail, normPhone)) return applyPending(c);
+  }
+  return null;
+}
+// Gmail's sender lookup: the contact whose email or one of its altEmails is
+// exactly this address (lowercase), or null.
+export function findContactIdByEmailOrAlt(email) {
+  const e = lower(email);
+  if (!e) return null;
+  const is = (c) => lower(c.email) === e || (c.altEmails || []).some(a => lower(a) === e);
+  if (!_remote) return _cache.find(is)?.id || null;
+  const hit = filterContacts(is, { sql: "contact_identity_keys(email, phone, extra) && $1::text[]", params: [[`e:${e}`]] });
+  return hit[0]?.id || null;
+}
+// Contact whose externalIds[key] === value (importers' "already imported?").
+export function findContactByExternalId(key, value) {
+  assertLoaded();
+  if (!value) return null;
+  if (!_remote) { const c = _cache.find(x => x.externalIds?.[key] === value); return c ? clone(c) : null; }
+  for (const o of _overlay.values()) if (o.c?.externalIds?.[key] === value) return applyPending(clone(o.c));
+  const r = _remote(`SELECT * FROM contacts WHERE external_ids @> $1::jsonb ORDER BY created_at NULLS LAST, id LIMIT 5`, [JSON.stringify({ [key]: value })])
+    .map(rowToContact).find(c => !_overlay.has(c.id) && c.externalIds?.[key] === value);
+  return r ? applyPending(r) : null;
+}
+// Per-id counts of an array field (tags / listIds), plus how many of those
+// contacts aren't email-opted-out -- the Contacts page's tag/list counts.
+export function countArrayFieldValues(field) {
+  assertLoaded();
+  const col = { tags: "tags", listIds: "list_ids" }[field];
+  if (!_remote || !col) {
+    const counts = {};
+    forEachContact((c) => { for (const v of c[field] || []) { const e = counts[v] || (counts[v] = { total: 0, subscribed: 0 }); e.total++; if (!c.emailOptOut) e.subscribed++; } });
+    return counts;
+  }
+  const counts = {};
+  for (const r of _remote(`SELECT v, count(*)::int AS total, count(*) FILTER (WHERE NOT email_opt_out)::int AS subscribed FROM contacts, unnest(${col}) AS v GROUP BY v`, [])) {
+    counts[r.v] = { total: r.total, subscribed: r.subscribed };
+  }
+  return counts;
+}
+export function countContacts() {
+  assertLoaded();
+  return _remote ? Number(_remote(`SELECT count(*)::int AS n FROM contacts`, [])[0].n) : _cache.length;
+}
+
+// Indexes the targeted reads above rely on (idempotent; created without
+// blocking writes). Run once by server.js when CONTACTS_STORE=pg.
+export const CONTACT_INDEXES_SQL = [
+  `CREATE OR REPLACE FUNCTION contact_identity_keys(email text, phone text, extra jsonb) RETURNS text[] LANGUAGE sql IMMUTABLE AS $f$
+     SELECT coalesce(array_agg(DISTINCT k), '{}') FROM (
+       SELECT 'e:' || lower(email) AS k WHERE coalesce(email, '') <> ''
+       UNION ALL SELECT 'e:' || lower(x) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(extra->'altEmails') = 'array' THEN extra->'altEmails' ELSE '[]'::jsonb END) x WHERE x <> ''
+       UNION ALL SELECT 'e:' || lower(extra->'hyrosOriginLead'->>'email') WHERE coalesce(extra->'hyrosOriginLead'->>'email', '') <> ''
+       UNION ALL SELECT 'p:' || right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) WHERE regexp_replace(coalesce(phone, ''), '\\D', '', 'g') <> ''
+       UNION ALL SELECT 'p:' || right(regexp_replace(x, '\\D', '', 'g'), 10) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(extra->'altPhones') = 'array' THEN extra->'altPhones' ELSE '[]'::jsonb END) x WHERE regexp_replace(x, '\\D', '', 'g') <> ''
+       UNION ALL SELECT 'p:' || right(regexp_replace(x, '\\D', '', 'g'), 10) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(extra->'hyrosPhones') = 'array' THEN extra->'hyrosPhones' ELSE '[]'::jsonb END) x WHERE regexp_replace(x, '\\D', '', 'g') <> ''
+     ) keys $f$`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS contacts_identity_keys ON contacts USING gin (contact_identity_keys(email, phone, extra))`,
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS contacts_external_ids ON contacts USING gin (external_ids jsonb_path_ops)`,
+];
 
 // ── Durable write queue ───────────────────────────────────────────────────
 // Strictly serialized: every write on this thread runs after the previous
@@ -736,9 +869,38 @@ export function exportContactsSnapshotIfDue(maxAgeMs = 24 * 60 * 60 * 1000) {
   assertLoaded();
   const p = join(DATA_DIR, CONTACTS_EXPORT_FILE);
   try { if (Date.now() - statSync(p).mtimeMs < maxAgeMs) return false; } catch { /* no export yet */ }
-  writeJson(CONTACTS_EXPORT_FILE, _remote ? remoteAll() : _cache);
-  console.log(`[contacts_db] wrote ${CONTACTS_EXPORT_FILE} (${_cache.length} contacts)`);
+  if (!_remote) {
+    writeJson(CONTACTS_EXPORT_FILE, _cache);
+    console.log(`[contacts_db] wrote ${CONTACTS_EXPORT_FILE} (${_cache.length} contacts)`);
+    return true;
+  }
+  // No copy on this thread: stream the export out chunk by chunk, then
+  // swap it into place in one rename.
+  const tmp = `${p}.tmp${process.pid}_${Date.now()}`;
+  const fd = openSync(tmp, "w");
+  let n = 0, buf = [];
+  const flush = () => { if (buf.length) { writeSync(fd, buf.join("")); buf = []; } };
+  try {
+    writeSync(fd, "[");
+    forEachContact((c) => { buf.push((n++ ? "," : "") + JSON.stringify(c)); if (buf.length >= 2000) flush(); });
+    flush();
+    writeSync(fd, "]");
+  } finally { closeSync(fd); }
+  renameSync(tmp, p);
+  console.log(`[contacts_db] wrote ${CONTACTS_EXPORT_FILE} (${n} contacts, streamed)`);
   return true;
+}
+
+// The lookup indexes CONTACT_INDEXES_SQL describes, built without blocking
+// writes (CREATE INDEX CONCURRENTLY) and without blocking this thread
+// (async, on the write pool). Safe to call on every boot.
+export async function ensureContactIndexes() {
+  for (const sql of CONTACT_INDEXES_SQL) {
+    const t = Date.now();
+    try { await pool.query(sql); }
+    catch (e) { console.error("[contacts_db] index setup failed:", e.message); return; }
+    if (Date.now() - t > 2000) console.log(`[contacts_db] built ${sql.match(/(contacts_\w+|contact_identity_keys)/)?.[1] || "index"} in ${((Date.now() - t) / 1000).toFixed(0)}s`);
+  }
 }
 
 // rowToContact/contactToParams are the ONE definition of the contact

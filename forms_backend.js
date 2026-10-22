@@ -4,7 +4,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
 import { findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
-import { getAllContacts, writeAllContacts, createContact } from "./contacts_db.js";
+import { getAllContacts, writeAllContacts, createContact, getContactsMapByIds, findContactMatchDb, updateContactById } from "./contacts_db.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
@@ -427,8 +427,7 @@ function upsertContactFromSubmission(form, answers, bookedIdentity) {
   const [bookedFirst, ...bookedRest] = String(bookedIdentity?.name || "").trim().split(/\s+/);
   const bookedLast = bookedRest.join(" ");
 
-  const contacts = getAllContacts();
-  let contact = findContactMatch(contacts, email, phone);
+  let contact = findContactMatchDb(email, phone);
   const prevTags = contact ? [...contact.tags] : [];
   const prevListIds = contact ? [...contact.listIds] : [];
   const isNew = !contact;
@@ -481,13 +480,15 @@ function upsertContactFromSubmission(form, answers, bookedIdentity) {
       externalIds: { acContactId: null, closeLeadId: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
-    contacts.push(contact);
   }
 
   (form.settings.addTagIds || []).forEach(tagId => { if (!contact.tags.includes(tagId)) contact.tags.push(tagId); });
   (form.settings.addListIds || []).forEach(listId => { if (!contact.listIds.includes(listId)) contact.listIds.push(listId); });
   contact.updatedAt = new Date().toISOString();
-  writeAllContacts(contacts);
+  // Just this one contact -- this used to be writeAllContacts(every contact),
+  // i.e. a full 176k-row Postgres upsert (and a reload on every other
+  // thread) for each form submission.
+  if (isNew) createContact(contact); else updateContactById(contact.id, () => contact);
   // Without this, a form-created (or form-updated) contact's real status/
   // name/etc. never reaches the Inbox sidebar's SQLite snapshot until
   // something else happens to touch this contact -- confirmed live: a
@@ -828,8 +829,8 @@ export async function handleFormsRequest(req, res, url) {
   const responsesMatch = p.match(/^\/api\/forms\/([^/]+)\/responses$/);
   if (responsesMatch && req.method === "GET") {
     const responses = readJson(RESPONSES_FILE, []).filter(r => r.formId === responsesMatch[1]);
-    const contacts = getAllContacts();
-    const withContact = responses.map(r => ({ ...r, contact: contacts.find(c => c.id === r.contactId) ? { first: contacts.find(c => c.id === r.contactId).first, last: contacts.find(c => c.id === r.contactId).last, email: contacts.find(c => c.id === r.contactId).email } : null }));
+    const contactsById = getContactsMapByIds(responses.map(r => r.contactId));
+    const withContact = responses.map(r => { const c = contactsById.get(r.contactId); return { ...r, contact: c ? { first: c.first, last: c.last, email: c.email } : null }; });
     withContact.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
     return sendJson(res, 200, { responses: withContact });
   }
@@ -986,7 +987,7 @@ function partialIdentity(form, answers) {
 function findOrCreateContactForPartial({ email, phone, first, last }) {
   const fast = email ? getContactRawByEmail(email) : null;
   if (fast) return fast;
-  const existing = findContactMatch(getAllContacts(), email, phone);
+  const existing = findContactMatchDb(email, phone);
   if (existing) return existing;
   const contact = {
     id: randomUUID(), type: "lead", accountName: "", first, last, email, phone,

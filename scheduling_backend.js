@@ -4,7 +4,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, updateJsonArrayRecordsByIds } from "./auth_backend.js";
 import { findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
-import { getAllContacts, createContact, updateContactsByIds } from "./contacts_db.js";
+import { getAllContacts, createContact, updateContactsByIds, findContactMatchDb } from "./contacts_db.js";
 import { STATUSES_FILE } from "./statuses_backend.js";
 import { logMessage } from "./message_log.js";
 import { fireTrigger } from "./automations_backend.js";
@@ -756,8 +756,7 @@ function upsertContactFromBooking({ name, email, phone, statusId, questions, ans
     // live 2026-09-21/22: a bulk write elsewhere froze the CRM for ~140s, and
     // no booking saved for the ~30 hours after. appendJsonRecordFast/
     // updateJsonArrayRecordsByIds below touch only the one record involved.
-    contacts = getAllContacts();
-    existing = findContactMatch(contacts, normalizedEmail, normalizedPhone);
+    existing = findContactMatchDb(normalizedEmail, normalizedPhone);
   }
   const [first, ...rest] = String(name || "").trim().split(/\s+/);
   const last = rest.join(" ");

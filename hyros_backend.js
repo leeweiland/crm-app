@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson } from "./auth_backend.js";
 import { findContactMatch, markFirstSeen, digitsOnly } from "./segments_shared.js";
-import { getAllContacts, writeAllContacts } from "./contacts_db.js";
+import { getAllContacts, writeAllContacts, findContactMatchDb, findContactByExternalId, createContact, updateContactById } from "./contacts_db.js";
 import { readImportLog, writeImportLog } from "./message_log.js";
 import { getOrCreateTag } from "./contacts_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
@@ -48,10 +48,10 @@ export async function searchHyrosLeadByIdentity(email, phone) {
 // duplicate), falling back to email/phone -- same identity-merge rule
 // every other importer in this app follows.
 export function upsertFromHyros(hyrosLead, defaultStatus) {
-  const contacts = getAllContacts();
   const email = (hyrosLead.email || "").toLowerCase();
   const phone = (hyrosLead.phoneNumbers || [])[0] || "";
-  let contact = contacts.find(c => c.externalIds?.hyrosLeadId === hyrosLead.id) || findContactMatch(contacts, email, phone);
+  let contact = findContactByExternalId("hyrosLeadId", hyrosLead.id) || findContactMatchDb(email, phone);
+  const isNew = !contact;
   if (contact) {
     contact.first = hyrosLead.firstName || contact.first;
     contact.last = hyrosLead.lastName || contact.last;
@@ -69,7 +69,6 @@ export function upsertFromHyros(hyrosLead, defaultStatus) {
       firstSeenAt: hyrosLead.creationDate || new Date().toISOString(),
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
-    contacts.push(contact);
   }
   // Hyros's own tags -- get-or-create by name so re-imports never duplicate,
   // same rule as every other tag source in this app. Every tag is kept,
@@ -99,7 +98,7 @@ export function upsertFromHyros(hyrosLead, defaultStatus) {
       phoneNumbers: hyrosLead.originLead.phoneNumbers || [],
     };
   }
-  writeAllContacts(contacts);
+  if (isNew) createContact(contact); else updateContactById(contact.id, () => contact); // just this contact, not all 176k
   try { syncContactFields(contact.id, contact); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); }
   return contact;
 }
