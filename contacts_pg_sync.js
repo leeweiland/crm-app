@@ -15,14 +15,19 @@
 // re-checks the port whenever the counter moves, so an answer can't slip
 // in between "checked the port" and "started waiting". Answers to an
 // earlier query that timed out carry an old id and are dropped.
-import { Worker, MessageChannel, receiveMessageOnPort } from "worker_threads";
+import { Worker, MessageChannel, receiveMessageOnPort, isMainThread } from "worker_threads";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// The report worker (its own process) runs long aggregate queries and sets
-// PG_SYNC_TIMEOUT_MS higher; everywhere else a query this slow is a bug.
-const QUERY_TIMEOUT_MS = Number(process.env.PG_SYNC_TIMEOUT_MS) || 60 * 1000;
+// How long one synchronous query may run. Enforced by Postgres itself
+// (statement_timeout on the helper's connection), so a slow query is
+// CANCELLED, not just abandoned: the helper has one connection, and an
+// abandoned query kept it busy -- every later lookup on the thread queued
+// behind it (2026-10-22: one slow Inbox query froze the main thread for ~6
+// minutes). The main thread serves every page, so its limit is short; the
+// report worker (its own process) sets PG_SYNC_TIMEOUT_MS higher.
+const QUERY_TIMEOUT_MS = Number(process.env.PG_SYNC_TIMEOUT_MS) || (isMainThread ? 15 * 1000 : 60 * 1000);
 
 // One helper thread (one Postgres connection) per calling thread, shared by
 // every module that needs synchronous queries (contacts_db.js remote mode,
@@ -37,7 +42,7 @@ export function createSyncQuery(connectionString) {
   const signal = new Int32Array(new SharedArrayBuffer(4));
   const { port1, port2 } = new MessageChannel();
   const helper = new Worker(join(__dirname, "contacts_pg_sync_helper.js"), {
-    workerData: { port: port2, signal, connectionString },
+    workerData: { port: port2, signal, connectionString, statementTimeoutMs: QUERY_TIMEOUT_MS - 500 },
     transferList: [port2],
   });
   helper.unref(); // never what keeps a thread alive on its own
@@ -60,7 +65,7 @@ export function createSyncQuery(connectionString) {
         if (!m.ok) throw new Error(m.error);
         return m.rows;
       }
-      const left = deadline - Date.now();
+      const left = deadline - Date.now() + 2000; // Postgres cancels at QUERY_TIMEOUT_MS; this is only a backstop
       if (left <= 0) throw new Error(`contacts_pg_sync: query timed out after ${QUERY_TIMEOUT_MS / 1000}s`);
       Atomics.wait(signal, 0, seen, left);
     }

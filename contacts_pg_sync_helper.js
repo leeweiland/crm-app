@@ -5,8 +5,10 @@
 import { workerData } from "worker_threads";
 import pg from "pg";
 
-const { port, signal, connectionString } = workerData;
-const pool = new pg.Pool({ connectionString, max: 1 });
+const { port, signal, connectionString, statementTimeoutMs } = workerData;
+// statement_timeout: Postgres cancels a query that runs too long, so it
+// errors back to the caller instead of holding this one connection.
+const pool = new pg.Pool({ connectionString, max: 1, options: statementTimeoutMs ? `-c statement_timeout=${Math.max(1000, statementTimeoutMs)}` : undefined });
 pool.on("error", (e) => console.error("[contacts_pg_sync] pool error:", e.message));
 
 function answer(msg) {

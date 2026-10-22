@@ -53,6 +53,9 @@ export const INDEXES_SQL = [
   "CREATE INDEX IF NOT EXISTS messages_source_slim ON messages (source_type, source_id, seq) INCLUDE (id, contact_id, to_addr, status, sent_at, created_at, provider_message_id) WHERE source_id IS NOT NULL",
   "CREATE INDEX IF NOT EXISTS messages_inbound_contact ON messages (contact_id) INCLUDE (channel, created_at) WHERE direction = 'inbound'",
   "CREATE INDEX IF NOT EXISTS messages_inreplyto ON messages (contact_id) WHERE direction = 'inbound' AND extra ? 'inReplyTo'",
+  // The Inbox items view's newest unhandled/handled inbound, with or without a channel.
+  "CREATE INDEX IF NOT EXISTS messages_inbound_done_recent ON messages (inbox_done, created_at DESC) WHERE direction = 'inbound'",
+  "CREATE INDEX IF NOT EXISTS messages_inbound_channel_done_recent ON messages (channel, inbox_done, created_at DESC) WHERE direction = 'inbound'",
 ];
 
 // Per-day counts by current status, kept exact by triggers: every insert,
