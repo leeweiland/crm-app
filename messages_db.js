@@ -127,13 +127,19 @@ export function getMessagesByIds(ids) {
   if (!ids?.length) return [];
   return q(`SELECT ${SELECT_COLS} FROM messages WHERE id = ANY($1) ORDER BY seq`, [ids]).map(rowToMessage);
 }
-// The slim shape msg_by_source rows always had.
+// The slim shape msg_by_source rows always had. Every column comes from the
+// messages_source_slim covering index, so a campaign's rows are read from
+// the index alone (they're scattered across the table otherwise); the rare
+// non-text "to" (kept in extra) is fetched separately for just those rows.
 export function getSourceMessages(sourceType, sourceId) {
   if (!sourceType || !sourceId) return [];
-  return q(
-    `SELECT id, contact_id, to_addr, extra->'to' AS to_json, status, sent_at, created_at, provider_message_id
+  const rows = q(
+    `SELECT id, contact_id, to_addr, status, sent_at, created_at, provider_message_id
        FROM messages WHERE source_type = $1 AND source_id = $2 ORDER BY seq`, [sourceType, sourceId]
-  ).map(r => ({ id: r.id, contactId: r.contact_id, to: r.to_addr ?? r.to_json ?? null, status: r.status, sentAt: r.sent_at || r.created_at, providerMessageId: r.provider_message_id }));
+  );
+  const noTo = rows.filter(r => r.to_addr == null).map(r => r.id);
+  const toJson = noTo.length ? new Map(q(`SELECT id, extra->'to' AS to_json FROM messages WHERE id = ANY($1)`, [noTo]).map(r => [r.id, r.to_json])) : null;
+  return rows.map(r => ({ id: r.id, contactId: r.contact_id, to: r.to_addr ?? toJson?.get(r.id) ?? null, status: r.status, sentAt: r.sent_at || r.created_at, providerMessageId: r.provider_message_id }));
 }
 // What crm_provider_id_index.json answered: does this provider id belong to
 // one of our messages, and which.

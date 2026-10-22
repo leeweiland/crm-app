@@ -46,6 +46,13 @@ export const INDEXES_SQL = [
   "CREATE INDEX IF NOT EXISTS messages_source ON messages (source_type, source_id, seq) WHERE source_id IS NOT NULL",
   "CREATE INDEX IF NOT EXISTS messages_inbound_recent ON messages (created_at DESC) WHERE direction = 'inbound'",
   "CREATE INDEX IF NOT EXISTS messages_unmatched ON messages (channel) WHERE contact_id IS NULL",
+  // Covering indexes (added 2026-10-22 after the live switch): a campaign's
+  // messages are scattered across the table, so its views read these
+  // instead of the rows.
+  "CREATE INDEX IF NOT EXISTS messages_source_status ON messages (source_type, source_id) INCLUDE (status, provider_message_id) WHERE source_id IS NOT NULL",
+  "CREATE INDEX IF NOT EXISTS messages_source_slim ON messages (source_type, source_id, seq) INCLUDE (id, contact_id, to_addr, status, sent_at, created_at, provider_message_id) WHERE source_id IS NOT NULL",
+  "CREATE INDEX IF NOT EXISTS messages_inbound_contact ON messages (contact_id) INCLUDE (channel, created_at) WHERE direction = 'inbound'",
+  "CREATE INDEX IF NOT EXISTS messages_inreplyto ON messages (contact_id) WHERE direction = 'inbound' AND extra ? 'inReplyTo'",
 ];
 
 // Per-day counts by current status, kept exact by triggers: every insert,

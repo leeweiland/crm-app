@@ -53,16 +53,28 @@ export function sourceMessagesInRange(sourceType, sourceIds, startMs, endMs, tes
 
 // Inbound messages on one channel for a set of contacts -- all countReplies
 // ever looked at in each contact's history.
+// Two index-only reads: every inbound message's channel/time (the
+// messages_inbound_contact covering index), then In-Reply-To for the few
+// inbound messages that carry one (messages_inreplyto).
 export function inboundByContact(contactIds, channel) {
   const out = new Map();
   if (!contactIds.length) return out;
+  const replyTo = new Map();
   for (const r of q(
     `SELECT contact_id, created_at, extra->'inReplyTo' AS in_reply_to FROM messages
-      WHERE contact_id = ANY($1) AND channel = $2 AND direction = 'inbound'`, [contactIds, channel]
+      WHERE contact_id = ANY($1) AND direction = 'inbound' AND extra ? 'inReplyTo' AND channel = $2`, [contactIds, channel]
+  )) {
+    if (!replyTo.has(r.contact_id)) replyTo.set(r.contact_id, []);
+    replyTo.get(r.contact_id).push({ channel, direction: "inbound", createdAt: r.created_at, inReplyTo: r.in_reply_to });
+  }
+  for (const r of q(
+    `SELECT contact_id, created_at FROM messages WHERE contact_id = ANY($1) AND direction = 'inbound' AND channel = $2`, [contactIds, channel]
   )) {
     if (!out.has(r.contact_id)) out.set(r.contact_id, []);
-    out.get(r.contact_id).push({ channel, direction: "inbound", createdAt: r.created_at, inReplyTo: r.in_reply_to });
+    out.get(r.contact_id).push({ channel, direction: "inbound", createdAt: r.created_at, inReplyTo: null });
   }
+  // Same rows, with In-Reply-To filled in where there is one.
+  for (const [cid, withReply] of replyTo) out.set(cid, [...withReply, ...(out.get(cid) || [])]);
   return out;
 }
 
