@@ -63,6 +63,8 @@ const _dirtyFiles = new Set();
 // first and only reparsing when mtime actually changed is a safe win for a
 // single-process server where every write goes through writeJson below.
 const _mtimeCache = new Map(); // file -> { mtimeMs, data }
+// Set only for report_worker.js's own process -- see readJson.
+const NO_READ_CACHE = process.env.READJSON_NO_CACHE === "1";
 
 // Mirrors writeJsonToDisk's reasoning on the read side: JSON.parse(string)
 // requires the ENTIRE file to exist as one JS string first, which hits the
@@ -335,6 +337,16 @@ export function readJson(file, fallback) {
     const data = readJsonArrayStreaming(p);
     if (_batchIo) _jsonCache.set(file, data);
     return data;
+  }
+  // A process started with READJSON_NO_CACHE=1 (report_worker.js) reads every
+  // file fresh and never keeps a copy -- it walks thousands of per-contact
+  // message files per report, and holding each one forever is exactly what
+  // ran the CRM server out of memory when those reports ran in-process
+  // (2026-10-21). The server itself never sets this.
+  if (NO_READ_CACHE) {
+    const fresh = JSON.parse(readFileSync(p, "utf8"));
+    if (_batchIo) _jsonCache.set(file, fresh);
+    return fresh;
   }
   const cached = _mtimeCache.get(file);
   let data;

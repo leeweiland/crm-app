@@ -17,6 +17,7 @@ import { handleCallsSheetRequest } from "./calls_sheet_backend.js";
 import { handleWorkflowsRequest } from "./workflows_backend.js";
 import { handleInboxRequest } from "./inbox_backend.js";
 import { handleReportingRequest } from "./reporting_backend.js";
+import { startReportPrewarm } from "./report_worker_client.js";
 import { handleImportRequest } from "./import_backend.js";
 import { handleFacebookRequest } from "./facebook_backend.js";
 import { handleTrackingRequest } from "./tracking_backend.js";
@@ -239,6 +240,8 @@ createServer(async (req, res) => {
 
 // Keeps the ads sheet's sales columns current from CALLS TRACKING (production only -- it writes to the live sheet)
 if (process.env.RAILWAY_ENVIRONMENT) startCallsSyncTimer();
+// Pre-computes Reporting's default view in its own process (report_worker.js) so the page opens instantly (production only).
+if (process.env.RAILWAY_ENVIRONMENT) startReportPrewarm();
 
 // BACKGROUND_WORKER (2026-09-16, off by default): runs the whole scheduler
 // tick and all Twilio/SES webhook processing on a separate OS thread

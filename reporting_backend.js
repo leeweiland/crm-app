@@ -4,7 +4,11 @@ import { getDailyStatsInRange, getContactMessages } from "./message_index.js";
 import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { AUTOMATIONS_FILE } from "./automations_backend.js";
 import { WORKFLOWS_FILE } from "./workflows_backend.js";
-import { getAllContacts } from "./contacts_db.js";
+import { getAllContacts, getAllContactsNoCopy } from "./contacts_db.js";
+// Inside report_worker.js's process (REPORT_WORKER=1) reports read the shared
+// contacts cache directly instead of a full copy each time -- every report
+// here only reads contacts, never changes them. Anywhere else: a copy, as before.
+const reportContacts = () => (process.env.REPORT_WORKER === "1" ? getAllContactsNoCopy() : getAllContacts());
 import { PAGE_VISITS_FILE } from "./tracking_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
 import { sentCategoryForSourceType, SENT_CATEGORIES } from "./ai_agents_backend.js";
@@ -12,6 +16,7 @@ import { fetchLiveMetaAdLevel, fetchLiveGoogleAdLevel, fetchCrmLeadsAndBookings,
 import { getCachedTestContactIds, TAGS_FILE } from "./contacts_backend.js";
 import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
+import { runReportJob } from "./report_worker_client.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -234,12 +239,27 @@ function attributionKeyForVisit(v) {
   return null;
 }
 
+// The Attribution tab, the Ads Report and the drill-down all start from the
+// same computeAttribution(range) -- one of the heaviest things in the app
+// (every contact + every recorded page visit). Inside report_worker.js these
+// run back to back for the same range, so the last result is reused for a
+// couple of minutes instead of being rebuilt 2-3 times in a row.
+let _attributionMemo = null;
+const ATTRIBUTION_MEMO_MS = 2 * 60 * 1000;
+function computeAttributionMemo(startMs, endMs) {
+  const m = _attributionMemo;
+  if (m && m.startMs === startMs && m.endMs === endMs && Date.now() - m.at < ATTRIBUTION_MEMO_MS) return m.data;
+  _attributionMemo = null; // let the previous one be collected before building the next
+  const data = computeAttribution(startMs, endMs);
+  _attributionMemo = { startMs, endMs, at: Date.now(), data };
+  return data;
+}
 export function computeAttribution(startMs, endMs) {
   // Same testContact exclusion as excludeTestContacts above -- this
   // report's own numbers would otherwise get real click/opt-in counts
   // muddied by whoever's own test contact (e.g. sending themselves test
   // links while building/verifying this exact feature).
-  const contacts = getAllContacts().filter(c => !c.testContact);
+  const contacts = reportContacts().filter(c => !c.testContact);
   const contactsById = new Map(contacts.map(c => [c.id, c]));
   const visits = readJson(PAGE_VISITS_FILE, []);
   const bookedContactIds = new Set(readJson(BOOKINGS_FILE, []).map(b => b.contactId));
@@ -560,7 +580,7 @@ const money = (n) => (n && isFinite(n)) ? Math.round(n * 100) / 100 : null;
 // source is connected -- not computed from anything today, deliberately,
 // rather than showing a number that would just be wrong.
 export async function computeAdsReport(startMs, endMs, startStr, endStr) {
-  const attribution = computeAttribution(startMs, endMs);
+  const attribution = computeAttributionMemo(startMs, endMs);
   const { sources: visitSources } = attribution;
   const ev = computeEventAttribution(startStr, endStr, attribution);
   // One row per source that either got visits or converted -- visits/unique visitors from
@@ -655,11 +675,12 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
 // frontend resolves a period to concrete start/end dates and passes them
 // here directly, so this endpoint just needs a plain date range, not the
 // preset logic itself.
-function parseRangeParams(url) {
-  const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
-  const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-  return { startMs: new Date(startStr + "T00:00:00Z").getTime(), endMs: new Date(endStr + "T23:59:59Z").getTime() };
+function rangeFromStrings(start, end) {
+  const endStr = end || new Date().toISOString().slice(0, 10);
+  const startStr = start || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  return { startStr, endStr, startMs: new Date(startStr + "T00:00:00Z").getTime(), endMs: new Date(endStr + "T23:59:59Z").getTime() };
 }
+function parseRangeParams(url) { return rangeFromStrings(url.searchParams.get("start"), url.searchParams.get("end")); }
 
 function emptySentCounts() {
   const c = { total: 0 };
@@ -667,80 +688,203 @@ function emptySentCounts() {
   return c;
 }
 
+
+// ── Heavy reports, as plain functions of their query params ──────────────
+// Each returns exactly the JSON body its endpoint used to send. They are run
+// by report_worker.js in its OWN process (see report_worker_client.js), never
+// on the CRM server: computed in-process, these took the server down with a
+// heap out-of-memory crash every time the Reporting page opened (2026-10-21)
+// -- full copies of all contacts plus thousands of per-contact message files
+// held in memory at once. Running them in the worker means the worst case is
+// that one report fails, never that the CRM goes down.
+export async function reportOverview(params = {}) {
+  const { startMs, endMs } = rangeFromStrings(params.start, params.end);
+
+  const campaignIds = readJson(CAMPAIGNS_FILE, []).map(c => c.id);
+  const campaignData = statsFromSources("campaign", campaignIds, startMs, endMs, statsFromMessages);
+  const automationStepIds = readJson(AUTOMATIONS_FILE, []).flatMap(automationStepSourceIds);
+  const automationData = statsFromSources("automation_step", automationStepIds, startMs, endMs, statsFromMessages);
+  const workflowStepIds = readJson(WORKFLOWS_FILE, []).flatMap(workflowStepSourceIds);
+  const workflowData = statsFromSources("workflow_step", workflowStepIds, startMs, endMs, smsStatsFromMessages);
+
+  return ({
+    campaigns: { ...campaignData.stats, replies: countReplies(campaignData.messages, "email", endMs) },
+    automations: { ...automationData.stats, replies: countReplies(automationData.messages, "email", endMs) },
+    workflows: { ...workflowData.stats, replies: countReplies(workflowData.messages, "sms", endMs) },
+  });
+}
+// Messages sent per team member's book, split by channel and by who/what
+// actually sent it (human vs AI agent vs SMS sequence vs email automation
+// vs campaign) -- same "human-sent" vs "CRM-sent" distinction the Inbox
+// Activity tab surfaces per-person, just rolled up across the whole team
+// with counts instead of a row-by-row feed. Bounded the same way that
+// endpoint is (inbox_backend.js's /api/inbox/activity): only each user's
+// OWNED_CONTACT_SCAN_CAP most-recently-touched contacts are scanned, so
+// this stays a handful of small per-contact file reads per team member
+// rather than a full message-log scan (see statsFromMessages' comment
+// above on why that's off the table).
+export async function reportSentByUser(params = {}) {
+  const { startMs, endMs } = rangeFromStrings(params.start, params.end);
+  const OWNED_CONTACT_SCAN_CAP = 300;
+  const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
+  const allContacts = reportContacts().filter((c) => !c.testContact);
+  const rows = users.map((u) => {
+    const contacts = allContacts
+      .filter((c) => c.ownerId === u.id)
+      .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+      .slice(0, OWNED_CONTACT_SCAN_CAP);
+    const email = emptySentCounts();
+    const sms = emptySentCounts();
+    // Inbound only ever counted from these SAME owned/real contacts --
+    // never a raw mailbox/phone-line count, which would pull in whatever
+    // unrelated mail a connected inbox happens to receive.
+    let emailReceived = 0, smsReceived = 0;
+    for (const c of contacts) {
+      for (const m of getContactMessages(c.id)) {
+        if (m.channel !== "email" && m.channel !== "sms") continue;
+        const t = new Date(m.createdAt).getTime();
+        if (!(t >= startMs && t <= endMs)) continue;
+        if (m.direction === "inbound") { if (m.channel === "email") emailReceived++; else smsReceived++; continue; }
+        if (m.direction !== "outbound") continue;
+        const cat = sentCategoryForSourceType(m.sourceType);
+        // Bulk-migrated history (Close/AC/Hyros) is attributed to whoever
+        // owns the contact TODAY, which has nothing to do with who
+        // actually sent it back then -- confirmed live this misattributes
+        // real activity (e.g. AC was only ever used by one person, but
+        // ac_import rows show up under teammates who never touched AC,
+        // just because they inherited the contact later). Excluded
+        // entirely rather than shown under the wrong name.
+        if (cat === "legacy_import") continue;
+        const bucket = m.channel === "email" ? email : sms;
+        bucket[cat]++;
+        bucket.total++;
+      }
+    }
+    return { userId: u.id, name: `${u.first} ${u.last}`.trim(), email, sms, emailReceived, smsReceived, scannedContacts: contacts.length };
+  });
+  return ({ rows, categories: SENT_CATEGORIES });
+}
+export async function reportAttribution(params = {}) {
+  const { startMs, endMs } = rangeFromStrings(params.start, params.end);
+  const data = computeAttributionMemo(startMs, endMs);
+  const start = params.start, end = params.end;
+  const labels = await labelAttributionSources(data.sources.map(s => s.el), start, end);
+  const sources = data.sources.map(s => {
+    const l = labels.get(s.el);
+    return {
+      ...s, ...l,
+      platform: s.hyrosOnly && l.platform === "Other" ? "Hyros" : l.platform,
+      optIns: s.optIns + s.hyrosOptIns, bookings: s.bookings + s.hyrosBookings, enrolled: s.enrolled + s.hyrosEnrolled,
+      hyros: s.hyrosOptIns > 0,
+    };
+  });
+  return ({ sources, hyrosNote: data.hyrosSourceCount ? HYROS_NOTE : null, start, end });
+}
+export async function reportAttributionContacts(params = {}) {
+  const { startMs, endMs } = rangeFromStrings(params.start, params.end);
+  const data = computeAttributionMemo(startMs, endMs);
+  // Drill-down: the exact contacts behind one source's one funnel stage.
+  const el = params.el;
+  const stage = params.stage; // "optIns" | "bookings" | "enrolled"
+  // basis=events: the Ads Report's own counts (conversion events credited to first touch)
+  const eventBasis = params.basis === "events";
+  const startStr = params.start || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const endStr = params.end || new Date().toISOString().slice(0, 10);
+  const bucket = eventBasis ? computeEventAttribution(startStr, endStr, data).byKeyStage.get(`${el}|${stage}`) : data.byElStage.get(`${el}|${stage}`);
+  const ids = [...new Set([...(bucket || []), ...(data.hyrosByStage.get(`${el}|${stage}`) || [])])];
+  if (!ids.length) return ({ contacts: [] });
+  // A Hyros source tag can hold thousands of contacts -- list the first 500 and say how many there are.
+  const need = new Set(ids.slice(0, 500));
+  const list = reportContacts().filter(c => need.has(c.id));
+  return ({ contacts: list, total: ids.length, truncated: ids.length > list.length });
+}
+export async function reportContactClicks(params = {}) {
+  const contactId = params.contactId;
+  const visits = readJson(PAGE_VISITS_FILE, []).filter(v => v.contactId === contactId);
+  // The el= tag only carries the sending campaign/automation/flow's NAME
+  // (resolveSendSourceSlug, source_names.js -- one slug per flow, not per
+  // step), so "Clicked: 2 Online Booking" doesn't say which of that flow's
+  // several emails/texts it actually was. For email/sms clicks specifically,
+  // correlate against this same contact's own outbound history: the most
+  // recent email/sms sent to them at or before the click time is, in
+  // practice, almost always the one that link lived in -- gives the real
+  // subject line (email) or message text (sms) instead of just the flow
+  // name. Fetched once per contact, not once per click.
+  // Same internal-staff-notification exclusion as
+  // /api/inbox/contact/:id (inbox_backend.js) -- a flow's own "notify the
+  // team" copy (sent to lee@/alexis@, not the contact) must never be
+  // picked as "the email this contact clicked", or a staff member's own
+  // click on their internal alert gets misattributed to the contact.
+  const contactForOwnEmails = getContactByIdFast(contactId);
+  const ownEmails = contactForOwnEmails ? new Set([contactForOwnEmails.email, ...(contactForOwnEmails.altEmails || [])].filter(Boolean).map(e => e.toLowerCase())) : null;
+  const outboundByChannel = { email: [], sms: [] };
+  for (const m of getContactMessages(contactId)) {
+    if (m.direction !== "outbound" || (m.channel !== "email" && m.channel !== "sms")) continue;
+    if (m.channel === "email" && ownEmails?.size && m.to && !ownEmails.has(String(m.to).toLowerCase())) continue;
+    outboundByChannel[m.channel].push(m);
+  }
+  outboundByChannel.email.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  outboundByChannel.sms.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  function closestPriorMessage(channel, atIso) {
+    const atMs = new Date(atIso).getTime();
+    return outboundByChannel[channel].find(m => new Date(m.createdAt).getTime() <= atMs) || null;
+  }
+  const siteBaseUrl = (readJson("crm_integrations.json", {}).site?.websiteUrl || "").replace(/\/+$/, "");
+  const ytTitles = await lookupVideoTitles(visits.map(attributionKeyForVisit).filter(k => k?.startsWith("youtube:")).map(k => k.slice(8)));
+  const clicks = visits.map(v => {
+    const key = attributionKeyForVisit(v);
+    if (!key) return null;
+    const isAd = /^(meta-ad|google-ad|ad):/.test(key);
+    const socialMatch = key.match(/^(youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
+    const category = isAd ? "ad" : socialMatch ? "media" : (key.startsWith("email") ? "email" : key.startsWith("sms") ? "sms" : "other");
+    const flowName = niceTitle(key.replace(/^(email|sms)[-:]/, ""));
+    const sourceMsg = (category === "email" || category === "sms") ? closestPriorMessage(category, v.at) : null;
+    // Falls back to the flow-name label when no matching send is found
+    // (e.g. the click happened before any tracked send, or the message
+    // predates getContactMessages' own history) -- never blank.
+    const label = isAd ? `${key.startsWith("meta-ad:") ? "Meta" : key.startsWith("google-ad:") ? "Google" : "Ad"} — ${key.split(":")[1]}`
+      : socialMatch ? `${SOCIAL_PLATFORM_LABEL[socialMatch[1]]} — ${(socialMatch[1] === "youtube" && ytTitles.get(socialMatch[2])) || niceTitle(socialMatch[2])}`
+      : category === "email" ? `Email: ${sourceMsg?.subject || flowName}`
+      : category === "sms" ? `SMS: ${sourceMsg?.body ? sourceMsg.body.slice(0, 60) : flowName}`
+      : flowName;
+    const fullUrl = (siteBaseUrl ? siteBaseUrl : "") + (v.path || "") + (v.search || "");
+    return { at: v.at, path: v.path, fullUrl, key, label: v.inferred ? `${label} (linked by timing)` : label, category, sourceSubject: sourceMsg?.subject || null };
+  }).filter(Boolean);
+  // The contact's Hyros source tags ("@...") as they're already set on them.
+  const tagNames = new Map(readJson(TAGS_FILE, []).map(t => [t.id, t.name]));
+  const sourceTags = (contactForOwnEmails?.tags || []).map(id => tagNames.get(id)).filter(n => n && n[0] === "@").sort();
+  return ({ clicks, sourceTags });
+}
+export async function reportAdsReport(params = {}) {
+  const { startMs, endMs } = rangeFromStrings(params.start, params.end);
+  const endStr = params.end || new Date().toISOString().slice(0, 10);
+  const startStr = params.start || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const { rows, spendError, coverage, totals, hyrosNote } = await computeAdsReport(startMs, endMs, startStr, endStr);
+  return ({ rows, spendError, coverage, totals, hyrosNote, start: startStr, end: endStr });
+}
+export const REPORT_JOBS = {
+  overview: reportOverview, sentByUser: reportSentByUser, attribution: reportAttribution,
+  attributionContacts: reportAttributionContacts, contactClicks: reportContactClicks, adsReport: reportAdsReport,
+};
+
 export async function handleReportingRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/reporting")) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
-  if (p === "/api/reporting/overview" && req.method === "GET") {
-    const { startMs, endMs } = parseRangeParams(url);
-
-    const campaignIds = readJson(CAMPAIGNS_FILE, []).map(c => c.id);
-    const campaignData = statsFromSources("campaign", campaignIds, startMs, endMs, statsFromMessages);
-    const automationStepIds = readJson(AUTOMATIONS_FILE, []).flatMap(automationStepSourceIds);
-    const automationData = statsFromSources("automation_step", automationStepIds, startMs, endMs, statsFromMessages);
-    const workflowStepIds = readJson(WORKFLOWS_FILE, []).flatMap(workflowStepSourceIds);
-    const workflowData = statsFromSources("workflow_step", workflowStepIds, startMs, endMs, smsStatsFromMessages);
-
-    return sendJson(res, 200, {
-      campaigns: { ...campaignData.stats, replies: countReplies(campaignData.messages, "email", endMs) },
-      automations: { ...automationData.stats, replies: countReplies(automationData.messages, "email", endMs) },
-      workflows: { ...workflowData.stats, replies: countReplies(workflowData.messages, "sms", endMs) },
-    });
-  }
-
-  // Messages sent per team member's book, split by channel and by who/what
-  // actually sent it (human vs AI agent vs SMS sequence vs email automation
-  // vs campaign) -- same "human-sent" vs "CRM-sent" distinction the Inbox
-  // Activity tab surfaces per-person, just rolled up across the whole team
-  // with counts instead of a row-by-row feed. Bounded the same way that
-  // endpoint is (inbox_backend.js's /api/inbox/activity): only each user's
-  // OWNED_CONTACT_SCAN_CAP most-recently-touched contacts are scanned, so
-  // this stays a handful of small per-contact file reads per team member
-  // rather than a full message-log scan (see statsFromMessages' comment
-  // above on why that's off the table).
-  if (p === "/api/reporting/sent-by-user" && req.method === "GET") {
-    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
-    const { startMs, endMs } = parseRangeParams(url);
-    const OWNED_CONTACT_SCAN_CAP = 300;
-    const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
-    const allContacts = getAllContacts().filter((c) => !c.testContact);
-    const rows = users.map((u) => {
-      const contacts = allContacts
-        .filter((c) => c.ownerId === u.id)
-        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
-        .slice(0, OWNED_CONTACT_SCAN_CAP);
-      const email = emptySentCounts();
-      const sms = emptySentCounts();
-      // Inbound only ever counted from these SAME owned/real contacts --
-      // never a raw mailbox/phone-line count, which would pull in whatever
-      // unrelated mail a connected inbox happens to receive.
-      let emailReceived = 0, smsReceived = 0;
-      for (const c of contacts) {
-        for (const m of getContactMessages(c.id)) {
-          if (m.channel !== "email" && m.channel !== "sms") continue;
-          const t = new Date(m.createdAt).getTime();
-          if (!(t >= startMs && t <= endMs)) continue;
-          if (m.direction === "inbound") { if (m.channel === "email") emailReceived++; else smsReceived++; continue; }
-          if (m.direction !== "outbound") continue;
-          const cat = sentCategoryForSourceType(m.sourceType);
-          // Bulk-migrated history (Close/AC/Hyros) is attributed to whoever
-          // owns the contact TODAY, which has nothing to do with who
-          // actually sent it back then -- confirmed live this misattributes
-          // real activity (e.g. AC was only ever used by one person, but
-          // ac_import rows show up under teammates who never touched AC,
-          // just because they inherited the contact later). Excluded
-          // entirely rather than shown under the wrong name.
-          if (cat === "legacy_import") continue;
-          const bucket = m.channel === "email" ? email : sms;
-          bucket[cat]++;
-          bucket.total++;
-        }
-      }
-      return { userId: u.id, name: `${u.first} ${u.last}`.trim(), email, sms, emailReceived, smsReceived, scannedContacts: contacts.length };
-    });
-    return sendJson(res, 200, { rows, categories: SENT_CATEGORIES });
+  // Every heavy report is computed by report_worker.js in its own process
+  // (see the comment above reportOverview) -- the server only relays it.
+  const JOB_ROUTES = { "/api/reporting/overview": "overview", "/api/reporting/sent-by-user": "sentByUser", "/api/reporting/attribution": "attribution", "/api/reporting/attribution/contacts": "attributionContacts", "/api/reporting/ads-report": "adsReport" };
+  const clicksMatch = p.match(/^\/api\/reporting\/contact-clicks\/([^/]+)$/);
+  if ((JOB_ROUTES[p] || clicksMatch) && req.method === "GET") {
+    if (p === "/api/reporting/sent-by-user" && !isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const params = clicksMatch ? { contactId: clicksMatch[1] } : Object.fromEntries(url.searchParams);
+    try {
+      return sendJson(res, 200, await runReportJob(clicksMatch ? "contactClicks" : JOB_ROUTES[p], params));
+    } catch (e) {
+      return sendJson(res, 503, { error: e.message });
+    }
   }
 
   if (p === "/api/reporting/email-daily" && req.method === "GET") {
@@ -769,39 +913,6 @@ export async function handleReportingRequest(req, res, url) {
     return sendJson(res, 200, { days: dayRows, totals: smsStatsFromByStatus(sumByStatus(days, "smsOut"), totalSmsIn) });
   }
 
-  if ((p === "/api/reporting/attribution" || p === "/api/reporting/attribution/contacts") && req.method === "GET") {
-    const { startMs, endMs } = parseRangeParams(url);
-    const data = computeAttribution(startMs, endMs);
-    if (p === "/api/reporting/attribution") {
-      const start = url.searchParams.get("start"), end = url.searchParams.get("end");
-      const labels = await labelAttributionSources(data.sources.map(s => s.el), start, end);
-      const sources = data.sources.map(s => {
-        const l = labels.get(s.el);
-        return {
-          ...s, ...l,
-          platform: s.hyrosOnly && l.platform === "Other" ? "Hyros" : l.platform,
-          optIns: s.optIns + s.hyrosOptIns, bookings: s.bookings + s.hyrosBookings, enrolled: s.enrolled + s.hyrosEnrolled,
-          hyros: s.hyrosOptIns > 0,
-        };
-      });
-      return sendJson(res, 200, { sources, hyrosNote: data.hyrosSourceCount ? HYROS_NOTE : null, start, end });
-    }
-    // Drill-down: the exact contacts behind one source's one funnel stage.
-    const el = url.searchParams.get("el");
-    const stage = url.searchParams.get("stage"); // "optIns" | "bookings" | "enrolled"
-    // basis=events: the Ads Report's own counts (conversion events credited to first touch)
-    const eventBasis = url.searchParams.get("basis") === "events";
-    const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-    const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
-    const bucket = eventBasis ? computeEventAttribution(startStr, endStr, data).byKeyStage.get(`${el}|${stage}`) : data.byElStage.get(`${el}|${stage}`);
-    const ids = [...new Set([...(bucket || []), ...(data.hyrosByStage.get(`${el}|${stage}`) || [])])];
-    if (!ids.length) return sendJson(res, 200, { contacts: [] });
-    // A Hyros source tag can hold thousands of contacts -- list the first 500 and say how many there are.
-    const need = new Set(ids.slice(0, 500));
-    const list = getAllContacts().filter(c => need.has(c.id));
-    return sendJson(res, 200, { contacts: list, total: ids.length, truncated: ids.length > list.length });
-  }
-
   // One contact's own tracked page visits, formatted as journey-timeline
   // "click" items -- kept separate from inbox_backend.js's /api/inbox/
   // contact/:id (which only ever returns message-log items) rather than
@@ -810,73 +921,6 @@ export async function handleReportingRequest(req, res, url) {
   // lookup here (that's Ads Report's job, and needs a live Meta/Google
   // call) -- a single contact's journey just needs a readable label,
   // reusing niceTitle for that, not a full spend/campaign resolution.
-  const journeyClicksMatch = p.match(/^\/api\/reporting\/contact-clicks\/([^/]+)$/);
-  if (journeyClicksMatch && req.method === "GET") {
-    const contactId = journeyClicksMatch[1];
-    const visits = readJson(PAGE_VISITS_FILE, []).filter(v => v.contactId === contactId);
-    // The el= tag only carries the sending campaign/automation/flow's NAME
-    // (resolveSendSourceSlug, source_names.js -- one slug per flow, not per
-    // step), so "Clicked: 2 Online Booking" doesn't say which of that flow's
-    // several emails/texts it actually was. For email/sms clicks specifically,
-    // correlate against this same contact's own outbound history: the most
-    // recent email/sms sent to them at or before the click time is, in
-    // practice, almost always the one that link lived in -- gives the real
-    // subject line (email) or message text (sms) instead of just the flow
-    // name. Fetched once per contact, not once per click.
-    // Same internal-staff-notification exclusion as
-    // /api/inbox/contact/:id (inbox_backend.js) -- a flow's own "notify the
-    // team" copy (sent to lee@/alexis@, not the contact) must never be
-    // picked as "the email this contact clicked", or a staff member's own
-    // click on their internal alert gets misattributed to the contact.
-    const contactForOwnEmails = getContactByIdFast(contactId);
-    const ownEmails = contactForOwnEmails ? new Set([contactForOwnEmails.email, ...(contactForOwnEmails.altEmails || [])].filter(Boolean).map(e => e.toLowerCase())) : null;
-    const outboundByChannel = { email: [], sms: [] };
-    for (const m of getContactMessages(contactId)) {
-      if (m.direction !== "outbound" || (m.channel !== "email" && m.channel !== "sms")) continue;
-      if (m.channel === "email" && ownEmails?.size && m.to && !ownEmails.has(String(m.to).toLowerCase())) continue;
-      outboundByChannel[m.channel].push(m);
-    }
-    outboundByChannel.email.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    outboundByChannel.sms.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    function closestPriorMessage(channel, atIso) {
-      const atMs = new Date(atIso).getTime();
-      return outboundByChannel[channel].find(m => new Date(m.createdAt).getTime() <= atMs) || null;
-    }
-    const siteBaseUrl = (readJson("crm_integrations.json", {}).site?.websiteUrl || "").replace(/\/+$/, "");
-    const ytTitles = await lookupVideoTitles(visits.map(attributionKeyForVisit).filter(k => k?.startsWith("youtube:")).map(k => k.slice(8)));
-    const clicks = visits.map(v => {
-      const key = attributionKeyForVisit(v);
-      if (!key) return null;
-      const isAd = /^(meta-ad|google-ad|ad):/.test(key);
-      const socialMatch = key.match(/^(youtube|facebook|instagram|linkedin|twitter|tiktok):(.+)$/);
-      const category = isAd ? "ad" : socialMatch ? "media" : (key.startsWith("email") ? "email" : key.startsWith("sms") ? "sms" : "other");
-      const flowName = niceTitle(key.replace(/^(email|sms)[-:]/, ""));
-      const sourceMsg = (category === "email" || category === "sms") ? closestPriorMessage(category, v.at) : null;
-      // Falls back to the flow-name label when no matching send is found
-      // (e.g. the click happened before any tracked send, or the message
-      // predates getContactMessages' own history) -- never blank.
-      const label = isAd ? `${key.startsWith("meta-ad:") ? "Meta" : key.startsWith("google-ad:") ? "Google" : "Ad"} — ${key.split(":")[1]}`
-        : socialMatch ? `${SOCIAL_PLATFORM_LABEL[socialMatch[1]]} — ${(socialMatch[1] === "youtube" && ytTitles.get(socialMatch[2])) || niceTitle(socialMatch[2])}`
-        : category === "email" ? `Email: ${sourceMsg?.subject || flowName}`
-        : category === "sms" ? `SMS: ${sourceMsg?.body ? sourceMsg.body.slice(0, 60) : flowName}`
-        : flowName;
-      const fullUrl = (siteBaseUrl ? siteBaseUrl : "") + (v.path || "") + (v.search || "");
-      return { at: v.at, path: v.path, fullUrl, key, label: v.inferred ? `${label} (linked by timing)` : label, category, sourceSubject: sourceMsg?.subject || null };
-    }).filter(Boolean);
-    // The contact's Hyros source tags ("@...") as they're already set on them.
-    const tagNames = new Map(readJson(TAGS_FILE, []).map(t => [t.id, t.name]));
-    const sourceTags = (contactForOwnEmails?.tags || []).map(id => tagNames.get(id)).filter(n => n && n[0] === "@").sort();
-    return sendJson(res, 200, { clicks, sourceTags });
-  }
-
-  if (p === "/api/reporting/ads-report" && req.method === "GET") {
-    const { startMs, endMs } = parseRangeParams(url);
-    const endStr = url.searchParams.get("end") || new Date().toISOString().slice(0, 10);
-    const startStr = url.searchParams.get("start") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-    const { rows, spendError, coverage, totals, hyrosNote } = await computeAdsReport(startMs, endMs, startStr, endStr);
-    return sendJson(res, 200, { rows, spendError, coverage, totals, hyrosNote, start: startStr, end: endStr });
-  }
-
   const campaignMatch = p.match(/^\/api\/reporting\/campaigns\/([^/]+)$/);
   if (campaignMatch && req.method === "GET") {
     const messages = excludeTestContacts(getMessagesForSource("campaign", campaignMatch[1]));

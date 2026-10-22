@@ -343,6 +343,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => {
   document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
   if (btn.dataset.tab === 'attribution') resizeAttributionTablePanel();
   if (btn.dataset.tab === 'adsreport') resizeAdsReportTablePanel();
+  if (HEAVY_TAB_LOADERS[btn.dataset.tab] && currentStart) {
+    setReportLoading(true);
+    loadActiveHeavyTab().finally(() => setReportLoading(false));
+  }
 });
 
 // Same mechanism as contacts.html's #contactsTablePanel -- keeps the
@@ -413,9 +417,32 @@ async function applyPeriod() {
   currentEnd = end.toISOString().slice(0, 10);
   document.getElementById('periodRangeMsg').textContent = `${currentStart} to ${currentEnd}`;
   setReportLoading(true);
-  const tasks = [loadEmailReport(), loadSmsReport(), loadAttributionReport(), loadAdsReportTable()];
-  if (document.getElementById('tab-overview').classList.contains('active')) tasks.push(loadOverview());
-  try { await Promise.all(tasks); } finally { setReportLoading(false); }
+  heavyLoadedFor = {};
+  // Email/SMS are cheap (small pre-counted daily totals). Overview,
+  // Attribution and Reporting are heavy -- computed by the server's separate
+  // report worker one at a time -- so only the tab actually on screen is
+  // fetched now; the others load when opened (see loadActiveHeavyTab).
+  try { await Promise.all([loadEmailReport(), loadSmsReport(), loadActiveHeavyTab()]); } finally { setReportLoading(false); }
+}
+// Which heavy tabs already hold data for the current range (cleared by applyPeriod).
+let heavyLoadedFor = {};
+const HEAVY_TAB_LOADERS = { overview: () => loadOverview(), attribution: () => loadAttributionReport(), adsreport: () => loadAdsReportTable() };
+// Set to '&fresh=1' only while Manual Update is reloading -- makes the server
+// recompute instead of answering from its report cache.
+let freshParam = '';
+async function loadActiveHeavyTab() {
+  const tab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  const load = HEAVY_TAB_LOADERS[tab];
+  const rangeKey = currentStart + '|' + currentEnd;
+  if (!load || heavyLoadedFor[tab] === rangeKey) return;
+  heavyLoadedFor[tab] = rangeKey;
+  await load();
+}
+// The server's own explanation when a heavy report fails (e.g. the report
+// worker ran out of memory) -- shown instead of a bare "Could not load."
+async function reportError(r) {
+  const d = await r.json().catch(() => ({}));
+  return d.error ? 'Could not load: ' + d.error : 'Could not load.';
 }
 function setReportLoading(loading, label) {
   const msg = document.getElementById('reportLoadingMsg');
@@ -505,7 +532,8 @@ document.getElementById('manualUpdateBtn').onclick = async () => {
     setReportLoading(true, 'Pulling latest data&hellip;');
     await new Promise(res => setTimeout(res, COUPLER_SETTLE_MS));
   }
-  await applyPeriod();
+  freshParam = '&fresh=1';
+  try { await applyPeriod(); } finally { freshParam = ''; }
 };
 
 // opened/clicked/reply hold pre-formatted "NN%" strings by the time they
@@ -597,14 +625,18 @@ function renderOneToOneCards() {
 document.getElementById('emailOneToOneUser').addEventListener('change', renderOneToOneCards);
 document.getElementById('smsOneToOneUser').addEventListener('change', renderOneToOneCards);
 async function loadOverview() {
-  const r = await fetch(`/api/reporting/overview?start=${currentStart}&end=${currentEnd}`);
+  const r = await fetch(`/api/reporting/overview?start=${currentStart}&end=${currentEnd}${freshParam}`);
+  if (!r.ok) {
+    const msg = escapeHtml(await reportError(r));
+    for (const id of ['campaignsGrid', 'automationsGrid', 'workflowsGrid']) document.getElementById(id).innerHTML = `<div class="pra-muted">${msg}</div>`;
+  }
   if (r.ok) {
     const { campaigns, automations, workflows } = await r.json();
     renderRateCard('campaignsGrid', 'stat-card-email', campaigns.sent, [['Open %', campaigns.opened], ['Click %', campaigns.clicked]], 'Reply %', fmtPct(campaigns.replies, campaigns.sent));
     renderRateCard('automationsGrid', 'stat-card-automations', automations.sent, [['Open %', automations.opened], ['Click %', automations.clicked]], 'Reply %', fmtPct(automations.replies, automations.sent));
     renderRateCard('workflowsGrid', 'stat-card-workflows', workflows.sent, [['Delivered %', workflows.delivered], ['Click %', 0]], 'Inbound', workflows.replies);
   }
-  const userR = await fetch(`/api/reporting/sent-by-user?start=${currentStart}&end=${currentEnd}`);
+  const userR = await fetch(`/api/reporting/sent-by-user?start=${currentStart}&end=${currentEnd}${freshParam}`);
   if (userR.ok) {
     sentByUserRows = (await userR.json()).rows;
     populateUserSelector('emailOneToOneUser');
@@ -709,8 +741,8 @@ function showHyrosNote(id, text, anchor, where) {
 async function loadAttributionReport() {
   const body = document.getElementById('attributionBody');
   body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
-  const r = await fetch(`/api/reporting/attribution?start=${currentStart}&end=${currentEnd}`);
-  if (!r.ok) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
+  const r = await fetch(`/api/reporting/attribution?start=${currentStart}&end=${currentEnd}${freshParam}`);
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="6" class="pra-muted" style="padding:16px">${escapeHtml(await reportError(r))}</td></tr>`; return; }
   const d = await r.json();
   allAttributionSources = d.sources;
   attributionPage = 1;
@@ -861,8 +893,8 @@ async function loadAdsReportTable() {
   const msg = document.getElementById('adsReportMsg');
   body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">Loading…</td></tr>`;
   msg.textContent = '';
-  const r = await fetch(`/api/reporting/ads-report?start=${currentStart}&end=${currentEnd}`);
-  if (!r.ok) { body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">Could not load.</td></tr>`; return; }
+  const r = await fetch(`/api/reporting/ads-report?start=${currentStart}&end=${currentEnd}${freshParam}`);
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="${adsReportColumnOrder.length}" class="pra-muted" style="padding:16px">${escapeHtml(await reportError(r))}</td></tr>`; return; }
   const d = await r.json();
   allAdsReportRows = d.rows;
   allAdsReportTotals = d.totals || null;
