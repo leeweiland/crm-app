@@ -8,6 +8,7 @@ import { segmentMembers } from "./segments_shared.js";
 import { getAllContacts } from "./contacts_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { getMessagesForSource, logMessagesBatch } from "./message_log.js";
+import { MESSAGES_PG, sourceStatusCounts } from "./messages_db.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
@@ -81,7 +82,21 @@ function statsCacheKey(campaignId) {
   const m = (dir) => { try { const st = statSync(join(DATA_DIR, dir, `campaign__${campaignId}.json`)); return `${st.mtimeMs}:${st.size}`; } catch { return "-"; } };
   return `${m("msg_by_source")}|${m("msg_by_source_status")}`;
 }
-function rollupStats(campaignId) {
+export function rollupStats(campaignId) {
+  // Postgres: status counts straight from an index (milliseconds, always
+  // current) -- the file-change cache key below has nothing to watch here.
+  if (MESSAGES_PG) {
+    const stats = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0 };
+    for (const { status, hasPid, n } of sourceStatusCounts("campaign", campaignId)) {
+      if (["sent", "delivered", "opened", "clicked"].includes(status)) stats.sent += n;
+      if (["delivered", "opened", "clicked"].includes(status) || (status === "sent" && hasPid)) stats.delivered += n;
+      if (["opened", "clicked"].includes(status)) stats.opened += n;
+      if (status === "clicked") stats.clicked += n;
+      if (status === "bounced") stats.bounced += n;
+      if (status === "complained") stats.unsubscribed += n;
+    }
+    return stats;
+  }
   const key = statsCacheKey(campaignId);
   const hit = _statsCache.get(campaignId);
   if (hit && hit.key === key) return { ...hit.stats };

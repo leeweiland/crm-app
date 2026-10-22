@@ -255,6 +255,16 @@ export function contactIdsForMessageIds(ids) {
   return q(`SELECT DISTINCT contact_id FROM messages WHERE id = ANY($1) AND contact_id IS NOT NULL`, [ids]).map(r => r.contact_id);
 }
 
+// How many of one source's messages are in each status (and whether SES
+// accepted them) -- all the Campaigns list's rollup needs. Answered from
+// the messages_source_status covering index without reading message rows.
+export function sourceStatusCounts(sourceType, sourceId) {
+  return q(
+    `SELECT status, provider_message_id IS NOT NULL AS has_pid, count(*)::int AS n FROM messages
+      WHERE source_type = $1 AND source_id = $2 GROUP BY 1, 2`, [sourceType, sourceId]
+  ).map(r => ({ status: r.status, hasPid: r.has_pid, n: r.n }));
+}
+
 // ── Daily stats ───────────────────────────────────────────────────────────
 // message_daily_stats holds (day, channel, direction, source_type, status)
 // counts, maintained by a trigger on messages (messages_schema.sql). Folded

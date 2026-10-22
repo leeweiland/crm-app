@@ -39,7 +39,7 @@ const results = new Map(); // cacheKey -> { at, value }
 function startWorker() {
   const child = fork(WORKER_PATH, [], {
     execArgv: [`--max-old-space-size=${WORKER_HEAP_MB}`],
-    env: { ...process.env, READJSON_NO_CACHE: "1", REPORT_WORKER: "1" },
+    env: { ...process.env, READJSON_NO_CACHE: "1", REPORT_WORKER: "1", PG_SYNC_TIMEOUT_MS: "300000" },
     stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
   const w = { child, pending: new Map() };

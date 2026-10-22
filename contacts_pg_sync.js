@@ -20,7 +20,9 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const QUERY_TIMEOUT_MS = 60 * 1000;
+// The report worker (its own process) runs long aggregate queries and sets
+// PG_SYNC_TIMEOUT_MS higher; everywhere else a query this slow is a bug.
+const QUERY_TIMEOUT_MS = Number(process.env.PG_SYNC_TIMEOUT_MS) || 60 * 1000;
 
 // One helper thread (one Postgres connection) per calling thread, shared by
 // every module that needs synchronous queries (contacts_db.js remote mode,
