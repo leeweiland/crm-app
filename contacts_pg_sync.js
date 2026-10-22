@@ -7,8 +7,9 @@
 // (contacts_pg_sync_helper.js) while the calling thread blocks on
 // Atomics.wait, then picks the answer up with receiveMessageOnPort -- the
 // same pattern the `synckit` package uses. Blocking is only allowed off
-// the main thread, which is exactly where this is used: the main server
-// thread keeps its full cache and never comes here.
+// the main thread in browsers; Node allows it on the main thread too, where
+// messages_db.js uses it -- a query blocks that thread for its few
+// milliseconds exactly like the synchronous file reads it replaces did.
 //
 // The helper bumps a shared counter AFTER posting each answer; the caller
 // re-checks the port whenever the counter moves, so an answer can't slip
@@ -20,6 +21,15 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const QUERY_TIMEOUT_MS = 60 * 1000;
+
+// One helper thread (one Postgres connection) per calling thread, shared by
+// every module that needs synchronous queries (contacts_db.js remote mode,
+// messages_db.js).
+let _shared = null;
+export function sharedSyncQuery() {
+  if (!_shared) _shared = createSyncQuery(process.env.DATABASE_URL);
+  return _shared;
+}
 
 export function createSyncQuery(connectionString) {
   const signal = new Int32Array(new SharedArrayBuffer(4));

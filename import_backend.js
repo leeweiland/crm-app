@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, scanJsonArrayFieldSets, appendJsonRecords } from "./auth_backend.js";
 import { findContactMatch, markFirstSeen } from "./segments_shared.js";
 import { getAllContacts, getContactById, createContact, updateContactByField, writeAllContacts } from "./contacts_db.js";
-import { MESSAGE_LOG_FILE } from "./message_log.js";
+import { readImportLog, writeImportLog } from "./message_log.js";
 import { CALLS_FILE, TASKS_FILE, NOTES_FILE } from "./inbox_backend.js";
 import { recheckStopStatus, isStopKeyword, BLACKLIST_STATUS_LABEL } from "./compliance_backend.js";
 import { getComplianceSettings } from "./integrations_backend.js";
@@ -520,7 +520,7 @@ export async function mergeCloseSequences(contact, existingIdsIndex, pendingBuff
   if (!leadId || !closeConfigured()) return 0;
   const auth = "Basic " + Buffer.from(process.env.CLOSE_API_KEY + ":").toString("base64");
   const subs = preFetchedSubs || await fetchCloseSequenceSubscriptions(leadId);
-  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readImportLog(contact.id);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.closeSequenceSubId).map(m => m.closeSequenceSubId));
   let added = 0;
   for (const s of subs) {
@@ -541,7 +541,7 @@ export async function mergeCloseSequences(contact, existingIdsIndex, pendingBuff
     existingIds.add(s.id);
     added++;
   }
-  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeImportLog(log);
   return added;
 }
 
@@ -601,7 +601,7 @@ export async function fetchAcOneToOneCampaigns() {
 export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex, pendingBuffer) {
   const matches = oneToOneCampaigns.filter(c => c.email === contact.email?.toLowerCase());
   if (!matches.length) return 0;
-  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readImportLog(contact.id);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.acCampaignId).map(m => m.acCampaignId));
   let added = 0;
   matches.forEach(c => {
@@ -622,7 +622,7 @@ export function mergeAcCampaigns(contact, oneToOneCampaigns, existingIdsIndex, p
     existingIds.add(c.id);
     added++;
   });
-  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeImportLog(log);
   return added;
 }
 
@@ -671,7 +671,7 @@ export async function acCampaignName(campaignId) {
 // fix, same reason.
 export async function mergeAcContactActivities(contact, acContactId, existingIdsIndex, pendingBuffer) {
   const { logs, linkData } = await fetchAcContactActivities(acContactId);
-  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readImportLog(contact.id);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.acActivityId).map(m => m.acActivityId));
   let added = 0;
   for (const l of logs) {
@@ -707,7 +707,7 @@ export async function mergeAcContactActivities(contact, acContactId, existingIds
     existingIds.add(acActivityId);
     added++;
   }
-  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeImportLog(log);
   return added;
 }
 
@@ -843,7 +843,7 @@ function closeStatusHistory(a) {
   return history;
 }
 function mergeCloseEmails(contact, activities, existingIdsIndex, pendingBuffer) {
-  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readImportLog(contact.id);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.closeActivityId).map(m => m.closeActivityId));
   let added = 0;
   activities.forEach(a => {
@@ -869,7 +869,7 @@ function mergeCloseEmails(contact, activities, existingIdsIndex, pendingBuffer) 
     existingIds.add(a.id);
     added++;
   });
-  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeImportLog(log);
   return added;
 }
 // Close keeps recording opens on an email after the fact (someone can open
@@ -888,8 +888,8 @@ function mergeCloseEmails(contact, activities, existingIdsIndex, pendingBuffer) 
 // yet-to-refresh. It stays wired up for the live/admin re-run path, where a
 // contact's activities were already imported earlier and may have picked up
 // a late open since.
-function refreshCloseEmailOpens(activities) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
+function refreshCloseEmailOpens(activities, contactId) {
+  const log = readImportLog(contactId);
   let updated = 0;
   activities.forEach(a => {
     const firstOpen = (a.opens || [])[0];
@@ -899,11 +899,11 @@ function refreshCloseEmailOpens(activities) {
     row.statusHistory = [...(row.statusHistory || []), { status: "opened", at: firstOpen.opened_at }];
     updated++;
   });
-  if (updated) writeJson(MESSAGE_LOG_FILE, log);
+  if (updated) writeImportLog(log);
   return updated;
 }
 function mergeCloseSms(contact, activities, existingIdsIndex, pendingBuffer) {
-  const log = pendingBuffer ? null : readJson(MESSAGE_LOG_FILE, []);
+  const log = pendingBuffer ? null : readImportLog(contact.id);
   const existingIds = existingIdsIndex || new Set(log.filter(m => m.closeActivityId).map(m => m.closeActivityId));
   let added = 0;
   activities.forEach(a => {
@@ -924,7 +924,7 @@ function mergeCloseSms(contact, activities, existingIdsIndex, pendingBuffer) {
     existingIds.add(a.id);
     added++;
   });
-  if (added && !pendingBuffer) writeJson(MESSAGE_LOG_FILE, log);
+  if (added && !pendingBuffer) writeImportLog(log);
   // Re-derived from the contact's full (now-merged) SMS history rather than
   // per-activity during the loop above -- Close doesn't guarantee activities
   // arrive in chronological order, and only the chronologically LATEST
@@ -1166,7 +1166,7 @@ export async function pullCloseHistoryForContact(contact) {
   const emailsAdded = mergeCloseEmails(contact, emails);
   return {
     ok: true,
-    emailsAdded, opensRefreshed: refreshCloseEmailOpens(emails),
+    emailsAdded, opensRefreshed: refreshCloseEmailOpens(emails, contact.id),
     smsAdded: mergeCloseSms(contact, sms),
     callsAdded: mergeCloseCalls(contact, calls),
   };

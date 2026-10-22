@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson } from "./auth_backend.js";
 import { findContactMatch, markFirstSeen, digitsOnly } from "./segments_shared.js";
 import { getAllContacts, writeAllContacts } from "./contacts_db.js";
-import { MESSAGE_LOG_FILE } from "./message_log.js";
+import { readImportLog, writeImportLog } from "./message_log.js";
 import { getOrCreateTag } from "./contacts_backend.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 
@@ -129,7 +129,7 @@ function hyrosSourceEntry(contact, hyrosLead, source, slot) {
   };
 }
 export function mergeHyrosActivity(contact, hyrosLead) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
+  const log = readImportLog(contact.id);
   const existingIds = new Set(log.filter(m => m.hyrosActivityId).map(m => m.hyrosActivityId));
   const entries = [
     hyrosSourceEntry(contact, hyrosLead, hyrosLead.firstSource, "first"),
@@ -141,7 +141,7 @@ export function mergeHyrosActivity(contact, hyrosLead) {
     log.push(e);
     added++;
   });
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added) writeImportLog(log);
   return added;
 }
 
@@ -205,7 +205,7 @@ function hyrosCallEntry(contact, call) {
   };
 }
 export function mergeHyrosSales(contact, sales) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
+  const log = readImportLog(contact.id);
   const existingIds = new Set(log.filter(m => m.hyrosActivityId).map(m => m.hyrosActivityId));
   let added = 0;
   sales.forEach(sale => {
@@ -214,11 +214,11 @@ export function mergeHyrosSales(contact, sales) {
     log.push(entry);
     added++;
   });
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added) writeImportLog(log);
   return added;
 }
 export function mergeHyrosCalls(contact, calls) {
-  const log = readJson(MESSAGE_LOG_FILE, []);
+  const log = readImportLog(contact.id);
   const existingIds = new Set(log.filter(m => m.hyrosActivityId).map(m => m.hyrosActivityId));
   let added = 0;
   calls.forEach(call => {
@@ -227,6 +227,6 @@ export function mergeHyrosCalls(contact, calls) {
     log.push(entry);
     added++;
   });
-  if (added) writeJson(MESSAGE_LOG_FILE, log);
+  if (added) writeImportLog(log);
   return added;
 }

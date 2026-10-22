@@ -3,6 +3,12 @@ import { join } from "path";
 import { DATA_DIR, readJson, writeJson, appendJsonRecordFast, appendJsonRecordsFast, updateJsonArrayRecordByField } from "./auth_backend.js";
 import { syncMessageFields, deleteConversationRow } from "./sqlite_inbox.js";
 import { getContactById } from "./contacts_db.js";
+// MESSAGES_STORE=pg (2026-10-22): every function below that touches message
+// files routes to the Postgres store instead (messages_db.js); the file
+// code after each `if (MESSAGES_PG)` is the pre-migration path, kept until
+// the files are retired.
+import * as mdb from "./messages_db.js";
+import { MESSAGES_PG } from "./messages_db.js";
 
 // The Inbox's two hottest reads -- "everything said with contact X" and
 // "one summary row per contact, most-recently-active first" -- both used to
@@ -58,6 +64,7 @@ function contactStatusFile(contactId) { return `${CONTACT_STATUS_DIR}/${safeId(c
 
 export function getContactMessages(contactId) {
   if (!contactId) return [];
+  if (MESSAGES_PG) return mdb.getContactMessages(contactId);
   const base = readJson(contactFile(contactId), []);
   const events = readJson(contactStatusFile(contactId), []);
   if (!events.length) return base;
@@ -79,6 +86,7 @@ export function getContactMessages(contactId) {
 }
 export function appendContactMessage(message) {
   if (!message.contactId) return;
+  if (MESSAGES_PG) { mdb.insertMessages([message], isTestContact); return; }
   ensureDir();
   // Was appendJsonRecords -- the full-file-copy-to-append version (see its
   // own comment: "fine for bulk imports, fatal for a per-send call"),
@@ -105,6 +113,13 @@ export function appendContactMessage(message) {
 // than a full read-and-rewrite of the whole file.
 export function updateContactMessage(contactId, field, value, updater) {
   if (!contactId) return null;
+  if (MESSAGES_PG) {
+    const original = mdb.getContactMessages(contactId).find((m) => m[field] === value);
+    if (!original) return null;
+    const updated = updater({ ...original, statusHistory: [...(original.statusHistory || [])] });
+    if (updated) mdb.writeMessages([updated]);
+    return updated || null;
+  }
   // Tried a byte-search-before-parse scan here first (2026-10-08) on the
   // theory that JSON.parse-ing a 20-30MB contact file was itself the CPU
   // cost. Measured directly before shipping it: on a realistic 21MB file,
@@ -148,6 +163,7 @@ export function updateContactMessage(contactId, field, value, updater) {
 // which this does by construction (one new entry, appended, every time).
 export function appendContactMessageStatusEvent(contactId, id, patch, historyAdd) {
   if (!contactId) return;
+  if (MESSAGES_PG) { mdb.updateMessageFields(id, patch, historyAdd); return; }
   ensureContactStatusDir();
   appendJsonRecordFast(contactStatusFile(contactId), { id, patch, historyAdds: historyAdd ? [historyAdd] : [], at: new Date().toISOString() });
 }
@@ -161,6 +177,7 @@ export function appendContactMessageStatusEvent(contactId, id, patch, historyAdd
 // worse than the unbatched version when it doesn't.
 export function appendContactMessageStatusEventsBatch(events) {
   if (!events || !events.length) return;
+  if (MESSAGES_PG) { for (const e of events) if (e.contactId) mdb.updateMessageFields(e.id, e.patch, e.historyAdd); return; }
   ensureContactStatusDir();
   const byContact = new Map();
   for (const e of events) {
@@ -223,6 +240,7 @@ function sourceStatusFile(sourceType, sourceId) { return `${SOURCE_STATUS_DIR}/$
 
 export function getSourceMessages(sourceType, sourceId) {
   if (!sourceType || !sourceId) return [];
+  if (MESSAGES_PG) return mdb.getSourceMessages(sourceType, sourceId);
   const base = readJson(sourceFile(sourceType, sourceId), []);
   const events = readJson(sourceStatusFile(sourceType, sourceId), []);
   // Fast path, by far the common case (a source with no open/click/bounce
@@ -239,6 +257,7 @@ export function getSourceMessages(sourceType, sourceId) {
 }
 export function appendSourceMessage(message) {
   if (!message.sourceType || !message.sourceId) return;
+  if (MESSAGES_PG) return; // the messages row IS the per-source record
   ensureSourceDir();
   // appendJsonRecords copies the ENTIRE existing file to append even one
   // record (see logMessage's own comment in message_log.js, which already
@@ -263,6 +282,7 @@ export function appendSourceMessage(message) {
 // array shares one, since callers outside the campaign send loop could
 // pass a mixed batch.
 export function appendSourceMessagesBatch(messages) {
+  if (MESSAGES_PG) return; // the messages rows ARE the per-source records
   const groups = new Map();
   for (const m of messages) {
     if (!m.sourceType || !m.sourceId) continue;
@@ -292,6 +312,7 @@ export function appendSourceMessagesBatch(messages) {
 // instead of mutating the base row in place.
 export function updateSourceMessageStatus(sourceType, sourceId, id, patch) {
   if (!sourceType || !sourceId) return;
+  if (MESSAGES_PG) return; // already updated on the row itself
   ensureSourceStatusDir();
   appendJsonRecordFast(sourceStatusFile(sourceType, sourceId), { id, patch, at: new Date().toISOString() });
 }
@@ -341,6 +362,7 @@ function isTestContact(contactId) {
   return !!c?.testContact;
 }
 export function recordDailyStatsNew(row) {
+  if (MESSAGES_PG) return; // message_daily_stats is kept by a database trigger
   if (isTestContact(row.contactId)) return;
   const all = readJson(DAILY_STATS_FILE, {});
   const bucket = all[dayKey(row.createdAt)] || (all[dayKey(row.createdAt)] = emptyDayBucket());
@@ -348,6 +370,7 @@ export function recordDailyStatsNew(row) {
   writeJson(DAILY_STATS_FILE, all);
 }
 export function recordDailyStatsTransition(row, oldStatus, newStatus) {
+  if (MESSAGES_PG) return; // message_daily_stats is kept by a database trigger
   if (oldStatus === newStatus || isTestContact(row.contactId)) return;
   const all = readJson(DAILY_STATS_FILE, {});
   const bucket = all[dayKey(row.createdAt)] || (all[dayKey(row.createdAt)] = emptyDayBucket());
@@ -356,6 +379,19 @@ export function recordDailyStatsTransition(row, oldStatus, newStatus) {
   writeJson(DAILY_STATS_FILE, all);
 }
 export function getDailyStatsInRange(startMs, endMs) {
+  if (MESSAGES_PG) {
+    // Same inclusion rule as below: a day counts when its UTC midnight is
+    // within [startMs, endMs].
+    const DAY = 86400000;
+    const startDay = new Date(Math.ceil(startMs / DAY) * DAY).toISOString().slice(0, 10);
+    const endDay = new Date(Math.floor(endMs / DAY) * DAY).toISOString().slice(0, 10);
+    const byDay = new Map();
+    for (const r of mdb.getDailyStatsRows(startDay, endDay)) {
+      if (!byDay.has(r.day)) byDay.set(r.day, emptyDayBucket());
+      applyDailyDelta(byDay.get(r.day), { channel: r.channel, direction: r.direction, sourceType: r.source_type }, r.status, Number(r.n));
+    }
+    return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, bucket]) => ({ date, ...bucket }));
+  }
   const all = readJson(DAILY_STATS_FILE, {});
   return Object.entries(all)
     .filter(([date]) => { const t = new Date(date + "T00:00:00Z").getTime(); return t >= startMs && t <= endMs; })
@@ -364,11 +400,13 @@ export function getDailyStatsInRange(startMs, endMs) {
 }
 export function deleteContactMessageFile(contactId) {
   if (!contactId) return;
+  if (MESSAGES_PG) { mdb.deleteContactMessages(contactId); return; }
   const p = join(DATA_DIR, contactFile(contactId));
   if (existsSync(p)) unlinkSync(p);
 }
 export function markContactMessagesDone(contactId) {
   if (!contactId) return;
+  if (MESSAGES_PG) { mdb.markInboundDone(contactId); return; }
   const messages = getContactMessages(contactId);
   let changed = false;
   messages.forEach(m => { if (m.direction === "inbound" && !m.inboxDone) { m.inboxDone = true; changed = true; } });
@@ -390,6 +428,7 @@ export function markPriorOutboundEmailsOpenedByReply(contactId, replyAt) {
   const messages = getContactMessages(contactId);
   let changed = false;
   const replyMs = new Date(replyAt).getTime();
+  const touched = [];
   messages.forEach(m => {
     if (m.channel !== "email" || m.direction !== "outbound") return;
     if (new Date(m.createdAt).getTime() >= replyMs) return;
@@ -397,8 +436,9 @@ export function markPriorOutboundEmailsOpenedByReply(contactId, replyAt) {
     if (alreadyOpened) return;
     m.statusHistory = [...(m.statusHistory || []), { status: "opened", at: replyAt, inferred: true }];
     changed = true;
+    touched.push(m);
   });
-  if (changed) writeJson(contactFile(contactId), messages);
+  if (changed) { if (MESSAGES_PG) mdb.writeMessages(touched); else writeJson(contactFile(contactId), messages); }
 }
 // Per-contact files are small (one contact's own history, not millions of
 // records), so a bulk update within one is just a plain read+forEach+write
@@ -407,8 +447,9 @@ export function updateContactMessagesByIds(contactId, idSet, updater) {
   if (!contactId) return;
   const messages = getContactMessages(contactId);
   let changed = false;
-  messages.forEach(m => { if (idSet.has(m.id)) { updater(m); changed = true; } });
-  if (changed) writeJson(contactFile(contactId), messages);
+  const touched = [];
+  messages.forEach(m => { if (idSet.has(m.id)) { updater(m); changed = true; touched.push(m); } });
+  if (changed) { if (MESSAGES_PG) mdb.writeMessages(touched); else writeJson(contactFile(contactId), messages); }
 }
 // Removes SPECIFIC messages from a contact's own shard by id -- unlike
 // deleteContactMessageFile (which wipes the contact's ENTIRE history), this
@@ -419,6 +460,7 @@ export function updateContactMessagesByIds(contactId, idSet, updater) {
 // own outreach -- that happens to live in the same per-contact file.
 export function removeContactMessagesByIds(contactId, idSet) {
   if (!contactId || !idSet?.size) return 0;
+  if (MESSAGES_PG) return mdb.deleteMessagesByIds(contactId, [...idSet]);
   const messages = getContactMessages(contactId);
   const kept = messages.filter(m => !idSet.has(m.id));
   const removed = messages.length - kept.length;

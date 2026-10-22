@@ -15,7 +15,8 @@ import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { readJson, writeJson, appendToJsonObjectFast, DATA_DIR } from "./auth_backend.js";
 import { getAllContacts, getContactById } from "./contacts_db.js";
-import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
+import { logMessage, isKnownProviderMessageId } from "./message_log.js";
+import { MESSAGES_PG } from "./messages_db.js";
 import { getContactMessages, updateContactMessagesByIds } from "./message_index.js";
 import { acConfigured, fetchAcOneToOneCampaigns, fetchAcContactActivities, acCampaignName, AC_BASE } from "./import_backend.js";
 import { getRecentlyActiveContactIds } from "./sqlite_inbox.js";
@@ -181,7 +182,7 @@ export async function syncAcEngagementForContact(contactId, preloadedContact) {
   const oneToOne = await getOneToOneCampaigns();
   for (const c of oneToOne.filter(x => x.email === email)) {
     const pid = `ac_1to1:${c.id}`;
-    if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
+    if (isKnownProviderMessageId(pid)) continue;
     if (c.clicks > 0) latestClick = later(latestClick, c.sdate); else if (c.opens > 0) latestOpen = later(latestOpen, c.sdate);
     logMessage({
       channel: "email", direction: "outbound", contactId,
@@ -200,7 +201,7 @@ export async function syncAcEngagementForContact(contactId, preloadedContact) {
   const { logs, linkData } = await fetchAcContactActivities(acContactId);
   for (const l of logs) {
     const pid = `ac_send:${l.id}`;
-    if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
+    if (isKnownProviderMessageId(pid)) continue;
     const name = await acCampaignName(l.campaign);
     logMessage({
       channel: "email", direction: "outbound", contactId,
@@ -211,7 +212,7 @@ export async function syncAcEngagementForContact(contactId, preloadedContact) {
   }
   for (const c of linkData) {
     const pid = `ac_click:${c.id}`;
-    if (readJson(PROVIDER_ID_INDEX_FILE, {})[pid]) continue;
+    if (isKnownProviderMessageId(pid)) continue;
     latestClick = later(latestClick, c.tstamp);
     const name = await acCampaignName(c.campaign);
     logMessage({
@@ -534,6 +535,9 @@ export async function processAcRefFillBatch() {
   if (!acConfigured()) return;
   const state = readJson(AC_REF_FILL_STATE_FILE, { nextIndex: 0, filesScanned: 0, refsAttached: 0, done: false });
   if (state.done) return;
+  // One-time pass over msg_by_contact/ files; once messages live in Postgres
+  // there are no files to walk.
+  if (MESSAGES_PG) return;
 
   const dir = join(DATA_DIR, MSG_BY_CONTACT_DIR);
   let files;

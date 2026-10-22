@@ -2,7 +2,9 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, topKJsonArray, updateJsonArrayRecordsByIds, updateJsonArrayRecordByField, appendJsonRecordFast, USERS_FILE, isAdmin } from "./auth_backend.js";
 import { findContactMatch } from "./segments_shared.js";
 import { getAllContacts, createContact, updateContactByField } from "./contacts_db.js";
-import { MESSAGE_LOG_FILE, MESSAGE_ID_INDEX_FILE, logMessage } from "./message_log.js";
+import { MESSAGE_LOG_FILE, logMessage, contactIdsForMessageIds } from "./message_log.js";
+import * as mdb from "./messages_db.js";
+import { MESSAGES_PG } from "./messages_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { sendSms } from "./sms_backend.js";
 import { CONVERSATION_META_FILE, getConvoMeta, getConvoMetaMap, setConvoMeta } from "./conversation_meta.js";
@@ -651,15 +653,21 @@ export async function handleInboxRequest(req, res, url) {
       // Rare in practice (unconfirmed senders don't accumulate at bulk-
       // import volume), unlike the contactId path below.
       const [, channel, address] = unmatched;
-      const log = readJson(MESSAGE_LOG_FILE, []);
-      const remaining = log.filter(m => !(!m.contactId && m.channel === channel && (m.direction === "inbound" ? m.from : m.to) === address));
-      if (remaining.length !== log.length) writeJson(MESSAGE_LOG_FILE, remaining);
+      if (MESSAGES_PG) mdb.deleteUnmatchedConversation(channel, address);
+      else {
+        const log = readJson(MESSAGE_LOG_FILE, []);
+        const remaining = log.filter(m => !(!m.contactId && m.channel === channel && (m.direction === "inbound" ? m.from : m.to) === address));
+        if (remaining.length !== log.length) writeJson(MESSAGE_LOG_FILE, remaining);
+      }
     } else {
-      const messages = getContactMessages(key);
-      if (messages.length) {
-        const ids = messages.map(m => m.id);
-        updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, ids, () => null);
-        deleteContactMessageFile(key);
+      if (MESSAGES_PG) deleteContactMessageFile(key); // one DELETE of this contact's messages
+      else {
+        const messages = getContactMessages(key);
+        if (messages.length) {
+          const ids = messages.map(m => m.id);
+          updateJsonArrayRecordsByIds(MESSAGE_LOG_FILE, ids, () => null);
+          deleteContactMessageFile(key);
+        }
       }
       const meta = readJson(CONVERSATION_META_FILE, []).filter(m => m.contactId !== key);
       writeJson(CONVERSATION_META_FILE, meta);
@@ -776,7 +784,10 @@ export async function handleInboxRequest(req, res, url) {
     const channelFilter = tab === "emails" ? "email" : tab === "messages" ? "sms" : null;
     const doneFilter = view === "new" ? false : view === "past" ? true : null;
     const INBOX_MESSAGE_LIMIT = 1000;
-    const inbound = needsMessages
+    const inbound = needsMessages && MESSAGES_PG
+      ? mdb.recentInboundMessages({ channel: channelFilter, done: doneFilter, limit: INBOX_MESSAGE_LIMIT })
+          .map(m => ({ ...m, itemType: m.channel, at: m.createdAt, done: !!m.inboxDone }))
+      : needsMessages
       ? topKJsonArray(
           MESSAGE_LOG_FILE,
           m => m.direction === "inbound" && (!channelFilter || m.channel === channelFilter) && (doneFilter === null || !!m.inboxDone === doneFilter),
@@ -825,8 +836,7 @@ export async function handleInboxRequest(req, res, url) {
     // log itself is intentionally write-once-append-only now -- see
     // updateMessageStatusByProviderId's own comment -- so it was never
     // meant to be the one getting patched here in the first place.
-    const idIndex = readJson(MESSAGE_ID_INDEX_FILE, {});
-    const touchedContacts = new Set(ids.map(id => idIndex[id]?.contactId).filter(Boolean));
+    const touchedContacts = new Set(contactIdsForMessageIds(ids));
     for (const contactId of touchedContacts) {
       updateContactMessagesByIds(contactId, idSet, m => { m.inboxDone = value; });
       recomputeConversationSummary(contactId);
@@ -853,8 +863,8 @@ export async function handleInboxRequest(req, res, url) {
   if (p === "/api/inbox/confirm-potential" && req.method === "POST") {
     const { messageId, first, last } = await readJsonBody(req);
     if (!first) return sendJson(res, 400, { error: "first name is required" });
-    const log = readJson(MESSAGE_LOG_FILE, []);
-    const row = log.find(m => m.id === messageId);
+    const log = MESSAGES_PG ? null : readJson(MESSAGE_LOG_FILE, []);
+    const row = MESSAGES_PG ? mdb.getMessageById(messageId) : log.find(m => m.id === messageId);
     if (!row) return sendJson(res, 404, { error: "Message not found" });
     // Which field is actually THEIR address depends on the row's own
     // direction -- from=them on an inbound message, but to=them on an
@@ -900,11 +910,17 @@ export async function handleInboxRequest(req, res, url) {
 
     let logChanged = false;
     const migrated = [];
-    if (phone) {
+    if (MESSAGES_PG) {
+      // Every unmatched message to/from this address now belongs to the contact.
+      const found = [...(phone ? mdb.getUnmatchedByDigits(digitsOnly(phone)) : []), ...(email ? mdb.getUnmatchedByEmail(email) : [])];
+      const byId = new Map(found.map(m => [m.id, m]));
+      mdb.assignMessagesToContact([...byId.keys()], contact.id);
+      for (const m of byId.values()) migrated.push({ ...m, contactId: contact.id });
+    } else if (phone) {
       const digits = digitsOnly(phone);
       log.forEach(m => { if (!m.contactId && digitsOnly(m.direction === "inbound" ? m.from : m.to) === digits) { m.contactId = contact.id; logChanged = true; migrated.push(m); } });
     }
-    if (email) {
+    if (!MESSAGES_PG && email) {
       const lower = email.toLowerCase();
       log.forEach(m => { if (!m.contactId && (m.direction === "inbound" ? m.from : m.to)?.toLowerCase() === lower) { m.contactId = contact.id; logChanged = true; migrated.push(m); } });
     }
@@ -913,7 +929,7 @@ export async function handleInboxRequest(req, res, url) {
     // ever findable via a full log scan) to belonging to a real contact --
     // feed them into that contact's index now so the Inbox/contact-detail
     // views find them immediately instead of only after a full reindex.
-    migrated.forEach(m => appendContactMessage(m));
+    if (!MESSAGES_PG) migrated.forEach(m => appendContactMessage(m));
     if (migrated.length) recomputeConversationSummary(contact.id);
     migrated.forEach(m => removeConversationSummary(`unmatched:${m.channel}:${m.direction === "inbound" ? m.from : m.to}`));
     return sendJson(res, 200, { ok: true, contact });

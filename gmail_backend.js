@@ -1,6 +1,6 @@
 import { readJson, writeJson, sendJson, getSessionUser, isAdmin, USERS_FILE, sortByName } from "./auth_backend.js";
 import { getAllContacts, getContactById } from "./contacts_db.js";
-import { logMessage, PROVIDER_ID_INDEX_FILE } from "./message_log.js";
+import { logMessage, isKnownProviderMessageId } from "./message_log.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
@@ -455,7 +455,7 @@ function getContactIdByEmail(email) {
 // unique per mailbox, so it's the one thing safe to dedupe against
 // regardless of which path found it.
 async function processGmailMessage(user, msg) {
-  if (readJson(PROVIDER_ID_INDEX_FILE, {})[msg.id]) return; // already logged, by this path or another
+  if (isKnownProviderMessageId(msg.id)) return; // already logged, by this path or another
   const fromHeader = headerValue(msg.payload?.headers, "From");
   const fromEmail = extractEmailAddress(fromHeader);
   if (!fromEmail) return;
@@ -525,7 +525,7 @@ async function fetchAndProcessGmailQuery(user, accessToken, q) {
       const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: auth, signal: gmailFetchTimeout() });
       const msg = await msgRes.json();
       if (!msgRes.ok) continue;
-      const already = readJson(PROVIDER_ID_INDEX_FILE, {})[msg.id];
+      const already = isKnownProviderMessageId(msg.id);
       await processGmailMessage(user, msg);
       if (!already) found++;
     } catch (e) {

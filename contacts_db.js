@@ -213,8 +213,8 @@ let _fullReadsLogged = 0;
 const REMOTE_FIELD_COLUMNS = { id: "id", status: "status", email: "email", phone: "phone" };
 
 export async function useContactsFromPostgres(label = String(threadId)) {
-  const { createSyncQuery } = await import("./contacts_pg_sync.js");
-  const querySync = createSyncQuery(process.env.DATABASE_URL);
+  const { sharedSyncQuery } = await import("./contacts_pg_sync.js");
+  const querySync = sharedSyncQuery();
   // Usage line every 5 minutes (only when there was any), so the real cost
   // of remote mode on each worker is visible in the logs, not guessed.
   const stats = { queries: 0, ms: 0, full: 0, slowest: 0 };

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, updateAllJsonArrayRecordsByField } from "./auth_backend.js";
 import { getAllContacts, getContactById, updateContactByField, deleteContact } from "./contacts_db.js";
 import { MESSAGE_LOG_FILE } from "./message_log.js";
+import { MESSAGES_PG, reassignContactMessages } from "./messages_db.js";
 import { CALLS_FILE, TASKS_FILE } from "./inbox_backend.js";
 import { CONVERSATION_META_FILE } from "./conversation_meta.js";
 import { PAGE_VISITS_FILE, claimVisitorHistory } from "./tracking_backend.js";
@@ -200,7 +201,10 @@ export function mergeContacts(keepId, mergeId) {
   // Byte-scanned in place instead of readJson+forEach+writeJson -- the
   // message log alone reached 12GB+ and a full parse/rewrite of it hung the
   // server outright the moment someone next merged a duplicate contact.
-  updateAllJsonArrayRecordsByField(MESSAGE_LOG_FILE, "contactId", mergeId, m => { m.contactId = keepId; return m; });
+  // Postgres: one UPDATE moves the merged contact's whole history (the file
+  // version only re-pointed the main log, leaving msg_by_contact behind).
+  if (MESSAGES_PG) reassignContactMessages(mergeId, keepId);
+  else updateAllJsonArrayRecordsByField(MESSAGE_LOG_FILE, "contactId", mergeId, m => { m.contactId = keepId; return m; });
   updateAllJsonArrayRecordsByField(CALLS_FILE, "contactId", mergeId, c => { c.contactId = keepId; return c; });
   updateAllJsonArrayRecordsByField(TASKS_FILE, "contactId", mergeId, t => { t.contactId = keepId; return t; });
   updateAllJsonArrayRecordsByField(PAGE_VISITS_FILE, "contactId", mergeId, v => { v.contactId = keepId; return v; });

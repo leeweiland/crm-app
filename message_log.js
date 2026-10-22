@@ -1,13 +1,21 @@
 import { randomUUID } from "crypto";
 import { statSync, existsSync, openSync, readSync, closeSync, readFileSync } from "fs";
 import { join } from "path";
-import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, appendToJsonObjectsFast, readJson, DATA_DIR } from "./auth_backend.js";
+import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, appendToJsonObjectsFast, readJson, writeJson, DATA_DIR } from "./auth_backend.js";
 import { appendContactMessage, appendContactMessageStatusEvent, appendContactMessageStatusEventsBatch, getContactMessages, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { recordEngagementHour } from "./send_time_db.js";
 import { broadcastInboxUpdate } from "./inbox_events.js";
 import { noteStaffActivity } from "./staff_activity.js";
 import { noteSmsRow, noteSmsStatusChange } from "./sms_stats.js";
+// MESSAGES_STORE=pg (2026-10-22): messages live in Postgres (messages_db.js).
+// One row per message holds what the main log, both per-contact files, the
+// per-source files and both lookup indexes held between them, so in pg mode
+// logMessage is one INSERT and a status event is one atomic UPDATE.
+import * as mdb from "./messages_db.js";
+import { MESSAGES_PG } from "./messages_db.js";
+import { getContactById } from "./contacts_db.js";
+function isTestContactId(contactId) { return !!(contactId && getContactById(contactId)?.testContact); }
 
 export const MESSAGE_LOG_FILE = "crm_message_log.json";
 // Small persisted index so a delivery/open/click/bounce webhook (arriving
@@ -92,8 +100,10 @@ function buildMessageRow({ id, channel, direction, contactId, sourceType, source
 // logMessagesBatch call the exact same side effects per row, rather than
 // maintaining two copies that could drift.
 function persistRowSideEffects(row, bodyOffset) {
-  appendContactMessage(row);
-  recordDailyStatsNew(row);
+  if (!MESSAGES_PG) {
+    appendContactMessage(row);
+    recordDailyStatsNew(row);
+  }
   upsertConversationSummary(row);
   // Which team member (if any) this message puts in conversation with the
   // contact -- feeds the "emailed/texted with <person>" segment condition.
@@ -143,7 +153,7 @@ function persistRowSideEffects(row, bodyOffset) {
   // own isRepeatForThisMessage check) -- same signal ("has this exact
   // message already fired this status before"), computed from a counter
   // instead of re-deriving it from a full history array.
-  if (row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status, openCount: 0, clickCount: 0 });
+  if (!MESSAGES_PG && row.providerMessageId) appendToJsonObjectFast(PROVIDER_ID_INDEX_FILE, row.providerMessageId, { id: row.id, contactId: row.contactId, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status, openCount: 0, clickCount: 0 });
   // bodyOffset/bodyLength (2026-10-08) -- the exact byte range row's own
   // JSON text landed at in MESSAGE_LOG_FILE, captured by logMessage/
   // logMessagesBatch from appendJsonRecordFast's/appendJsonRecordsFast's
@@ -154,11 +164,16 @@ function persistRowSideEffects(row, bodyOffset) {
   // history. Same extra fields as PROVIDER_ID_INDEX_FILE just above, for
   // updateMessageById's identical reasoning (keyed by our own row id
   // instead of the provider's).
-  appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status });
+  if (!MESSAGES_PG) appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status });
   if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
 }
 export function logMessage(fields) {
   const row = buildMessageRow(fields);
+  if (MESSAGES_PG) {
+    mdb.insertMessages([row], isTestContactId);
+    persistRowSideEffects(row, null);
+    return row;
+  }
   const offset = appendJsonRecordFast(MESSAGE_LOG_FILE, row);
   appendSourceMessage(row);
   persistRowSideEffects(row, offset);
@@ -177,8 +192,12 @@ export function logMessage(fields) {
 export function logMessagesBatch(fieldsList) {
   if (!fieldsList || !fieldsList.length) return [];
   const rows = fieldsList.map(buildMessageRow);
-  const offsets = appendJsonRecordsFast(MESSAGE_LOG_FILE, rows);
-  appendSourceMessagesBatch(rows);
+  let offsets = [];
+  if (MESSAGES_PG) mdb.insertMessages(rows, isTestContactId);
+  else {
+    offsets = appendJsonRecordsFast(MESSAGE_LOG_FILE, rows);
+    appendSourceMessagesBatch(rows);
+  }
   // Per row: one contact's bookkeeping failing (a damaged per-contact file,
   // etc.) must not throw out of a campaign send's batch flush -- that used to
   // stop the WHOLE send (2026-10-20). The message itself is already in the
@@ -303,6 +322,7 @@ const getMessageIdIndexCached = makeIncrementalJsonCache(MESSAGE_ID_INDEX_FILE);
 // "no match, caller decides the fallback" shape as that function).
 export function lookupNotificationSourceType(providerMessageId) {
   if (!providerMessageId) return null;
+  if (MESSAGES_PG) return mdb.getMessageByProviderId(providerMessageId)?.sourceType ?? null;
   return getProviderIndexCached()[providerMessageId]?.sourceType ?? null;
 }
 
@@ -368,6 +388,7 @@ function enrichLegacyEntry(entry) {
 // timestamp) -- feeds predictive sending's per-contact best hour.
 export function updateMessageStatusByProviderId(providerMessageId, status, extra, eventAtMs) {
   if (!providerMessageId) return null;
+  if (MESSAGES_PG) return applyStatusEventPg(providerMessageId, status, extra, eventAtMs);
   const entry = enrichLegacyEntry(getProviderIndexCached()[providerMessageId]);
   if (!entry) return null;
   const oldStatus = entry.status;
@@ -415,6 +436,21 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
   return found;
 }
+// Postgres version of the status event: one atomic UPDATE finds the row by
+// provider id, applies the status, bumps the open/click counter and returns
+// what it was before -- the repeat check can't race another thread now.
+// Daily stats follow by trigger; the per-source record is the row itself.
+function applyStatusEventPg(providerMessageId, status, extra, eventAtMs) {
+  const r = mdb.updateStatusByProviderId(providerMessageId, status, { status, at: new Date().toISOString(), ...(extra || {}) });
+  if (!r) return null;
+  const isRepeat = status === "opened" ? r.oldOpenCount > 0 : status === "clicked" ? r.oldClickCount > 0 : false;
+  const found = { ...r, isRepeat, _oldStatus: r.oldStatus };
+  if (status === "opened" || status === "clicked") recordEngagementHour(r.contactId, status, eventAtMs, Date.parse(r.createdAt));
+  if (r.contactId) recomputeConversationSummary(r.contactId);
+  try { noteSmsStatusChange(found, r.oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
+  if (status === "failed" && r.oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(r.contactId, found.channel);
+  return found;
+}
 // Batched sibling for a bulk-drain-sized run (2026-10-08) -- updates is an
 // array of { providerMessageId, status, extra? }. The per-row version
 // above already stopped reading any big file per call; the remaining
@@ -432,6 +468,9 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
 // per-row side effects (recompute, source-status, daily-stats, trigger
 // firing) it always has -- nothing about those changes here.
 export function updateMessageStatusesByProviderIdBatch(updates) {
+  // In Postgres each event is its own atomic UPDATE (milliseconds), applied
+  // in order -- a repeat of the same id later in the batch sees the earlier one.
+  if (MESSAGES_PG) return updates.map(u => (u.providerMessageId ? applyStatusEventPg(u.providerMessageId, u.status, u.extra, u.eventAtMs) : null));
   const index = getProviderIndexCached();
   const indexPatch = {};
   const overlayEvents = [];
@@ -482,6 +521,16 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
 // (2026-10-08) no longer reads the big per-contact file either, for the
 // identical reason/fix as updateMessageStatusByProviderId above.
 export function updateMessageById(id, patch) {
+  if (MESSAGES_PG) {
+    const historyAdd = patch.status ? { status: patch.status, at: new Date().toISOString() } : null;
+    const r = mdb.updateMessageFields(id, patch, historyAdd);
+    if (!r) return null;
+    const found = { ...r, id, ...patch };
+    if (patch.status === "opened" || patch.status === "clicked") recordEngagementHour(r.contactId, patch.status, Date.now(), Date.parse(r.createdAt));
+    if (r.contactId) recomputeConversationSummary(r.contactId);
+    if (patch.status) { try { noteSmsStatusChange(found, r.oldStatus, patch.status); } catch (e) { console.error("[sms_stats] note failed:", e.message); } }
+    return found;
+  }
   const entry = enrichLegacyEntry(getMessageIdIndexCached()[id]);
   if (!entry) return null;
   const oldStatus = entry.status;
@@ -503,6 +552,32 @@ export function updateMessageById(id, patch) {
   if (patch.status) { try { noteSmsStatusChange(found, oldStatus, patch.status); } catch (e) { console.error("[sms_stats] note failed:", e.message); } }
   return found;
 }
+// "Have we already logged this provider message?" -- Gmail and AC sync's
+// de-duplication. They used to readJson the whole provider-id index per
+// check; past 300MB that read returns [] (see makeIncrementalJsonCache), so
+// every check said "no".
+export function isKnownProviderMessageId(providerMessageId) {
+  if (!providerMessageId) return false;
+  if (MESSAGES_PG) return !!mdb.getMessageByProviderId(providerMessageId);
+  return !!getProviderIndexCached()[providerMessageId];
+}
+// The Close/AC/Hyros import merges (import_backend.js, hyros_backend.js)
+// read the whole main log, pushed new rows onto it and wrote it back. In pg
+// mode they get just this contact's messages, and writing back upserts them
+// (new rows inserted, edited rows updated).
+export function readImportLog(contactId) {
+  return MESSAGES_PG ? mdb.getContactMessages(contactId) : readJson(MESSAGE_LOG_FILE, []);
+}
+export function writeImportLog(log) {
+  if (MESSAGES_PG) mdb.writeMessages(log);
+  else writeJson(MESSAGE_LOG_FILE, log);
+}
+// Inbox "mark done" by message ids: which contacts own them.
+export function contactIdsForMessageIds(ids) {
+  if (MESSAGES_PG) return mdb.contactIdsForMessageIds(ids);
+  const idIndex = getMessageIdIndexCached();
+  return [...new Set(ids.map(id => idIndex[id]?.contactId).filter(Boolean))];
+}
 export function getMessagesForSource(sourceType, sourceId) {
   return getSourceMessages(sourceType, sourceId);
 }
@@ -516,6 +591,7 @@ export function getMessagesForSource(sourceType, sourceId) {
 // callers (inbox_backend.js's conversation rendering) can fall through to
 // whatever they were already doing for that case.
 export function getMessageBodyById(id) {
+  if (MESSAGES_PG) return mdb.getMessageById(id);
   const entry = getMessageIdIndexCached()[id];
   if (!entry || entry.bodyOffset == null || entry.bodyLength == null) return null;
   const p = join(DATA_DIR, MESSAGE_LOG_FILE);

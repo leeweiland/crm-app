@@ -23,6 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
+import { MESSAGES_PG, getContactMessages as getContactMessagesPg } from "./messages_db.js";
 import { getAllContacts, getContactById, getContactsByIds } from "./contacts_db.js";
 
 // Declared locally rather than imported from scheduling_backend.js, which
@@ -604,7 +605,7 @@ export function resyncStaleLegacyLabelRows() {
 // it's requested, same as scrolling the sidebar naturally would.
 const SIDEBAR_CHANNELS = new Set(["email", "sms", "form", "booking", "activity", "meeting"]);
 function computeLastPreview(contactId) {
-  const msgs = readJson(`msg_by_contact/${contactId}.json`, []);
+  const msgs = MESSAGES_PG ? getContactMessagesPg(contactId) : readJson(`msg_by_contact/${contactId}.json`, []);
   const sidebarMsgs = msgs.filter((m) => SIDEBAR_CHANNELS.has(m.channel));
   if (!sidebarMsgs.length) return null;
   const last = sidebarMsgs.reduce((a, b) => (new Date(b.createdAt) > new Date(a.createdAt) ? b : a));

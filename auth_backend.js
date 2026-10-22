@@ -98,7 +98,7 @@ const LARGE_FILE_STREAM_THRESHOLD = 300 * 1024 * 1024; // 300MB
 // of a multi-byte character -- no risk of splitting one mid-character, and
 // no risk of splitting one across a chunk boundary either, since the same
 // per-byte state machine (inString/escape/depth) carries across chunks.
-function forEachJsonArrayElement(p, onElement) {
+export function forEachJsonArrayElement(p, onElement) {
   const fd = openSync(p, "r");
   try {
     const size = fstatSync(fd).size;
