@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { statSync, existsSync, openSync, readSync, closeSync } from "fs";
+import { statSync, existsSync, openSync, readSync, closeSync, readFileSync } from "fs";
 import { join } from "path";
 import { appendJsonRecordFast, appendJsonRecordsFast, appendToJsonObjectFast, appendToJsonObjectsFast, readJson, DATA_DIR } from "./auth_backend.js";
 import { appendContactMessage, appendContactMessageStatusEvent, appendContactMessageStatusEventsBatch, getContactMessages, upsertConversationSummary, recomputeConversationSummary, appendSourceMessage, appendSourceMessagesBatch, updateSourceMessageStatus, getSourceMessages, recordDailyStatsNew, recordDailyStatsTransition, NOTIFY_CHANNELS } from "./message_index.js";
@@ -250,12 +250,22 @@ function notifyFailedSend(contactId, channel) {
 function makeIncrementalJsonCache(filename) {
   const path = join(DATA_DIR, filename);
   let cache = null, mtimeMs = null, size = null;
+  // These index files are JSON OBJECTS. readJson switches to its array-only
+  // streaming reader at 300MB, which on an object file buffers the whole
+  // thing and returns [] -- every lookup then misses. The provider-id index
+  // crossed 300MB (2026-10-22: 346MB), so status updates silently stopped
+  // after the next restart. Parse it directly instead (fine until ~500MB,
+  // V8's string limit -- the real fix is moving it to Postgres).
+  const readWhole = () => {
+    try { return JSON.parse(readFileSync(path, "utf8")); }
+    catch (e) { if (e.code !== "ENOENT") console.error(`[message_log] ${filename} full read failed:`, e.message); return {}; }
+  };
   return function getCached() {
     let st = null;
     try { st = statSync(path); } catch { /* file not created yet */ }
     const newMtimeMs = st ? st.mtimeMs : null, newSize = st ? st.size : null;
     if (cache === null) {
-      cache = readJson(filename, {});
+      cache = readWhole();
       mtimeMs = newMtimeMs; size = newSize;
       return cache;
     }
@@ -276,7 +286,7 @@ function makeIncrementalJsonCache(filename) {
           } finally { closeSync(fd); }
         } catch { /* fall through to full reload below */ }
       }
-      if (!appliedIncremental) cache = readJson(filename, {});
+      if (!appliedIncremental) cache = readWhole();
       mtimeMs = newMtimeMs; size = newSize;
     }
     return cache;
