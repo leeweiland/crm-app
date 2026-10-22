@@ -43,6 +43,7 @@
 // itself only a replica of what this cache held.
 import { randomUUID } from "crypto";
 import { statSync } from "fs";
+import { threadId } from "worker_threads";
 import { join } from "path";
 import pg from "pg";
 import { writeJson, DATA_DIR } from "./auth_backend.js";
@@ -189,15 +190,194 @@ export async function loadContactsCache() {
   if (process.env.CONTACTS_DB_NO_LISTEN !== "1") await startContactsListener();
 }
 
+// ── Remote mode (worker threads) ──────────────────────────────────────────
+// Until 2026-10-22 every worker thread called loadContactsCache() and held
+// its own full copy of all contacts (~400MB per 148k contacts measured,
+// x10 threads = most of the app's memory bill). A worker that calls
+// useContactsFromPostgres() instead holds NO copy: every read is a
+// synchronous Postgres query (contacts_pg_sync.js) and every write goes
+// through the same durable queue as before. Same function names, same
+// return shapes, so none of the call sites change.
+//
+// Read-your-own-writes: a write is queued, not committed, when the call
+// returns -- so until it commits, the written rows sit in _overlay and
+// every read on this thread is served from there first (exactly what the
+// cache gave callers). Pending engagement/tag changes (coalesced for 5s,
+// see queueContactEngagementUpdate) are applied on top of every read the
+// same way. No LISTEN connection: there's no cache to keep fresh.
+let _remote = null;           // querySync, when this thread runs in remote mode
+const _overlay = new Map();   // id -> { c: contact | null (deleted), seq }
+let _overlaySeq = 0;
+let _pendingFull = null;      // writeAllContacts() snapshot until it commits
+let _fullReadsLogged = 0;
+const REMOTE_FIELD_COLUMNS = { id: "id", status: "status", email: "email", phone: "phone" };
+
+export async function useContactsFromPostgres(label = String(threadId)) {
+  const { createSyncQuery } = await import("./contacts_pg_sync.js");
+  const querySync = createSyncQuery(process.env.DATABASE_URL);
+  // Usage line every 5 minutes (only when there was any), so the real cost
+  // of remote mode on each worker is visible in the logs, not guessed.
+  const stats = { queries: 0, ms: 0, full: 0, slowest: 0 };
+  _remote = (sql, params) => {
+    const t = Date.now();
+    try { return querySync(sql, params); }
+    finally { const ms = Date.now() - t; stats.queries++; stats.ms += ms; if (ms > stats.slowest) stats.slowest = ms; if (sql === "SELECT * FROM contacts") stats.full++; }
+  };
+  setInterval(() => {
+    if (!stats.queries) return;
+    console.log(`[contacts_db] remote usage (${label}, last 5m): ${stats.queries} queries, avg ${(stats.ms / stats.queries).toFixed(1)}ms, slowest ${stats.slowest}ms, full reads ${stats.full}`);
+    Object.assign(stats, { queries: 0, ms: 0, full: 0, slowest: 0 });
+  }, 5 * 60 * 1000).unref?.();
+  _remote("SELECT 1"); // fail at startup, not on the first contact lookup
+  _loaded = true;
+  console.log("[contacts_db] remote mode: contacts read from Postgres on demand (no in-memory copy on this thread)");
+}
+export function contactsRemoteMode() { return !!_remote; }
+// What every worker thread except background_worker.js calls at startup.
+// WORKER_CONTACTS_CACHE=1 puts them back on a full per-thread copy (the
+// pre-2026-10-22 behavior) without a code change, if remote mode ever
+// misbehaves.
+export async function initWorkerContacts(label) {
+  if (process.env.WORKER_CONTACTS_CACHE === "1") return loadContactsCache();
+  return useContactsFromPostgres(label);
+}
+
+function overlayPut(contacts) {
+  const seq = ++_overlaySeq;
+  for (const c of contacts) _overlay.set(c.id, { c: clone(c), seq });
+  return seq;
+}
+function overlayDelete(ids) {
+  const seq = ++_overlaySeq;
+  for (const id of ids) _overlay.set(id, { c: null, seq });
+  return seq;
+}
+// Once the queued write commits, Postgres has it -- drop the overlay entry,
+// unless a later write to the same contact has replaced it meanwhile.
+function overlayRelease(ids, seq, done) {
+  Promise.resolve(done).finally(() => { for (const id of ids) if (_overlay.get(id)?.seq === seq) _overlay.delete(id); });
+}
+function applyPending(c) {
+  const p = _pendingEngagement.get(c.id);
+  if (p) {
+    c.emailEngagement = c.emailEngagement || {};
+    if (p.opened) { c.emailEngagement.opened = true; if (!c.emailEngagement.openedAt || new Date(p.openedAt) > new Date(c.emailEngagement.openedAt)) c.emailEngagement.openedAt = p.openedAt; }
+    if (p.clicked) { c.emailEngagement.clicked = true; if (!c.emailEngagement.clickedAt || new Date(p.clickedAt) > new Date(c.emailEngagement.clickedAt)) c.emailEngagement.clickedAt = p.clickedAt; }
+  }
+  const t = _pendingTagChanges.get(c.id);
+  if (t) {
+    c.tags = c.tags || [];
+    for (const a of t.add) if (!c.tags.includes(a)) c.tags.push(a);
+    if (t.remove.size) c.tags = c.tags.filter(x => !t.remove.has(x));
+  }
+  return c;
+}
+function remoteRows(sql, params) { return _remote(sql, params).map(rowToContact); }
+function remoteById(ids) {
+  const out = new Map();
+  const missing = [];
+  for (const id of ids) {
+    if (_pendingFull) { const c = _pendingFull.byId.get(id); if (c) out.set(id, clone(c)); continue; }
+    const o = _overlay.get(id);
+    if (o) { if (o.c) out.set(id, clone(o.c)); } else missing.push(id);
+  }
+  if (missing.length) for (const c of remoteRows("SELECT * FROM contacts WHERE id = ANY($1)", [missing])) out.set(c.id, c);
+  for (const c of out.values()) applyPending(c);
+  return out;
+}
+// Every contact -- one full SELECT. Only the rare whole-audience jobs on a
+// worker should land here (campaign recipient resolution, AI Active's
+// 5-minute top-up, daily segment triggers); logged so a hot path that
+// starts doing this per event shows up in the logs immediately.
+function remoteAll() {
+  if (_fullReadsLogged < 50) {
+    _fullReadsLogged++;
+    const caller = (new Error().stack || "").split("\n").slice(3, 6).map(s => s.trim()).join(" <- ");
+    console.log(`[contacts_db] remote full read (${_fullReadsLogged}/50 logged): ${caller}`);
+  }
+  let list;
+  if (_pendingFull) list = _pendingFull.list.map(clone);
+  else {
+    list = remoteRows("SELECT * FROM contacts");
+    if (_overlay.size) {
+      const idx = new Map(list.map((c, i) => [c.id, i]));
+      const deleted = new Set();
+      for (const [id, o] of _overlay) {
+        if (!o.c) { deleted.add(id); continue; }
+        if (idx.has(id)) list[idx.get(id)] = clone(o.c); else list.push(clone(o.c));
+      }
+      if (deleted.size) list = list.filter(c => !deleted.has(c.id));
+    }
+  }
+  if (_pendingEngagement.size || _pendingTagChanges.size) for (const c of list) if (_pendingEngagement.has(c.id) || _pendingTagChanges.has(c.id)) applyPending(c);
+  return list;
+}
+// Contacts where contact[field] === value. id/status/email/phone are real
+// columns; anything else falls back to a full read (no caller does that today).
+function remoteByField(field, value) {
+  const col = REMOTE_FIELD_COLUMNS[field];
+  if (!col || _pendingFull) return remoteAll().filter(c => c[field] === value);
+  const found = new Map();
+  for (const c of remoteRows(`SELECT * FROM contacts WHERE ${col} = $1`, [value])) if (!_overlay.has(c.id)) found.set(c.id, applyPending(c));
+  for (const [id, o] of _overlay) if (o.c && o.c[field] === value) found.set(id, applyPending(clone(o.c)));
+  return [...found.values()];
+}
+
 function assertLoaded() {
   if (!_loaded) throw new Error("contacts_db: cache not loaded yet -- loadContactsCache() must be awaited at startup before any request touches contacts");
 }
 
 // ── Reads (sync) ──────────────────────────────────────────────────────────
-export function getAllContacts() { assertLoaded(); return clone(_cache); }
-export function getContactById(id) { assertLoaded(); return clone(_byId.get(id)) || null; }
-export function getContactsByIds(ids) { assertLoaded(); const set = new Set(ids); return clone(_cache.filter(c => set.has(c.id))); }
+export function getAllContacts() { assertLoaded(); return _remote ? remoteAll() : clone(_cache); }
+// The live cache itself, NOT a copy -- read-only callers only (anything that
+// mutates a returned contact would corrupt the cache). Used solely by the
+// reports in report_worker.js's own process, where a full copy of all
+// contacts per report was the single biggest memory cost.
+export function getAllContactsNoCopy() { assertLoaded(); return _remote ? remoteAll() : _cache; }
+export function getContactById(id) {
+  assertLoaded();
+  if (_remote) return id ? remoteById([id]).get(id) || null : null;
+  return clone(_byId.get(id)) || null;
+}
+export function getContactsByIds(ids) {
+  assertLoaded();
+  if (_remote) { const found = remoteById([...new Set(ids)]); return ids.filter(id => found.has(id)).filter((id, i, a) => a.indexOf(id) === i).map(id => found.get(id)); }
+  const set = new Set(ids); return clone(_cache.filter(c => set.has(c.id)));
+}
 export function findContactById(id) { return getContactById(id); } // alias for call sites that currently do contacts.find(c => c.id === id)
+
+// First contact whose phone / altPhones / hyrosPhones ends in the same 10
+// digits. Replaces sms_backend.js's getAllContacts().find(...) -- which
+// deep-copied every contact just to match one inbound text's sender.
+const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+function phoneMatches(c, digits) {
+  return last10(c.phone) === digits || (c.altPhones || []).some(p => last10(p) === digits) || (c.hyrosPhones || []).some(p => last10(p) === digits);
+}
+export function findContactByPhoneDigits(phone) {
+  assertLoaded();
+  const digits = last10(phone);
+  if (!digits) return null;
+  if (!_remote) { const c = _cache.find(c => phoneMatches(c, digits)); return c ? clone(c) : null; }
+  if (_pendingFull) return remoteAll().find(c => phoneMatches(c, digits)) || null;
+  for (const o of _overlay.values()) if (o.c && phoneMatches(o.c, digits)) return applyPending(clone(o.c));
+  // Primary phone first (indexed-ish, cheap); alt/hyros phones only when
+  // that misses. Oldest contact wins a tie -- deterministic, where the
+  // cache's answer depended on load order.
+  const rows = remoteRows(
+    `SELECT * FROM contacts WHERE right(regexp_replace(coalesce(phone,''), '\\D', '', 'g'), 10) = $1 ORDER BY created_at ASC NULLS LAST LIMIT 20`, [digits]
+  );
+  let c = rows.find(r => !_overlay.has(r.id));
+  if (!c) {
+    const alt = remoteRows(
+      `SELECT * FROM contacts WHERE (extra ? 'altPhones' OR extra ? 'hyrosPhones')
+         AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(coalesce(extra->'altPhones','[]'::jsonb) || coalesce(extra->'hyrosPhones','[]'::jsonb)) p
+                     WHERE right(regexp_replace(p, '\\D', '', 'g'), 10) = $1)
+       ORDER BY created_at ASC NULLS LAST LIMIT 20`, [digits]
+    );
+    c = alt.find(r => !_overlay.has(r.id) && phoneMatches(r, digits));
+  }
+  return c ? applyPending(c) : null;
+}
 
 // ── Durable write queue ───────────────────────────────────────────────────
 // Strictly serialized: every write on this thread runs after the previous
@@ -246,11 +426,17 @@ async function notifyIds(client, key, ids) {
 function queueUpsert(label, contacts) {
   if (!contacts.length) return;
   const snapshot = contacts.map(clone); // the rows as they are NOW, not whatever they become by the time the queue reaches them
-  return enqueue(label, async (client) => { await upsertRows(client, snapshot); await notifyIds(client, "ids", snapshot.map(c => c.id)); });
+  const seq = _remote ? overlayPut(snapshot) : 0;
+  const done = enqueue(label, async (client) => { await upsertRows(client, snapshot); await notifyIds(client, "ids", snapshot.map(c => c.id)); });
+  if (_remote) overlayRelease(snapshot.map(c => c.id), seq, done);
+  return done;
 }
 function queueDelete(label, ids) {
   if (!ids.length) return;
-  return enqueue(label, async (client) => { await client.query("DELETE FROM contacts WHERE id = ANY($1)", [ids]); await notifyIds(client, "del", ids); });
+  const seq = _remote ? overlayDelete(ids) : 0;
+  const done = enqueue(label, async (client) => { await client.query("DELETE FROM contacts WHERE id = ANY($1)", [ids]); await notifyIds(client, "del", ids); });
+  if (_remote) overlayRelease(ids, seq, done);
+  return done;
 }
 
 // ── Cross-thread / cross-process freshness ────────────────────────────────
@@ -323,6 +509,7 @@ export async function applyContactsChangeNotification(payload) {
 
 export function createContact(contact) {
   assertLoaded();
+  if (_remote) { queueUpsert("createContact", [contact]); return contact; }
   _cache.push(contact);
   _byId.set(contact.id, contact);
   queueUpsert("createContact", [contact]);
@@ -334,6 +521,14 @@ export function createContact(contact) {
 // untouched (this single-record helper never deletes).
 export function updateContactByField(field, value, updater) {
   assertLoaded();
+  if (_remote) {
+    const current = field === "id" ? getContactById(value) : remoteByField(field, value)[0] || null;
+    if (!current) return null;
+    const updated = updater(current);
+    if (!updated) return null;
+    queueUpsert("updateContactByField", [updated]);
+    return clone(updated);
+  }
   const existing = field === "id" ? _byId.get(value) : _cache.find(c => c[field] === value);
   if (!existing) return null;
   const updated = updater(clone(existing));
@@ -352,6 +547,20 @@ export function updateContactsByIds(ids, updater) { return updateContactsByIdSet
 export function updateContactsByIdSet(idSet, updater) {
   assertLoaded();
   const results = [], deletedIds = [];
+  if (_remote) {
+    const found = remoteById([...idSet]);
+    for (const id of idSet) {
+      const current = found.get(id);
+      if (!current) continue;
+      const updated = updater(current);
+      if (updated === null) { deletedIds.push(id); continue; }
+      if (!updated) continue;
+      results.push(updated);
+    }
+    queueUpsert("updateContactsByIdSet", results);
+    queueDelete("updateContactsByIdSet", deletedIds);
+    return results.map(clone);
+  }
   for (const id of idSet) {
     const existing = _byId.get(id);
     if (!existing) continue;
@@ -450,7 +659,7 @@ function flushEngagementUpdates() {
 // the updated records so callers can re-sync exactly those elsewhere.
 export function updateAllContactsByField(field, value, updater) {
   assertLoaded();
-  const matched = _cache.filter(c => c[field] === value);
+  const matched = _remote ? remoteByField(field, value) : _cache.filter(c => c[field] === value);
   return updateContactsByIdSet(new Set(matched.map(c => c.id)), updater);
 }
 
@@ -459,6 +668,16 @@ export function updateAllContactsByField(field, value, updater) {
 export function removeValuesFromContactsArrayField(fieldName, valuesToRemove) {
   assertLoaded();
   const removeSet = new Set(valuesToRemove);
+  if (_remote) {
+    const col = { tags: "tags", listIds: "list_ids" }[fieldName];
+    const candidates = col && !_pendingFull
+      ? [...remoteById(_remote(`SELECT id FROM contacts WHERE ${col} && $1::text[]`, [[...removeSet]]).map(r => r.id).concat([..._overlay.keys()])).values()]
+      : remoteAll();
+    const affected = candidates.filter(c => Array.isArray(c[fieldName]) && c[fieldName].some(v => removeSet.has(v)));
+    for (const c of affected) c[fieldName] = c[fieldName].filter(v => !removeSet.has(v));
+    queueUpsert("removeValuesFromContactsArrayField", affected);
+    return affected.length;
+  }
   const affected = _cache.filter(c => Array.isArray(c[fieldName]) && c[fieldName].some(v => removeSet.has(v)));
   for (const c of affected) c[fieldName] = c[fieldName].filter(v => !removeSet.has(v));
   queueUpsert("removeValuesFromContactsArrayField", affected);
@@ -469,6 +688,20 @@ export function removeValuesFromContactsArrayField(fieldName, valuesToRemove) {
 // one shot. Other threads get a single "full" notification and reload.
 export function writeAllContacts(contacts) {
   assertLoaded();
+  if (_remote) {
+    const newIds = new Set(contacts.map(c => c.id));
+    const removedIds = remoteAll().filter(c => !newIds.has(c.id)).map(c => c.id);
+    const list = contacts.map(clone);
+    const full = { list, byId: new Map(list.map(c => [c.id, c])) };
+    _pendingFull = full;
+    const done = enqueue("writeAllContacts", async (client) => {
+      await upsertRows(client, list);
+      if (removedIds.length) await client.query("DELETE FROM contacts WHERE id = ANY($1)", [removedIds]);
+      await notify(client, { full: 1 });
+    });
+    done.finally(() => { if (_pendingFull === full) _pendingFull = null; });
+    return;
+  }
   const newIds = new Set(contacts.map(c => c.id));
   const removedIds = _cache.filter(c => !newIds.has(c.id)).map(c => c.id);
   _cache = contacts.map(clone);
@@ -490,6 +723,7 @@ export function deleteContact(id) { return deleteContacts([id]); }
 export function deleteContacts(ids) {
   assertLoaded();
   const idSet = new Set(ids);
+  if (_remote) { queueDelete("deleteContacts", [...idSet]); return; }
   _cache = _cache.filter(c => !idSet.has(c.id));
   rebuildIndex();
   queueDelete("deleteContacts", [...idSet]);
@@ -502,7 +736,7 @@ export function exportContactsSnapshotIfDue(maxAgeMs = 24 * 60 * 60 * 1000) {
   assertLoaded();
   const p = join(DATA_DIR, CONTACTS_EXPORT_FILE);
   try { if (Date.now() - statSync(p).mtimeMs < maxAgeMs) return false; } catch { /* no export yet */ }
-  writeJson(CONTACTS_EXPORT_FILE, _cache);
+  writeJson(CONTACTS_EXPORT_FILE, _remote ? remoteAll() : _cache);
   console.log(`[contacts_db] wrote ${CONTACTS_EXPORT_FILE} (${_cache.length} contacts)`);
   return true;
 }

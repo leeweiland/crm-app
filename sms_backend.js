@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import twilio from "twilio";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getContactById, findContactByPhoneDigits } from "./contacts_db.js";
 import { logMessage, updateMessageStatusByProviderId } from "./message_log.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSmsWorker } from "./sms_worker_handle.js";
@@ -82,14 +82,7 @@ export const FOREIGN_NANP_AREA_CODES = new Set([
   "664", "721", "758", "767", "784", "809", "829", "849", "868", "869", "876",
 ]);
 function getContact(id) { return getContactById(id); }
-function findContactByPhone(phone) {
-  const digits = String(phone || "").replace(/\D/g, "").slice(-10);
-  return getAllContacts().find(c =>
-    String(c.phone || "").replace(/\D/g, "").slice(-10) === digits ||
-    (c.altPhones || []).some(p => String(p || "").replace(/\D/g, "").slice(-10) === digits) ||
-    (c.hyrosPhones || []).some(p => String(p || "").replace(/\D/g, "").slice(-10) === digits)
-  ) || null;
-}
+function findContactByPhone(phone) { return findContactByPhoneDigits(phone); }
 
 // Shared send primitive, same shape/convention as email_backend.js's
 // sendEmail() -- imported directly by workflows_backend.js and (later)

@@ -11,15 +11,12 @@
 // sendEmail call, a slow contact write) is never waiting behind an
 // unrelated scheduler phase, and vice versa.
 import { advanceDueEnrollments } from "./automations_backend.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { initWorkerContacts } from "./contacts_db.js";
 
-// Same reasoning as every other worker file's own loadContactsCache() call
-// -- worker_threads get their own independent module registry, so this
-// thread's copy of contacts_db.js has its own empty cache the main
-// thread's load never populates. advanceDueEnrollments resolves contacts
-// via getContact()/sendEmail(), so this must be loaded here too,
-// independently, before any enrollment can advance.
-await loadContactsCache();
+// No contacts copy on this thread: reads go straight to Postgres (see
+// contacts_db.js "Remote mode"). Only the main thread and
+// background_worker.js (the scheduler's whole-list jobs) keep a full copy.
+await initWorkerContacts("automation-send-worker");
 
 const CHECK_MS = 30 * 1000;
 let running = false;

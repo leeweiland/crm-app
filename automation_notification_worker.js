@@ -14,9 +14,12 @@
 // busiest gets moved first."
 import { parentPort } from "worker_threads";
 import { processSesNotificationMessage } from "./email_backend.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { initWorkerContacts } from "./contacts_db.js";
 
-await loadContactsCache();
+// No contacts copy on this thread: reads go straight to Postgres (see
+// contacts_db.js "Remote mode"). Only the main thread and
+// background_worker.js (the scheduler's whole-list jobs) keep a full copy.
+await initWorkerContacts("automation-notification-worker");
 
 function reply(msg, err) {
   if (msg?.replyId) parentPort.postMessage({ type: "relay_result", replyId: msg.replyId, ok: !err, error: err?.message });

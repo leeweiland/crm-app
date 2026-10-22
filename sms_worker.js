@@ -19,15 +19,12 @@
 // yet."
 import { parentPort } from "worker_threads";
 import { processTwilioStatusUpdate, processTwilioInboundMessage } from "./sms_backend.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { initWorkerContacts } from "./contacts_db.js";
 
-// Same reasoning as background_worker.js/send_worker.js's own call --
-// worker_threads get their own independent module registry, so this
-// thread's copy of contacts_db.js has its own empty cache the main
-// thread's load never populates. processTwilioInboundMessage resolves the
-// sender via findContactByPhone (getAllContacts()), so this must be loaded
-// here too, independently, before any inbound message can be matched.
-await loadContactsCache();
+// No contacts copy on this thread: reads go straight to Postgres (see
+// contacts_db.js "Remote mode"). Only the main thread and
+// background_worker.js (the scheduler's whole-list jobs) keep a full copy.
+await initWorkerContacts("sms-worker");
 
 // replyId handling mirrors background_worker.js's own reply() exactly --
 // webhook_relay_backend.js's dispatchToWorker() round-trips a correlated

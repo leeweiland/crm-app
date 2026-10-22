@@ -23,7 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "fs";
 import { join } from "path";
 import { DATA_DIR, readJson } from "./auth_backend.js";
-import { getAllContacts, getContactById } from "./contacts_db.js";
+import { getAllContacts, getContactById, getContactsByIds } from "./contacts_db.js";
 
 // Declared locally rather than imported from scheduling_backend.js, which
 // already imports syncContactFields from THIS file -- that import would be
@@ -892,9 +892,7 @@ export function getContactsByIdsFast(ids) {
   const result = new Map();
   if (!uniqueIds.length) return result;
   if (!sqliteInboxAvailable()) {
-    const contacts = getAllContacts();
-    const idSet = new Set(uniqueIds);
-    for (const c of contacts) if (idSet.has(c.id)) result.set(c.id, c);
+    for (const c of getContactsByIds(uniqueIds)) result.set(c.id, c);
     return result;
   }
   const CHUNK = 500;

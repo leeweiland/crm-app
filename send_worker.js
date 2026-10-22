@@ -26,15 +26,14 @@
 import { parentPort } from "worker_threads";
 import { runCampaignSendLoop, sendCampaignNow, CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { processSesNotificationMessage } from "./email_backend.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { initWorkerContacts } from "./contacts_db.js";
 import { readJson } from "./auth_backend.js";
 
-// Same reasoning as background_worker.js's own loadContactsCache() call --
-// worker_threads get their own independent module registry, so this
-// thread's copy of contacts_db.js has its own empty cache the main
-// thread's load never populates. runCampaignSendLoop resolves recipients
-// via getAllContacts(), so this must happen before any send can run here.
-await loadContactsCache();
+// No contacts copy on this thread: reads go straight to Postgres (see
+// contacts_db.js "Remote mode"). Only the main thread and
+// background_worker.js (the scheduler's whole-list jobs) keep a full copy.
+// runCampaignSendLoop's recipient list is one full read per send start.
+await initWorkerContacts("send-worker");
 
 // Self-sufficient due/stuck-campaign check -- NOT delegated to
 // scheduler.js's tick (which deliberately skips this when SEND_WORKER=1;

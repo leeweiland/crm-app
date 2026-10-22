@@ -7,13 +7,12 @@
 // email automations -- never isolated because nothing had stressed it yet,
 // not because it was judged safe to share a thread.
 import { advanceDueWorkflowEnrollments } from "./workflows_backend.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { initWorkerContacts } from "./contacts_db.js";
 
-// Same reasoning as every other worker file's own loadContactsCache() call
-// -- this thread's copy of contacts_db.js has its own empty cache the main
-// thread's load never populates. advanceDueWorkflowEnrollments resolves
-// contacts via getContact()/sendSms(), so this must be loaded here too.
-await loadContactsCache();
+// No contacts copy on this thread: reads go straight to Postgres (see
+// contacts_db.js "Remote mode"). Only the main thread and
+// background_worker.js (the scheduler's whole-list jobs) keep a full copy.
+await initWorkerContacts("sequence-send-worker");
 
 const CHECK_MS = 30 * 1000;
 let running = false;

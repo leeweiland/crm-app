@@ -29,7 +29,7 @@ import pg from "pg";
 import { processSesNotificationMessage } from "./email_backend.js";
 import { updateMessageStatusesByProviderIdBatch } from "./message_log.js";
 import { withEnrollmentBatch } from "./automation_enrollments_db.js";
-import { loadContactsCache } from "./contacts_db.js";
+import { initWorkerContacts } from "./contacts_db.js";
 import { markContactEmailEngagement, suppressContactEmail } from "./contacts_backend.js";
 import { fireTrigger } from "./automations_backend.js";
 import { fireWorkflowTrigger } from "./workflows_backend.js";
@@ -39,13 +39,10 @@ import { getComplianceSettings } from "./integrations_backend.js";
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 
-// Same reasoning as every other worker file's own loadContactsCache() call
-// -- worker_threads get their own independent module registry, so this
-// thread's copy of contacts_db.js has its own empty cache the main thread's
-// load never populates. processSesNotificationMessage resolves contacts
-// via getContact()/markContactEmailEngagement(), so this must be loaded
-// here too, independently, before any notification can be processed.
-await loadContactsCache();
+// No contacts copy on this thread: reads go straight to Postgres (see
+// contacts_db.js "Remote mode"). Only the main thread and
+// background_worker.js (the scheduler's whole-list jobs) keep a full copy.
+await initWorkerContacts("ses-notification-worker");
 
 // Reverted (2026-10-08) -- suppressing the sidebar recompute, in any
 // scope, is off the table per direct instruction. The backlog drain
