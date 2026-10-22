@@ -5,6 +5,7 @@
 //
 //   node backchannel/messages_backfill.mjs schema      create tables (no indexes yet)
 //   node backchannel/messages_backfill.mjs contacts    msg_by_contact/ (+ status overlays) -> messages; resumable
+//   node backchannel/messages_backfill.mjs missing     contacts with messages but no rows yet (damaged files salvaged)
 //   node backchannel/messages_backfill.mjs unmatched   rows with no contact, from crm_message_log.json
 //   node backchannel/messages_backfill.mjs finish      indexes, daily-stats rebuild + triggers, ANALYZE
 //   node backchannel/messages_backfill.mjs catchup [--deploy=<iso>]
@@ -47,8 +48,38 @@ const saveState = (s) => writeFileSync(STATE_FILE, JSON.stringify(s, null, 1));
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(`[messages-backfill ${new Date().toISOString()}]`, ...a);
 
+// A file cut off mid-write (some contact files are) still holds every record
+// before the cut: keep those instead of skipping the contact.
 function readJsonFile(p, fallback) {
-  try { return JSON.parse(readFileSync(p, "utf8")); } catch (e) { if (e.code === "ENOENT") return fallback; throw e; }
+  try { return JSON.parse(readFileSync(p, "utf8")); }
+  catch (e) {
+    if (e.code === "ENOENT") return fallback;
+    const out = [];
+    try { forEachJsonArrayElement(p, (buf, s, en) => { try { out.push(JSON.parse(buf.toString("utf8", s, en))); } catch { /* the cut-off record */ } }); }
+    catch { throw e; }
+    log(`  salvaged ${out.length} complete records from damaged ${path.basename(path.dirname(p))}/${path.basename(p)} (${e.message})`);
+    salvagedFiles++;
+    return out;
+  }
+}
+let salvagedFiles = 0;
+
+// Backs off while the CRM itself is slow to answer, so the copy never
+// competes with real users (checked every few batches, on this container).
+const CRM_URL = `http://127.0.0.1:${process.env.PORT || 8080}/login.html`;
+let batchesSinceCheck = 0;
+async function yieldToCrm() {
+  if (++batchesSinceCheck < 5) return;
+  batchesSinceCheck = 0;
+  for (let waited = 0; ; waited += 20) {
+    const t = Date.now();
+    try { await fetch(CRM_URL, { signal: AbortSignal.timeout(15000) }); }
+    catch (e) { if (e.name !== "TimeoutError") return; /* no CRM listening here (e.g. a local test run) */ }
+    const ms = Date.now() - t;
+    if (ms < 800) return;
+    if (waited % 120 === 0) log(`  CRM answered in ${ms}ms -- pausing the copy`);
+    await sleep(20000);
+  }
 }
 // Exactly message_index.js's getContactMessages fold (file mode): base rows
 // with their status-overlay events applied in order.
@@ -94,6 +125,7 @@ async function writeRows(rows, { upsert = false } = {}) {
     );
     written += r.rowCount;
     if (PAUSE_MS) await sleep(PAUSE_MS);
+    await yieldToCrm();
   }
   return written;
 }
@@ -134,7 +166,7 @@ async function phaseContacts() {
   if (pending.length) rowsWritten += await writeRows(pending);
   Object.assign(state, { contactsNext: files.length, contactsRowsSeen: rowsSeen, contactsRowsWritten: rowsWritten, contactsDoneAt: new Date().toISOString() });
   saveState(state);
-  log(`contacts done: ${rowsSeen} rows read, ${rowsWritten} inserted (${rowsSeen - rowsWritten} were duplicates of an id already copied)`);
+  log(`contacts done: ${rowsSeen} rows read, ${rowsWritten} inserted (${rowsSeen - rowsWritten} were duplicates of an id already copied), ${salvagedFiles} damaged files salvaged`);
 }
 
 // Rows with no contact live only in the main log (msg_by_contact is keyed
@@ -162,6 +194,27 @@ async function phaseUnmatched() {
   Object.assign(state, { unmatchedScanned: scanned, unmatchedFound: found.length, unmatchedWritten: written, unmatchedLogSize: size, unmatchedDoneAt: new Date().toISOString() });
   saveState(state);
   log(`unmatched done: ${scanned} rows scanned, ${found.length} with no contact, ${written} inserted`);
+}
+
+// Contacts whose file holds messages but who have no rows in Postgres (an
+// earlier run skipped damaged files) -- copied now, salvaging what's readable.
+async function phaseMissing() {
+  const files = readdirSync(CONTACT_DIR).filter(f => f.endsWith(".json")).sort();
+  let fixed = 0, rows = 0;
+  for (let i = 0; i < files.length; i += 2000) {
+    const ids = files.slice(i, i + 2000).map(f => f.slice(0, -5));
+    const have = new Set((await pool.query(`SELECT DISTINCT contact_id FROM messages WHERE contact_id = ANY($1)`, [ids])).rows.map(r => r.contact_id));
+    for (const id of ids) {
+      if (have.has(id)) continue;
+      let msgs;
+      try { msgs = contactMessagesFromFiles(id).filter(m => m?.id).map(m => (m.contactId ? m : { ...m, contactId: id })); }
+      catch (e) { log(`  still unreadable: ${id}: ${e.message}`); continue; }
+      if (!msgs.length) continue;
+      rows += await writeRows(msgs);
+      fixed++;
+    }
+  }
+  log(`missing done: ${fixed} contacts copied (${rows} rows), ${salvagedFiles} damaged files salvaged`);
 }
 
 async function phaseFinish() {
@@ -282,7 +335,7 @@ async function phaseVerify() {
 }
 
 const phase = process.argv[2];
-const phases = { schema: phaseSchema, contacts: phaseContacts, unmatched: phaseUnmatched, finish: phaseFinish, catchup: phaseCatchup, verify: phaseVerify };
+const phases = { schema: phaseSchema, contacts: phaseContacts, missing: phaseMissing, unmatched: phaseUnmatched, finish: phaseFinish, catchup: phaseCatchup, verify: phaseVerify };
 if (!phases[phase]) { console.error(`usage: messages_backfill.mjs <${Object.keys(phases).join("|")}>`); process.exit(2); }
 try { await phases[phase](); }
 catch (e) { log(`FAILED in ${phase}:`, e.stack || e.message); process.exitCode = 1; }
