@@ -20,14 +20,18 @@
 //   worker -> { type: "ready" }                  once contacts are loaded
 //   worker -> { type: "result", id, ok, result | error }
 import os from "os";
-import { loadContactsCache } from "./contacts_db.js";
+import { loadContactsCache, useContactsFromPostgres } from "./contacts_db.js";
+import { REPORTS_PG, ensureReportFunctions } from "./reports_pg.js";
 import { REPORT_JOBS } from "./reporting_backend.js";
 
 try { os.setPriority(0, 19); } catch { /* best effort */ }
 
 const mb = () => Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
 const t0 = Date.now();
-await loadContactsCache();
+// With messages + records in Postgres the reports query just the rows they
+// count (reports_pg.js), so this process holds no copy of the contacts.
+if (REPORTS_PG) { await useContactsFromPostgres("report-worker"); ensureReportFunctions(); }
+else await loadContactsCache();
 console.log(`[report-worker] ready in ${Date.now() - t0}ms (heap ${mb()}MB)`);
 process.send({ type: "ready" });
 

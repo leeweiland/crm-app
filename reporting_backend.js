@@ -17,6 +17,10 @@ import { getCachedTestContactIds, TAGS_FILE } from "./contacts_backend.js";
 import { getContactByIdFast, getContactsByIdsFast } from "./sqlite_inbox.js";
 import { isYouTubeVideoId, lookupVideoTitles } from "./youtube_backend.js";
 import { runReportJob } from "./report_worker_client.js";
+// With messages + records in Postgres, the reports below read just the rows
+// they count (reports_pg.js) instead of every contact and every message file.
+import * as rpg from "./reports_pg.js";
+import { REPORTS_PG } from "./reports_pg.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
 // directly (12+GB and growing; a full scan blocks the whole single-threaded
@@ -107,7 +111,7 @@ function excludeTestContacts(messages) {
   // Falls back to computing live only on a cold start, before the
   // scheduler's first tick has populated that cache yet.
   const cached = getCachedTestContactIds();
-  const testIds = new Set(cached ?? getAllContacts().filter(c => c.testContact).map(c => c.id));
+  const testIds = new Set(cached ?? (REPORTS_PG ? rpg.testContactIds() : getAllContacts().filter(c => c.testContact).map(c => c.id)));
   return messages.filter(m => !testIds.has(m.contactId));
 }
 
@@ -117,6 +121,11 @@ function excludeTestContacts(messages) {
 // getMessagesForSource's own comment on why this is never a message-log
 // scan), just summed across all of them instead of one at a time.
 function statsFromSources(sourceType, sourceIds, startMs, endMs, statsFn) {
+  if (REPORTS_PG) {
+    const testIds = getCachedTestContactIds() ?? rpg.testContactIds();
+    const messages = rpg.sourceMessagesInRange(sourceType, sourceIds, startMs, endMs, [...testIds]);
+    return { stats: (statsFn || statsFromMessages)(messages), messages };
+  }
   const messages = sourceIds.flatMap(id => excludeTestContacts(getMessagesForSource(sourceType, id)))
     .filter(m => { const t = new Date(m.sentAt || 0).getTime(); return t >= startMs && t <= endMs; });
   return { stats: (statsFn || statsFromMessages)(messages), messages };
@@ -145,6 +154,9 @@ function countReplies(sentMessages, channel, endMs) {
     }
   }
   let replies = 0;
+  // Postgres: every candidate contact's inbound messages on this channel in
+  // one query, instead of reading each contact's whole history.
+  const inboundPg = REPORTS_PG ? rpg.inboundByContact([...earliestSendByContact.keys()], channel) : null;
   for (const [contactId, sentAtMs] of earliestSendByContact) {
     // Precise match first: In-Reply-To/References (see gmail_backend.js's
     // processGmailMessage) names the exact provider message id this is
@@ -157,7 +169,7 @@ function countReplies(sentMessages, channel, endMs) {
     // silently has nothing to match for older sends; falls through to the
     // timing heuristic below for exactly those, not a hard requirement.
     const providerIds = providerIdsByContact.get(contactId) || [];
-    const contactMessages = getContactMessages(contactId);
+    const contactMessages = inboundPg ? (inboundPg.get(contactId) || []) : getContactMessages(contactId);
     const preciseMatch = providerIds.length && contactMessages.some(m =>
       m.channel === channel && m.direction === "inbound" && m.inReplyTo && providerIds.some(pid => m.inReplyTo.includes(pid))
     );
@@ -259,9 +271,12 @@ export function computeAttribution(startMs, endMs) {
   // report's own numbers would otherwise get real click/opt-in counts
   // muddied by whoever's own test contact (e.g. sending themselves test
   // links while building/verifying this exact feature).
-  const contacts = reportContacts().filter(c => !c.testContact);
-  const contactsById = new Map(contacts.map(c => [c.id, c]));
   const visits = readJson(PAGE_VISITS_FILE, []);
+  // Postgres: only the contacts this report can count -- ones with a tagged
+  // visit (fetched once the visits are folded, below) and the Hyros-tag
+  // candidates -- never all of them; anyone else is looked up on demand.
+  const contacts = REPORTS_PG ? null : reportContacts().filter(c => !c.testContact);
+  const contactsById = REPORTS_PG ? new rpg.LazyContactMap() : new Map(contacts.map(c => [c.id, c]));
   const bookedContactIds = new Set(readJson(BOOKINGS_FILE, []).map(b => b.contactId));
 
   const visitStats = new Map(); // key -> {visits, visitorIds:Set}
@@ -281,6 +296,8 @@ export function computeAttribution(startMs, endMs) {
       if (!existing || atMs < existing.atMs) firstTouchByContact.set(v.contactId, { key, atMs, inferred: !!v.inferred });
     }
   }
+
+  if (REPORTS_PG) contactsById.prefetch([...firstTouchByContact.keys()]);
 
   // byElStage powers the drill-down endpoint -- "key|stage" -> Set(contactId).
   // Keyed by the same attributionKeyForVisit value as everything else here
@@ -319,7 +336,7 @@ export function computeAttribution(startMs, endMs) {
   const tagInfo = hyrosTagInfo();
   if (tagInfo.sourceKeyById.size) {
     const addHy = (key, stage, id) => { const k = `${key}|${stage}`; if (!hyrosByStage.has(k)) hyrosByStage.set(k, new Set()); hyrosByStage.get(k).add(id); };
-    for (const c of contacts) {
+    for (const c of (REPORTS_PG ? rpg.hyrosCandidates([...tagInfo.sourceKeyById.keys()]) : contacts)) {
       const imported = c.source === "hyros_import";
       if (firstTouchByContact.has(c.id) || (!imported && !c.tags?.length)) continue;
       let keys = null;
@@ -423,7 +440,9 @@ export function computeEventAttribution(startStr, endStr, attribution) {
   const bySource = new Map(), byKeyStage = new Map();
   const attributed = { online: { emails: 0, bookM: 0 }, gym: { emails: 0, bookM: 0 } };
   let inferred = 0; // credited via a timing-inferred link (attribution_backfill.js), not a recorded sign-up beacon
-  for (const ev of crmEventRuns(crmStartMs, crmEndMs)) {
+  const events = crmEventRuns(crmStartMs, crmEndMs);
+  contactsById.prefetch?.(events.map(e => e.contactId).filter(Boolean));
+  for (const ev of events) {
     const contact = ev.contactId ? contactsById.get(ev.contactId) : null;
     const key = contact ? touchKeyForContact(contact, firstTouchByContact) : null;
     if (!key) continue;
@@ -727,23 +746,26 @@ export async function reportSentByUser(params = {}) {
   const { startMs, endMs } = rangeFromStrings(params.start, params.end);
   const OWNED_CONTACT_SCAN_CAP = 300;
   const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
-  const allContacts = reportContacts().filter((c) => !c.testContact);
+  const allContacts = REPORTS_PG ? null : reportContacts().filter((c) => !c.testContact);
   const rows = users.map((u) => {
-    const contacts = allContacts
-      .filter((c) => c.ownerId === u.id)
-      .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
-      .slice(0, OWNED_CONTACT_SCAN_CAP);
+    const contacts = REPORTS_PG
+      ? rpg.recentOwnedContactIds(u.id, OWNED_CONTACT_SCAN_CAP).map(id => ({ id }))
+      : allContacts
+        .filter((c) => c.ownerId === u.id)
+        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
+        .slice(0, OWNED_CONTACT_SCAN_CAP);
     const email = emptySentCounts();
     const sms = emptySentCounts();
     // Inbound only ever counted from these SAME owned/real contacts --
     // never a raw mailbox/phone-line count, which would pull in whatever
     // unrelated mail a connected inbox happens to receive.
     let emailReceived = 0, smsReceived = 0;
-    for (const c of contacts) {
-      for (const m of getContactMessages(c.id)) {
+    // Postgres: these contacts' email/SMS already limited to the range.
+    const inRange = REPORTS_PG ? rpg.emailSmsInRange(contacts.map(c => c.id), startMs, endMs) : null;
+    for (const c of (inRange ? [null] : contacts)) {
+      for (const m of (inRange || getContactMessages(c.id))) {
         if (m.channel !== "email" && m.channel !== "sms") continue;
-        const t = new Date(m.createdAt).getTime();
-        if (!(t >= startMs && t <= endMs)) continue;
+        if (!inRange) { const t = new Date(m.createdAt).getTime(); if (!(t >= startMs && t <= endMs)) continue; }
         if (m.direction === "inbound") { if (m.channel === "email") emailReceived++; else smsReceived++; continue; }
         if (m.direction !== "outbound") continue;
         const cat = sentCategoryForSourceType(m.sourceType);
@@ -795,7 +817,7 @@ export async function reportAttributionContacts(params = {}) {
   if (!ids.length) return ({ contacts: [] });
   // A Hyros source tag can hold thousands of contacts -- list the first 500 and say how many there are.
   const need = new Set(ids.slice(0, 500));
-  const list = reportContacts().filter(c => need.has(c.id));
+  const list = REPORTS_PG ? rpg.contactsByIds([...need]) : reportContacts().filter(c => need.has(c.id));
   return ({ contacts: list, total: ids.length, truncated: ids.length > list.length });
 }
 export async function reportContactClicks(params = {}) {
