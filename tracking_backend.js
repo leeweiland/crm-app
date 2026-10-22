@@ -6,6 +6,7 @@ import { markContactVisitedPage } from "./contacts_backend.js";
 import { queueBehavioralTrigger, parseVisitContext } from "./behavioral_triggers_backend.js";
 import { findContactMatch } from "./segments_shared.js";
 import { getAllContacts } from "./contacts_db.js";
+import { isPgRecordFile, claimVisits } from "./records_db.js";
 
 export const PAGE_VISITS_FILE = "crm_page_visits.json";
 const IP_LOCATION_CACHE_FILE = "crm_ip_location_cache.json";
@@ -313,6 +314,7 @@ export async function handleTrackingRequest(req, res, url) {
 // hasn't been updated on every page yet) -- just finds nothing to claim.
 export function claimVisitorHistory(vid, contactId) {
   if (!vid || !contactId) return 0;
+  if (isPgRecordFile(PAGE_VISITS_FILE)) return claimVisits(PAGE_VISITS_FILE, vid, contactId);
   const visits = readJson(PAGE_VISITS_FILE, []);
   let claimed = 0;
   for (const v of visits) {

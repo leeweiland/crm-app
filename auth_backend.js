@@ -2,6 +2,10 @@ import { readFileSync, writeFileSync, existsSync, statSync, openSync, writeSync,
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "crypto";
+// RECORDS_STORE=pg (2026-10-22): page visits, bookings and flow runs live in
+// Postgres (records_db.js); every helper below routes those files there.
+import * as recordsDb from "./records_db.js";
+import { isPgRecordFile } from "./records_db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -195,6 +199,7 @@ function readJsonArrayStreaming(p) {
 // streams via forEachJsonArrayElement and only ever parses+keeps elements
 // that already pass the predicate.
 export function readJsonArrayFiltered(file, predicate) {
+  if (isPgRecordFile(file)) return recordsDb.readAll(file).filter(predicate);
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return [];
   const stat = statSync(p);
@@ -222,6 +227,7 @@ export function readJsonArrayFiltered(file, predicate) {
 // be this hot, regardless of its current byte size relative to the
 // general-purpose threshold.
 export function streamJsonArrayFiltered(file, predicate) {
+  if (isPgRecordFile(file)) return recordsDb.readAll(file).filter(predicate);
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return [];
   const results = [];
@@ -243,6 +249,7 @@ export function streamJsonArrayFiltered(file, predicate) {
 // from millions of messages across all contacts" -- this is the one to use
 // for that shape of query instead.
 export function reduceJsonArray(file, reducer, initial) {
+  if (isPgRecordFile(file)) return recordsDb.readAll(file).reduce(reducer, initial);
   const p = join(DATA_DIR, file);
   let acc = initial;
   if (!existsSync(p)) return acc;
@@ -285,6 +292,7 @@ function insertTopK(top, obj, k, compareFn) {
   if (top.length > k) top.length = k;
 }
 export function topKJsonArray(file, predicate, k, compareFn) {
+  if (isPgRecordFile(file)) { const top = []; for (const el of recordsDb.readAll(file)) if (predicate(el)) insertTopK(top, el, k, compareFn); return top; }
   const p = join(DATA_DIR, file);
   const top = [];
   if (!existsSync(p)) return top;
@@ -300,7 +308,9 @@ export function topKJsonArray(file, predicate, k, compareFn) {
   });
   return top;
 }
+function appendPgRecords(file, list) { recordsDb.append(file, list || []); }
 export function readJson(file, fallback) {
+  if (isPgRecordFile(file)) return recordsDb.readAll(file);
   const p = join(DATA_DIR, file);
   if (_batchIo && _jsonCache.has(file)) return _jsonCache.get(file);
   // A missing file is a normal, expected case (first run, not-yet-created
@@ -486,6 +496,7 @@ function writeJsonToDisk(p, data) {
   });
 }
 export function writeJson(file, data) {
+  if (isPgRecordFile(file)) { recordsDb.writeAll(file, data); return; }
   // Temporary diagnostic: crm_users.json has been found wiped down to a
   // single account (with no delete endpoint anywhere in this codebase to
   // explain it) more than once. Every writeJson(USERS_FILE, ...) call logs
@@ -596,6 +607,7 @@ export function scanJsonArrayFieldSets(file, fieldNames) {
 // re-scanning the file. Backward compatible -- every existing caller
 // ignores the return value already, same as when this returned undefined.
 export function appendJsonRecordFast(file, record) {
+  if (isPgRecordFile(file)) { recordsDb.append(file, [record]); return null; }
   const p = join(DATA_DIR, file);
   const json = JSON.stringify(record);
   if (!existsSync(p)) { writeJsonToDisk(p, [record]); return { offset: 1, length: Buffer.byteLength(json, "utf8") }; }
@@ -660,6 +672,7 @@ export function appendJsonRecordFast(file, record) {
 // per record in the batch. Backward compatible -- existing callers that
 // ignore the return value are unaffected.
 export function appendJsonRecordsFast(file, records) {
+  if (isPgRecordFile(file)) { appendPgRecords(file, records); return []; }
   if (!records || !records.length) return [];
   const p = join(DATA_DIR, file);
   const jsons = records.map((r) => JSON.stringify(r));
@@ -808,6 +821,7 @@ export function appendToJsonObjectsFast(file, entries) {
 }
 
 export function appendJsonRecords(file, newRecords) {
+  if (isPgRecordFile(file)) { appendPgRecords(file, newRecords); return; }
   if (!newRecords || !newRecords.length) return;
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) { writeJsonToDisk(p, newRecords); return; }
@@ -882,6 +896,7 @@ export function appendJsonRecords(file, newRecords) {
 // change, not "instant" updates -- a genuinely fast single-record update
 // needs a real index, not a full-file rewrite.
 export function updateJsonArrayRecordByField(file, field, value, updater) {
+  if (isPgRecordFile(file)) return recordsDb.updateFirstByField(file, field, value, updater);
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return null;
   return withFileLock(p, () => {
@@ -939,6 +954,7 @@ export function updateJsonArrayRecordByField(file, field, value, updater) {
 // rewrite hung the single-threaded server outright (14+ minutes with zero
 // write progress) the next time anyone merged a duplicate contact.
 export function updateAllJsonArrayRecordsByField(file, field, value, updater) {
+  if (isPgRecordFile(file)) return recordsDb.updateAllByField(file, field, value, updater);
   const p = join(DATA_DIR, file);
   if (!existsSync(p)) return 0;
   return withFileLock(p, () => {
@@ -1005,6 +1021,7 @@ export function updateAllJsonArrayRecordsByField(file, field, value, updater) {
 // real match, so the byte pre-check only needs to be a superset, never a
 // subset, of the real matches.
 export function removeValuesFromArrayField(file, fieldName, valuesToRemove) {
+  if (isPgRecordFile(file)) return recordsDb.removeValuesFromField(file, fieldName, valuesToRemove);
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !valuesToRemove || !valuesToRemove.length) return 0;
   return withFileLock(p, () => {
@@ -1044,6 +1061,7 @@ export function removeValuesFromArrayField(file, fieldName, valuesToRemove) {
 }
 
 export function updateJsonArrayRecordsByIds(file, ids, updater) {
+  if (isPgRecordFile(file)) return ids && ids.length ? recordsDb.updateByIds(file, ids, updater) : [];
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !ids || !ids.length) return [];
   return withFileLock(p, () => {
@@ -1097,6 +1115,7 @@ export function updateJsonArrayRecordsByIds(file, ids, updater) {
 // writes, but hand-edited data exists) falls back to a real parse rather than
 // being skipped.
 export function updateJsonArrayRecordsByIdSet(file, idSet, updater) {
+  if (isPgRecordFile(file)) return idSet && idSet.size ? recordsDb.updateByIds(file, [...idSet], updater) : [];
   const p = join(DATA_DIR, file);
   if (!existsSync(p) || !idSet || !idSet.size) return [];
   return withFileLock(p, () => {
