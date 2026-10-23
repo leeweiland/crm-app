@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Financials — CRM</title>
+<link rel="stylesheet" href="/crm-design-system.css"/>
+<style>
+  .fin-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+  .fin-toolbar .pra-input, .fin-toolbar .pra-select { width: auto; }
+  .fin-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .fin-card { padding: 14px 16px; }
+  .fin-card .lbl { font-size: .74rem; color: var(--pra-dim); text-transform: uppercase; letter-spacing: .04em; }
+  .fin-card .val { font-size: 1.4rem; font-weight: 700; margin-top: 4px; }
+  .fin-card .sub { font-size: .76rem; color: var(--pra-dim); margin-top: 2px; }
+  .fin-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+  @media (max-width: 900px) { .fin-grid2 { grid-template-columns: 1fr; } }
+  .num { text-align: right; white-space: nowrap; }
+  .fin-neg { color: var(--pra-red, #e5484d); }
+  .fin-dim td { opacity: .5; }
+  .fin-sources { font-size: .78rem; display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div class="pra-root">
+  <div class="app-shell">
+    <div class="app-sidebar" id="appSidebar"></div>
+    <div class="app-main">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+        <div class="pra-h1">Financials</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="pra-btn pra-btn-outline pra-btn-sm" id="syncBtn">Sync now</button>
+          <a class="pra-btn pra-btn-ghost pra-btn-sm" href="/settings.html#financials">Settings</a>
+        </div>
+      </div>
+      <div class="fin-sources" id="sources"></div>
+
+      <div class="fin-toolbar">
+        <select class="pra-select pra-input" id="period">
+          <option value="this-month">This month</option>
+          <option value="last-month">Last month</option>
+          <option value="last-30">Last 30 days</option>
+          <option value="last-90">Last 90 days</option>
+          <option value="ytd">Year to date</option>
+          <option value="last-year">Last year</option>
+          <option value="all">Last 3 years</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input class="pra-input" type="date" id="startDate" style="display:none"/>
+        <input class="pra-input" type="date" id="endDate" style="display:none"/>
+      </div>
+
+      <div class="fin-cards" id="cards"></div>
+
+      <div class="fin-grid2">
+        <div class="pra-panel" style="padding:16px">
+          <div class="pra-h2" style="font-size:1rem;margin-bottom:10px">By processor</div>
+          <table class="data-table" id="byProvider"></table>
+        </div>
+        <div class="pra-panel" style="padding:16px">
+          <div class="pra-h2" style="font-size:1rem;margin-bottom:10px">By month</div>
+          <table class="data-table" id="byMonth"></table>
+        </div>
+      </div>
+
+      <div class="pra-panel" style="padding:16px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <div class="pra-h2" style="font-size:1rem;margin-right:auto">Transactions</div>
+          <input class="pra-input" id="search" placeholder="Search payer, email, description…" style="width:240px"/>
+          <select class="pra-select pra-input" id="providerFilter" style="width:auto">
+            <option value="">All processors</option><option value="paypal">PayPal</option><option value="wise">Wise</option><option value="kurv">Kurv</option><option value="swipesimple">SwipeSimple</option><option value="other">Other</option>
+          </select>
+          <select class="pra-select pra-input" id="kindFilter" style="width:auto">
+            <option value="revenue">Sales, refunds &amp; chargebacks</option><option value="">Everything</option><option value="payment">Sales only</option><option value="refund">Refunds</option><option value="chargeback">Chargebacks</option><option value="transfer">Own-account transfers</option><option value="sent">Money sent</option><option value="conversion">Conversions</option><option value="card">Card spending</option><option value="other">Other</option>
+          </select>
+          <label class="pra-label" style="display:flex;gap:6px;align-items:center;margin:0;cursor:pointer"><input type="checkbox" id="unmatchedOnly"/> No contact only</label>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table">
+            <thead><tr><th>Date</th><th>Processor</th><th>Payer</th><th>Contact</th><th>Description</th><th>Kind</th><th class="num">Amount</th><th title="Leave this one out of every total">Exclude</th></tr></thead>
+            <tbody id="txBody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:.82rem">
+          <span class="pra-muted" id="txSummary"></span>
+          <span><button class="pra-btn pra-btn-ghost pra-btn-sm" id="prevBtn">‹ Prev</button> <button class="pra-btn pra-btn-ghost pra-btn-sm" id="nextBtn">Next ›</button></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/crm-nav.js"></script>
+<script>
+const PROVIDERS = { paypal: 'PayPal', wise: 'Wise', kurv: 'Kurv', swipesimple: 'SwipeSimple', other: 'Other' };
+const KINDS = { payment: 'Sale', refund: 'Refund', chargeback: 'Chargeback', transfer: 'Own transfer', sent: 'Sent', conversion: 'Conversion', card: 'Card', other: 'Other' };
+const esc = (s) => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money0 = (n) => (n < 0 ? '-$' : '$') + Math.abs(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+// Dates are Anchorage days, same as Reporting.
+const akToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Anchorage' }).format(new Date());
+const fmtDay = (iso) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Anchorage', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+function addDays(d, n) { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
+
+let range = { start: '', end: '' }, page = 0;
+const PAGE = 100;
+function resolvePeriod(p) {
+  const today = akToday(), [y, m] = today.split('-').map(Number);
+  const first = (yy, mm) => `${yy}-${String(mm).padStart(2, '0')}-01`;
+  switch (p) {
+    case 'last-month': { const ly = m === 1 ? y - 1 : y, lm = m === 1 ? 12 : m - 1; return { start: first(ly, lm), end: addDays(first(y, m), -1) }; }
+    case 'last-30': return { start: addDays(today, -29), end: today };
+    case 'last-90': return { start: addDays(today, -89), end: today };
+    case 'ytd': return { start: `${y}-01-01`, end: today };
+    case 'last-year': return { start: `${y - 1}-01-01`, end: `${y - 1}-12-31` };
+    case 'all': return { start: addDays(today, -3 * 365), end: today };
+    case 'custom': return { start: document.getElementById('startDate').value || first(y, m), end: document.getElementById('endDate').value || today };
+    default: return { start: first(y, m), end: today };
+  }
+}
+
+async function loadSources() {
+  const r = await fetch('/api/financials/settings');
+  if (!r.ok) { document.querySelector('.app-main').innerHTML = '<div class="pra-muted">Financials is admins only.</div>'; return null; }
+  const j = await r.json();
+  const named = [
+    ...j.paypal.map(a => ({ key: 'paypal:' + a.id, name: a.label || 'PayPal' })),
+    ...j.wise.map(a => ({ key: 'wise:' + a.id, name: a.label || 'Wise' })),
+    ...j.sheets.map(a => ({ key: 'sheet:' + a.id, name: (a.label || PROVIDERS[a.provider]) + ' (sheet)' })),
+  ];
+  const el = document.getElementById('sources');
+  el.innerHTML = named.length ? named.map(n => {
+    const st = j.states.find(s => s.key === n.key);
+    const txt = !st ? 'waiting for first sync' : st.last_error ? 'sync failed: ' + st.last_error : 'synced ' + new Date(st.last_sync_at).toLocaleString();
+    return `<span><b>${esc(n.name)}</b> <span style="color:${st?.last_error ? 'var(--pra-red,#e5484d)' : 'var(--pra-dim)'}">${esc(txt)}</span></span>`;
+  }).join('') : '<span class="pra-muted">No processors connected yet -- <a class="pra-link" href="/settings.html#financials">connect them in Settings</a>.</span>';
+  document.getElementById('syncBtn').disabled = j.syncing;
+  document.getElementById('syncBtn').textContent = j.syncing ? 'Syncing…' : 'Sync now';
+  return j.syncing;
+}
+
+async function loadSummary() {
+  const r = await fetch(`/api/financials/summary?start=${range.start}&end=${range.end}`);
+  const j = await r.json();
+  const net = j.byProvider.reduce((s, p) => s + (p.cash || 0), 0);
+  const refunds = j.byProvider.reduce((s, p) => s + (p.refunds || 0), 0);
+  const sales = j.byProvider.reduce((s, p) => s + (p.payments || 0), 0);
+  const unmatched = j.byProvider.reduce((s, p) => s + (p.unmatched || 0), 0);
+  const pg = j.program;
+  const cards = [
+    ['Cash collected (net)', money0(net), `${sales} sales`],
+    ['Refunds & chargebacks', money0(refunds), ''],
+    ['Online', money0(pg.online), 'by paying contact\'s program'],
+    ['Gym', money0(pg.gym), ''],
+    ['No program / no contact', money0(pg.unassigned), `${unmatched} transactions not matched to a contact`],
+  ];
+  document.getElementById('cards').innerHTML = cards.map(([l, v, s]) => `<div class="pra-panel fin-card"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub">${esc(s)}</div></div>`).join('')
+    + (j.unconverted.length ? `<div class="pra-panel fin-card"><div class="lbl">Not counted (no USD rate)</div><div class="val" style="font-size:1rem">${j.unconverted.map(u => `${u.amount.toFixed(2)} ${esc(u.currency)}`).join('<br>')}</div><div class="sub">Connect Wise to convert foreign currency</div></div>` : '');
+  document.getElementById('byProvider').innerHTML = `<thead><tr><th>Processor</th><th class="num">Sales</th><th class="num">Refunds</th><th class="num">Net</th></tr></thead><tbody>`
+    + (j.byProvider.map(p => `<tr><td>${esc(PROVIDERS[p.provider] || p.provider)}</td><td class="num">${p.payments}</td><td class="num fin-neg">${p.refunds ? money0(p.refunds) : '—'}</td><td class="num"><b>${money0(p.cash)}</b></td></tr>`).join('') || '<tr><td colspan="4" class="pra-muted">Nothing in this range.</td></tr>') + '</tbody>';
+  const months = [...new Set(j.byMonth.map(m => m.month))];
+  const provs = [...new Set(j.byMonth.map(m => m.provider))];
+  const cell = (mo, pv) => j.byMonth.find(x => x.month === mo && x.provider === pv)?.cash || 0;
+  document.getElementById('byMonth').innerHTML = `<thead><tr><th>Month</th>${provs.map(p => `<th class="num">${esc(PROVIDERS[p] || p)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>`
+    + (months.map(mo => { const [yy, mm] = mo.split('-'); const label = new Date(Date.UTC(+yy, +mm - 1, 15)).toLocaleString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+      return `<tr><td>${label}</td>${provs.map(p => `<td class="num">${money0(cell(mo, p))}</td>`).join('')}<td class="num"><b>${money0(provs.reduce((s, p) => s + cell(mo, p), 0))}</b></td></tr>`; }).join('') || '<tr><td class="pra-muted">Nothing in this range.</td></tr>') + '</tbody>';
+}
+
+async function loadTx() {
+  const qs = new URLSearchParams({ start: range.start, end: range.end, limit: PAGE, offset: page * PAGE, kind: document.getElementById('kindFilter').value, provider: document.getElementById('providerFilter').value, q: document.getElementById('search').value.trim() });
+  if (document.getElementById('unmatchedOnly').checked) qs.set('unmatched', '1');
+  const r = await fetch('/api/financials/payments?' + qs);
+  const j = await r.json();
+  document.getElementById('txBody').innerHTML = j.rows.map(p => {
+    const contact = p.contact_id ? `<a class="pra-link" href="/contact-detail.html?id=${encodeURIComponent(p.contact_id)}">${esc([p.contact_first, p.contact_last].filter(Boolean).join(' ') || 'Contact')}</a>${p.contact_program ? ` <span class="pra-badge pra-badge-${esc(p.contact_program)}">${esc(p.contact_program)}</span>` : ''}${p.match_method === 'name' ? ' <span class="pra-muted" title="Matched by name only" style="font-size:.7rem">(name)</span>' : ''}` : '<span class="pra-muted">—</span>';
+    const amt = p.amount_usd != null ? p.amount_usd : p.amount;
+    return `<tr class="${p.excluded ? 'fin-dim' : ''}">
+      <td style="white-space:nowrap">${esc(fmtDay(p.occurred_at))}</td>
+      <td>${esc(p.account || PROVIDERS[p.provider])}</td>
+      <td>${esc(p.payer_name || '')}${p.payer_email ? `<div class="pra-muted" style="font-size:.74rem">${esc(p.payer_email)}</div>` : ''}</td>
+      <td>${contact}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.description || '')}">${esc(p.description || '')}</td>
+      <td>${esc(KINDS[p.kind] || p.kind)}${p.status && !['S', 'Success', 'Approved'].includes(p.status) ? ` <span class="pra-muted" style="font-size:.72rem">${esc(p.status)}</span>` : ''}</td>
+      <td class="num ${amt < 0 ? 'fin-neg' : ''}">${money(amt)}${p.currency !== 'USD' ? `<div class="pra-muted" style="font-size:.72rem">${esc(p.amount.toFixed(2))} ${esc(p.currency)}</div>` : ''}</td>
+      <td style="text-align:center"><input type="checkbox" data-exclude="${esc(p.id)}"${p.excluded ? ' checked' : ''}/></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" class="pra-muted" style="padding:14px">No transactions.</td></tr>';
+  document.getElementById('txSummary').textContent = j.total ? `${page * PAGE + 1}–${Math.min(j.total, (page + 1) * PAGE)} of ${j.total}` : '';
+  document.getElementById('prevBtn').disabled = page === 0;
+  document.getElementById('nextBtn').disabled = (page + 1) * PAGE >= j.total;
+  document.querySelectorAll('[data-exclude]').forEach(cb => cb.onchange = async () => {
+    await fetch('/api/financials/payments/' + encodeURIComponent(cb.dataset.exclude), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ excluded: cb.checked }) });
+    cb.closest('tr').classList.toggle('fin-dim', cb.checked);
+    loadSummary();
+  });
+}
+
+function applyPeriod() {
+  const p = document.getElementById('period').value;
+  const custom = p === 'custom';
+  document.getElementById('startDate').style.display = document.getElementById('endDate').style.display = custom ? '' : 'none';
+  range = resolvePeriod(p);
+  if (custom) { document.getElementById('startDate').value = range.start; document.getElementById('endDate').value = range.end; }
+  page = 0;
+  loadSummary(); loadTx();
+}
+let searchTimer;
+document.getElementById('period').onchange = applyPeriod;
+document.getElementById('startDate').onchange = document.getElementById('endDate').onchange = applyPeriod;
+document.getElementById('search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page = 0; loadTx(); }, 300); };
+for (const id of ['providerFilter', 'kindFilter', 'unmatchedOnly']) document.getElementById(id).onchange = () => { page = 0; loadTx(); };
+document.getElementById('prevBtn').onclick = () => { page = Math.max(0, page - 1); loadTx(); };
+document.getElementById('nextBtn').onclick = () => { page++; loadTx(); };
+document.getElementById('syncBtn').onclick = async () => { await fetch('/api/financials/sync', { method: 'POST' }); poll(); };
+async function poll() {
+  const syncing = await loadSources();
+  if (syncing) setTimeout(poll, 4000); else { loadSummary(); loadTx(); }
+}
+
+(async () => {
+  await window.crmNavReady;
+  const syncing = await loadSources();
+  if (syncing === null) return;
+  applyPeriod();
+  if (syncing) setTimeout(poll, 4000);
+})();
+</script>
+</body>
+</html>

@@ -20,6 +20,7 @@ import { runReportJob } from "./report_worker_client.js";
 // With messages + records in Postgres, the reports below read just the rows
 // they count (reports_pg.js) instead of every contact and every message file.
 import * as rpg from "./reports_pg.js";
+import { financialsDbAvailable, cashByContact } from "./financials_db.js";
 import { REPORTS_PG } from "./reports_pg.js";
 
 // Cross-channel dashboards -- these used to read crm_message_log.json
@@ -602,9 +603,10 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
   const attribution = computeAttributionMemo(startMs, endMs);
   const { sources: visitSources } = attribution;
   const ev = computeEventAttribution(startStr, endStr, attribution);
-  // One row per source that either got visits or converted -- visits/unique visitors from
-  // the tracked page-visit log, Emails/Bookings from the four conversion events above.
-  const sources = [...new Set([...visitSources.map(s => s.el), ...ev.bySource.keys()])].map(el => {
+  const cash = await processorCashBySource(startStr, endStr, attribution);
+  // One row per source that either got visits, converted, or brought in cash -- visits/unique visitors
+  // from the tracked page-visit log, Emails/Bookings from the four conversion events above.
+  const sources = [...new Set([...visitSources.map(s => s.el), ...ev.bySource.keys(), ...(cash?.bySource.keys() || [])])].map(el => {
     const vs = visitSources.find(s => s.el === el);
     const e = ev.bySource.get(el) || { emails: 0, bookings: 0 };
     // + the Hyros source tags' counts (contacts carrying that tag, see computeAttribution)
@@ -629,6 +631,7 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
       // Revenue/Sales come only from Hyros purchase tags (customers carrying this source tag, and the sum
       // of their tagged purchase amounts); live rows have no sales source yet, so they stay 0.
       revenue: s.revenue, sales: s.sales, costPerSale: s.sales ? money(meta.spend / s.sales) : null,
+      ...cashCells(cash?.bySource.get(s.el), meta.spend, cash),
       spend: money(meta.spend), visits: s.visits, uniqueVisitors: s.uniqueVisitors,
       key: s.el,
     };
@@ -670,9 +673,20 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
     leads: Math.max(0, crmData[program].emails - attributedLeads[program]), costPerLead: null,
     bookings: Math.max(0, crmData[program].bookM - attributedBookings[program]), costPerBooking: null,
     revenue: 0, sales: 0, costPerSale: null,
+    ...cashCells(cash?.untracked[program], 0, cash),
     spend: 0, visits: 0, uniqueVisitors: 0,
     key: `untracked-${program}`,
-  })).filter(r => r.leads > 0 || r.bookings > 0);
+  })).filter(r => r.leads > 0 || r.bookings > 0 || r.cash > 0);
+  // Processor cash nobody in the CRM can be tied to (no matched contact, or one with no program).
+  if (cash) {
+    for (const [key, label, amount] of [["unassigned-cash", "Paying contact has no Online/Gym program", cash.untracked.other], ["unmatched-cash", "Payments not matched to a CRM contact (see Financials)", cash.unmatched]]) {
+      if (!amount) continue;
+      untrackedRows.push({
+        source: label, platform: "Financials", adGroup: "—", campaign: "—", leads: 0, costPerLead: null, bookings: 0, costPerBooking: null,
+        revenue: 0, sales: 0, costPerSale: null, ...cashCells(amount, 0, cash), spend: 0, visits: 0, uniqueVisitors: 0, key,
+      });
+    }
+  }
 
   // How much of the period's conversion events could be tied to an ad/source click at all --
   // the rest ("Untracked") had no click journey captured for that contact.
@@ -686,8 +700,41 @@ export async function computeAdsReport(startMs, endMs, startStr, endStr) {
     leads: [...ev.bySource.values()].reduce((n, e) => n + e.emails, 0) + untrackedRows.reduce((n, r) => n + r.leads, 0) + hu.optIns,
     bookings: [...ev.bySource.values()].reduce((n, e) => n + e.bookings, 0) + untrackedRows.reduce((n, r) => n + r.bookings, 0) + hu.bookings,
     revenue: hu.revenue, sales: hu.customers,
+    cash: cash ? money(cash.total) : null,
   } : null;
   return { rows: [...rows, ...untrackedRows], spendError, coverage, totals, hyrosNote: attribution.hyrosSourceCount ? HYROS_NOTE : null };
+}
+
+// Real cash from the payment processors (Financials, financials_db.js) in
+// the range, credited to each paying contact's first touch -- the same
+// touchKeyForContact the Emails/Bookings columns use. A paying contact with
+// no touch lands in Untracked under their program; payments with no matched
+// contact get their own row. Null when no processor data exists at all.
+async function processorCashBySource(startStr, endStr, attribution) {
+  if (!financialsDbAvailable()) return null;
+  let byContact;
+  try {
+    byContact = await cashByContact(anchorageMidnightUTC(startStr).getTime(), anchorageMidnightUTC(endStr).getTime() + 86400000 - 1);
+  } catch (e) { console.error("[reporting] processor cash:", e.message); return null; }
+  if (!byContact.size) return null;
+  const { firstTouchByContact, contactsById } = attribution;
+  const bySource = new Map(), untracked = { online: 0, gym: 0, other: 0 };
+  let unmatched = 0, total = 0;
+  contactsById.prefetch?.([...byContact.keys()].filter(Boolean));
+  for (const [contactId, amount] of byContact) {
+    total += amount;
+    const contact = contactId ? contactsById.get(contactId) : null;
+    if (!contact) { unmatched += amount; continue; }
+    const key = touchKeyForContact(contact, firstTouchByContact);
+    if (key) bySource.set(key, (bySource.get(key) || 0) + amount);
+    else untracked[contact.programType === "online" || contact.programType === "gym" ? contact.programType : "other"] += amount;
+  }
+  return { bySource, untracked, unmatched, total };
+}
+function cashCells(amount, spend, cash) {
+  if (!cash) return { cash: null, trueRoas: null };
+  const c = money(amount || 0) || 0;
+  return { cash: c, trueRoas: spend ? Math.round((c / spend) * 100) / 100 : null };
 }
 
 // Shared with ads_backend.js's period presets on the frontend -- the

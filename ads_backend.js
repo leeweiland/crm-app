@@ -1,4 +1,5 @@
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { financialsDbAvailable, cashByProgram } from "./financials_db.js";
 import { getConversionSettings, getGoogleAdsAccessToken } from "./conversions_backend.js";
 import { FLOWS_FILE, RUNS_FILE } from "./flows_backend.js";
 import { BOOKINGS_FILE } from "./scheduling_backend.js";
@@ -756,12 +757,23 @@ async function fetchAdsReport(period, customStart, customEnd) {
     bookM: o.bookM + g.bookM,
     closes: o.closes + g.closes, sales: o.sales + g.sales, coll: o.coll + g.coll, all: o.all + g.all,
   };
+  // Real cash from the payment processors (Financials). Online/Gym by the
+  // paying contact's program; Combined also includes payments with no
+  // matched contact/program, so it's more than Online + Gym.
+  let processorCash = null;
+  if (financialsDbAvailable()) {
+    try {
+      processorCash = await cashByProgram(crmStartMs, crmEndMs);
+      if (processorCash.count) { o.procCash = processorCash.online; g.procCash = processorCash.gym; combined.procCash = processorCash.total; }
+      else processorCash = null;
+    } catch (e) { console.error("[ads] processor cash:", e.message); }
+  }
 
   return {
     ok: true, period, start: startStr, end: endStr, monthLabels,
     onlineSheetExists: onlineResult.exists, gymSheetExists: gymResult.exists,
     liveSpendUsed: !!liveSpend, liveSpendError: liveSpend?.partialError || liveSpendError,
-    salesSource, salesError,
+    salesSource, salesError, processorUnassigned: processorCash ? processorCash.unassigned : null,
     online: o, gym: g, combined,
   };
 }

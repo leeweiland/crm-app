@@ -652,6 +652,7 @@ async function loadOverview() {
     : '<div class="pra-muted">Could not load ads data.</div>';
   showHyrosNote('adsSalesNote', !ads.ok ? '' : ads.salesSource === 'ads-sheet'
     ? 'Closes, Sales and $ figures come from the Ads Tracking Sheet, whose sales columns are filled in automatically from every Calls Tracking Sheet tab (enrolled rows, renewals & payoffs, travel). ROAS = new enrollments ÷ spend; MAR = all cash collected ÷ spend.'
+      + (ads.processorUnassigned != null ? ` True ROAS = real cash from PayPal, Wise and imported Kurv/SwipeSimple payments (net of refunds) ÷ spend; Online/Gym go by the paying contact's program, and Combined also includes ${fmtMoney(ads.processorUnassigned)} not tied to an Online or Gym contact (see Financials).` : '')
     : `The Ads Tracking Sheet couldn't be updated from the Calls Tracking Sheet${ads.salesError ? ' (' + ads.salesError + ')' : ''}.`,
     document.getElementById('overviewAdsCards'), 'after');
 }
@@ -715,6 +716,8 @@ function adsSegmentCardHtml(title, data) {
     ['Total Revenue', fmtMoney(data.all), ''],
     ['ROAS', fmtRatio(roas), 'roas-row'], ['MAR (Total ROAS)', fmtRatio(mar), 'mar-row'],
   ];
+  // Real cash from the payment processors (Financials), when any is synced.
+  if (data.procCash != null) rows.push(['Cash Collected (processors)', fmtMoney(data.procCash), ''], ['True ROAS', fmtRatio(data.spend ? data.procCash / data.spend : 0), 'roas-row']);
   return `
     <div class="ads-segment-card">
       <div class="seg-title">${title}</div>
@@ -835,6 +838,12 @@ async function loadSortPreference() {
       const saved = prefs.adsReportColumnOrder.filter(k => ADS_REPORT_COLUMNS[k]);
       const missing = ADS_REPORT_DEFAULT_ORDER.filter(k => !saved.includes(k));
       adsReportColumnOrder = [...saved, ...missing];
+      // Cash/True ROAS belong next to Revenue, not tacked on at the far end.
+      for (const k of ['trueRoas', 'cash']) {
+        if (!missing.includes(k) || !adsReportColumnOrder.includes('revenue')) continue;
+        adsReportColumnOrder.splice(adsReportColumnOrder.indexOf(k), 1);
+        adsReportColumnOrder.splice(adsReportColumnOrder.indexOf('revenue') + 1, 0, k);
+      }
     }
   } catch {}
 }
@@ -873,6 +882,8 @@ const ADS_REPORT_COLUMNS = {
   campaign:       { label: 'Campaign', align: 'left' },
   spend:          { label: 'Spent', align: 'right' },
   revenue:        { label: 'Revenue', align: 'right' },
+  cash:           { label: 'Cash (processors)', align: 'right' },
+  trueRoas:       { label: 'True ROAS', align: 'right' },
   sales:          { label: 'Sales', align: 'right' },
   costPerSale:    { label: '$/Sale', align: 'right' },
   bookings:       { label: 'Bookings/Apps', align: 'right' },
@@ -973,6 +984,8 @@ function renderAdsReportTable() {
       case 'campaign': return `<td style="padding:10px 16px">${escapeHtml(row.campaign)}</td>`;
       case 'spend': return `<td style="text-align:right;padding:10px 16px">${fmtMoney(row.spend)}</td>`;
       case 'revenue': return `<td style="text-align:right;padding:10px 16px">${fmtMoney(row.revenue)}</td>`;
+      case 'cash': return `<td style="text-align:right;padding:10px 16px">${row.cash == null ? '—' : fmtMoney(row.cash)}</td>`;
+      case 'trueRoas': return `<td style="text-align:right;padding:10px 16px">${row.trueRoas == null ? '—' : fmtRatio(row.trueRoas)}</td>`;
       case 'sales': return `<td style="text-align:right;padding:10px 16px">${row.sales}</td>`;
       case 'costPerSale': return `<td style="text-align:right;padding:10px 16px">${money(row.costPerSale)}</td>`;
       case 'bookings': return countCell(row.bookings, 'bookings', row.key);
@@ -995,10 +1008,13 @@ function renderAdsReportTable() {
   const totalBookings = T ? T.bookings : allAdsReportRows.reduce((s, r) => s + (r.bookings || 0), 0);
   const totalLeads = T ? T.leads : allAdsReportRows.reduce((s, r) => s + (r.leads || 0), 0);
   const totalVisits = allAdsReportRows.reduce((s, r) => s + (r.visits || 0), 0);
+  const hasCash = allAdsReportRows.some(r => r.cash != null);
+  const totalCash = !hasCash ? null : T?.cash != null ? T.cash : allAdsReportRows.reduce((s, r) => s + (r.cash || 0), 0);
   const totalsRow = {
     source: 'Totals', platform: `${allAdsReportRows.length} source${allAdsReportRows.length === 1 ? '' : 's'}`,
     adGroup: '—', campaign: '—',
     spend: totalSpend || null, revenue: totalRevenue, sales: totalSales, costPerSale: totalSales ? totalSpend / totalSales : null,
+    cash: totalCash, trueRoas: totalCash != null && totalSpend ? totalCash / totalSpend : null,
     bookings: totalBookings, costPerBooking: totalBookings ? totalSpend / totalBookings : null,
     leads: totalLeads, costPerLead: totalLeads ? totalSpend / totalLeads : null,
     visits: totalVisits, key: '__totals__',

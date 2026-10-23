@@ -26,6 +26,7 @@ import { handleSchedulingRequest } from "./scheduling_backend.js";
 import { handleIntegrationsRequest } from "./integrations_backend.js";
 import { handleUploadsRequest } from "./uploads_backend.js";
 import { handleAdsRequest, startCallsSyncTimer } from "./ads_backend.js";
+import { handleFinancialsRequest, startFinancialsSyncTimer } from "./financials_backend.js";
 import { handleFlowsRequest } from "./flows_backend.js";
 import { handleDuplicatesRequest } from "./duplicates_backend.js";
 import { handleAiAgentsRequest, handleCacheRequest } from "./ai_agents_backend.js";
@@ -222,6 +223,7 @@ createServer(async (req, res) => {
   if (await handleIntegrationsRequest(req, res, url)) return;
   if (await handleUploadsRequest(req, res, url)) return;
   if (await handleAdsRequest(req, res, url)) return;
+  if (await handleFinancialsRequest(req, res, url)) return;
   if (await handleFlowsRequest(req, res, url)) return;
   if (await handleDuplicatesRequest(req, res, url)) return;
   if (await handleAiAgentsRequest(req, res, url)) return;
@@ -253,6 +255,7 @@ createServer(async (req, res) => {
 
 // Keeps the ads sheet's sales columns current from CALLS TRACKING (production only -- it writes to the live sheet)
 if (process.env.RAILWAY_ENVIRONMENT) startCallsSyncTimer();
+if (process.env.RAILWAY_ENVIRONMENT) startFinancialsSyncTimer();
 // Pre-computes Reporting's default view in its own process (report_worker.js) so the page opens instantly (production only).
 if (process.env.RAILWAY_ENVIRONMENT) startReportPrewarm();
 

@@ -49,6 +49,7 @@
           <button class="tab-btn" data-tab="twilio">Twilio</button>
           <button class="tab-btn" data-tab="emailsettings">Opt Out</button>
           <button class="tab-btn" data-tab="tracking">Tracking</button>
+          <button class="tab-btn" data-tab="financials">Financials</button>
           <button class="tab-btn" data-tab="users">Users</button>
           <button class="tab-btn" data-tab="account">My Account</button>
           <button class="tab-btn" data-tab="cache">Cache</button>
@@ -358,6 +359,8 @@
         </div>
         </div>
       </div>
+
+      <div class="tab-panel pra-panel" id="tab-financials" style="padding:22px;max-width:900px"><div class="pra-muted">Loading…</div></div>
 
       <div class="tab-panel pra-panel" id="tab-users" style="padding:22px">
         <div class="pra-h2" style="margin-bottom:4px">Team Users</div>
@@ -1558,5 +1561,6 @@ document.querySelector('[data-tab="cache"]').addEventListener('click', () => {
   loadCacheChunks('sales');
 });
 </script>
+<script src="/financials-settings.js"></script>
 </body>
 </html>
