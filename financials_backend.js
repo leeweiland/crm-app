@@ -243,8 +243,9 @@ async function syncKurv(acct, settings, state) {
         return {
           id: `kurv:${acct.id}:${x.payment_id}`, provider: "kurv", account: acct.label || "Kurv", txnId: x.payment_id,
           occurredAt: x.payment_date || x.transaction_date, amount, fee: null, currency: (x.currency || "USD").toUpperCase(), kind,
-          status: x.status === "success" ? "S" : "D", payerEmail: x.email || null, payerName: null,
-          description: [x.reference_number, x.transaction_type].filter(Boolean).join(" -- ") || null,
+          // Live payments say status "ACK"/"NOK" with status_label "success"/"failed"; the docs' examples say "success".
+          status: x.status === "success" || x.status === "ACK" || x.status_label === "success" ? "S" : "D", payerEmail: x.email || null, payerName: null,
+          description: [x.reference_number, x.source].filter(Boolean).join(" -- ") || null,
           raw: { type: x.payment_type, transactionId: x.transaction_id, phone: x.customer_phone_number || null, result: x.result_description || null },
         };
       }).filter(r => r.txnId && r.occurredAt);
