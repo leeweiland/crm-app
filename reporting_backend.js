@@ -752,10 +752,11 @@ export async function reportSentByUser(params = {}) {
   // cards read these rows, so the other categories stay at zero here.
   if (REPORTS_PG) {
     const testIds = [...(getCachedTestContactIds() ?? rpg.testContactIds())];
+    const teamAddresses = readJson(USERS_FILE, []).flatMap((x) => [x.email, x.gmailEmail]);
     const rows = users.map((u) => {
       const email = emptySentCounts();
       const sms = emptySentCounts();
-      const mine = rpg.personalSendsInRange(u.id, [u.gmailEmail, u.email], startMs, endMs, testIds);
+      const mine = rpg.personalSendsInRange(u, teamAddresses, startMs, endMs, testIds);
       email.human = email.total = mine.email;
       sms.human = sms.total = mine.sms;
       const talkedTo = [...new Set([...rpg.ownedContactIds(u.id), ...mine.contactIds])];

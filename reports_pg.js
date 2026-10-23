@@ -82,28 +82,55 @@ export function inboundByContact(contactIds, channel) {
 // SENDER (2026-10-23 -- was by contact owner, capped at 300 contacts, which
 // credited nobody for sends to someone else's lead): every CRM Inbox send
 // is recorded under the user who sent it (the only way to tell, since SMS
-// all go out on the one shared number), plus emails sent from their own
-// mailbox outside the CRM and picked up from Gmail ("Name <address>").
-// Read from indexes (messages_source_slim, messages_gmail_sent_from).
+// all go out on the one shared number), plus emails from their own mailbox
+// picked up from Gmail ("Name <address>"). A mailbox's Sent folder holds a
+// lot that isn't a 1:1 email, so those are left out:
+//   - mail to themselves / the team (lead notifications, test sends)
+//   - mail sent under another name (the PRA Chat app sends as "PRA Chat")
+//   - Gmail's copy of something the CRM itself sent through that mailbox
+//     (AI agent replies, booking reminders): same contact, same subject,
+//     within 15 minutes
+//   - the same subject to 5+ people the same day (a broadcast, not 1:1)
+//   - the same Gmail message stored twice (the old Gmail duplicate check
+//     failed once its index outgrew 300MB) -- counted once
+// For Lee's October that's 635 Gmail rows -> 35 real 1:1 emails.
 const GMAIL_FROM = "lower(coalesce(substring(from_addr from '<([^>]+)>'), from_addr))";
-export function personalSendsInRange(userId, addresses, startMs, endMs, testIds) {
+const GMAIL_FROM_M = "lower(coalesce(substring(m.from_addr from '<([^>]+)>'), m.from_addr))";
+const BULK_RECIPIENTS = 5;
+const COPY_WINDOW_SECONDS = 900;
+export function personalSendsInRange(user, teamAddresses, startMs, endMs, testIds) {
   const range = [iso(startMs), iso(endMs)];
   const out = { email: 0, sms: 0, contactIds: new Set() };
   for (const r of q(
     `SELECT channel, contact_id FROM messages
       WHERE source_type = 'inbox' AND source_id = $1 AND direction = 'outbound' AND channel IN ('email', 'sms')
         AND safe_ts(created_at) BETWEEN $2::timestamptz AND $3::timestamptz AND NOT (coalesce(contact_id, '') = ANY($4))`,
-    [userId, ...range, testIds]
+    [user.id, ...range, testIds]
   )) { out[r.channel]++; if (r.contact_id) out.contactIds.add(r.contact_id); }
-  const emails = [...new Set(addresses.filter(Boolean).map(a => a.toLowerCase()))];
-  if (emails.length) {
-    for (const r of q(
-      `SELECT contact_id FROM messages
-        WHERE source_type = 'gmail_sent' AND ${GMAIL_FROM} = ANY($1)
-          AND safe_ts(created_at) BETWEEN $2::timestamptz AND $3::timestamptz AND NOT (coalesce(contact_id, '') = ANY($4))`,
-      [emails, ...range, testIds]
-    )) { out.email++; if (r.contact_id) out.contactIds.add(r.contact_id); }
-  }
+  const mine = [...new Set([user.gmailEmail, user.email].filter(Boolean).map(a => a.toLowerCase()))];
+  if (!mine.length) return out;
+  const team = new Set(teamAddresses.filter(Boolean).map(a => a.toLowerCase()));
+  const ownName = `${user.first || ""} ${user.last || ""}`.trim().toLowerCase();
+  const rows = q(
+    `SELECT m.id, m.provider_message_id AS pid, m.contact_id, m.subject, left(m.created_at, 10) AS day,
+            lower(coalesce(substring(m.to_addr from '<([^>]+)>'), m.to_addr)) AS to_email,
+            trim(both ' "' from split_part(m.from_addr, '<', 1)) AS from_name,
+            EXISTS (SELECT 1 FROM messages o WHERE o.contact_id = m.contact_id AND o.direction = 'outbound' AND o.channel = 'email'
+                      AND o.source_type <> 'gmail_sent' AND o.subject = m.subject
+                      AND abs(extract(epoch FROM safe_ts(o.created_at) - safe_ts(m.created_at))) < ${COPY_WINDOW_SECONDS}) AS crm_copy
+       FROM messages m
+      WHERE m.source_type = 'gmail_sent' AND ${GMAIL_FROM_M} = ANY($1)
+        AND safe_ts(m.created_at) BETWEEN $2::timestamptz AND $3::timestamptz AND NOT (coalesce(m.contact_id, '') = ANY($4))`,
+    [mine, ...range, testIds]
+  );
+  const ownSender = (n) => !n || ownName.includes(n.toLowerCase()) || mine.includes(n.toLowerCase());
+  let kept = rows.filter(r => !team.has(r.to_email) && ownSender(r.from_name) && !r.crm_copy);
+  const bulkKey = (r) => `${r.day}|${String(r.subject || "").replace(/^(re|fwd?):\s*/i, "").toLowerCase()}`;
+  const recipients = new Map();
+  for (const r of kept) { const k = bulkKey(r); if (!recipients.has(k)) recipients.set(k, new Set()); recipients.get(k).add(r.contact_id); }
+  kept = kept.filter(r => !String(r.subject || "").trim() || recipients.get(bulkKey(r)).size < BULK_RECIPIENTS);
+  out.email += new Set(kept.map(r => r.pid || r.id)).size;
+  for (const r of kept) if (r.contact_id) out.contactIds.add(r.contact_id);
   return out;
 }
 export const GMAIL_SENT_FROM_INDEX_SQL = `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_gmail_sent_from ON messages ((${GMAIL_FROM}), created_at) INCLUDE (contact_id) WHERE source_type = 'gmail_sent'`;
@@ -113,7 +140,7 @@ export function inboundCountsInRange(contactIds, startMs, endMs) {
   const out = { email: 0, sms: 0 };
   if (!contactIds.length) return out;
   for (const r of q(
-    `SELECT channel, count(*)::int AS n FROM messages
+    `SELECT channel, count(DISTINCT coalesce(provider_message_id, id))::int AS n FROM messages
       WHERE contact_id = ANY($1) AND direction = 'inbound' AND channel IN ('email', 'sms')
         AND safe_ts(created_at) BETWEEN $2::timestamptz AND $3::timestamptz GROUP BY 1`,
     [contactIds, iso(startMs), iso(endMs)]
