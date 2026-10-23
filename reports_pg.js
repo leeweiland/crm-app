@@ -78,6 +78,51 @@ export function inboundByContact(contactIds, channel) {
   return out;
 }
 
+// The 1:1 messages one team member personally sent in the range, counted by
+// SENDER (2026-10-23 -- was by contact owner, capped at 300 contacts, which
+// credited nobody for sends to someone else's lead): every CRM Inbox send
+// is recorded under the user who sent it (the only way to tell, since SMS
+// all go out on the one shared number), plus emails sent from their own
+// mailbox outside the CRM and picked up from Gmail ("Name <address>").
+// Read from indexes (messages_source_slim, messages_gmail_sent_from).
+const GMAIL_FROM = "lower(coalesce(substring(from_addr from '<([^>]+)>'), from_addr))";
+export function personalSendsInRange(userId, addresses, startMs, endMs, testIds) {
+  const range = [iso(startMs), iso(endMs)];
+  const out = { email: 0, sms: 0, contactIds: new Set() };
+  for (const r of q(
+    `SELECT channel, contact_id FROM messages
+      WHERE source_type = 'inbox' AND source_id = $1 AND direction = 'outbound' AND channel IN ('email', 'sms')
+        AND safe_ts(created_at) BETWEEN $2::timestamptz AND $3::timestamptz AND NOT (coalesce(contact_id, '') = ANY($4))`,
+    [userId, ...range, testIds]
+  )) { out[r.channel]++; if (r.contact_id) out.contactIds.add(r.contact_id); }
+  const emails = [...new Set(addresses.filter(Boolean).map(a => a.toLowerCase()))];
+  if (emails.length) {
+    for (const r of q(
+      `SELECT contact_id FROM messages
+        WHERE source_type = 'gmail_sent' AND ${GMAIL_FROM} = ANY($1)
+          AND safe_ts(created_at) BETWEEN $2::timestamptz AND $3::timestamptz AND NOT (coalesce(contact_id, '') = ANY($4))`,
+      [emails, ...range, testIds]
+    )) { out.email++; if (r.contact_id) out.contactIds.add(r.contact_id); }
+  }
+  return out;
+}
+export const GMAIL_SENT_FROM_INDEX_SQL = `CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_gmail_sent_from ON messages ((${GMAIL_FROM}), created_at) INCLUDE (contact_id) WHERE source_type = 'gmail_sent'`;
+// Inbound email/SMS in the range from these contacts (index-only:
+// messages_inbound_contact).
+export function inboundCountsInRange(contactIds, startMs, endMs) {
+  const out = { email: 0, sms: 0 };
+  if (!contactIds.length) return out;
+  for (const r of q(
+    `SELECT channel, count(*)::int AS n FROM messages
+      WHERE contact_id = ANY($1) AND direction = 'inbound' AND channel IN ('email', 'sms')
+        AND safe_ts(created_at) BETWEEN $2::timestamptz AND $3::timestamptz GROUP BY 1`,
+    [contactIds, iso(startMs), iso(endMs)]
+  )) out[r.channel] = r.n;
+  return out;
+}
+export function ownedContactIds(ownerId) {
+  return q(`SELECT id FROM contacts WHERE owner_id = $1 AND ${NOT_TEST}`, [ownerId]).map(r => r.id);
+}
 // A team member's most recently updated (non-test) contacts.
 export function recentOwnedContactIds(ownerId, limit) {
   return q(

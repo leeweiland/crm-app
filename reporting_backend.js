@@ -746,6 +746,24 @@ export async function reportSentByUser(params = {}) {
   const { startMs, endMs } = rangeFromStrings(params.start, params.end);
   const OWNED_CONTACT_SCAN_CAP = 300;
   const users = sortByName(readJson(USERS_FILE, []).filter((u) => !u.archived));
+  // Postgres: 1:1 counted by who SENT it (see reports_pg.js's
+  // personalSendsInRange), no contact cap. Inbound = replies in the range
+  // from contacts this person owns or personally messaged. Only the 1:1
+  // cards read these rows, so the other categories stay at zero here.
+  if (REPORTS_PG) {
+    const testIds = [...(getCachedTestContactIds() ?? rpg.testContactIds())];
+    const rows = users.map((u) => {
+      const email = emptySentCounts();
+      const sms = emptySentCounts();
+      const mine = rpg.personalSendsInRange(u.id, [u.gmailEmail, u.email], startMs, endMs, testIds);
+      email.human = email.total = mine.email;
+      sms.human = sms.total = mine.sms;
+      const talkedTo = [...new Set([...rpg.ownedContactIds(u.id), ...mine.contactIds])];
+      const inbound = rpg.inboundCountsInRange(talkedTo, startMs, endMs);
+      return { userId: u.id, name: `${u.first} ${u.last}`.trim(), email, sms, emailReceived: inbound.email, smsReceived: inbound.sms, scannedContacts: talkedTo.length };
+    });
+    return ({ rows, categories: SENT_CATEGORIES });
+  }
   const allContacts = REPORTS_PG ? null : reportContacts().filter((c) => !c.testContact);
   const rows = users.map((u) => {
     const contacts = REPORTS_PG

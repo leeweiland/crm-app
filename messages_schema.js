@@ -56,6 +56,8 @@ export const INDEXES_SQL = [
   // The Inbox items view's newest unhandled/handled inbound, with or without a channel.
   "CREATE INDEX IF NOT EXISTS messages_inbound_done_recent ON messages (inbox_done, created_at DESC) WHERE direction = 'inbound'",
   "CREATE INDEX IF NOT EXISTS messages_inbound_channel_done_recent ON messages (channel, inbox_done, created_at DESC) WHERE direction = 'inbound'",
+  // Reporting's per-person 1:1 count: emails sent from a team member's own Gmail.
+  "CREATE INDEX IF NOT EXISTS messages_gmail_sent_from ON messages ((lower(coalesce(substring(from_addr from '<([^>]+)>'), from_addr))), created_at) INCLUDE (contact_id) WHERE source_type = 'gmail_sent'",
 ];
 
 // Per-day counts by current status, kept exact by triggers: every insert,
