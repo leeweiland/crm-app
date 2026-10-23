@@ -174,7 +174,7 @@ async function loadTx() {
   const r = await fetch('/api/financials/payments?' + qs);
   const j = await r.json();
   document.getElementById('txBody').innerHTML = j.rows.map(p => {
-    const contact = p.contact_id ? `<a class="pra-link" href="/contact-detail.html?id=${encodeURIComponent(p.contact_id)}">${esc([p.contact_first, p.contact_last].filter(Boolean).join(' ') || 'Contact')}</a>${p.contact_program ? ` <span class="pra-badge pra-badge-${esc(p.contact_program)}">${esc(p.contact_program)}</span>` : ''}${p.match_method === 'name' ? ' <span class="pra-muted" title="Matched by name only" style="font-size:.7rem">(name)</span>' : ''}` : '<span class="pra-muted">—</span>';
+    const contact = p.contact_id ? `<a class="pra-link" href="/contact-detail.html?id=${encodeURIComponent(p.contact_id)}">${esc([p.contact_first, p.contact_last].filter(Boolean).join(' ') || 'Contact')}</a>${p.contact_program ? ` <span class="pra-badge pra-badge-${esc(p.contact_program)}">${esc(p.contact_program)}</span>` : ''}${p.match_method && p.match_method !== 'email' ? ` <span class="pra-muted" title="How this payment was tied to the contact" style="font-size:.7rem">(${esc(p.match_method)})</span>` : ''}` : '<span class="pra-muted">—</span>';
     const amt = p.amount_usd != null ? p.amount_usd : p.amount;
     return `<tr class="${p.excluded ? 'fin-dim' : ''}">
       <td style="white-space:nowrap">${esc(fmtDay(p.occurred_at))}</td>

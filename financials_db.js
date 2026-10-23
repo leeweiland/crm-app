@@ -95,39 +95,136 @@ export async function upsertPayments(rows) {
   return rows.length;
 }
 
-// Ties unmatched money-in rows to a contact: payer email first (the same
-// identity keys contact matching uses everywhere -- email, alt emails, Hyros
-// origin email; oldest contact wins a tie), then an exact full-name match
-// when exactly one contact has that name.
-export async function matchUnmatchedPayments() {
-  const rows = await q(`SELECT id, lower(trim(payer_email)) AS email, lower(regexp_replace(trim(payer_name), '\\s+', ' ', 'g')) AS name
-    FROM payments WHERE contact_id IS NULL AND kind = ANY('{payment,refund,chargeback}') AND (payer_email IS NOT NULL OR payer_name IS NOT NULL)`);
-  if (!rows.length) return 0;
-  let matched = 0;
-  const emails = [...new Set(rows.map(r => r.email).filter(Boolean))];
-  const byEmail = new Map();
-  for (let i = 0; i < emails.length; i += 500) {
-    const keys = emails.slice(i, i + 500).map(e => `e:${e}`);
+// Ties unmatched money-in rows to a contact, strongest evidence first:
+//  1. email   -- payer email via the contact identity keys (email, alt emails,
+//                Hyros origin email; oldest contact wins a tie)
+//  2. history -- the same payer email/name already matched on another payment
+//  3. name    -- payer name vs contact first+last with accents, case, middle
+//                names, "Last, First" and nicknames (Matt/Matthew) handled;
+//                a family-name-only or first-initial match needs the contact's
+//                own recorded enrollment amount to agree
+//  4. sales   -- a CALLS TRACKING enrollment row (salesRecords) with the same
+//                amount within days of the payment, whose buyer then resolves
+//                to a contact by email, phone or name
+// Every step must point at exactly one person: ties between different people
+// stay unmatched (several contacts with the same full name are one person
+// entered twice -- the ENROLLED, then oldest, one is used).
+const normName = (s) => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z\s'-]/g, " ").replace(/\s+/g, " ").trim();
+const tokensOf = (s) => normName(s).split(" ").filter(t => t.length >= 2);
+const lastTen = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+const DAY_MS = 86400000;
+
+async function contactsByIdentity(keys) {
+  const out = new Map();
+  for (let i = 0; i < keys.length; i += 500) {
     const hits = await q(`SELECT id, contact_identity_keys(email, phone, extra) AS keys FROM contacts
-      WHERE contact_identity_keys(email, phone, extra) && $1::text[] ORDER BY created_at NULLS LAST, id`, [keys]);
-    for (const h of hits) for (const k of h.keys || []) if (k.startsWith("e:") && !byEmail.has(k.slice(2))) byEmail.set(k.slice(2), h.id);
+      WHERE contact_identity_keys(email, phone, extra) && $1::text[] ORDER BY created_at NULLS LAST, id`, [keys.slice(i, i + 500)]);
+    for (const h of hits) for (const k of h.keys || []) if (!out.has(k)) out.set(k, h.id);
   }
-  const names = [...new Set(rows.filter(r => !(r.email && byEmail.has(r.email))).map(r => r.name).filter(n => n && n.includes(" ")))];
-  const byName = new Map();
-  if (names.length) {
-    const hits = await q(`SELECT n, min(id) AS id, count(*)::int AS c FROM (
-        SELECT id, lower(regexp_replace(trim(coalesce(first,'')) || ' ' || trim(coalesce(last,'')), '\\s+', ' ', 'g')) AS n FROM contacts) x
-      WHERE n = ANY($1::text[]) GROUP BY n`, [names]);
-    for (const h of hits) if (h.c === 1) byName.set(h.n, h.id);
-  }
+  return out;
+}
+// Contacts whose first or last name is one of these tokens (accent-insensitive
+// comparison happens in JS; the SQL just narrows the field).
+async function nameCandidates(tokens) {
+  if (!tokens.length) return [];
+  const rows = await q(`SELECT id, first, last, status, created_at, custom_fields->>'enrollAmountPaid' AS paid FROM contacts
+    WHERE lower(last) = ANY($1) OR lower(first) = ANY($1)
+       OR lower(split_part(last, ' ', -1)) = ANY($1) OR lower(split_part(first, ' ', 1)) = ANY($1)`, [tokens]);
+  return rows.map(r => {
+    const f = tokensOf(r.first), l = tokensOf(r.last);
+    return { ...r, f0: f[0] || "", lN: l[l.length - 1] || "", full: [...f, ...l].join(" "), paidN: Number(String(r.paid || "").replace(/[^0-9.]/g, "")) || null };
+  });
+}
+function scoreName(payTokens, amount, c) {
+  if (!c.lN || !c.f0 || c.lN === c.f0) return 0; // "Amy amy" / "lee lee" junk names can't confirm anyone
+  const has = (t) => payTokens.includes(t);
+  let s = 0;
+  if (has(c.lN) && has(c.f0)) s = 100;                                  // first+last, any order, middle names ignored
+  else if (has(c.lN) && payTokens.some(t => t !== c.lN && t.length >= 3 && c.f0.length >= 3 && (t.startsWith(c.f0) || c.f0.startsWith(t)))) s = 85; // Matt/Matthew, Kat/Kathleen
+  else if (has(c.lN) && payTokens.some(t => t !== c.lN && t[0] === c.f0[0])) s = 50; // initial only
+  else if (has(c.lN)) s = 25;                                           // family name only (a spouse or parent paying?)
+  else return 0;
+  if (c.paidN && amount && Math.abs(c.paidN - Math.abs(amount)) < 1) s += 40; // agrees with the enrollment amount recorded on the contact
+  return s;
+}
+function pickOne(scored, threshold) {
+  scored.sort((a, b) => b.s - a.s || (b.c.status === "ENROLLED") - (a.c.status === "ENROLLED") || String(a.c.created_at).localeCompare(String(b.c.created_at)));
+  const [best, second] = scored;
+  if (!best || best.s < threshold) return null;
+  if (second && best.s - second.s < 20 && second.c.full !== best.c.full) return null; // two different people fit about as well
+  return best.c.id;
+}
+
+export async function matchUnmatchedPayments(salesRecords = [], { dryRun = false } = {}) {
+  const rows = await q(`SELECT id, occurred_at, amount_usd::float AS amount, lower(trim(payer_email)) AS email, payer_name AS name
+    FROM payments WHERE contact_id IS NULL AND kind = ANY('{payment,refund,chargeback}') AND NOT excluded`);
+  if (!rows.length) return 0;
+  const found = new Map(); // payment id -> [contactId, method]
+
+  // 1. email
+  const byKey = await contactsByIdentity([...new Set(rows.map(r => r.email).filter(Boolean))].map(e => `e:${e}`));
+  for (const r of rows) if (r.email && byKey.has(`e:${r.email}`)) found.set(r.id, [byKey.get(`e:${r.email}`), "email"]);
+
+  // 2. history: this payer's other payments, when they all point at one contact
+  const prior = await q(`SELECT lower(trim(payer_email)) AS email, payer_name AS name, contact_id FROM payments WHERE contact_id IS NOT NULL`);
+  const hist = new Map();
+  const note = (k, id) => { if (!k) return; const v = hist.get(k); hist.set(k, v === undefined || v === id ? id : null); };
+  for (const p of prior) { note(p.email && "e:" + p.email, p.contact_id); note(normName(p.name).length > 4 && "n:" + normName(p.name), p.contact_id); }
   for (const r of rows) {
-    const viaEmail = r.email && byEmail.get(r.email);
-    const id = viaEmail || (r.name && byName.get(r.name));
-    if (!id) continue;
-    await q(`UPDATE payments SET contact_id = $2, match_method = $3, updated_at = now() WHERE id = $1 AND contact_id IS NULL`, [r.id, id, viaEmail ? "email" : "name"]);
-    matched++;
+    if (found.has(r.id)) continue;
+    const id = (r.email && hist.get("e:" + r.email)) || (normName(r.name).length > 4 && hist.get("n:" + normName(r.name)));
+    if (id) found.set(r.id, [id, "history"]);
   }
-  return matched;
+
+  // 3. name
+  const open = rows.filter(r => !found.has(r.id) && r.name);
+  const cands = await nameCandidates([...new Set(open.flatMap(r => tokensOf(r.name)).filter(t => t.length >= 3))]);
+  for (const r of open) {
+    const pt = tokensOf(r.name);
+    const scored = cands.map(c => ({ c, s: scoreName(pt, r.amount, c) })).filter(x => x.s > 0);
+    const id = pickOne(scored, 85);
+    if (id) found.set(r.id, [id, "name"]);
+  }
+
+  // 4. sales records (CALLS TRACKING): same amount, within a few days; a payer
+  // name has to share the buyer's family name, a nameless payment needs the
+  // amount+date to point at a single sale.
+  if (salesRecords.length) {
+    const sales = salesRecords.filter(x => x.amount && x.dateMs);
+    const pending = [];
+    for (const r of rows) {
+      if (found.has(r.id) || !r.amount) continue;
+      const at = new Date(r.occurred_at).getTime(), pt = tokensOf(r.name);
+      const scored = [];
+      for (const x of sales) {
+        const days = Math.abs(at - x.dateMs) / DAY_MS;
+        if (days > 7 || Math.abs(x.amount - r.amount) > Math.max(1, r.amount * 0.04)) continue; // allow a card surcharge/fee
+        let s = Math.abs(x.amount - r.amount) < 1 ? 50 : 35;
+        s += days <= 2 ? 30 : 15;
+        const lt = tokensOf(x.last).pop(), ft = tokensOf(x.first)[0];
+        if (pt.length) { if (!lt || !pt.includes(lt)) continue; s += ft && pt.includes(ft) ? 40 : 20; }
+        scored.push({ c: { id: x, status: "", created_at: "", full: `${normName(x.first)} ${normName(x.last)}|${x.email || ""}` }, s });
+      }
+      const sale = pickOne(scored, pt.length ? 100 : 80);
+      if (sale) pending.push([r.id, sale]);
+    }
+    if (pending.length) {
+      const keys = pending.flatMap(([, x]) => [x.email && `e:${String(x.email).trim().toLowerCase()}`, lastTen(x.phone).length === 10 && `p:${lastTen(x.phone)}`]).filter(Boolean);
+      const ids = await contactsByIdentity([...new Set(keys)]);
+      const byName = await nameCandidates([...new Set(pending.flatMap(([, x]) => tokensOf(`${x.first} ${x.last}`)).filter(t => t.length >= 3))]);
+      for (const [pid, x] of pending) {
+        let id = (x.email && ids.get(`e:${String(x.email).trim().toLowerCase()}`)) || (lastTen(x.phone).length === 10 && ids.get(`p:${lastTen(x.phone)}`));
+        if (!id) id = pickOne(byName.map(c => ({ c, s: scoreName(tokensOf(`${x.first} ${x.last}`), null, c) })).filter(y => y.s > 0), 100);
+        if (id) found.set(pid, [id, "sales record"]);
+      }
+    }
+  }
+
+  if (dryRun) return found;
+  for (const [pid, [id, method]] of found) {
+    await q(`UPDATE payments SET contact_id = $2, match_method = $3, updated_at = now() WHERE id = $1 AND contact_id IS NULL`, [pid, id, method]);
+  }
+  return found.size;
 }
 
 export async function setPaymentFields(id, { excluded, contactId }) {

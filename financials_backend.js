@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
 import { INTEGRATIONS_FILE } from "./integrations_backend.js";
-import { anchorageMidnightUTC, googleCreds } from "./ads_backend.js";
+import { anchorageMidnightUTC, googleCreds, googleAccessToken, getAdsSettings } from "./ads_backend.js";
 import * as fdb from "./financials_db.js";
 
 const DAY = 86400000;
@@ -343,6 +343,31 @@ async function syncEmails(src, settings, state) {
   return rows.length;
 }
 
+// ── Sales records for matching ─────────────────────────────────────────
+// Every enrollment in CALLS TRACKING (ONLINE + GYM tabs): the buyer's name,
+// email and phone with the amount and date -- what ties a nameless or
+// company-name payment (Kurv, a Wise wire from a business) to a person.
+export async function loadSalesRecords() {
+  const token = await googleAccessToken();
+  const ranges = ["'ONLINE'!A1:P6000", "'GYM'!A1:P6000"];
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${getAdsSettings().callsSheetId}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${ranges.map(x => "ranges=" + encodeURIComponent(x)).join("&")}`, { headers: { Authorization: `Bearer ${token}` } });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.error?.message || `HTTP ${r.status}`);
+  const out = [];
+  for (const vr of d.valueRanges || []) {
+    const [head, ...rows] = vr.values || [];
+    const col = Object.fromEntries((head || []).map((h, i) => [String(h).trim().toLowerCase(), i]));
+    const get = (row, ...names) => { for (const n of names) if (col[n] != null && String(row[col[n]] ?? "").trim()) return String(row[col[n]]).trim(); return ""; };
+    for (const row of rows) {
+      const amount = parseMoney(get(row, "amount paid"));
+      const date = parseCsvDate(get(row, "date of enrollment", "date of call", "applied date", "date"));
+      if (!(amount > 0) || !date) continue;
+      out.push({ first: get(row, "first"), last: get(row, "last"), email: get(row, "email"), phone: get(row, "phone"), amount, dateMs: Date.parse(date) });
+    }
+  }
+  return out;
+}
+
 // ── Sync orchestration ─────────────────────────────────────────────────
 let _syncing = null;
 export function financialsSyncRunning() { return !!_syncing; }
@@ -380,7 +405,8 @@ export function syncAllFinancials() {
       const rate = await usdRate(r.currency, new Date(r.occurred_at).getTime()).catch(() => null);
       if (rate) await fdb.setAmountUsd(r.id, Math.round(r.amount * rate * 100) / 100);
     }
-    out.matched = await fdb.matchUnmatchedPayments();
+    const sales = await loadSalesRecords().catch(e => { console.error("[financials] CALLS TRACKING read failed:", e.message); return []; });
+    out.matched = await fdb.matchUnmatchedPayments(sales);
     return out;
   })().finally(() => { _syncing = null; });
   return _syncing;
@@ -463,7 +489,7 @@ function guessMapping(headers) {
   return out;
 }
 function parseCsvDate(dateStr, timeStr) {
-  const s = `${String(dateStr || "").trim()} ${String(timeStr || "").trim()}`.trim();
+  const s = `${String(dateStr || "").trim()} ${String(timeStr || "").trim()}`.trim().replace(/^[A-Za-z]+day,\s*/, "").replace(/\s+at\s+/i, " ");
   if (!s) return null;
   if (/[zZ]$|[+-]\d\d:?\d\d$/.test(s) && !Number.isNaN(Date.parse(s))) return new Date(Date.parse(s)).toISOString();
   let y, mo, d, rest;
