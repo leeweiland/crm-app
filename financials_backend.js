@@ -291,6 +291,7 @@ async function readSheetGrid(sheetId, tab) {
 // deleted from it are deleted here too on the next sync.
 async function syncSheet(src) {
   const key = `sheet:${src.id}`;
+  if (!src.tab) throw new Error("Pick the tab in Settings -> Financials");
   const grid = await readSheetGrid(src.sheetId, src.tab);
   const parsed = gridToPayments({ grid, src });
   await fdb.upsertPayments(await withUsd(parsed.rows));

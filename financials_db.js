@@ -165,7 +165,8 @@ export async function financialsSummary(startMs, endMs) {
   const range = `p.occurred_at >= to_timestamp($1 / 1000.0) AND p.occurred_at <= to_timestamp($2 / 1000.0)`;
   const [byProvider, byKind, byMonth, program, unconverted] = await Promise.all([
     q(`SELECT p.provider, sum(p.amount_usd)::float AS cash, count(*) FILTER (WHERE p.kind = 'payment')::int AS payments,
-         sum(p.amount_usd) FILTER (WHERE p.kind <> 'payment')::float AS refunds,
+         sum(p.amount_usd) FILTER (WHERE p.kind <> 'payment' AND p.amount_usd < 0)::float AS refunds,
+         sum(p.amount_usd) FILTER (WHERE p.kind = 'chargeback' AND p.amount_usd > 0)::float AS won,
          count(*) FILTER (WHERE p.contact_id IS NULL)::int AS unmatched
        FROM payments p WHERE ${REVENUE_WHERE} AND ${range} GROUP BY 1 ORDER BY 2 DESC NULLS LAST`, [startMs, endMs]),
     q(`SELECT p.kind, count(*)::int AS n, sum(p.amount_usd)::float AS usd FROM payments p WHERE ${range} GROUP BY 1 ORDER BY 2 DESC`, [startMs, endMs]),

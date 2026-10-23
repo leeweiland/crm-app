@@ -143,12 +143,13 @@ async function loadSummary() {
   const j = await r.json();
   const net = j.byProvider.reduce((s, p) => s + (p.cash || 0), 0);
   const refunds = j.byProvider.reduce((s, p) => s + (p.refunds || 0), 0);
+  const won = j.byProvider.reduce((s, p) => s + (p.won || 0), 0);
   const sales = j.byProvider.reduce((s, p) => s + (p.payments || 0), 0);
   const unmatched = j.byProvider.reduce((s, p) => s + (p.unmatched || 0), 0);
   const pg = j.program;
   const cards = [
     ['Cash collected (net)', money0(net), `${sales} sales`],
-    ['Refunds & chargebacks', money0(refunds), ''],
+    ['Refunds & chargebacks', money0(refunds), won ? `${money0(won)} of disputes won back (counted in cash)` : ''],
     ['Online', money0(pg.online), 'by paying contact\'s program'],
     ['Gym', money0(pg.gym), ''],
     ['No program / no contact', money0(pg.unassigned), `${unmatched} transactions not matched to a contact`],
@@ -179,7 +180,7 @@ async function loadTx() {
       <td>${esc(p.payer_name || '')}${p.payer_email ? `<div class="pra-muted" style="font-size:.74rem">${esc(p.payer_email)}</div>` : ''}</td>
       <td>${contact}</td>
       <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.description || '')}">${esc(p.description || '')}</td>
-      <td>${esc(KINDS[p.kind] || p.kind)}${p.status && !['S', 'Success', 'Approved'].includes(p.status) ? ` <span class="pra-muted" style="font-size:.72rem">${esc(p.status)}</span>` : ''}</td>
+      <td>${esc(p.kind === 'chargeback' && p.amount > 0 ? 'Chargeback won back' : KINDS[p.kind] || p.kind)}${p.status && !['S', 'Success', 'Approved'].includes(p.status) ? ` <span class="pra-muted" style="font-size:.72rem">${esc(p.status)}</span>` : ''}</td>
       <td class="num ${amt < 0 ? 'fin-neg' : ''}">${money(amt)}${p.currency !== 'USD' ? `<div class="pra-muted" style="font-size:.72rem">${esc(p.amount.toFixed(2))} ${esc(p.currency)}</div>` : ''}</td>
       <td style="text-align:center"><input type="checkbox" data-exclude="${esc(p.id)}"${p.excluded ? ' checked' : ''}/></td>
     </tr>`;
