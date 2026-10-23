@@ -19,6 +19,11 @@
   .fin-neg { color: var(--pra-red, #e5484d); }
   .fin-dim td { opacity: .5; }
   .fin-sources { font-size: .78rem; display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+  .fin-link-btn { background: none; border: none; color: var(--pra-blue); cursor: pointer; font: inherit; font-size: .76rem; padding: 0; }
+  .fin-link-pop { position: absolute; z-index: 50; width: 300px; padding: 10px; background: var(--pra-panel, #15161a); border: 1px solid var(--pra-border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .fin-link-pop .res { max-height: 240px; overflow-y: auto; margin-top: 6px; }
+  .fin-link-pop .res button { display: block; width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit; font-size: .8rem; padding: 6px 4px; cursor: pointer; border-radius: 6px; }
+  .fin-link-pop .res button:hover { background: var(--pra-blue-dim); }
 </style>
 </head>
 <body>
@@ -174,7 +179,8 @@ async function loadTx() {
   const r = await fetch('/api/financials/payments?' + qs);
   const j = await r.json();
   document.getElementById('txBody').innerHTML = j.rows.map(p => {
-    const contact = p.contact_id ? `<a class="pra-link" href="/contact-detail.html?id=${encodeURIComponent(p.contact_id)}">${esc([p.contact_first, p.contact_last].filter(Boolean).join(' ') || 'Contact')}</a>${p.contact_program ? ` <span class="pra-badge pra-badge-${esc(p.contact_program)}">${esc(p.contact_program)}</span>` : ''}${p.match_method && p.match_method !== 'email' ? ` <span class="pra-muted" title="How this payment was tied to the contact" style="font-size:.7rem">(${esc(p.match_method)})</span>` : ''}` : '<span class="pra-muted">—</span>';
+    const contact = p.contact_id ? `<a class="pra-link" href="/contact-detail.html?id=${encodeURIComponent(p.contact_id)}">${esc([p.contact_first, p.contact_last].filter(Boolean).join(' ') || 'Contact')}</a>${p.contact_program ? ` <span class="pra-badge pra-badge-${esc(p.contact_program)}">${esc(p.contact_program)}</span>` : ''}${p.match_method && p.match_method !== 'email' ? ` <span class="pra-muted" title="How this payment was tied to the contact" style="font-size:.7rem">(${esc(p.match_method)})</span>` : ''}<div><button class="fin-link-btn" data-link="${esc(p.id)}">change</button> · <button class="fin-link-btn" data-unlink="${esc(p.id)}">unlink</button></div>`
+      : `<button class="fin-link-btn" data-link="${esc(p.id)}" data-guess="${esc(p.payer_name || p.payer_email || '')}">+ Link to contact</button>`;
     const amt = p.amount_usd != null ? p.amount_usd : p.amount;
     return `<tr class="${p.excluded ? 'fin-dim' : ''}">
       <td style="white-space:nowrap">${esc(fmtDay(p.occurred_at))}</td>
@@ -190,12 +196,48 @@ async function loadTx() {
   document.getElementById('txSummary').textContent = j.total ? `${page * PAGE + 1}–${Math.min(j.total, (page + 1) * PAGE)} of ${j.total}` : '';
   document.getElementById('prevBtn').disabled = page === 0;
   document.getElementById('nextBtn').disabled = (page + 1) * PAGE >= j.total;
+  document.querySelectorAll('[data-link]').forEach(b => b.onclick = (e) => { e.stopPropagation(); openLinkPopup(b); });
+  document.querySelectorAll('[data-unlink]').forEach(b => b.onclick = async () => {
+    await setContact(b.dataset.unlink, null);
+  });
   document.querySelectorAll('[data-exclude]').forEach(cb => cb.onchange = async () => {
     await fetch('/api/financials/payments/' + encodeURIComponent(cb.dataset.exclude), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ excluded: cb.checked }) });
     cb.closest('tr').classList.toggle('fin-dim', cb.checked);
     loadSummary();
   });
 }
+
+// Link a payment to a contact by hand (search by name, email or phone).
+// Unlinking marks the payment so the automatic matcher leaves it alone.
+async function setContact(paymentId, contactId) {
+  await fetch('/api/financials/payments/' + encodeURIComponent(paymentId), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId }) });
+  document.querySelector('.fin-link-pop')?.remove();
+  loadSummary(); loadTx();
+}
+function openLinkPopup(btn) {
+  document.querySelector('.fin-link-pop')?.remove();
+  const pop = document.createElement('div');
+  pop.className = 'fin-link-pop';
+  pop.innerHTML = `<input class="pra-input" placeholder="Search name, email or phone…" style="width:100%"/><div class="res pra-muted" style="font-size:.78rem">Type to search.</div>`;
+  const r = btn.getBoundingClientRect();
+  pop.style.left = (r.left + window.scrollX) + 'px';
+  pop.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  (document.querySelector('.pra-root') || document.body).appendChild(pop); // inside .pra-root so it gets the app's fonts
+  const input = pop.querySelector('input'), res = pop.querySelector('.res');
+  let t;
+  const search = async () => {
+    const q = input.value.trim();
+    if (q.length < 2) { res.textContent = 'Type to search.'; return; }
+    const j = await (await fetch(`/api/contacts?q=${encodeURIComponent(q)}&limit=12`)).json().catch(() => ({ contacts: [] }));
+    res.innerHTML = (j.contacts || []).map(c => `<button data-cid="${esc(c.id)}"><b>${esc([c.first, c.last].filter(Boolean).join(' ') || '(no name)')}</b> <span class="pra-muted">${esc(c.email || c.phone || '')}${c.status ? ' · ' + esc(c.status) : ''}</span></button>`).join('') || 'No contacts found.';
+    res.querySelectorAll('[data-cid]').forEach(b => b.onclick = () => setContact(btn.dataset.link, b.dataset.cid));
+  };
+  input.oninput = () => { clearTimeout(t); t = setTimeout(search, 250); };
+  // Start from the payer's family name -- usually enough to find a spouse or parent.
+  input.value = (btn.dataset.guess || '').split(/\s+/).filter(Boolean).pop() || '';
+  input.focus(); search();
+}
+document.addEventListener('click', (e) => { const pop = document.querySelector('.fin-link-pop'); if (pop && !pop.contains(e.target)) pop.remove(); });
 
 function applyPeriod() {
   const p = document.getElementById('period').value;

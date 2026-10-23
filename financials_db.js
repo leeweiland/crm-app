@@ -157,7 +157,8 @@ function pickOne(scored, threshold) {
 
 export async function matchUnmatchedPayments(salesRecords = [], { dryRun = false } = {}) {
   const rows = await q(`SELECT id, occurred_at, amount_usd::float AS amount, lower(trim(payer_email)) AS email, payer_name AS name
-    FROM payments WHERE contact_id IS NULL AND kind = ANY('{payment,refund,chargeback}') AND NOT excluded`);
+    FROM payments WHERE contact_id IS NULL AND kind = ANY('{payment,refund,chargeback}') AND NOT excluded
+      AND coalesce(match_method, '') <> 'unlinked'`);
   if (!rows.length) return 0;
   const found = new Map(); // payment id -> [contactId, method]
 
@@ -231,7 +232,7 @@ export async function setPaymentFields(id, { excluded, contactId }) {
   if (excluded !== undefined) await q(`UPDATE payments SET excluded = $2, updated_at = now() WHERE id = $1`, [id, !!excluded]);
   if (contactId !== undefined) {
     await q(`UPDATE payments SET contact_id = $2, match_method = $3, updated_at = now() WHERE id = $1`,
-      [id, contactId || null, contactId ? "manual" : null]);
+      [id, contactId || null, contactId ? "manual" : "unlinked"]); // "unlinked": someone said this auto-match was wrong -- never re-match it
   }
 }
 

@@ -354,11 +354,18 @@ function callsCloses(rows, dateHeader) {
   }
   return out;
 }
-// RENEWALS & PAYOFFS and TRAVEL tabs: FIRST | LAST | DATE | AMOUNT
+// RENEWALS & PAYOFFS and TRAVEL tabs: found by header name ("DATE", "AMOUNT"),
+// not position -- the tabs grew EMAIL/PHONE/START DATE/END DATE columns ahead
+// of DATE and AMOUNT, and reading fixed columns C/D silently dropped every
+// renewal, payoff and travel payment.
 function callsPayments(rows) {
+  const hdr = (rows[0] || []).map(c => String(c).trim().toLowerCase());
+  const di = hdr.indexOf("date"), ai = hdr.indexOf("amount");
+  if (!rows.length) return [];
+  if (di < 0 || ai < 0) throw new Error('A CALLS TRACKING renewals/travel tab is missing a "DATE" or "AMOUNT" column');
   const out = [];
   for (let i = 1; i < rows.length; i++) {
-    const d = parseSheetDate(rows[i][2]), amt = sheetNum(rows[i][3]);
+    const d = parseSheetDate(rows[i][di]), amt = sheetNum(rows[i][ai]);
     if (d && amt) out.push({ d, amt });
   }
   return out;
@@ -380,7 +387,7 @@ async function loadCallsTracking(fresh = false) {
   try {
     const accessToken = await googleAccessToken();
     const id = getAdsSettings().callsSheetId;
-    const ranges = ["'ONLINE'!A1:P6000", "'GYM'!A1:P6000", "'ONLINE RENEWALS & PAYOFFS'!A1:D3000", "'ONLINE TRAVEL'!A1:D3000", "'GYM RENEWALS & PAYOFFS'!A1:D3000", "'GYM TRAVEL'!A1:D3000"];
+    const ranges = ["'ONLINE'!A1:P6000", "'GYM'!A1:P6000", "'ONLINE RENEWALS & PAYOFFS'!A1:Z3000", "'ONLINE TRAVEL'!A1:Z3000", "'GYM RENEWALS & PAYOFFS'!A1:Z3000", "'GYM TRAVEL'!A1:Z3000"];
     const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?valueRenderOption=FORMATTED_VALUE&${ranges.map(x => "ranges=" + encodeURIComponent(x)).join("&")}`, {
       headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30000),
     });
