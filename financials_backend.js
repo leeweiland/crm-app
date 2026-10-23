@@ -1,12 +1,13 @@
 // Financials: real cash from the payment processors, for Reporting's True
-// ROAS. PayPal (Transaction Search API) and Wise (balance statements) sync on
-// a timer with read-only credentials saved in Settings -> Financials; Kurv and
-// SwipeSimple have no merchant API, so their transaction exports live in
-// Google Sheets (one tab per source, set up in the same settings) that the
-// same timer reads. Every row lands in Postgres (financials_db.js) and is
-// matched to a contact by payer email, then by exact full name.
+// ROAS. PayPal (Transaction Search API), Wise (balance statements) and Kurv
+// (payment history API) sync on a timer with credentials saved in Settings ->
+// Financials. SwipeSimple has no API, so its per-sale notification emails are
+// read from a connected Gmail inbox on the same timer; Google Sheets tabs
+// cover anything else with an export. Every row lands in Postgres
+// (financials_db.js) and is matched to a contact by payer email, then by
+// exact full name.
 import { createHash, randomUUID } from "crypto";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, isAdmin, USERS_FILE } from "./auth_backend.js";
 import { INTEGRATIONS_FILE } from "./integrations_backend.js";
 import { anchorageMidnightUTC, googleCreds } from "./ads_backend.js";
 import * as fdb from "./financials_db.js";
@@ -14,6 +15,7 @@ import * as fdb from "./financials_db.js";
 const DAY = 86400000;
 const PAYPAL_API = "https://api-m.paypal.com";
 const WISE_API = "https://api.wise.com";
+const KURV_API = "https://api.kurv.app";
 // Payments from these names/addresses are money moving between our own
 // accounts (PayPal -> PayPal, a wire into Wise), not sales.
 const DEFAULT_OWN_NAMES = ["pacific rim athletics", "weiland"];
@@ -24,6 +26,8 @@ export function getFinancialsSettings() {
   return {
     paypal: Array.isArray(f.paypal) ? f.paypal : [],
     wise: Array.isArray(f.wise) ? f.wise : [],
+    kurv: Array.isArray(f.kurv) ? f.kurv : [],
+    emails: Array.isArray(f.emails) ? f.emails : [],
     sheets: Array.isArray(f.sheets) ? f.sheets : [],
     ownNames: Array.isArray(f.ownNames) ? f.ownNames : DEFAULT_OWN_NAMES,
   };
@@ -207,6 +211,137 @@ async function syncWise(acct, settings, state) {
   return total;
 }
 
+// ── Kurv ───────────────────────────────────────────────────────────────
+// GET /payments (payment history) with the merchant's live key (kp_live_...).
+// payment_type is <method>.<action>: DB = sale, CP = capture of a pre-auth,
+// RF = refund, RV = reversal, CB = chargeback, PA = pre-auth (no money yet).
+function kurvKind(type) {
+  const t = String(type || "").toUpperCase().split(".").pop();
+  if (t === "DB" || t === "CP") return "payment";
+  if (t === "RF" || t === "RV") return "refund";
+  if (t === "CB") return "chargeback";
+  return "other";
+}
+async function syncKurv(acct, settings, state) {
+  const key = `kurv:${acct.id}`;
+  const now = Date.now();
+  let from = state?.synced_through ? new Date(state.synced_through).getTime() - 3 * DAY : now - 3 * 365 * DAY;
+  let total = 0;
+  const ymd = (ms) => new Date(ms).toISOString().slice(0, 10);
+  while (from < now) {
+    const to = Math.min(from + 90 * DAY, now);
+    for (let page = 1, pages = 1; page <= pages; page++) {
+      const qs = new URLSearchParams({ start_date: ymd(from), end_date: ymd(to), page: String(page), limit: "100" });
+      const r = await fetch(`${KURV_API}/payments?${qs}`, { headers: { Authorization: `Bearer ${acct.key}` } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`Kurv: ${j.message || j.error || j.result || `HTTP ${r.status}`}`);
+      pages = Number(j.page_count) || 1;
+      const rows = (j.payments || []).map(x => {
+        let kind = kurvKind(x.payment_type);
+        const amount = kind === "refund" || kind === "chargeback" ? -Math.abs(Number(x.amount) || 0) : Number(x.amount) || 0;
+        if (kind === "payment" && isOwn(settings, null, x.email)) kind = "transfer";
+        return {
+          id: `kurv:${acct.id}:${x.payment_id}`, provider: "kurv", account: acct.label || "Kurv", txnId: x.payment_id,
+          occurredAt: x.payment_date || x.transaction_date, amount, fee: null, currency: (x.currency || "USD").toUpperCase(), kind,
+          status: x.status === "success" ? "S" : "D", payerEmail: x.email || null, payerName: null,
+          description: [x.reference_number, x.transaction_type].filter(Boolean).join(" -- ") || null,
+          raw: { type: x.payment_type, transactionId: x.transaction_id, phone: x.customer_phone_number || null, result: x.result_description || null },
+        };
+      }).filter(r => r.txnId && r.occurredAt);
+      total += await fdb.upsertPayments(await withUsd(rows));
+    }
+    await fdb.setSourceState(key, { syncedThrough: new Date(to).toISOString(), count: total });
+    from = to + 1000;
+  }
+  return total;
+}
+
+// ── Sale-notification emails (SwipeSimple, anything that emails a receipt) ─
+// Read from a Gmail inbox already connected to the CRM (Connect Email). The
+// processor's notifications are forwarded there; each email is one sale
+// (a "refund"/"void" in the subject makes it a refund; "declined" is skipped).
+export function gmailInboxes() {
+  return readJson(USERS_FILE, []).filter(u => u.gmailRefreshToken && u.gmailEmail).map(u => u.gmailEmail);
+}
+async function gmailToken(inbox) {
+  const u = readJson(USERS_FILE, []).find(x => x.gmailEmail === inbox && x.gmailRefreshToken);
+  if (!u) throw new Error(`${inbox} isn't connected to the CRM anymore (Connect Email)`);
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: process.env.GOOGLE_GMAIL_CLIENT_ID, client_secret: process.env.GOOGLE_GMAIL_CLIENT_SECRET, refresh_token: u.gmailRefreshToken, grant_type: "refresh_token" }),
+  });
+  const j = await r.json();
+  if (!j.access_token) throw new Error("Gmail sign-in failed for " + inbox);
+  return j.access_token;
+}
+const b64url = (d) => Buffer.from(String(d || "").replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+function emailText(payload) {
+  let plain = "", html = "";
+  (function walk(part) {
+    if (!part) return;
+    if (part.mimeType === "text/plain" && part.body?.data) plain += b64url(part.body.data) + "\n";
+    else if (part.mimeType === "text/html" && part.body?.data) html += b64url(part.body.data) + "\n";
+    for (const c of part.parts || []) walk(c);
+  })(payload);
+  const fromHtml = html.replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, "\n").replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").replace(/&[a-z]+;|&#\d+;/gi, " ");
+  return (plain.trim() ? plain : fromHtml).replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
+}
+const OUR_ADDRESS = /swipesimple|cardflight|kurv|paypal|pacificrimathletics|weiland|noreply|no-reply/i;
+export function parseSaleEmail({ subject, text, date }) {
+  const all = `${subject}\n${text}`;
+  if (/declin|failed|unsuccessful/i.test(subject)) return { skip: "declined" };
+  const amt = /(?:total|amount|charged|paid|sale)[^$\d\n]{0,30}\$\s?([\d,]+\.\d{2})/i.exec(all) || /\$\s?([\d,]+\.\d{2})/.exec(all);
+  if (!amt) return { skip: "no amount" };
+  let amount = Number(amt[1].replace(/,/g, ""));
+  const refund = /refund|void|return/i.test(subject);
+  if (refund) amount = -amount;
+  const name = (/(?:[Cc]ustomer(?: [Nn]ame)?|[Cc]ard ?[Hh]older(?: [Nn]ame)?|[Bb]illed [Tt]o|^[Nn]ame)[ \t]*:?[ \t]*([A-Z][A-Za-z'.-]+(?: [A-Z][A-Za-z'.-]+){1,3})/m.exec(text) || [])[1] || null;
+  const email = (text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) || []).find(e => !OUR_ADDRESS.test(e)) || null;
+  const txn = (/(?:transaction|reference|receipt|order|invoice)\s*(?:id|#|no\.?|number)?\s*:?\s*#?([A-Z0-9-]{5,})/i.exec(text) || [])[1] || null;
+  return { amount, kind: refund ? "refund" : "payment", payerName: name, payerEmail: email, txn, occurredAt: date };
+}
+async function fetchSaleEmails(src, { newerThanDays, max = 300 }) {
+  const token = await gmailToken(src.inbox);
+  const H = { Authorization: `Bearer ${token}` };
+  const q = `${src.query || "swipesimple"} newer_than:${Math.max(1, Math.ceil(newerThanDays))}d`;
+  const ids = [];
+  for (let pageToken = ""; ids.length < max;) {
+    const l = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100&q=${encodeURIComponent(q)}${pageToken ? "&pageToken=" + pageToken : ""}`, { headers: H })).json();
+    if (l.error) throw new Error("Gmail: " + l.error.message);
+    ids.push(...(l.messages || []).map(m => m.id));
+    if (!l.nextPageToken) break;
+    pageToken = l.nextPageToken;
+  }
+  const out = [];
+  for (const id of ids.slice(0, max)) {
+    const m = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: H })).json();
+    const h = Object.fromEntries((m.payload?.headers || []).map(x => [x.name.toLowerCase(), x.value]));
+    const subject = h.subject || "", text = emailText(m.payload);
+    const date = new Date(Number(m.internalDate) || Date.parse(h.date) || Date.now()).toISOString();
+    out.push({ id, subject, from: h.from || "", date, parsed: parseSaleEmail({ subject, text, date }) });
+  }
+  return out;
+}
+async function syncEmails(src, settings, state) {
+  const key = `email:${src.id}`;
+  const days = state?.synced_through ? (Date.now() - new Date(state.synced_through).getTime()) / DAY + 3 : 3 * 365;
+  const mails = await fetchSaleEmails(src, { newerThanDays: days, max: state?.synced_through ? 300 : 3000 });
+  const rows = mails.filter(m => !m.parsed.skip).map(m => {
+    let kind = m.parsed.kind;
+    if (kind === "payment" && isOwn(settings, m.parsed.payerName, m.parsed.payerEmail)) kind = "transfer";
+    return {
+      id: `email:${src.id}:${m.id}`, provider: src.provider || "swipesimple", account: src.label || "SwipeSimple", txnId: m.parsed.txn || m.id,
+      occurredAt: m.date, amount: m.parsed.amount, fee: null, currency: "USD", kind, status: "S",
+      payerEmail: m.parsed.payerEmail, payerName: m.parsed.payerName, description: m.subject.slice(0, 200), raw: { gmailId: m.id, inbox: src.inbox },
+    };
+  });
+  await fdb.upsertPayments(await withUsd(rows));
+  await fdb.setSourceState(key, { syncedThrough: new Date().toISOString(), count: rows.length,
+    error: mails.length ? null : "No matching emails yet -- check the forward and the search" });
+  return rows.length;
+}
+
 // ── Sync orchestration ─────────────────────────────────────────────────
 let _syncing = null;
 export function financialsSyncRunning() { return !!_syncing; }
@@ -216,9 +351,10 @@ export function syncAllFinancials() {
     const settings = getFinancialsSettings();
     const states = new Map((await fdb.getSourceStates()).map(s => [s.key, s]));
     const out = {};
-    for (const [kind, fn, list] of [["paypal", syncPaypal, settings.paypal], ["wise", syncWise, settings.wise]]) {
+    const READY = { paypal: a => a.clientId && a.clientSecret, wise: a => a.token, kurv: a => a.key, email: a => a.inbox };
+    for (const [kind, fn, list] of [["paypal", syncPaypal, settings.paypal], ["wise", syncWise, settings.wise], ["kurv", syncKurv, settings.kurv], ["email", syncEmails, settings.emails]]) {
       for (const acct of list) {
-        if (kind === "paypal" ? !(acct.clientId && acct.clientSecret) : !acct.token) continue;
+        if (!READY[kind](acct)) continue;
         const key = `${kind}:${acct.id}`;
         try { out[key] = { ok: true, count: await fn(acct, settings, states.get(key)) }; }
         catch (e) {
@@ -391,6 +527,9 @@ function maskedSettings() {
   return {
     paypal: s.paypal.map(a => ({ id: a.id, label: a.label || "", clientId: a.clientId || "", secretSet: !!a.clientSecret })),
     wise: s.wise.map(a => ({ id: a.id, label: a.label || "", tokenSet: !!a.token })),
+    kurv: s.kurv.map(a => ({ id: a.id, label: a.label || "", keySet: !!a.key })),
+    emails: s.emails,
+    inboxes: gmailInboxes(),
     sheets: s.sheets,
     ownNames: s.ownNames,
   };
@@ -425,6 +564,24 @@ export async function handleFinancialsRequest(req, res, url) {
           const old = cur.wise.find(o => o.id === a.id);
           return { id: old?.id || randomUUID(), label: String(a.label || "").trim(), token: String(a.token || "").trim() || old?.token || "" };
         });
+      }
+      if (Array.isArray(body.kurv)) {
+        next.kurv = body.kurv.filter(a => a && (a.key || a.id)).map(a => {
+          const old = cur.kurv.find(o => o.id === a.id);
+          return { id: old?.id || randomUUID(), label: String(a.label || "").trim(), key: String(a.key || "").trim() || old?.key || "" };
+        });
+      }
+      if (Array.isArray(body.emails)) {
+        next.emails = body.emails.filter(a => a && a.inbox).map(a => ({
+          id: cur.emails.find(o => o.id === a.id)?.id || randomUUID(), label: String(a.label || "").trim(),
+          provider: ["swipesimple", "kurv", "other"].includes(a.provider) ? a.provider : "swipesimple",
+          inbox: String(a.inbox).trim(), query: String(a.query || "").trim() || "swipesimple",
+        }));
+        for (const old of cur.emails) {
+          if (next.emails.some(n => n.id === old.id)) continue;
+          await fdb.deleteMissing(`email:${old.id}:`, []);
+          await fdb.resetSourceState(`email:${old.id}`);
+        }
       }
       if (Array.isArray(body.sheets)) {
         const PROVIDERS = ["kurv", "swipesimple", "paypal", "wise", "other"];
@@ -469,6 +626,12 @@ export async function handleFinancialsRequest(req, res, url) {
       const body = await readJsonBody(req);
       await fdb.setPaymentFields(decodeURIComponent(m[1]), { excluded: body.excluded, contactId: body.contactId });
       return sendJson(res, 200, { ok: true });
+    }
+    // What an email source would pick up: the last 30 days of matching emails and how each parsed.
+    if (p === "/api/financials/email-preview" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      const mails = await fetchSaleEmails({ inbox: body.inbox, query: body.query }, { newerThanDays: 30, max: 15 });
+      return sendJson(res, 200, { emails: mails.map(m => ({ subject: m.subject, from: m.from, date: m.date, ...m.parsed })) });
     }
     if (p === "/api/financials/sheet-tabs" && req.method === "GET") {
       return sendJson(res, 200, await sheetTabs(url.searchParams.get("sheetId")));

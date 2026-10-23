@@ -1,14 +1,15 @@
 // Settings > Financials: the payment processors behind Reporting's True ROAS.
-// PayPal and Wise connect with read-only API credentials; Kurv/SwipeSimple
-// (no merchant API) come from Google Sheets of their exports. Everything
-// here syncs automatically every 3 hours (financials_backend.js).
+// PayPal, Wise and Kurv connect with API credentials; SwipeSimple (no API)
+// comes from its sale-notification emails in a CRM-connected Gmail inbox;
+// Google Sheets cover anything else. Everything here syncs automatically
+// every 3 hours (financials_backend.js).
 (function () {
   const panel = document.getElementById('tab-financials');
   if (!panel) return;
   const esc = (s) => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
   const PROVIDER_LABELS = { kurv: 'Kurv', swipesimple: 'SwipeSimple', other: 'Other' };
   const FIELD_LABELS = { date: 'Date', time: 'Time (if separate)', amount: 'Amount', id: 'Transaction ID', email: 'Payer email', name: 'Payer name', status: 'Status', type: 'Type (sale/refund)', description: 'Description', currency: 'Currency' };
-  let state = { paypal: [], wise: [], sheets: [], ownNames: [], states: [], syncing: false };
+  let state = { paypal: [], wise: [], kurv: [], emails: [], inboxes: [], sheets: [], ownNames: [], states: [], syncing: false };
 
   function statusLine(key) {
     const st = state.states.find(s => s.key === key);
@@ -58,8 +59,40 @@
         </div>`).join('')}
       <button class="pra-btn pra-btn-outline pra-btn-sm" id="finAddWise">+ Add Wise account</button>
 
-      <div class="pra-h2" style="font-size:1rem;margin:24px 0 4px">Google Sheets (Kurv, SwipeSimple, anything else)</div>
-      <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">Kurv and SwipeSimple have no API for merchants, so their transaction exports go in a Google Sheet tab -- one row per transaction, headers in row 1. The CRM reads it on the same schedule; rows added, changed or deleted in the sheet follow automatically. Uses the same Google login as the Ads Tracking Sheet.</div>
+      <div class="pra-h2" style="font-size:1rem;margin:24px 0 4px">Kurv</div>
+      <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">developer.kurv.app → Apply (sign up) → create an app → connect it to the Pacific Rim Athletics merchant account and publish it → enable the app in your Kurv merchant dashboard → copy its live access key (starts with <code>kp_live_</code>).</div>
+      ${state.kurv.map((a, i) => `
+        <div class="pra-panel" style="padding:12px 14px;margin-bottom:10px">
+          <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:end">
+            <div><label class="pra-label">Name</label><input class="pra-input" data-kurv="${i}" data-f="label" value="${esc(a.label)}" placeholder="Kurv"/></div>
+            <div><label class="pra-label">Live access key</label><input class="pra-input" type="password" data-kurv="${i}" data-f="key" value="" autocomplete="new-password" placeholder="${a.keySet ? 'saved -- leave blank to keep' : 'kp_live_...'}"/></div>
+            ${removeBtn('kurv', i)}
+          </div>
+          <div style="font-size:.78rem;margin-top:6px">${a.id ? statusLine('kurv:' + a.id) : '<span class="pra-muted">Save to connect.</span>'}</div>
+        </div>`).join('')}
+      <button class="pra-btn pra-btn-outline pra-btn-sm" id="finAddKurv">+ Add Kurv account</button>
+
+      <div class="pra-h2" style="font-size:1rem;margin:24px 0 4px">Sale emails (SwipeSimple)</div>
+      <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">SwipeSimple has no API, so the CRM reads its per-sale notification emails. Turn on SwipeSimple's email for every transaction, forward those emails to an inbox connected under Connect Email, and pick that inbox here. Each email becomes one sale ("refund"/"void" in the subject = a refund, "declined" is skipped).</div>
+      ${state.emails.map((a, i) => `
+        <div class="pra-panel" style="padding:12px 14px;margin-bottom:10px">
+          <div style="display:grid;grid-template-columns:1fr .8fr 1.4fr 1.4fr auto;gap:8px;align-items:end">
+            <div><label class="pra-label">Name</label><input class="pra-input" data-em="${i}" data-f="label" value="${esc(a.label)}" placeholder="SwipeSimple"/></div>
+            <div><label class="pra-label">Processor</label><select class="pra-select pra-input" data-em="${i}" data-f="provider">${Object.entries(PROVIDER_LABELS).map(([v, l]) => `<option value="${v}"${a.provider === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+            <div><label class="pra-label">Inbox</label><select class="pra-select pra-input" data-em="${i}" data-f="inbox">${state.inboxes.map(x => `<option${x === a.inbox ? ' selected' : ''}>${esc(x)}</option>`).join('') || '<option value="">(connect a Gmail first)</option>'}</select></div>
+            <div><label class="pra-label">Gmail search</label><input class="pra-input" data-em="${i}" data-f="query" value="${esc(a.query || 'swipesimple')}"/></div>
+            ${removeBtn('emails', i)}
+          </div>
+          <div style="font-size:.78rem;margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            ${a.id ? statusLine('email:' + a.id) : '<span class="pra-muted">Not saved yet.</span>'}
+            <button class="pra-btn pra-btn-ghost pra-btn-sm" data-email-preview="${i}">Preview emails</button>
+          </div>
+          <div data-email-box="${i}"></div>
+        </div>`).join('')}
+      <button class="pra-btn pra-btn-outline pra-btn-sm" id="finAddEmail">+ Add sale-email source</button>
+
+      <div class="pra-h2" style="font-size:1rem;margin:24px 0 4px">Google Sheets (anything else)</div>
+      <div class="pra-muted" style="font-size:.78rem;margin-bottom:10px">For a processor with neither an API nor sale emails: its transaction export in a Google Sheet tab, one row per transaction, headers in row 1. The CRM reads it on the same schedule; rows added, changed or deleted in the sheet follow automatically.</div>
       ${state.sheets.map((a, i) => `
         <div class="pra-panel" style="padding:12px 14px;margin-bottom:10px" data-sheet-card="${i}">
           <div style="display:grid;grid-template-columns:1fr .8fr 2fr 1.1fr auto;gap:8px;align-items:end">
@@ -94,6 +127,11 @@
   function wire() {
     panel.querySelectorAll('[data-pp]').forEach(el => el.oninput = () => { state.paypal[+el.dataset.pp][el.dataset.f] = el.value; });
     panel.querySelectorAll('[data-wise]').forEach(el => el.oninput = () => { state.wise[+el.dataset.wise][el.dataset.f] = el.value; });
+    panel.querySelectorAll('[data-kurv]').forEach(el => el.oninput = () => { state.kurv[+el.dataset.kurv][el.dataset.f] = el.value; });
+    panel.querySelectorAll('[data-em]').forEach(el => el.oninput = el.onchange = () => { state.emails[+el.dataset.em][el.dataset.f] = el.value; });
+    panel.querySelectorAll('[data-email-preview]').forEach(b => b.onclick = () => previewEmails(+b.dataset.emailPreview));
+    document.getElementById('finAddKurv').onclick = () => { state.kurv.push({ label: 'Kurv', key: '' }); render(); };
+    document.getElementById('finAddEmail').onclick = () => { state.emails.push({ label: 'SwipeSimple', provider: 'swipesimple', inbox: state.inboxes[0] || '', query: 'swipesimple' }); render(); };
     panel.querySelectorAll('[data-sh]').forEach(el => {
       const a = state.sheets[+el.dataset.sh];
       el.oninput = el.onchange = () => { a[el.dataset.f] = el.value; };
@@ -140,12 +178,25 @@
     box.querySelectorAll('[data-map]').forEach(sel => sel.onchange = () => { a.mapping[sel.dataset.map] = sel.value; preview(i); });
   }
 
+  async function previewEmails(i) {
+    const a = state.emails[i];
+    const box = panel.querySelector(`[data-email-box="${i}"]`);
+    box.innerHTML = '<div class="pra-muted" style="font-size:.8rem;margin-top:8px">Searching the inbox…</div>';
+    const r = await fetch('/api/financials/email-preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inbox: a.inbox, query: a.query }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { box.innerHTML = `<div style="color:var(--pra-red,#e5484d);font-size:.8rem;margin-top:8px">${esc(j.error || 'Could not search the inbox')}</div>`; return; }
+    box.innerHTML = j.emails.length ? `<div style="overflow-x:auto;margin-top:8px"><table class="data-table" style="font-size:.78rem"><thead><tr><th>Date</th><th>Subject</th><th>Read as</th></tr></thead><tbody>
+      ${j.emails.map(m => `<tr><td style="white-space:nowrap">${esc(new Date(m.date).toLocaleDateString())}</td><td>${esc(m.subject)}<div class="pra-muted" style="font-size:.7rem">${esc(m.from)}</div></td><td>${m.skip ? `<span class="pra-muted">skipped (${esc(m.skip)})</span>` : `${esc(m.kind)} $${esc(m.amount.toFixed(2))} ${esc(m.payerName || '')} ${esc(m.payerEmail || '')}`}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="pra-muted" style="font-size:.8rem;margin-top:8px">No matching emails in the last 30 days yet.</div>';
+  }
   function msg(t) { const el = document.getElementById('finMsg'); if (el) el.textContent = t || ''; }
   async function save() {
     msg('Saving…');
     const body = {
       paypal: state.paypal.map(({ id, label, clientId, clientSecret }) => ({ id, label, clientId, clientSecret })),
       wise: state.wise.map(({ id, label, token }) => ({ id, label, token })),
+      kurv: state.kurv.map(({ id, label, key }) => ({ id, label, key })),
+      emails: state.emails.map(({ id, label, provider, inbox, query }) => ({ id, label, provider, inbox, query })),
       sheets: state.sheets.map(({ id, label, provider, sheetId, tab, mapping }) => ({ id, label, provider, sheetId, tab, mapping })),
       ownNames: state.ownNames,
     };
@@ -174,7 +225,7 @@
     const r = await fetch('/api/financials/settings');
     if (!r.ok) { panel.innerHTML = '<div class="pra-muted">Admins only.</div>'; return; }
     const j = await r.json();
-    state = { ...j, paypal: j.paypal.map(a => ({ ...a, clientSecret: '' })), wise: j.wise.map(a => ({ ...a, token: '' })), sheets: j.sheets.map(s => ({ ...s, mapping: s.mapping || {}, _tabs: keepTabs?.get(s.id) })) };
+    state = { ...j, paypal: j.paypal.map(a => ({ ...a, clientSecret: '' })), wise: j.wise.map(a => ({ ...a, token: '' })), kurv: j.kurv.map(a => ({ ...a, key: '' })), emails: j.emails.map(a => ({ ...a })), sheets: j.sheets.map(s => ({ ...s, mapping: s.mapping || {}, _tabs: keepTabs?.get(s.id) })) };
     render();
     for (const s of state.sheets) if (s.sheetId && !s._tabs) loadTabs(s);
   }

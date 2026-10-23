@@ -125,6 +125,8 @@ async function loadSources() {
   const named = [
     ...j.paypal.map(a => ({ key: 'paypal:' + a.id, name: a.label || 'PayPal' })),
     ...j.wise.map(a => ({ key: 'wise:' + a.id, name: a.label || 'Wise' })),
+    ...j.kurv.map(a => ({ key: 'kurv:' + a.id, name: a.label || 'Kurv' })),
+    ...j.emails.map(a => ({ key: 'email:' + a.id, name: (a.label || PROVIDERS[a.provider]) + ' (emails)' })),
     ...j.sheets.map(a => ({ key: 'sheet:' + a.id, name: (a.label || PROVIDERS[a.provider]) + ' (sheet)' })),
   ];
   const el = document.getElementById('sources');
