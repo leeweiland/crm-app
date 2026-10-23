@@ -71,7 +71,7 @@
             <option value="">All processors</option><option value="paypal">PayPal</option><option value="wise">Wise</option><option value="kurv">Kurv</option><option value="swipesimple">SwipeSimple</option><option value="other">Other</option>
           </select>
           <select class="pra-select pra-input" id="kindFilter" style="width:auto">
-            <option value="revenue">Sales, refunds &amp; chargebacks</option><option value="">Everything</option><option value="payment">Sales only</option><option value="refund">Refunds</option><option value="chargeback">Chargebacks</option><option value="transfer">Own-account transfers</option><option value="sent">Money sent</option><option value="conversion">Conversions</option><option value="card">Card spending</option><option value="other">Other</option>
+            <option value="revenue">Sales, refunds &amp; chargebacks</option><option value="">Everything</option><option value="payment">Sales only</option><option value="refund">Refunds</option><option value="chargeback">Chargebacks</option><option value="transfer">Own-account transfers</option><option value="loan">Loans</option><option value="sent">Money sent</option><option value="conversion">Conversions</option><option value="card">Card spending</option><option value="other">Other</option>
           </select>
           <label class="pra-label" style="display:flex;gap:6px;align-items:center;margin:0;cursor:pointer"><input type="checkbox" id="unmatchedOnly"/> No contact only</label>
         </div>
@@ -92,7 +92,7 @@
 <script src="/crm-nav.js"></script>
 <script>
 const PROVIDERS = { paypal: 'PayPal', wise: 'Wise', kurv: 'Kurv', swipesimple: 'SwipeSimple', other: 'Other' };
-const KINDS = { payment: 'Sale', refund: 'Refund', chargeback: 'Chargeback', transfer: 'Own transfer', sent: 'Sent', conversion: 'Conversion', card: 'Card', other: 'Other' };
+const KINDS = { payment: 'Sale', refund: 'Refund', chargeback: 'Chargeback', transfer: 'Own transfer', loan: 'Loan', sent: 'Sent', conversion: 'Conversion', card: 'Card', other: 'Other' };
 const esc = (s) => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
 const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const money0 = (n) => (n < 0 ? '-$' : '$') + Math.abs(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });

@@ -18,6 +18,12 @@
       ? `<span style="color:var(--pra-red,#e5484d)">Last sync failed: ${esc(st.last_error)}</span> <span class="pra-muted">(${esc(when)})</span>`
       : `<span class="pra-muted">Synced ${esc(when)}${st.last_count != null ? ` · ${st.last_count} rows` : ''}</span>`;
   }
+  function tabOptions(a) {
+    if (!a._tabs) return a.tab ? `<option selected>${esc(a.tab)}</option>` : '<option value="">(enter the sheet first)</option>';
+    const missing = a.tab && !a._tabs.includes(a.tab);
+    return (a.tab && !missing ? '' : `<option value="" selected>${missing ? `"${esc(a.tab)}" isn't in this sheet -- pick a tab` : '— pick a tab —'}</option>`)
+      + a._tabs.map(t => `<option${t === a.tab ? ' selected' : ''}>${esc(t)}</option>`).join('');
+  }
   function removeBtn(kind, i) { return `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-remove="${kind}" data-i="${i}">Remove</button>`; }
 
   function render() {
@@ -60,7 +66,7 @@
             <div><label class="pra-label">Name</label><input class="pra-input" data-sh="${i}" data-f="label" value="${esc(a.label)}" placeholder="Kurv"/></div>
             <div><label class="pra-label">Processor</label><select class="pra-select pra-input" data-sh="${i}" data-f="provider">${Object.entries(PROVIDER_LABELS).map(([v, l]) => `<option value="${v}"${a.provider === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
             <div><label class="pra-label">Sheet URL or ID</label><input class="pra-input" data-sh="${i}" data-f="sheetId" value="${esc(a.sheetId)}" placeholder="https://docs.google.com/spreadsheets/d/..."/></div>
-            <div><label class="pra-label">Tab</label><select class="pra-select pra-input" data-sh="${i}" data-f="tab">${(a._tabs || (a.tab ? [a.tab] : [])).map(t => `<option${t === a.tab ? ' selected' : ''}>${esc(t)}</option>`).join('') || '<option value="">(enter the sheet first)</option>'}</select></div>
+            <div><label class="pra-label">Tab</label><select class="pra-select pra-input" data-sh="${i}" data-f="tab">${tabOptions(a)}</select></div>
             ${removeBtn('sheets', i)}
           </div>
           <div style="font-size:.78rem;margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -109,8 +115,7 @@
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { msg(j.error || 'Could not open that sheet'); return; }
     a._tabs = j.tabs;
-    if (!a.tab || !j.tabs.includes(a.tab)) a.tab = j.tabs[0] || '';
-    if (!a.label && j.title) a.label = j.title;
+    if (!a.label) a.label = PROVIDER_LABELS[a.provider] || '';
     render();
   }
 
@@ -171,6 +176,7 @@
     const j = await r.json();
     state = { ...j, paypal: j.paypal.map(a => ({ ...a, clientSecret: '' })), wise: j.wise.map(a => ({ ...a, token: '' })), sheets: j.sheets.map(s => ({ ...s, mapping: s.mapping || {}, _tabs: keepTabs?.get(s.id) })) };
     render();
+    for (const s of state.sheets) if (s.sheetId && !s._tabs) loadTabs(s);
   }
 
   document.querySelector('[data-tab="financials"]')?.addEventListener('click', () => { if (!panel.dataset.loaded) { panel.dataset.loaded = '1'; load(); } });

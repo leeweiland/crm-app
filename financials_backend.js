@@ -91,12 +91,19 @@ async function paypalToken(acct) {
   if (!j.access_token) throw new Error(`PayPal sign-in failed: ${j.error_description || j.error || r.status}`);
   return j.access_token;
 }
-// PayPal event codes: T00xx payments, T11xx refunds, T12xx chargebacks/
+// PayPal event codes: T00xx payments (except T0001 mass-pay receipts and
+// T0014 rebates), T1106/T1107 refunds we issued, T12xx chargebacks and their
 // reversals, T03xx/T04xx bank deposits & withdrawals, T02xx conversions.
-function paypalKind(code, amount) {
+// Every other T11xx/T15xx/T21xx is a hold or a hold's release, and a positive
+// T1107 is a merchant refunding us. Working Capital loan money arrives as an
+// ordinary T0000 payment from WebBank, so it's caught by name.
+const LOAN_PAYER = /web ?bank|working capital|loanbuilder|business loan/i;
+function paypalKind(code, amount, payerName) {
   const c = String(code || "");
+  if (LOAN_PAYER.test(payerName || "")) return amount > 0 ? "loan" : "sent";
+  if (c === "T0001" || c === "T0014") return "other";
   if (c.startsWith("T00")) return amount > 0 ? "payment" : "sent";
-  if (c.startsWith("T11")) return "refund";
+  if (c === "T1106" || c === "T1107") return amount < 0 ? "refund" : "other";
   if (c.startsWith("T12")) return "chargeback";
   if (c.startsWith("T03") || c.startsWith("T04")) return "transfer";
   if (c.startsWith("T02")) return "conversion";
@@ -107,7 +114,7 @@ function paypalRow(acct, settings, d) {
   const t = d.transaction_info || {}, p = d.payer_info || {};
   const amount = Number(t.transaction_amount?.value || 0);
   const name = p.payer_name?.alternate_full_name || [p.payer_name?.given_name, p.payer_name?.surname].filter(Boolean).join(" ") || null;
-  let kind = paypalKind(t.transaction_event_code, amount);
+  let kind = paypalKind(t.transaction_event_code, amount, name);
   if (kind === "payment" && isOwn(settings, name, p.email_address)) kind = "transfer";
   const items = (d.cart_info?.item_details || []).map(i => i.item_name).filter(Boolean).join(", ");
   return {
@@ -160,7 +167,7 @@ function wiseKind(t) {
   if (type === "CONVERSION") return "conversion";
   if (type === "MONEY_ADDED" || type === "ACCRUAL_CHARGE") return "transfer";
   if (type === "CARD") return t.type === "CREDIT" ? "other" : "card"; // money back to our own card isn't a customer refund
-  if (t.type === "CREDIT" && (type === "DEPOSIT" || type === "TRANSFER")) return "payment";
+  if (t.type === "CREDIT" && (type === "DEPOSIT" || type === "TRANSFER" || type === "ACQUIRING_PAYMENT")) return "payment";
   if (t.type === "DEBIT") return "sent";
   return "other";
 }
@@ -179,7 +186,9 @@ async function syncWise(acct, settings, state) {
         const st = await wiseGet(acct, `/v1/profiles/${prof.id}/balance-statements/${bal.id}/statement.json?${qs}`);
         const rows = (st?.transactions || []).map(t => {
           let kind = wiseKind(t);
-          const name = t.details?.senderName || t.details?.recipient?.name || null;
+          // A card payment taken through Wise names the payer only in its description.
+          const name = t.details?.senderName || t.details?.recipient?.name
+            || (/^Received payment from (.+?)(?: -- |$)/.exec(t.details?.description || "") || [])[1] || null;
           if (kind === "payment" && isOwn(settings, name, null)) kind = "transfer";
           return {
             id: `wise:${acct.id}:${t.referenceNumber}:${bal.currency}`, provider: "wise", account: acct.label || prof.fullName || "Wise",

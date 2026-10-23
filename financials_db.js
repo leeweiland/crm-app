@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS payments (
   amount_usd   numeric(14,2),               -- signed; null = couldn't convert (not counted)
   fee          numeric(14,2),
   currency     text NOT NULL,
-  kind         text NOT NULL,               -- payment | refund | chargeback | transfer | sent | conversion | card | other
+  kind         text NOT NULL,               -- payment | refund | chargeback | transfer | loan | sent | conversion | card | other
   status       text,
   payer_email  text,
   payer_name   text,
