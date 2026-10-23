@@ -528,7 +528,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const source = campaigns.find(c => c.id === duplicateMatch[1]);
     if (!source) return sendJson(res, 404, { error: "Not found" });
     const copy = {
-      id: randomUUID(), name: `Copy of ${source.name}`, status: "draft",
+      id: randomUUID(), name: `${source.name} (copy)`, status: "draft",
       subject: source.subject, previewText: source.previewText || "", blocks: JSON.parse(JSON.stringify(source.blocks)),
       theme: JSON.parse(JSON.stringify(source.theme || getEmailTheme())),
       footerTemplateId: source.footerTemplateId,
