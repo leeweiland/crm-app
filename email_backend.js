@@ -305,7 +305,18 @@ function plainTextPreview(html, len) {
 // left alone -- that's a different domain than this CRM app's own).
 export function absolutizeUploadUrls(html, baseUrl) {
   if (!baseUrl) return html;
-  return html.replace(/src="\/uploads\//g, `src="${baseUrl}/uploads/`);
+  return html
+    .replace(/src="\/uploads\//g, `src="${baseUrl}/uploads/`)
+    // Add-to-calendar buttons saved before 2026-10-26 carry their icon as an
+    // inline data:image/svg+xml URI. Gmail/Outlook don't render data: images,
+    // and some clients decode it when quoting a reply -- its inner quotes
+    // then cut the <img> tag and the leftover attributes show up as text on
+    // the button. Swapped for the hosted PNG at send time so every
+    // already-saved email gets the fix without being re-edited.
+    // (matched on the icon's own encoded `<line x1="16" y1="2"` so no other
+    // inline image anyone pastes into an email is ever touched)
+    .replace(/src="data:image\/svg\+xml,[^"]*x1%3D%2216%22%20y1%3D%222%22[^"]*"/g, `src="${baseUrl}/calendar-icon-white.png"`)
+    .replace(/src="\/calendar-icon-white\.png"/g, `src="${baseUrl}/calendar-icon-white.png"`);
 }
 
 // Rewrites every real content link to route through /api/email/click first

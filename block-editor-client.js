@@ -43,7 +43,6 @@ window.BlockEditor = (function () {
   // whole point is a clickable button in the sent email. A generic
   // calendar-plus glyph is used for all three rather than each provider's
   // actual trademarked logo -- distinguished by label/color only.
-  const ADD_TO_CALENDAR_ICON_SVG = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="10" y1="16" x2="14" y2="16"/></svg>');
   const ADD_TO_CALENDAR_BUTTONS = {
     '%ADDTOCALENDARGOOGLE%': { text: 'Add to Google Calendar', color: '#1a73e8' },
     '%ADDTOCALENDAROUTLOOK%': { text: 'Add to Outlook Calendar', color: '#0078d4' },
@@ -63,7 +62,9 @@ window.BlockEditor = (function () {
     a.href = token;
     a.setAttribute('style', `display:inline-block;background:${btn.color};color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;padding:10px 18px;border-radius:6px;line-height:1`);
     const img = document.createElement('img');
-    img.src = `data:image/svg+xml,${ADD_TO_CALENDAR_ICON_SVG}`;
+    // Hosted PNG, not an inline data: SVG -- see absolutizeUploadUrls in
+    // email_backend.js for why (and for the send-time swap of old buttons).
+    img.src = `${location.origin}/calendar-icon-white.png`;
     img.width = 16; img.height = 16;
     img.setAttribute('style', 'vertical-align:middle;margin-right:8px;border:0');
     const span = document.createElement('span');
