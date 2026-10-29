@@ -462,6 +462,35 @@ window.BlockEditor = (function () {
       });
     }
 
+    // Ctrl+V with an image on the clipboard fills an empty image block --
+    // the selected one, or (when nothing's selected and you aren't typing
+    // somewhere) the only empty image block in the email. Same upload path
+    // as the button/drop. Text pastes are untouched: this only acts when
+    // the clipboard actually holds an image file and there's a blank
+    // image holder to put it in.
+    document.addEventListener('paste', (e) => {
+      if (!rootEl.isConnected) return;
+      const file = [...(e.clipboardData?.items || [])].find(it => it.kind === 'file' && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(it.type))?.getAsFile();
+      if (!file) return;
+      let target = selectedId ? findBlock(selectedId) : null;
+      if (!(target?.block?.type === 'image' && !target.block.src)) {
+        const a = document.activeElement;
+        const typing = a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+        const empties = [...blocks.map(b => ({ block: b, isFooter: false })), ...footerBlocks.map(b => ({ block: b, isFooter: true }))].filter(x => x.block.type === 'image' && !x.block.src);
+        target = !typing && empties.length === 1 ? empties[0] : null;
+      }
+      if (!target) return;
+      e.preventDefault();
+      const { block, isFooter } = target;
+      uploadImageFile(file, null, (err, url) => {
+        if (err) { alert('Image paste failed: ' + err); return; }
+        block.src = url;
+        render();
+        if (selectedId === block.id) renderStylePanel();
+        notifyChange(isFooter);
+      });
+    });
+
     function newBlock(type) {
       return type === 'text' ? { id: uid(), type, html: 'New text block', style: {} }
         : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: {}, linkAction: null }
