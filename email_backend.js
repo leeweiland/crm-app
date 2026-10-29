@@ -16,6 +16,7 @@ import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
 import { getContactByIdFast, syncContactFields } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
+import { campaignCalendarLinks, applyCalendarLinksToBlocks } from "./calendar_links.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 
@@ -704,9 +705,12 @@ export async function handleEmailRequest(req, res, url) {
   }
 
   if (p === "/api/email/test-send" && req.method === "POST") {
-    const { to, subject, previewText, blocks, theme, footerTemplateId } = await readJsonBody(req);
+    const { to, subject, previewText, blocks, theme, footerTemplateId, campaignId, calendarEvent } = await readJsonBody(req);
     if (!to || !subject) return sendJson(res, 400, { error: "to and subject are required" });
-    const result = await sendEmail({ to, subject, previewText, blocks: blocks || [], theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
+    // Campaign builder tests pass their (possibly unsaved) event so Add to
+    // Calendar buttons arrive working, same as the real send.
+    const testBlocks = campaignId ? applyCalendarLinksToBlocks(blocks || [], campaignCalendarLinks({ id: campaignId, subject, calendarEvent })) : (blocks || []);
+    const result = await sendEmail({ to, subject, previewText, blocks: testBlocks, theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
     if (!result.ok) return sendJson(res, 400, { error: result.reason === "ses_not_configured" ? "Amazon SES isn't configured yet -- add AWS credentials to .env first." : result.reason });
     return sendJson(res, 200, { ok: true });
   }

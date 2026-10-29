@@ -14,10 +14,11 @@ import { getEmailTheme } from "./integrations_backend.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
+import { buildIcs, campaignEventDetails, campaignCalendarLinks, applyCalendarLinksToBlocks, blocksUseCalendarTokens } from "./calendar_links.js";
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
-const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients", "predictiveSend"];
+const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients", "predictiveSend", "calendarEvent"];
 function campaignSnapshotFields(campaign) {
   const out = {};
   for (const k of VERSIONED_FIELDS) out[k] = campaign[k];
@@ -297,6 +298,9 @@ export async function runCampaignSendLoop(campaignId) {
     remaining.sort((a, b) => releaseAt.get(a.id) - releaseAt.get(b.id));
     console.log(`[campaign send] ${campaignId} predictive: ${hours.size}/${remaining.length} recipients have a personal hour, fallback hour ${globalHour ?? "none (send now)"}`);
   }
+  // Add-to-calendar buttons resolve to the campaign's one event -- same
+  // links for every recipient, so built once here, not per send.
+  const sendBlocks = applyCalendarLinksToBlocks(campaign.blocks, campaignCalendarLinks(campaign));
   const postProgress = (sendProgress) => {
     const progressWorker = getBackgroundWorker();
     if (progressWorker) progressWorker.postMessage({ type: "update_campaign_progress", campaignId, sendProgress });
@@ -355,7 +359,7 @@ export async function runCampaignSendLoop(campaignId) {
         // amount of an already-in-flight batch at real concurrency.
         await Promise.all(batch.map((contact) =>
           sendEmail({
-            to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme,
+            to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: sendBlocks, theme: campaign.theme,
             footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
             sourceType: "campaign", sourceId: campaign.id, batchLog,
           }).catch((e) => console.error(`[campaign send] ${campaignId} contact ${contact.id} failed:`, e.message))
@@ -452,6 +456,17 @@ export function sendCampaignNow(campaignId) {
 export async function handleCampaignsRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/campaigns")) return false;
+  // Public: the "Add to Apple Calendar" button's .ics, opened by recipients
+  // who aren't logged in -- same reason as the booking .ics route.
+  const icsMatch = p.match(/^\/api\/campaigns\/([^/]+)\/event\.ics$/);
+  if (icsMatch && req.method === "GET") {
+    const campaign = readJson(CAMPAIGNS_FILE, []).find(c => c.id === icsMatch[1]);
+    const d = campaignEventDetails(campaign);
+    if (!d) return sendJson(res, 404, { error: "Not found" });
+    res.writeHead(200, { "Content-Type": "text/calendar; charset=utf-8", "Content-Disposition": `attachment; filename="event.ics"` });
+    res.end(buildIcs(d));
+    return true;
+  }
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
@@ -632,6 +647,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaign = campaigns.find(c => c.id === sendMatch[1]);
     if (!campaign) return sendJson(res, 404, { error: "Not found" });
     if (!campaign.subject || !campaign.blocks?.length) return sendJson(res, 400, { error: "Add a subject and at least one block before sending" });
+    if (blocksUseCalendarTokens(campaign.blocks) && !campaignEventDetails(campaign)) return sendJson(res, 400, { error: "This email has Add to Calendar buttons -- set the event date & time first" });
     // sendCampaignNow is synchronous now and kicks off the actual send loop
     // in the background -- this returns almost immediately regardless of
     // recipient count (see its own comment), so the browser doesn't sit on
@@ -665,6 +681,7 @@ export async function handleCampaignsRequest(req, res, url) {
     const campaign = campaigns.find(c => c.id === scheduleMatch[1]);
     if (!campaign) return sendJson(res, 404, { error: "Not found" });
     if (!campaign.subject || !campaign.blocks?.length) return sendJson(res, 400, { error: "Add a subject and at least one block before scheduling" });
+    if (blocksUseCalendarTokens(campaign.blocks) && !campaignEventDetails(campaign)) return sendJson(res, 400, { error: "This email has Add to Calendar buttons -- set the event date & time first" });
     campaign.status = "scheduled";
     campaign.scheduledAt = scheduledAt;
     campaign.updatedAt = new Date().toISOString();

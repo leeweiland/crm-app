@@ -17,6 +17,7 @@ import { fireFlowTrigger } from "./flows_backend.js";
 import { claimVisitorHistory } from "./tracking_backend.js";
 import { normalizePhoneForRequest } from "./phone_util.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
+import { buildGoogleCalendarLink, buildOutlookCalendarLink, buildIcs } from "./calendar_links.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -398,25 +399,7 @@ export async function deleteCalendarEvent(eventId, calendarId) {
   }
 }
 
-// ── Add-to-calendar links + universal .ics, same shapes as chat-app's ──────
-function icsDate(d) { return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z"); }
-function icsEscape(s) { return String(s || "").replace(/[\\,;]/g, m => "\\" + m).replace(/\n/g, "\\n"); }
-function buildGoogleCalendarLink({ summary, description, start, end, timezone }) {
-  const params = new URLSearchParams({ action: "TEMPLATE", text: summary, details: description || "", dates: `${icsDate(start)}/${icsDate(end)}`, ctz: timezone });
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
-}
-function buildOutlookCalendarLink({ summary, description, start, end }) {
-  const params = new URLSearchParams({ path: "/calendar/action/compose", rru: "addevent", subject: summary, body: description || "", startdt: start.toISOString(), enddt: end.toISOString() });
-  return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
-}
-function buildIcs({ summary, description, start, end, uid }) {
-  return [
-    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Pacific Rim Athletics//CRM Scheduling//EN", "CALSCALE:GREGORIAN",
-    "BEGIN:VEVENT", `UID:${uid}@pacificrimathletics.com`, `DTSTAMP:${icsDate(new Date())}`,
-    `DTSTART:${icsDate(start)}`, `DTEND:${icsDate(end)}`, `SUMMARY:${icsEscape(summary)}`, `DESCRIPTION:${icsEscape(description)}`,
-    "END:VEVENT", "END:VCALENDAR",
-  ].join("\r\n");
-}
+// Add-to-calendar link/.ics builders live in calendar_links.js (shared with campaigns).
 
 // ── Event types ──────────────────────────────────────────────────────────
 // fontPrimary/fontSecondary are keys into book.html/scheduling-editor.html's

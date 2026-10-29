@@ -54,6 +54,17 @@
           <span class="pra-label" style="margin:0">Predictive sending</span>
           <span style="font-size:.78rem;color:var(--pra-dim)">deliver at each person's best hour, within 24h</span>
         </label>
+        <!-- One event for the whole send (Zoom open house, live class): fills the
+             Add to Calendar buttons from Personalize... for every recipient. -->
+        <div class="field" style="margin-top:10px">
+          <label class="pra-label">Calendar event <span style="text-transform:none;letter-spacing:0;color:var(--pra-dim)">— for Add to Calendar buttons (Personalize...)</span></label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="pra-input" id="eventTitleInput" placeholder="Event title (defaults to subject)" style="flex:2 1 200px"/>
+            <input class="pra-input" id="eventStartInput" type="datetime-local" style="flex:1 1 190px" title="Start, in your computer's time zone"/>
+            <input class="pra-input" id="eventDurationInput" type="number" min="5" step="5" placeholder="60" style="flex:0 1 90px" title="Length in minutes"/>
+            <input class="pra-input" id="eventLocationInput" placeholder="Zoom / meeting link" style="flex:2 1 220px"/>
+          </div>
+        </div>
       </div>
 
       <div class="cb-layout">
@@ -310,7 +321,7 @@ function saveDebounced() {
 async function saveCampaign(opts) {
   const r = await fetch('/api/campaigns/' + campaign.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend }),
+    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend, calendarEvent: campaign.calendarEvent || null }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (r.ok && !opts?.keepalive) updateRecipientCount();
@@ -338,6 +349,22 @@ document.getElementById('campaignName').addEventListener('input', (e) => { campa
 document.getElementById('subjectInput').addEventListener('input', (e) => { campaign.subject = e.target.value; saveDebounced(); });
 document.getElementById('previewTextInput').addEventListener('input', (e) => { campaign.previewText = e.target.value; saveDebounced(); });
 document.getElementById('predictiveSendInput').addEventListener('change', (e) => { campaign.predictiveSend = e.target.checked; saveDebounced(); });
+// datetime-local is the browser's own wall time; stored as a UTC instant plus
+// the browser's zone (Google Calendar's ctz) so every recipient sees it in theirs.
+const pad2 = (n) => String(n).padStart(2, '0');
+const toLocalInput = (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}` : ''; };
+function readEventInputs() {
+  const start = document.getElementById('eventStartInput').value;
+  campaign.calendarEvent = {
+    title: document.getElementById('eventTitleInput').value.trim(),
+    startAt: start ? new Date(start).toISOString() : '',
+    durationMin: Number(document.getElementById('eventDurationInput').value) || 60,
+    location: document.getElementById('eventLocationInput').value.trim(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  saveDebounced();
+}
+['eventTitleInput', 'eventStartInput', 'eventDurationInput', 'eventLocationInput'].forEach(id => document.getElementById(id).addEventListener('input', readEventInputs));
 document.getElementById('segmentSelect').addEventListener('change', (e) => { campaign.recipients.segmentId = e.target.value || null; saveDebounced(); updateRecipientCount(); });
 document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); updateEditorFooter(); });
 function currentFooter() {
@@ -434,7 +461,7 @@ document.getElementById('scheduleBtn').onclick = async () => {
 document.getElementById('testSendBtn').onclick = async () => {
   const to = document.getElementById('testEmailInput').value.trim();
   if (!to) return;
-  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId }) });
+  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, campaignId: campaign.id, calendarEvent: campaign.calendarEvent || null }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { showToast(d.error || 'Test send failed', true); return; }
   showToast('Test sent');
@@ -448,6 +475,11 @@ async function loadCampaign() {
   document.getElementById('subjectInput').value = campaign.subject || '';
   document.getElementById('previewTextInput').value = campaign.previewText || '';
   document.getElementById('predictiveSendInput').checked = !!campaign.predictiveSend;
+  const ev = campaign.calendarEvent || {};
+  document.getElementById('eventTitleInput').value = ev.title || '';
+  document.getElementById('eventStartInput').value = toLocalInput(ev.startAt);
+  document.getElementById('eventDurationInput').value = ev.durationMin || '';
+  document.getElementById('eventLocationInput').value = ev.location || '';
   document.getElementById('statusPill').textContent = campaign.status;
   const editable = !['sending', 'sent'].includes(campaign.status);
   document.querySelectorAll('.cb-layout input, .cb-layout select, .cb-layout button').forEach(el => { if (el.id !== 'testEmailInput' && el.id !== 'testSendBtn') el.disabled = !editable; });
@@ -456,6 +488,11 @@ async function loadCampaign() {
       document.getElementById('blockEditorRoot'), { blocks: campaign.blocks, theme: campaign.theme },
       (state) => { campaign.blocks = state.blocks; campaign.theme = state.theme; saveDebounced(); },
       () => { document.getElementById('footerDirtyBar').style.display = 'block'; },
+      { extraPersonalizeOptions: [
+        { value: '%ADDTOCALENDARGOOGLE%', label: 'Add to Google Calendar button' },
+        { value: '%ADDTOCALENDAROUTLOOK%', label: 'Add to Outlook Calendar button' },
+        { value: '%ADDTOCALENDARAPPLE%', label: 'Add to Apple Calendar button' },
+      ] },
     );
     // Keeps the block editor's own sticky toolbar positioned right below
     // the page's sticky header (which now also holds Subject/Preview)
