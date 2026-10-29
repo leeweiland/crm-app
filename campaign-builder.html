@@ -59,10 +59,10 @@
         <div class="field" style="margin-top:10px">
           <label class="pra-label">Calendar event <span style="text-transform:none;letter-spacing:0;color:var(--pra-dim)">— for Add to Calendar buttons (Personalize...)</span></label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <input class="pra-input" id="eventTitleInput" placeholder="Event title (defaults to subject)" style="flex:2 1 200px"/>
-            <input class="pra-input" id="eventStartInput" type="datetime-local" style="flex:1 1 190px" title="Start, in your computer's time zone"/>
-            <input class="pra-input" id="eventDurationInput" type="number" min="5" step="5" placeholder="60" style="flex:0 1 90px" title="Length in minutes"/>
-            <input class="pra-input" id="eventLocationInput" placeholder="Zoom / meeting link" style="flex:2 1 220px"/>
+            <input class="pra-input" id="eventTitleInput" autocomplete="off" data-lpignore="true" placeholder="Event title (defaults to subject)" style="flex:2 1 200px"/>
+            <input class="pra-input" id="eventStartInput" type="datetime-local" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" style="flex:1 1 190px;color-scheme:dark;cursor:pointer" title="Start, in your computer's time zone"/>
+            <input class="pra-input" id="eventDurationInput" autocomplete="off" data-lpignore="true" type="number" min="5" step="5" placeholder="60" style="flex:0 1 90px" title="Length in minutes"/>
+            <input class="pra-input" id="eventLocationInput" autocomplete="off" data-lpignore="true" placeholder="Zoom / meeting link" style="flex:2 1 220px"/>
           </div>
         </div>
       </div>
@@ -365,6 +365,8 @@ function readEventInputs() {
   saveDebounced();
 }
 ['eventTitleInput', 'eventStartInput', 'eventDurationInput', 'eventLocationInput'].forEach(id => document.getElementById(id).addEventListener('input', readEventInputs));
+// Whole field opens the date/time picker, not just the small icon.
+document.getElementById('eventStartInput').addEventListener('click', (e) => { try { e.target.showPicker(); } catch {} });
 document.getElementById('segmentSelect').addEventListener('change', (e) => { campaign.recipients.segmentId = e.target.value || null; saveDebounced(); updateRecipientCount(); });
 document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); updateEditorFooter(); });
 function currentFooter() {

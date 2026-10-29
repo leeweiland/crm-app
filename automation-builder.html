@@ -186,17 +186,19 @@
      doesn't need its own URL/recipients panel. -->
 <div class="modal-backdrop" id="emailStepModal">
   <div class="pra-panel modal-box eb-fullscreen">
-    <div class="pra-h2" style="margin-bottom:16px">Send Email Step</div>
+    <div class="eb-modal-head">
+      <div class="pra-h2" style="margin-bottom:16px">Send Email Step</div>
+      <div class="field" style="margin-bottom:12px">
+        <label class="pra-label">Subject line</label>
+        <input class="pra-input" id="emailStepSubject" placeholder="Your session with Coach Lee..."/>
+      </div>
+      <div class="field">
+        <label class="pra-label">Preview text</label>
+        <input class="pra-input" id="emailStepPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
+      </div>
+    </div>
     <div class="cb-layout">
       <div>
-        <div class="field" style="margin-bottom:16px">
-          <label class="pra-label">Subject line</label>
-          <input class="pra-input" id="emailStepSubject" placeholder="Your session with Coach Lee..."/>
-        </div>
-        <div class="field" style="margin-bottom:16px">
-          <label class="pra-label">Preview text</label>
-          <input class="pra-input" id="emailStepPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
-        </div>
         <div id="emailStepEditorRoot"></div>
       </div>
       <div class="cb-sidebar">

@@ -290,15 +290,17 @@
 <!-- Send Email step: same visual block editor as Automations/Campaigns/Calendars -->
 <div class="modal-backdrop" id="flowEmailModal">
   <div class="pra-panel modal-box eb-fullscreen">
-    <div class="pra-h2" style="margin-bottom:16px">Send Email</div>
+    <div class="eb-modal-head">
+      <div class="pra-h2" style="margin-bottom:6px">Send Email</div>
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">"To" can be staff addresses (a "new lead" notification), the lead itself via a token, or both -- separate multiple recipients with commas. Use the editor's Personalize menu to drop in this flow's fields.</div>
+      <div id="flowEmailFields"></div>
+      <div class="field">
+        <label class="pra-label">Preview text</label>
+        <input class="pra-input" id="flowEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
+      </div>
+    </div>
     <div class="cb-layout">
       <div>
-        <div class="pra-muted" style="font-size:.8rem;margin-bottom:12px">"To" can be staff addresses (a "new lead" notification), the lead itself via a token, or both -- separate multiple recipients with commas. Use the editor's Personalize menu to drop in this flow's fields.</div>
-        <div id="flowEmailFields"></div>
-        <div class="field" style="margin-bottom:16px">
-          <label class="pra-label">Preview text</label>
-          <input class="pra-input" id="flowEmailPreviewText" placeholder="Shown next to the subject in the inbox — not visible in the email body"/>
-        </div>
         <div id="flowEmailEditorRoot"></div>
       </div>
       <div class="cb-sidebar">

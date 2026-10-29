@@ -1273,3 +1273,15 @@ window.BlockEditor = (function () {
 
   return { init, renderBlocksToHtml, renderFooterHtml };
 })();
+
+// Email-step modals' sticky head (.eb-modal-head, see crm-design-system.css)
+// -- its height varies (flow-builder's To/From/Subject fields wrap), so it's
+// measured rather than hardcoded, and re-measured whenever the modal opens.
+(function () {
+  const sync = (head) => { const box = head.closest('.modal-box'); if (box) box.style.setProperty('--eb-head-h', head.offsetHeight + 'px'); };
+  const start = () => document.querySelectorAll('.eb-modal-head').forEach(head => {
+    sync(head);
+    new ResizeObserver(() => sync(head)).observe(head);
+  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
