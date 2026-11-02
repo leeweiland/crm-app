@@ -99,6 +99,11 @@ function buildMessageRow({ id, channel, direction, contactId, sourceType, source
 // the per-source file) -- split out so both logMessage and
 // logMessagesBatch call the exact same side effects per row, rather than
 // maintaining two copies that could drift.
+// Failures that say nothing about the recipient's address -- our SES quota or
+// rate limit, or a dropped connection. These must never reach the auto opt-out:
+// confirmed live (2026-11-01), hitting the daily quota opted out all 9,887
+// recipients of the sends it stopped.
+const SENDER_SIDE_FAILURE = /quota exceeded|rate exceeded|throttl|socket|EPIPE|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timed? ?out/i;
 function persistRowSideEffects(row, bodyOffset) {
   if (!MESSAGES_PG) {
     appendContactMessage(row);
@@ -165,7 +170,7 @@ function persistRowSideEffects(row, bodyOffset) {
   // updateMessageById's identical reasoning (keyed by our own row id
   // instead of the provider's).
   if (!MESSAGES_PG) appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status });
-  if (row.status === "failed" && row.direction === "outbound") notifyFailedSend(row.contactId, row.channel);
+  if (row.status === "failed" && row.direction === "outbound" && !SENDER_SIDE_FAILURE.test(row.failReason || "")) notifyFailedSend(row.contactId, row.channel);
 }
 export function logMessage(fields) {
   const row = buildMessageRow(fields);
