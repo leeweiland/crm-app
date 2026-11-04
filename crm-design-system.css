@@ -491,7 +491,13 @@ body { margin: 0; }
 .be-toolbar #beFontFamily { width: 130px; }
 .be-toolbar #beFontSize { width: 62px; }
 .be-toolbar #beSpacing { width: 92px; }
-.be-toolbar #bePersonalize { width: 120px; }
+.be-pz-menu { position: fixed; z-index: 1000; background: var(--pra-panel); border: 1px solid var(--pra-border); border-radius: 8px; padding: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.55); }
+.be-pz-menu[hidden] { display: none; }
+.be-pz-menu input { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--pra-border); color: var(--pra-white); border-radius: 5px; padding: 7px 9px; margin-bottom: 6px; font-size: .85rem; }
+.be-pz-list { overflow-y: auto; }
+.be-toolbar .be-pz-item { display: block; width: 100%; text-align: left; white-space: normal; line-height: 1.35; background: none; border: 0; border-radius: 5px; padding: 8px 9px; font-size: .85rem; }
+.be-toolbar .be-pz-item:hover { background: rgba(255,255,255,0.08); }
+.be-pz-none { padding: 8px 9px; color: var(--pra-dim); font-size: .85rem; }
 /* Hex-first color field -- a text input for typing/pasting a hex value
    directly (a native <input type="color">'s own picker UI can't be
    reordered to put hex first), with a small swatch alongside for picking

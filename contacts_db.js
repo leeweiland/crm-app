@@ -58,7 +58,7 @@ export const CONTACTS_EXPORT_FILE = "crm_contacts_export.json";
 
 const EXTRA_KEYS = [
   "hyrosIps", "hyrosPhones", "altEmails", "altPhones", "mergedHyrosLeadIds",
-  "address", "hyrosOriginLead", "clickIds", "visitedPaths",
+  "address", "hyrosOriginLead", "clickIds", "firstClickIds", "visitedPaths",
   "emailSuppressedAt", "emailSuppressedReason", "testContact",
 ];
 

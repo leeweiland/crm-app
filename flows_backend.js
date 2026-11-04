@@ -15,6 +15,7 @@ import { fetchChannelFeed, addVideoToPlaylist } from "./youtube_backend.js";
 import { addPeopleToAudience, endWindowAndTrim, normPhone } from "./facebook_backend.js";
 import { getBookingById, cancelBookingById } from "./scheduling_backend.js";
 import { getContactMessages } from "./message_index.js";
+import { describeContactClick } from "./contact_clicks.js";
 
 export const FLOWS_FILE = "crm_flows.json";
 export const RUNS_FILE = "crm_flow_runs.json";
@@ -378,6 +379,7 @@ function resolveTemplate(str, { contact, payload, timestamp }) {
   // resolving (or even blanking) it.
   return String(str || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, path) => {
     if (path === "timestamp") return timestamp || "";
+    if (path === "click.first" || path === "click.last") return describeContactClick(contact, path === "click.first" ? "first" : "last");
     if (path === "clickIds.gclid" || path === "clickIds.fbclid") return describeAdClick(contact?.clickIds, path === "clickIds.gclid" ? "google" : "meta");
     if (path.startsWith("payload.")) {
       // Payload keys are always flat (the raw webhook body / form answers /
@@ -551,6 +553,8 @@ async function advanceFlowRun(run, flow) {
             const info = await withTimeout(lookupAdInfo(platform, ap.h_ad_id), 8000, "ad name lookup").catch(() => null);
             clickIds.ads = { [platform]: { id: ap.h_ad_id, ...(info || {}) } };
           }
+          // clickIds keeps only the newest click, so the first one is held on to separately.
+          workingContact.firstClickIds = workingContact.firstClickIds || workingContact.clickIds || clickIds;
           workingContact.clickIds = clickIds;
         }
       }

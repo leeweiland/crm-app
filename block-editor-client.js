@@ -526,7 +526,7 @@ window.BlockEditor = (function () {
             </select>
             <select id="beFontSize" title="Font size"><option value="">Size...</option><option value="8">8</option><option value="10">10</option><option value="12">12</option><option value="14">14</option><option value="16">16</option><option value="18">18</option><option value="20">20</option><option value="24">24</option><option value="28">28</option><option value="32">32</option><option value="36">36</option><option value="48">48</option></select>
             <select id="beSpacing" title="Gaps between paragraphs -- fixes doubled blank lines from pasted text (applies to this whole text block)"><option value="">Spacing...</option><option value="none">No gaps</option><option value="small">Small gaps</option><option value="line">One blank line</option></select>
-            <select id="bePersonalize"><option value="">Personalize...</option><option value="%FIRSTNAME%">First name</option><option value="%LASTNAME%">Last name</option><option value="%EMAIL%">Email</option><option value="%UNSUBSCRIBE%">Unsubscribe link</option>${(opts.extraPersonalizeOptions || []).map(o => `<option value="${o.value}">${o.label}</option>`).join('')}</select>
+            <span class="be-pz"><button type="button" id="bePersonalize" aria-haspopup="listbox" aria-expanded="false">Personalize... <span aria-hidden="true">&#9662;</span></button><div class="be-pz-menu" id="bePersonalizeMenu" hidden><input type="text" id="bePersonalizeSearch" placeholder="Search fields..." autocomplete="off" data-lpignore="true"/><div class="be-pz-list" id="bePersonalizeList" role="listbox"></div></div></span>
             <span class="be-link-popover" id="beLinkPopover">
               <input type="text" id="beLinkUrl" placeholder="Link URL (select text first)" title="Type or paste a URL -- it's applied to the selected text automatically. Clear it to remove the link."/>
               ${hexColorFieldHtml('beLinkColor', '')}
@@ -1215,12 +1215,73 @@ window.BlockEditor = (function () {
     linkUrlInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); commitLink('url'); }
     });
-    toolbar.querySelector('#bePersonalize').addEventListener('change', (e) => {
-      if (!e.target.value) return;
-      if (ADD_TO_CALENDAR_BUTTONS[e.target.value]) insertAddToCalendarButton(e.target.value);
-      else document.execCommand('insertText', false, e.target.value);
-      e.target.value = '';
+    // A real menu instead of a native <select>: a form question can be a whole
+    // paragraph, and a native option neither wraps nor stays on screen. Typing
+    // in the search box moves focus out of the email, so the caret is saved on
+    // open and put back before inserting.
+    const pzBtn = toolbar.querySelector('#bePersonalize');
+    const pzMenu = toolbar.querySelector('#bePersonalizeMenu');
+    const pzSearch = toolbar.querySelector('#bePersonalizeSearch');
+    const pzList = toolbar.querySelector('#bePersonalizeList');
+    const pzOptions = [
+      { value: '%FIRSTNAME%', label: 'First name' }, { value: '%LASTNAME%', label: 'Last name' },
+      { value: '%EMAIL%', label: 'Email' }, { value: '%UNSUBSCRIBE%', label: 'Unsubscribe link' },
+      ...(opts.extraPersonalizeOptions || []),
+    ];
+    let pzRange = null;
+    function renderPzList() {
+      const needle = pzSearch.value.trim().toLowerCase();
+      pzList.innerHTML = '';
+      for (const o of pzOptions) {
+        if (needle && !String(o.label).toLowerCase().includes(needle)) continue;
+        const item = document.createElement('button');
+        item.type = 'button'; item.className = 'be-pz-item'; item.setAttribute('role', 'option');
+        item.textContent = o.label;
+        item.addEventListener('mousedown', (e) => e.preventDefault());
+        item.addEventListener('click', () => pickPz(o.value));
+        pzList.appendChild(item);
+      }
+      if (!pzList.children.length) { const none = document.createElement('div'); none.className = 'be-pz-none'; none.textContent = 'No matching fields'; pzList.appendChild(none); }
+    }
+    function closePz() { pzMenu.hidden = true; pzBtn.setAttribute('aria-expanded', 'false'); }
+    function openPz() {
+      const sel = window.getSelection();
+      pzRange = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+      pzSearch.value = '';
+      renderPzList();
+      pzMenu.hidden = false;
+      pzBtn.setAttribute('aria-expanded', 'true');
+      // Fixed so the modal's scroll box can't clip it; kept fully on screen.
+      const r = pzBtn.getBoundingClientRect();
+      const width = Math.min(460, window.innerWidth - 24);
+      pzMenu.style.width = width + 'px';
+      pzMenu.style.left = Math.max(12, Math.min(r.left, window.innerWidth - width - 12)) + 'px';
+      pzMenu.style.top = (r.bottom + 4) + 'px';
+      pzList.style.maxHeight = Math.max(160, window.innerHeight - r.bottom - 76) + 'px';
+      pzSearch.focus();
+    }
+    function pickPz(value) {
+      closePz();
+      const sel = window.getSelection();
+      if (pzRange) {
+        (pzRange.startContainer.nodeType === 1 ? pzRange.startContainer : pzRange.startContainer.parentElement)?.closest('[contenteditable]')?.focus();
+        sel.removeAllRanges();
+        sel.addRange(pzRange);
+      }
+      if (ADD_TO_CALENDAR_BUTTONS[value]) insertAddToCalendarButton(value);
+      else document.execCommand('insertText', false, value);
       syncSelectedText();
+    }
+    pzBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    pzBtn.addEventListener('click', () => { if (pzMenu.hidden) openPz(); else closePz(); });
+    pzSearch.addEventListener('input', renderPzList);
+    pzSearch.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); closePz(); }
+      if (e.key === 'Enter') { e.preventDefault(); pzList.querySelector('.be-pz-item')?.click(); }
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!rootEl.isConnected || pzMenu.hidden) return;
+      if (!e.target.closest('.be-pz')) closePz();
     });
     function syncSelectedText() {
       const el = canvas.querySelector(`[data-id="${selectedId}"].be-block-body`);

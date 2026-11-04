@@ -1925,6 +1925,9 @@ async function getAvailableTokens() {
     { label: 'Email', token: '{{email}}', example: exampleFor(['email', 'emailaddress']) },
     { label: 'Phone', token: '{{phone}}', example: exampleFor(['phone', 'phonenumber', 'mobile', 'mobilenumber']) },
     // Click IDs come from the site's submit beacon (tracking_backend.js), stamped onto the contact at run time -- never in a webhook sample.
+    // Any source -- ads, YouTube, email, text, social (contact_clicks.js).
+    { label: 'First Click (any source)', token: '{{click.first}}', example: null },
+    { label: 'Last Click (any source)', token: '{{click.last}}', example: null },
     { label: 'Google Ad (name + click ID)', token: '{{clickIds.gclid}}', example: null },
     { label: 'Meta Ad (name + click ID)', token: '{{clickIds.fbclid}}', example: null },
     { label: 'Date/Time Captured', token: '{{timestamp}}', example: null }, // stamped at run time, not part of any pulled sample
@@ -1959,7 +1962,7 @@ async function getAvailableTokens() {
 function tokenLabel(raw) {
   const m = raw.match(/^\{\{(.+)\}\}$/);
   if (!m) return raw;
-  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured', 'clickIds.gclid': 'Google Ad (name + click ID)', 'clickIds.fbclid': 'Meta Ad (name + click ID)' };
+  const KNOWN = { first: 'First Name', last: 'Last Name', email: 'Email', phone: 'Phone', timestamp: 'Date/Time Captured', 'click.first': 'First Click (any source)', 'click.last': 'Last Click (any source)', 'clickIds.gclid': 'Google Ad (name + click ID)', 'clickIds.fbclid': 'Meta Ad (name + click ID)' };
   if (KNOWN[m[1]]) return KNOWN[m[1]];
   const pm = m[1].match(/^payload\.(.+)$/);
   if (!pm) return m[1];
