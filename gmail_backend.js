@@ -4,7 +4,7 @@ import { logMessage, isKnownProviderMessageId, providerIndexUnreadable } from ".
 import { checkConversionGoal } from "./workflows_backend.js";
 import { sqliteInboxAvailable, findContactIdByEmail } from "./sqlite_inbox.js";
 import { markPriorOutboundEmailsOpenedByReply } from "./message_index.js";
-import { resolveFooterHtml, absolutizeUploadUrls } from "./email_backend.js";
+import { resolveFooterHtml, absolutizeUploadUrls, tagUnsubscribeLinks } from "./email_backend.js";
 import { getPublicBaseUrl } from "./integrations_backend.js";
 import { renderEmailBody } from "./block_editor_shared.js";
 import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
@@ -152,6 +152,7 @@ export async function sendViaGmail({ user, to, subject, blocks, theme, contactId
   // merge tag same as everywhere else in the app -- literal and inert until
   // this substitution actually runs.
   fullHtml = fullHtml.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`);
+  fullHtml = tagUnsubscribeLinks(fullHtml, contactId, sourceType, sourceId);
   if (trailingHtml) fullHtml += trailingHtml;
   // Mirrors email_backend.js's sendEmail contract: logs the attempt itself
   // (sent OR failed) so callers on both paths can just check `.ok`,

@@ -8,7 +8,6 @@ import { CAMPAIGNS_FILE } from "./campaigns_backend.js";
 import { markContactEmailEngagement, suppressContactEmail } from "./contacts_backend.js";
 import { getSesSettings, getPublicBaseUrl, getComplianceSettings } from "./integrations_backend.js";
 import { resolveSendSourceSlug } from "./source_names.js";
-import { setConvoMeta } from "./conversation_meta.js";
 import { queueBehavioralTrigger } from "./behavioral_triggers_backend.js";
 import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
@@ -17,6 +16,8 @@ import { getContactByIdFast, syncContactFields } from "./sqlite_inbox.js";
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
 import { campaignCalendarLinks, applyCalendarLinksToBlocks } from "./calendar_links.js";
+import { completeActiveEnrollments } from "./automation_enrollments_db.js";
+import { getContactMessages } from "./messages_db.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
 
@@ -223,6 +224,37 @@ export function reconstructEmailBody(message) {
   return html;
 }
 
+// The lists an email's unsubscribe link removes the contact from. A campaign's
+// are its chosen recipient lists. An automation's are its list_subscribe
+// triggers plus whatever list the flows that enroll people into it add them to
+// (every automation here is entered through a flow, none by list trigger).
+// Anything else -- bookings, inbox replies, flow emails -- has no list.
+function flowNodes(n, out = []) {
+  if (Array.isArray(n)) n.forEach(x => flowNodes(x, out));
+  else if (n && typeof n === "object") { if (n.type) out.push(n); Object.values(n).forEach(x => flowNodes(x, out)); }
+  return out;
+}
+function unsubscribeListIds(sourceType, sourceId) {
+  if (sourceType === "campaign") return readJson(CAMPAIGNS_FILE, []).find(c => c.id === sourceId)?.recipients?.listIds || [];
+  if (sourceType !== "automation_step") return [];
+  const automationId = String(sourceId || "").split(":")[0];
+  const ids = new Set();
+  const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === automationId);
+  for (const t of automation?.triggers || []) if (t.type === "list_subscribe" && t.config?.listId) ids.add(t.config.listId);
+  for (const flow of readJson("crm_flows.json", [])) {
+    const nodes = flowNodes(flow);
+    if (!nodes.some(s => s.type === "enroll_automation" && (s.config || s).automationId === automationId)) continue;
+    for (const s of nodes) if (s.type === "add_to_list" && (s.config || s).listId) ids.add((s.config || s).listId);
+  }
+  return [...ids];
+}
+// Stamps which email an unsubscribe link came from, so it can act on that
+// email's lists only. Runs after %UNSUBSCRIBE% has become the real URL.
+export function tagUnsubscribeLinks(html, contactId, sourceType, sourceId) {
+  const link = `/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
+  return String(html || "").replaceAll(link, `${link}&st=${encodeURIComponent(sourceType || "manual")}&si=${encodeURIComponent(sourceId || "")}`);
+}
+
 export function resolveFooterHtml(footerTemplateId, contactId) {
   const templates = readJson(FOOTER_TEMPLATES_FILE, []);
   const footer = templates.find(f => f.id === footerTemplateId) || templates.find(f => f.isDefault) || null;
@@ -338,7 +370,7 @@ function wrapLinksForClickTracking(html, rowId) {
   return String(html || "").replace(/href="([^"]+)"/g, (match, url) => {
     // Case-insensitive, matching the %UNSUBSCRIBE% replace's own /gi flag --
     // the footer template actually carries it lowercase.
-    if (!url || /^%unsubscribe%/i.test(url) || /^(mailto:|tel:|#)/i.test(url)) return match;
+    if (!url || /^%unsubscribe%/i.test(url) || url.includes("/api/email/unsubscribe") || /^(mailto:|tel:|#)/i.test(url)) return match;
     return `href="${base}/api/email/click?m=${encodeURIComponent(rowId)}&u=${encodeURIComponent(url)}"`;
   });
 }
@@ -400,6 +432,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // link too instead of the literal, non-functional string "%unsubscribe%".
   const unsubscribeUrl = `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
   html = html.replace(/%UNSUBSCRIBE%/gi, unsubscribeUrl);
+  html = tagUnsubscribeLinks(html, contactId, sourceType, sourceId);
   // Appended after the footer, not folded into `blocks` by the caller (see
   // inbox_backend.js's Reply handling) -- a quoted older message shouldn't
   // be click-tracking-wrapped or %UNSUBSCRIBE%-substituted like the caller's
@@ -659,19 +692,32 @@ export async function handleEmailRequest(req, res, url) {
     // matched a contact.
     const contactId = String(url.searchParams.get("c") || "").split(/[?&#]/)[0].trim();
     const contact = getContactById(contactId);
+    let sourceType = url.searchParams.get("st"), sourceId = url.searchParams.get("si"), listIds = [];
     if (contact) {
-      // Only emailOptOut -- never contact.status. Same reasoning as
-      // recheckStopStatus (compliance_backend.js): a genuinely ENROLLED or
-      // BOOKED contact clicking an unsubscribe link must stop receiving
-      // marketing email without their real pipeline stage being erased.
+      // Links sent before these carried st/si say nothing about their email;
+      // the contact's latest campaign/automation email stands in for it.
+      if (!sourceType) {
+        const last = getContactMessages(contact.id).filter(m => m.channel === "email" && m.direction === "outbound" && (m.sourceType === "campaign" || m.sourceType === "automation_step")).pop();
+        sourceType = last?.sourceType; sourceId = last?.sourceId;
+      }
+      listIds = unsubscribeListIds(sourceType, sourceId);
+    }
+    if (listIds.length) {
+      // Only the lists tied to this email -- never contact.status or the
+      // contact-wide emailOptOut. No list on the email means nothing changes.
+      const now = new Date().toISOString();
       const updated = updateContactByField("id", contact.id, c => {
-        c.emailOptOut = true; c.updatedAt = new Date().toISOString();
+        const removed = (c.listIds || []).filter(id => listIds.includes(id));
+        c.listIds = (c.listIds || []).filter(id => !listIds.includes(id));
+        c.listUnsubscribes = [...(c.listUnsubscribes || []), { at: now, listIds: removed, sourceType, sourceId }];
+        c.updatedAt = now;
         return c;
       });
       // Keep the SQLite copy in step too (Inbox, filters, and the send check above read it).
       if (updated) { try { syncContactFields(updated.id, updated); } catch (e) { console.error("[sqlite_inbox] contact sync failed:", e.message); } }
-      setConvoMeta(contact.id, { archived: true });
-    } else {
+      // Leaving the list also ends that automation's remaining emails to them.
+      if (sourceType === "automation_step") completeActiveEnrollments(String(sourceId).split(":")[0], contact.id, now);
+    } else if (!contact) {
       // Confirmed live: a contact complained their unsubscribe "didn't
       // work" after clicking it repeatedly. No way to tell after the fact
       // whether `c` was ever actually valid for them -- logging here at
@@ -681,6 +727,13 @@ export async function handleEmailRequest(req, res, url) {
     // Settings > Opt Out's "Unsubscribe Redirect" -- "" (the default) falls
     // back to this CRM's own plain confirmation page below instead of
     // sending them anywhere.
+    if (contact && !listIds.length) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px 20px">
+      <h2>This email isn't part of a mailing list.</h2><p>There's nothing to unsubscribe from, so no changes were made.</p>
+    </body></html>`);
+      return true;
+    }
     const redirectUrl = getComplianceSettings().unsubscribeRedirectUrl;
     if (redirectUrl) {
       res.writeHead(302, { Location: redirectUrl });
@@ -689,7 +742,7 @@ export async function handleEmailRequest(req, res, url) {
     }
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px 20px">
-      <h2>You've been unsubscribed.</h2><p>You won't receive any more marketing emails from us.</p>
+      <h2>You've been unsubscribed.</h2><p>You've been removed from this mailing list.</p>
     </body></html>`);
     return true;
   }
