@@ -264,6 +264,7 @@
       <button data-type="add_tag"><svg viewBox="0 0 24 24" fill="none"><path d="M11.5 3.5H19a1 1 0 0 1 1 1v7.5L11 21 3.5 13.5 11.5 3.5Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="8" r="1.3" fill="#fff"/><path d="M10 18h4M12 16v4" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add Tag</button>
       <button data-type="remove_tag"><svg viewBox="0 0 24 24" fill="none"><path d="M11.5 3.5H19a1 1 0 0 1 1 1v7.5L11 21 3.5 13.5 11.5 3.5Z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="16" cy="8" r="1.3" fill="#fff"/><path d="M10 18h4" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Remove Tag</button>
       <button data-type="add_to_list"><svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="#fff" stroke-width="1.6"/><path d="M8 12.3l2.6 2.6L16.5 9" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Add to List</button>
+      <button data-type="remove_from_list"><svg viewBox="0 0 24 24" fill="none"><rect x="4.5" y="4.5" width="15" height="15" rx="3" stroke="#fff" stroke-width="1.6"/><path d="M8.5 12h7" stroke="#009bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Remove from List</button>
       <button data-type="send_conversion_event"><svg viewBox="0 0 24 24" fill="none"><path d="M4 19V10M9.5 19V5M15 19v-7M20.5 19V3" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><circle cx="20.5" cy="3" r="1.6" fill="#009bff"/></svg>Send Conversion Event</button>
       <button data-type="add_to_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="#fff" stroke-width="1.6"/><path d="M8 12h8M12 8v8" stroke="#009bff" stroke-width="1.8" stroke-linecap="round"/></svg>Add to ActiveCampaign</button>
       <button data-type="add_update_contact_ac"><svg viewBox="0 0 24 24" fill="none"><circle cx="10" cy="8.5" r="3.5" stroke="#fff" stroke-width="1.6"/><path d="M3.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><circle cx="17.5" cy="8" r="4" stroke="#009bff" stroke-width="1.6"/><path d="M17.5 6.3v3.4M15.8 8h3.4" stroke="#009bff" stroke-width="1.4" stroke-linecap="round"/></svg>Add/Update Contact (ActiveCampaign)</button>
@@ -455,6 +456,7 @@ function stepSummary(step) {
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'add_to_list') return `Add to list: ${escapeHtml(allLists.find(l => l.id === c.listId)?.name || '—')}`;
+  if (step.type === 'remove_from_list') return `Remove from list: ${escapeHtml(allLists.find(l => l.id === c.listId)?.name || '—')}`;
   if (step.type === 'send_conversion_event') return `Send "${escapeHtml(allConversionEvents.find(e => e.key === c.eventKey)?.label || c.eventKey || '—')}" conversion`;
   if (step.type === 'add_to_ac') {
     const listName = allAcLists.find(l => String(l.id) === String(c.acListId))?.name;
@@ -472,7 +474,7 @@ function stepSummary(step) {
   return '';
 }
 function fmtDripTime(t) { const [h, m] = String(t || '09:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; }
-const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', sheet_upsert: 'Find/Update Row in Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist', drip: 'Drip', fb_audience_add: 'Add to Facebook Audience', fb_audience_remove: 'Remove from Facebook Audience', cancel_if_no_engagement: 'Cancel Booking if No Engagement' };
+const TYPE_LABELS = { filter: 'Filter', if_then: 'If / Then', delay: 'Delay', google_sheet: 'Add Row to Google Sheet', sheet_upsert: 'Find/Update Row in Google Sheet', enroll_automation: 'Enroll in Email Automation', enroll_workflow: 'Enroll in SMS Sequence', add_update_contact: 'Add/Update Contact', send_email: 'Send Email', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_list: 'Add to List', remove_from_list: 'Remove from List', send_conversion_event: 'Send Conversion Event', add_to_ac: 'Add to ActiveCampaign', add_update_contact_ac: 'Add/Update Contact (ActiveCampaign)', youtube_add_to_playlist: 'Add Video to YouTube Playlist', drip: 'Drip', fb_audience_add: 'Add to Facebook Audience', fb_audience_remove: 'Remove from Facebook Audience', cancel_if_no_engagement: 'Cancel Booking if No Engagement' };
 // Steps with two exits (yesStepId/noStepId) instead of one nextStepId.
 const BRANCH_TYPES = ['if_then', 'cancel_if_no_engagement'];
 function isBranch(step) { return !!step && BRANCH_TYPES.includes(step.type); }
@@ -951,7 +953,7 @@ function defaultConfig(type) {
   if (type === 'add_update_contact') return { first: '', last: '', email: '', phone: '', programType: '', statusId: '', altEmail: '', altPhone: '', customFields: {} };
   if (type === 'send_email') return { to: '', from: '', subject: '', previewText: '', blocks: [], theme: {}, footerTemplateId: null };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
-  if (type === 'add_to_list') return { listId: '' };
+  if (type === 'add_to_list' || type === 'remove_from_list') return { listId: '' };
   if (type === 'send_conversion_event') return { eventKey: '' };
   if (type === 'add_to_ac') return { acListId: '', acAutomationId: '' };
   if (type === 'add_update_contact_ac') return { first: '', last: '', email: '', phone: '', customFields: {} };
@@ -1660,7 +1662,7 @@ function openStepConfigModal(step, isNew) {
     `;
   } else if (step.type === 'add_tag' || step.type === 'remove_tag') {
     body.innerHTML = `<div class="field"><label class="pra-label">Tag</label><select class="pra-select" id="cfgTag">${allTags.map(t => `<option value="${t.id}" ${step.config.tagId === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`).join('')}</select></div>`;
-  } else if (step.type === 'add_to_list') {
+  } else if (step.type === 'add_to_list' || step.type === 'remove_from_list') {
     body.innerHTML = `<div class="field"><label class="pra-label">List</label><select class="pra-select" id="cfgList">${allLists.map(l => `<option value="${l.id}" ${step.config.listId === l.id ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}</select></div>`;
   } else if (step.type === 'send_conversion_event') {
     body.innerHTML = allConversionEvents.length
@@ -1838,7 +1840,7 @@ function openStepConfigModal(step, isNew) {
       step.config.customFields = customFields;
     }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
-    else if (step.type === 'add_to_list') { step.config.listId = document.getElementById('cfgList').value; }
+    else if (step.type === 'add_to_list' || step.type === 'remove_from_list') { step.config.listId = document.getElementById('cfgList').value; }
     else if (step.type === 'send_conversion_event') { const el = document.getElementById('cfgConversionEvent'); if (el) step.config.eventKey = el.value; }
     else if (step.type === 'add_to_ac') { step.config.acListId = document.getElementById('cfgAcList').value; step.config.acAutomationId = document.getElementById('cfgAcAutomation').value; }
     else if (step.type === 'add_update_contact_ac') {
@@ -2067,8 +2069,12 @@ function exampleValueForToken(raw, samples) {
 // amber "unresolved" warning as an actual stale/renamed field, on every
 // single flow, always, since there's structurally no sample data for it
 // to ever match. Chip callers check this before deciding to warn.
+// Same for every non-payload token ({{first}}, {{customFields.x}}...): those
+// read the contact when the run executes, not the submission, so a blank
+// sample (every status-change flow has one) says nothing about them --
+// confirmed live: the Enrollment/Renewal flows showed every field amber.
 function isRuntimeOnlyToken(raw) {
-  return raw === '{{timestamp}}' || raw.startsWith('{{clickIds.');
+  return !raw.startsWith('{{payload.');
 }
 // Applies a resolved answer (or the lack of one) to an already-rendered
 // chip -- updates the label text, and toggles the amber "unresolved"

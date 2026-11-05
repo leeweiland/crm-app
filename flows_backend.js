@@ -25,7 +25,7 @@ export const TRIGGER_TYPES = ["webhook", "form_submitted", "form_abandoned", "bo
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
   "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
-  "add_tag", "remove_tag", "add_to_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
+  "add_tag", "remove_tag", "add_to_list", "remove_from_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
   "youtube_add_to_playlist", "drip", "fb_audience_add", "fb_audience_remove", "cancel_if_no_engagement",
 ];
 // Steps with two exits (yesStepId/noStepId) instead of one nextStepId.
@@ -503,6 +503,9 @@ async function advanceFlowRun(run, flow) {
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "add_to_list") {
       if (contact && step.config.listId && !contact.listIds.includes(step.config.listId)) { contact.listIds.push(step.config.listId); saveContact(contact); }
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "remove_from_list") {
+      if (contact && step.config.listId && contact.listIds.includes(step.config.listId)) { contact.listIds = contact.listIds.filter(l => l !== step.config.listId); saveContact(contact); }
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "add_update_contact") {
       // The one place a contact gets created or matched for a webhook-
