@@ -70,8 +70,16 @@
   .step-card .step-actions button:hover { color: #fff; }
   .add-step-btn { background: transparent; border: 1px dashed var(--pra-border); color: var(--pra-dim); border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: .82rem; transition: border-color .12s, color .12s, background .12s, transform .12s; }
   .add-step-btn:hover { border-color: var(--pra-blue); color: var(--pra-blue); }
-  .branch-row { display: flex; gap: 40px; margin-top: 4px; }
-  .branch-col { display: flex; flex-direction: column; align-items: center; }
+  .branch-row { display: flex; gap: 40px; margin-top: 4px; position: relative; padding-top: 18px; }
+  .branch-col { display: flex; flex-direction: column; align-items: center; position: relative; }
+  /* Connector from a branching step into its YES/NO columns: a stub down from
+     the step, a bar across to each column's center, and a stub into each. */
+  .branch-row::before { content: ''; position: absolute; top: 0; left: 50%; width: 2px; height: 9px; margin-left: -1px; background: var(--pra-blue); }
+  .branch-col::before { content: ''; position: absolute; top: -9px; left: 50%; width: 2px; height: 9px; margin-left: -1px; background: var(--pra-blue); }
+  .branch-col::after { content: ''; position: absolute; top: -9px; height: 2px; background: var(--pra-blue); }
+  .branch-col:first-child::after { left: calc(50% - 1px); right: -20px; }
+  .branch-col:last-child::after { left: -20px; right: calc(50% - 1px); }
+  .branch-label + .chain-arrow-wrap .chain-arrow { color: var(--pra-blue); }
   .branch-label { font-family: var(--font-secondary); font-size: .68rem; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 6px; }
   .type-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .type-picker button { background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: #fff; border-radius: 8px; padding: 12px; cursor: pointer; font-size: .82rem; text-align: left; display: flex; align-items: center; gap: 10px; }
