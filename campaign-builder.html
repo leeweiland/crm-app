@@ -24,6 +24,11 @@
   @media (min-width: 1321px) {
     .cb-sidebar, .be-side-panel { top: calc(var(--cb-sticky-top, 0px) + 12px); max-height: calc(100vh - var(--cb-sticky-top, 0px) - 24px); overflow-y: auto; }
   }
+  /* Calendar event: a collapsed row with a chevron until opened. */
+  .cb-event > summary { cursor: pointer; list-style: none; margin: 0; }
+  .cb-event > summary::-webkit-details-marker { display: none; }
+  .cb-event > summary::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 8px 2px 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+  .cb-event[open] > summary::before { transform: rotate(45deg); }
 </style>
 </head>
 <body>
@@ -56,15 +61,15 @@
         </label>
         <!-- One event for the whole send (Zoom open house, live class): fills the
              Add to Calendar buttons from Personalize... for every recipient. -->
-        <div class="field" style="margin-top:10px">
-          <label class="pra-label">Calendar event <span style="text-transform:none;letter-spacing:0;color:var(--pra-dim)">— for Add to Calendar buttons (Personalize...)</span></label>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <details class="field cb-event" id="eventPanel" style="margin-top:10px">
+          <summary class="pra-label">Calendar event <span id="eventSummary" style="text-transform:none;letter-spacing:0;color:var(--pra-dim)">— for Add to Calendar buttons (Personalize...)</span></summary>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
             <input class="pra-input" id="eventTitleInput" autocomplete="off" data-lpignore="true" placeholder="Event title (defaults to subject)" style="flex:2 1 200px"/>
             <input class="pra-input" id="eventStartInput" type="datetime-local" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" style="flex:1 1 190px;color-scheme:dark;cursor:pointer" title="Start, in your computer's time zone"/>
             <input class="pra-input" id="eventDurationInput" autocomplete="off" data-lpignore="true" type="number" min="5" step="5" placeholder="60" style="flex:0 1 90px" title="Length in minutes"/>
             <input class="pra-input" id="eventLocationInput" autocomplete="off" data-lpignore="true" placeholder="Zoom / meeting link" style="flex:2 1 220px"/>
           </div>
-        </div>
+        </details>
       </div>
 
       <div class="cb-layout">
@@ -478,6 +483,9 @@ async function loadCampaign() {
   document.getElementById('previewTextInput').value = campaign.previewText || '';
   document.getElementById('predictiveSendInput').checked = !!campaign.predictiveSend;
   const ev = campaign.calendarEvent || {};
+  // Collapsed unless this campaign already has an event set.
+  document.getElementById('eventPanel').open = !!ev.startAt;
+  if (ev.startAt) document.getElementById('eventSummary').textContent = '— ' + new Date(ev.startAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   document.getElementById('eventTitleInput').value = ev.title || '';
   document.getElementById('eventStartInput').value = toLocalInput(ev.startAt);
   document.getElementById('eventDurationInput').value = ev.durationMin || '';
