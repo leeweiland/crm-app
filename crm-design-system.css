@@ -624,6 +624,21 @@ body { margin: 0; }
   .cb-layout, .be-shell { grid-template-columns: 1fr; }
   .be-side-panel { position: static; }
 }
+/* Between phone and wide desktop (landscape phones, tablets, small laptops)
+   the three columns -- email, block palette, settings sidebar -- don't fit,
+   and the email canvas was crushed to a sliver (letters stacked one per
+   line). The settings sidebar drops below sooner, and the editor stacks its
+   own palette under the email whenever the editor itself is narrow, wherever
+   it sits (campaign page, automation/flow modals). */
+@media (max-width: 1320px) {
+  .cb-layout { grid-template-columns: 1fr; }
+  .cb-layout > .cb-sidebar { position: static; max-height: none; overflow: visible; }
+}
+:has(> .be-shell) { container-type: inline-size; }
+@container (max-width: 700px) {
+  .be-shell { grid-template-columns: 1fr; }
+  .be-shell > .be-side-panel { position: static; max-height: none; overflow: visible; }
+}
 
 /* Searchable multi-select chip widget -- moved here from being locally
    defined only in campaign-builder.html so condition-row-client.js's "is
