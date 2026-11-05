@@ -65,6 +65,7 @@
   .step-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
   .step-card .step-type { flex: 1; min-width: 0; font-family: var(--font-secondary); font-size: .62rem; text-transform: uppercase; color: var(--pra-dim); letter-spacing: .06em; }
   .step-card .step-summary { font-size: .88rem; margin-top: 3px; }
+  .step-card .sheet-link { color: #009bff; text-decoration: underline; }
   .step-card .step-actions { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
   .step-card .step-actions button { background: none; border: none; color: var(--pra-dim); cursor: pointer; font-size: .8rem; }
   .step-card .step-actions button:hover { color: #fff; }
@@ -442,6 +443,39 @@ async function loadRefs() {
 // real label to show instead, in the same Question/Answer shape the app's
 // other Q&A displays already use (e.g. the booking confirmation email's
 // intake-answers block).
+// Plain-English names for the fields and operators a condition stores
+// ("customFields.enrollKind not_any_of renewal,travel,manual" reads as
+// "Enrollment type is not Renewal, Travel or Manual").
+const FIELD_LABELS = {
+  first: 'First name', last: 'Last name', email: 'Email', phone: 'Phone', status: 'Status', statusId: 'Status',
+  programType: 'Program type', type: 'Contact type', tags: 'Tags', listIds: 'Lists', source: 'Source', ownerId: 'Assigned to',
+  'customFields.enrollKind': 'Enrollment type', 'customFields.enrollProgramType': 'Enrollment program type',
+  'customFields.enrollProgram': 'Enrollment program', 'customFields.enrollPayment': 'Payment method',
+  'customFields.enrollAmountPaid': 'Amount paid', 'customFields.enrollStartDate': 'Start date', 'customFields.enrollEndDate': 'End date',
+};
+const OP_LABELS = {
+  eq: 'is', neq: 'is not', any_of: 'is', not_any_of: 'is not', contains: 'contains', not_contains: 'does not contain',
+  exists: 'is set', not_exists: 'is not set', gt: 'is more than', gte: 'is at least', lt: 'is less than', lte: 'is at most',
+  within_last_days: 'in the last', not_within_last_days: 'not in the last', within_last_hours: 'in the last',
+};
+function fieldLabel(field) {
+  if (FIELD_LABELS[field]) return FIELD_LABELS[field];
+  if (field.startsWith('customFields.')) {
+    const key = field.slice('customFields.'.length);
+    const def = allCustomFields.find(f => f.id === key);
+    if (def) return def.label;
+    field = key;
+  }
+  return field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, ch => ch.toUpperCase());
+}
+// Ids (lists, tags, statuses) shown by name; lowercase codes ("online") capitalized.
+function valueLabel(field, v) {
+  const s = String(v ?? '');
+  if (field === 'listIds') return allLists.find(l => l.id === s)?.name || s;
+  if (field === 'tags') return allTags.find(t => t.id === s)?.name || s;
+  return /^[a-z][a-z_ ]*$/.test(s) ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ') : s;
+}
+function joinOr(items) { return items.length > 1 ? `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}` : (items[0] || ''); }
 function conditionSummary(cond, prefix) {
   const field = cond?.field, value = cond?.value;
   if (!field) return `${prefix} —`;
@@ -449,9 +483,38 @@ function conditionSummary(cond, prefix) {
     const label = escapeHtml(cachedFieldLabels[field.slice('payload.'.length)] || field.slice('payload.'.length));
     return `Question: ${label}<br>Answer: ${escapeHtml(String(value ?? ''))}`;
   }
-  return `${prefix} ${field} ${cond.op || ''} ${escapeHtml(String(value ?? ''))}`;
+  const op = cond.op || 'eq';
+  const values = (Array.isArray(value) ? value : String(value ?? '').split(',')).map(v => String(v).trim()).filter(Boolean).map(v => valueLabel(field, v));
+  const unit = op === 'within_last_days' || op === 'not_within_last_days' ? ' days' : op === 'within_last_hours' ? ' hours' : '';
+  const tail = op === 'exists' || op === 'not_exists' ? '' : ` ${joinOr(values)}${unit}`;
+  const many = field === 'listIds' || field === 'tags';
+  const opText = many && (op === 'eq' || op === 'any_of') ? 'include' : many && (op === 'neq' || op === 'not_any_of') ? "don't include" : (OP_LABELS[op] || op.replace(/_/g, ' '));
+  return `${prefix} ${escapeHtml(fieldLabel(field))} ${escapeHtml(opText)}${escapeHtml(tail)}`;
 }
-function stepSummary(step) {
+// Spreadsheet title + tab gids, fetched once per spreadsheet a flow uses, so
+// a sheet step shows a clickable "CALLS TRACKING → ONLINE tab" link instead of
+// a raw spreadsheet id.
+const sheetMeta = {};
+async function loadSheetMeta() {
+  const ids = [...new Set(Object.values(flow?.steps || {}).map(s => s.config?.spreadsheetId).filter(Boolean))].filter(id => !sheetMeta[id]);
+  if (!ids.length) return;
+  await Promise.all(ids.map(async id => {
+    try { const r = await fetch(`/api/flows/sheets/${id}/meta`); if (r.ok) sheetMeta[id] = await r.json(); } catch { /* falls back to the saved name */ }
+  }));
+  render();
+}
+function sheetRef(c, plain) {
+  const meta = sheetMeta[c.spreadsheetId];
+  const title = meta?.title || c.spreadsheetName || 'Google Sheet';
+  const text = `${title}${c.sheetName ? ` → ${c.sheetName} tab` : ''}`;
+  if (plain || !c.spreadsheetId) return plain ? text : escapeHtml(text);
+  const gid = meta?.tabs?.find(t => t.title === c.sheetName)?.gid;
+  const href = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(c.spreadsheetId)}/edit${gid != null ? `#gid=${gid}` : ''}`;
+  return `<a class="sheet-link" href="${href}" target="_blank" rel="noopener" onclick="event.stopPropagation()" draggable="false">${escapeHtml(text)}</a>`;
+}
+const CONTACT_FIELD_LABELS = { first: 'first name', last: 'last name', email: 'email', phone: 'phone', programType: 'program type', statusId: 'status', altEmail: 'extra email', altPhone: 'extra phone' };
+// plain: text only (no link markup), for places that escape the summary themselves.
+function stepSummary(step, plain) {
   const c = step.config || {};
   if (step.type === 'filter') return conditionSummary(c.filter?.all?.[0], 'Continue only if');
   if (step.type === 'if_then') return conditionSummary(c.filter?.all?.[0], 'If');
@@ -462,15 +525,25 @@ function stepSummary(step) {
     return `Cancel unless ${names.length ? names.join(' / ') : '(nothing checked -- always cancels)'} by ${c.amount || 1} ${c.unit || 'hours'} before the meeting${c.notify === false ? ' (no notification)' : ''}${flow.trigger?.type !== 'booking_created' ? '<br><span style="color:#f59e0b">Only works when the trigger is "Booking is created"</span>' : ''}`;
   }
   if (step.type === 'drip') { const dc = c; return `Release ${Number(dc.perDay) || 0} per day${dc.spread === false ? ` at ${fmtDripTime(dc.releaseTime)} (Anchorage)` : ', spread through the day'}`; }
-  if (step.type === 'google_sheet') return `Add row to "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''}${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
-  if (step.type === 'sheet_upsert') return c.alwaysAppend
-    ? `Always add a new row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`
-    : `Find/update row in "${escapeHtml(c.spreadsheetName || c.spreadsheetId || '—')}"${c.sheetName ? ` &rarr; ${escapeHtml(c.sheetName)}` : ''} (${(c.matchGroups || []).length} match rule${(c.matchGroups || []).length === 1 ? '' : 's'}, ${(c.columns || []).length} column${(c.columns || []).length === 1 ? '' : 's'})${sheetsIsConfigured ? '' : ' (Sheets not configured)'}`;
-  if (step.type === 'enroll_automation') return `Enroll in: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
-  if (step.type === 'enroll_workflow') return `Enroll in: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
-  if (step.type === 'unenroll_automation') return `Remove from: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
-  if (step.type === 'unenroll_workflow') return `Remove from: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
-  if (step.type === 'add_update_contact') return `Set ${['first', 'last', 'email', 'phone', 'programType', 'statusId', 'altEmail', 'altPhone'].filter(k => c[k]).length + Object.keys(c.customFields || {}).length || 'no'} field(s)`;
+  const notConfigured = sheetsIsConfigured ? '' : ' (Sheets not configured)';
+  if (step.type === 'google_sheet') return `Add a new row to ${sheetRef(c, plain)}${notConfigured}`;
+  if (step.type === 'sheet_upsert') {
+    if (c.alwaysAppend) return `Add a new row to ${sheetRef(c, plain)}${notConfigured}`;
+    // "matched by Email, then Phone, then First + Last" -- the order rows are looked up in.
+    const matchBy = (c.matchGroups || []).map(g => (g.fields || []).map(f => f.header).filter(Boolean).join(' + ')).filter(Boolean);
+    return `Update their row in ${sheetRef(c, plain)}${matchBy.length ? ` (found by ${escapeHtml(matchBy.join(', then '))}; adds a row if none)` : ''}${notConfigured}`;
+  }
+  if (step.type === 'enroll_automation') return `Start email automation: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
+  if (step.type === 'enroll_workflow') return `Start SMS sequence: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
+  if (step.type === 'unenroll_automation') return `Stop email automation: ${escapeHtml(allAutomations.find(a => a.id === c.automationId)?.name || '—')}`;
+  if (step.type === 'unenroll_workflow') return `Stop SMS sequence: ${escapeHtml(allWorkflows.find(w => w.id === c.workflowId)?.name || '—')}`;
+  if (step.type === 'add_update_contact') {
+    const names = [
+      ...Object.keys(CONTACT_FIELD_LABELS).filter(k => c[k]).map(k => CONTACT_FIELD_LABELS[k]),
+      ...Object.keys(c.customFields || {}).map(id => allCustomFields.find(f => f.id === id)?.label || fieldLabel(`customFields.${id}`)),
+    ];
+    return names.length ? `Update contact: ${escapeHtml(names.join(', '))}` : 'Update contact (no fields set)';
+  }
   if (step.type === 'send_email') return `Email ${escapeHtml(c.to || '—')}${c.subject ? `: "${escapeHtml(c.subject)}"` : ''}`;
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === c.tagId)?.name || '—')}`;
@@ -1068,7 +1141,7 @@ async function deleteStep(stepId) {
   const optionsEl = document.getElementById('moveRunsOptions');
   function renderMoveRunsOptions() {
     const rows = [{ id: '', label: "Don't move -- just mark them done" }, ...orderedIds.map(id => ({
-      id, label: `${TYPE_LABELS[flow.steps[id].type]} -- ${stepSummary(flow.steps[id])}${id === naturalNext ? ' (next step)' : ''}`,
+      id, label: `${TYPE_LABELS[flow.steps[id].type]} -- ${stepSummary(flow.steps[id], true)}${id === naturalNext ? ' (next step)' : ''}`,
     }))];
     optionsEl.innerHTML = rows.map(r => `<div class="move-runs-option${r.id === moveRunsSelected ? ' selected' : ''}" data-value="${r.id}">${escapeHtml(r.label)}</div>`).join('');
     optionsEl.querySelectorAll('[data-value]').forEach(row => row.onclick = () => {
@@ -2747,6 +2820,7 @@ canvasWrap.addEventListener('touchend', (e) => {
   runCounts = d.stepCounts || {};
   render();
   centerCanvasOnTrigger();
+  loadSheetMeta();
   // cachedFieldLabels (code -> question wording, used by conditionSummary
   // above to humanize an if_then/filter step's "payload.<code>" condition)
   // is only populated once fetchRawSamples() has run -- kick it off here so

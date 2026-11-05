@@ -1217,6 +1217,21 @@ export async function handleFlowsRequest(req, res, url) {
       return sendJson(res, 400, { error: e.message });
     }
   }
+  // Title + each tab's gid, so a sheet step can link straight to its tab.
+  const sheetMetaMatch = p.match(/^\/api\/flows\/sheets\/([^/]+)\/meta$/);
+  if (sheetMetaMatch && req.method === "GET") {
+    try {
+      const accessToken = await getSheetsAccessToken();
+      const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetMetaMatch[1])}?fields=properties.title,sheets.properties.title,sheets.properties.sheetId`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const d = await r.json();
+      if (!r.ok) return sendJson(res, 400, { error: d.error?.message || "Could not read that spreadsheet" });
+      return sendJson(res, 200, { title: d.properties?.title || "", tabs: (d.sheets || []).map(s => ({ title: s.properties.title, gid: s.properties.sheetId })) });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
   const sheetHeadersMatch = p.match(/^\/api\/flows\/sheets\/([^/]+)\/headers$/);
   if (sheetHeadersMatch && req.method === "GET") {
     try {
