@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"/>
 <title>Email Campaign — CRM</title>
 <link rel="stylesheet" href="/crm-design-system.css"/>
 <style>
@@ -29,6 +29,12 @@
   .cb-event > summary::-webkit-details-marker { display: none; }
   .cb-event > summary::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 8px 2px 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
   .cb-event[open] > summary::before { transform: rotate(45deg); }
+  /* Phone: the header (subject, preview, options) scrolls away instead of
+     staying pinned -- pinned, it filled most of the screen once the keyboard
+     opened and left almost no room to edit. The format toolbar still pins. */
+  @media (max-width: 900px) {
+    .mobile-sticky-header { position: static; }
+  }
 </style>
 </head>
 <body>
@@ -56,13 +62,12 @@
         </div>
         <label class="field" style="margin-top:10px;display:flex;align-items:center;gap:8px;cursor:pointer" title="Each recipient gets this email at the hour they usually open email, within 24 hours of sending. Contacts without enough history yet get the list-wide best hour.">
           <input type="checkbox" id="predictiveSendInput"/>
-          <span class="pra-label" style="margin:0">Predictive sending</span>
-          <span style="font-size:.78rem;color:var(--pra-dim)">deliver at each person's best hour, within 24h</span>
+          <span class="pra-label" style="margin:0;white-space:nowrap">Predictive sending</span>
         </label>
         <!-- One event for the whole send (Zoom open house, live class): fills the
              Add to Calendar buttons from Personalize... for every recipient. -->
         <details class="field cb-event" id="eventPanel" style="margin-top:10px">
-          <summary class="pra-label">Calendar event <span id="eventSummary" style="text-transform:none;letter-spacing:0;color:var(--pra-dim)">— for Add to Calendar buttons (Personalize...)</span></summary>
+          <summary class="pra-label">Calendar event <span id="eventSummary" style="text-transform:none;letter-spacing:0;color:var(--pra-dim)">— for Add to Calendar buttons</span></summary>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
             <input class="pra-input" id="eventTitleInput" autocomplete="off" data-lpignore="true" placeholder="Event title (defaults to subject)" style="flex:2 1 200px"/>
             <input class="pra-input" id="eventStartInput" type="datetime-local" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" style="flex:1 1 190px;color-scheme:dark;cursor:pointer" title="Start, in your computer's time zone"/>
@@ -515,7 +520,12 @@ async function loadCampaign() {
     if (stickyHeader && toolbar) {
       const syncStickyOffsets = () => {
         const h = stickyHeader.getBoundingClientRect().height;
-        toolbar.style.top = h + 'px';
+        // The header's own sticky top is the fixed menu bar's height on
+        // phones (0 on desktop); the toolbar pins below the header when the
+        // header is pinned, otherwise right below that bar.
+        const cs = getComputedStyle(stickyHeader);
+        const barH = parseFloat(cs.top) || 0;
+        toolbar.style.top = (cs.position === 'sticky' ? barH + h : barH) + 'px';
         // Same offset for the two right-hand panels (block palette/style,
         // and Recipients/Footer/Send) -- both are position:sticky, but at
         // top:20px they slid UNDER this pinned header and looked like they
