@@ -3,7 +3,8 @@ import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./a
 import { matchesSegment, findContactMatch, applyAdvancingStatus } from "./segments_shared.js";
 import { getAllContacts, createContact, updateContactByField, getContactsMapByIds, findContactMatchDb } from "./contacts_db.js";
 import { AUTOMATIONS_FILE, enrollContact, checkAutomationGoal, dripClock, dripAllowedSoFar } from "./automations_backend.js";
-import { WORKFLOWS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
+import { WORKFLOWS_FILE, WF_ENROLLMENTS_FILE, enrollContactInWorkflow, checkConversionGoal } from "./workflows_backend.js";
+import { completeActiveEnrollments } from "./automation_enrollments_db.js";
 import { pushConversionEvent } from "./conversions_backend.js";
 import { syncContactFields, getContactByIdFast } from "./sqlite_inbox.js";
 import { sendEmail } from "./email_backend.js";
@@ -24,7 +25,7 @@ const OLD_WEBHOOK_CONFIGS_FILE = "crm_webhook_configs.json"; // retired UI, migr
 export const TRIGGER_TYPES = ["webhook", "form_submitted", "form_abandoned", "booking_created", "youtube_new_video", "status_changed"];
 export const STEP_TYPES = [
   "filter", "if_then", "delay", "google_sheet", "sheet_upsert",
-  "enroll_automation", "enroll_workflow", "add_update_contact", "send_email",
+  "enroll_automation", "enroll_workflow", "unenroll_automation", "unenroll_workflow", "add_update_contact", "send_email",
   "add_tag", "remove_tag", "add_to_list", "remove_from_list", "send_conversion_event", "add_to_ac", "add_update_contact_ac",
   "youtube_add_to_playlist", "drip", "fb_audience_add", "fb_audience_remove", "cancel_if_no_engagement",
 ];
@@ -619,6 +620,18 @@ async function advanceFlowRun(run, flow) {
     } else if (step.type === "enroll_workflow") {
       const target = readJson(WORKFLOWS_FILE, []).find(w => w.id === step.config.workflowId);
       if (target && contact) enrollContactInWorkflow(target, contact.id);
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "unenroll_automation") {
+      // Ends their active enrollment, so no further emails from it.
+      if (contact && step.config.automationId) completeActiveEnrollments(step.config.automationId, contact.id, new Date().toISOString());
+      run.currentStepId = step.nextStepId || null;
+    } else if (step.type === "unenroll_workflow") {
+      if (contact && step.config.workflowId) {
+        const enrollments = readJson(WF_ENROLLMENTS_FILE, []), now = new Date().toISOString();
+        let n = 0;
+        for (const e of enrollments) if (e.workflowId === step.config.workflowId && e.contactId === contact.id && e.status === "active") { e.status = "completed"; e.completedAt = now; e.nextStepDueAt = null; n++; }
+        if (n) writeJson(WF_ENROLLMENTS_FILE, enrollments);
+      }
       run.currentStepId = step.nextStepId || null;
     } else if (step.type === "google_sheet") {
       if (step.config.spreadsheetId && step.config.sheetName) {
