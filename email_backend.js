@@ -814,7 +814,7 @@ export async function handleEmailRequest(req, res, url) {
     let testBlocks = campaignId ? applyCalendarLinksToBlocks(blocks || [], campaignCalendarLinks({ id: campaignId, subject, calendarEvent })) : (blocks || []);
     // AI Text / %APPLIEDAGO%: filled in for one real sample applicant from the
     // campaign's audience, so the test shows what a recipient actually gets.
-    if (hasAiBlocks(testBlocks) || /%APPLIEDAGO%/i.test(JSON.stringify(testBlocks))) {
+    if (hasAiBlocks(testBlocks) || /%APPLIED(AGO|FOR)%/i.test(JSON.stringify(testBlocks))) {
       const sample = pickSampleApplicant(segmentId);
       if (sample) {
         testBlocks = (await resolveAiBlocks(testBlocks, { contact: sample, sourceType: "test", sourceId: `${campaignId || "manual"}:${Date.now()}` }))

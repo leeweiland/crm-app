@@ -8,7 +8,9 @@
 //
 // %APPLIEDAGO% reads the contact's "APPLIED WHEN?" field: "12 days ago",
 // "4 months ago", "2 years ago" (largest unit that applies), or "a while back"
-// when there's no usable date.
+// when there's no usable date. %APPLIEDFOR% is the same span without "ago",
+// for "In the past %APPLIEDFOR% you've..." -- "3 months", "2 years", "year"
+// for exactly one -- or "however long" when there's no date.
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "crypto";
 import { join } from "path";
@@ -27,7 +29,7 @@ export const AI_BLOCK_MODELS = {
   "claude-haiku-5-5": { label: "Claude Haiku 5.5 (cheapest)", per1k: "≈ $0.50 per 1,000 emails" },
 };
 export const DEFAULT_AI_BLOCK_MODEL = "claude-opus-5-5";
-export const DEFAULT_AI_BLOCK_PROMPT = "A quick dig into their problems and situation from their application, 1-2 short paragraphs, under 90 words: their pain, injuries, what keeps them stuck, what they've tried that hasn't worked -- and that they're still stuck. Don't tell them things about themselves they already know (their job, height, weight, age, where they live); use those only to understand them. Don't pitch or offer a solution -- the rest of the email does that. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase.";
+export const DEFAULT_AI_BLOCK_PROMPT = "ONE short paragraph, 3-4 sentences, under 70 words, that sums up their pain points and where they're stuck, from their application: their pain, injuries, what they've tried that hasn't worked. Concise and human -- not a list, and never trivializing what they've been through. No agitating and no solution or pitch -- the rest of the email does that. Don't tell them things about themselves they already know (their job, height, weight, age, where they live). It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase.";
 
 // ── application fields on the contact ────────────────────────────────────
 const APPLICATION_LABELS = ["APPLIED WHEN?", "CAREER", "AGE, HEIGHT, WEIGHT, ETC.", "CURRENT SITUATION?", "GOALS", "INJURIES", "WHAT HAVE THEY TRIED?", "WHAT HELP DO THEY WANT?", "READY TODAY?", "READYINESS LEVEL", "STRESS", "PERSONALITY TYPE"];
@@ -41,20 +43,31 @@ export function applicationAnswers(contact) {
   return APPLICATION_LABELS.map(l => [l, contact?.customFields?.[ids[l]]]).filter(([, v]) => v != null && String(v).trim() !== "");
 }
 
-export function appliedAgo(contact, now = Date.now()) {
+// [count, unit] since they applied (largest unit that applies), or null.
+function appliedSpan(contact, now) {
   const raw = contact?.customFields?.[contactFieldIdsByLabel()["APPLIED WHEN?"]];
   const t = raw ? Date.parse(String(raw).replace(/(\d)(st|nd|rd|th)\b/gi, "$1")) : NaN;
-  if (isNaN(t) || t > now) return "a while back";
+  if (isNaN(t) || t > now) return null;
   const days = Math.floor((now - t) / 86400000);
-  const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
-  if (days < 1) return "today";
-  if (days < 31) return plural(days, "day");
-  if (days < 365) return plural(Math.max(1, Math.floor(days / 30.44)), "month");
-  return plural(Math.floor(days / 365.25), "year");
+  if (days < 31) return [days, "day"];
+  if (days < 365) return [Math.max(1, Math.floor(days / 30.44)), "month"];
+  return [Math.floor(days / 365.25), "year"];
+}
+export function appliedAgo(contact, now = Date.now()) {
+  const span = appliedSpan(contact, now);
+  if (!span) return "a while back";
+  if (span[0] === 0) return "today";
+  return `${span[0]} ${span[1]}${span[0] === 1 ? "" : "s"} ago`;
+}
+export function appliedFor(contact, now = Date.now()) {
+  const span = appliedSpan(contact, now);
+  if (!span) return "however long";
+  return span[0] <= 1 ? span[1] : `${span[0]} ${span[1]}s`;
 }
 export function applyAppliedAgo(text, contact) {
   const s = String(text || "");
-  return /%APPLIEDAGO%/i.test(s) ? s.replace(/%APPLIEDAGO%/gi, appliedAgo(contact)) : s;
+  if (!/%APPLIED(AGO|FOR)%/i.test(s)) return s;
+  return s.replace(/%APPLIEDAGO%/gi, appliedAgo(contact)).replace(/%APPLIEDFOR%/gi, appliedFor(contact));
 }
 
 // ── generation ───────────────────────────────────────────────────────────
