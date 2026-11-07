@@ -10,6 +10,7 @@
 // "4 months ago", "2 years ago" (largest unit that applies), or "a while back"
 // when there's no usable date.
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "crypto";
 import { join } from "path";
 import { readJson, DATA_DIR } from "./auth_backend.js";
 
@@ -90,22 +91,27 @@ export const hasAiBlocks = blocks => (blocks || []).some(b => b.type === "ai");
 
 // Turns every "ai" block into a text block for this contact. A contact with
 // no record (test sends) gets a clearly-marked placeholder; a failed
-// generation drops the block rather than holding the whole email.
-export async function resolveAiBlocks(blocks, { contact, sourceType, sourceId }) {
+// generation drops the block rather than holding the whole email (and is
+// pushed onto `errors` when the caller passes one). Cached per email, block,
+// instructions+model and contact -- a recipient preview writes exactly the
+// text the real send then reuses; editing the instructions writes fresh text.
+export async function resolveAiBlocks(blocks, { contact, sourceType, sourceId, errors }) {
   if (!hasAiBlocks(blocks)) return blocks;
   const source = `${sourceType || "manual"}:${sourceId || ""}`;
   const out = [];
   for (const b of blocks) {
     if (b.type !== "ai") { out.push(b); continue; }
+    const blockKey = `${b.id}:${createHash("sha1").update(`${b.model || ""}|${b.prompt || ""}`).digest("hex").slice(0, 12)}`;
     if (!contact) { out.push({ id: b.id, type: "text", style: b.style || {}, html: "<p><i>[AI paragraph -- written for each recipient from their application when the real email sends]</i></p>" }); continue; }
     let text = null;
-    try { text = db().prepare("SELECT text FROM ai_block_text WHERE source = ? AND block_id = ? AND contact_id = ?").get(source, b.id, contact.id)?.text || null; } catch { /* cache is best-effort */ }
+    try { text = db().prepare("SELECT text FROM ai_block_text WHERE source = ? AND block_id = ? AND contact_id = ?").get(source, blockKey, contact.id)?.text || null; } catch { /* cache is best-effort */ }
     if (!text) {
       try {
         text = await generateAiParagraph({ prompt: b.prompt, model: b.model, contact });
-        try { db().prepare("INSERT OR REPLACE INTO ai_block_text (source, block_id, contact_id, text, created_at) VALUES (?, ?, ?, ?, ?)").run(source, b.id, contact.id, text, new Date().toISOString()); } catch { /* best-effort */ }
+        try { db().prepare("INSERT OR REPLACE INTO ai_block_text (source, block_id, contact_id, text, created_at) VALUES (?, ?, ?, ?, ?)").run(source, blockKey, contact.id, text, new Date().toISOString()); } catch { /* best-effort */ }
       } catch (e) {
         console.error(`[ai-block] ${source} contact ${contact.id}: ${e.message} -- sending without this paragraph`);
+        if (errors) errors.push(e.message);
         continue;
       }
     }

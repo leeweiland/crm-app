@@ -5,8 +5,8 @@ import { join } from "path";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, DATA_DIR } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
 import { segmentMembers } from "./segments_shared.js";
-import { getAllContacts, filterContacts } from "./contacts_db.js";
-import { sendEmail, reconstructEmailBody } from "./email_backend.js";
+import { getAllContacts, filterContacts, getContactById } from "./contacts_db.js";
+import { sendEmail, reconstructEmailBody, previewEmailForContact } from "./email_backend.js";
 import { getMessagesForSource, logMessagesBatch } from "./message_log.js";
 import { MESSAGES_PG, sourceStatusCounts } from "./messages_db.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
@@ -453,6 +453,7 @@ export function sendCampaignNow(campaignId) {
   return { ok: true, recipientCount: remaining.length, totalRecipients: allRecipients.length };
 }
 
+const recipientPageCache = new Map();
 export async function handleCampaignsRequest(req, res, url) {
   const p = url.pathname;
   if (!p.startsWith("/api/campaigns")) return false;
@@ -639,6 +640,40 @@ export async function handleCampaignsRequest(req, res, url) {
     if (!campaign) return sendJson(res, 404, { error: "Not found" });
     const recipients = resolveRecipients(campaign.recipients || {});
     return sendJson(res, 200, { count: recipients.length });
+  }
+
+  // "Preview as recipient": the campaign's real (saved) audience, a page at a
+  // time, name-sorted, optional search. The resolved list is kept a minute so
+  // scrolling doesn't re-resolve the whole audience per page.
+  const pageMatch = p.match(/^\/api\/campaigns\/([^/]+)\/recipients-page$/);
+  if (pageMatch && req.method === "GET") {
+    const campaign = readJson(CAMPAIGNS_FILE, []).find(c => c.id === pageMatch[1]);
+    if (!campaign) return sendJson(res, 404, { error: "Not found" });
+    const key = JSON.stringify(campaign.recipients || {});
+    let cached = recipientPageCache.get(campaign.id);
+    if (!cached || cached.key !== key || Date.now() - cached.at > 60000) {
+      const list = resolveRecipients(campaign.recipients || {}).map(c => ({ id: c.id, name: `${c.first || ""} ${c.last || ""}`.trim(), email: c.email || "" }))
+        .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+      cached = { key, at: Date.now(), list };
+      recipientPageCache.set(campaign.id, cached);
+    }
+    const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+    const items = q ? cached.list.filter(r => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q)) : cached.list;
+    const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0), limit = Math.min(100, Number(url.searchParams.get("limit")) || 50);
+    return sendJson(res, 200, { total: items.length, items: items.slice(offset, offset + limit) });
+  }
+  const previewForMatch = p.match(/^\/api\/campaigns\/([^/]+)\/preview-for$/);
+  if (previewForMatch && req.method === "POST") {
+    const campaign = readJson(CAMPAIGNS_FILE, []).find(c => c.id === previewForMatch[1]);
+    if (!campaign) return sendJson(res, 404, { error: "Not found" });
+    const body = await readJsonBody(req);
+    const contact = getContactById(body.contactId);
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+    // The editor's current (maybe unsaved) content, so what you see is what you have now.
+    const draft = { ...campaign, ...["subject", "previewText", "blocks", "theme", "footerTemplateId", "calendarEvent"].reduce((o, k) => (k in body ? { ...o, [k]: body[k] } : o), {}) };
+    const blocks = applyCalendarLinksToBlocks(draft.blocks, campaignCalendarLinks(draft));
+    const out = await previewEmailForContact({ contact, subject: draft.subject, previewText: draft.previewText, blocks, theme: draft.theme, footerTemplateId: draft.footerTemplateId, sourceType: "campaign", sourceId: campaign.id });
+    return sendJson(res, 200, { ok: true, ...out, contactName: `${contact.first || ""} ${contact.last || ""}`.trim() || contact.email });
   }
 
   const sendMatch = p.match(/^\/api\/campaigns\/([^/]+)\/send$/);

@@ -257,6 +257,19 @@ export function tagUnsubscribeLinks(html, contactId, sourceType, sourceId) {
   return String(html || "").replaceAll(link, `${link}&st=${encodeURIComponent(sourceType || "manual")}&si=${encodeURIComponent(sourceId || "")}`);
 }
 
+// What one contact would receive -- same render as sendEmail (AI Text written
+// for them, merge tags, %APPLIEDAGO%, footer), minus tracking and sending.
+// sourceType/sourceId match the real send so its AI text is reused there.
+export async function previewEmailForContact({ contact, subject, previewText, blocks, theme, footerTemplateId, sourceType, sourceId }) {
+  const errors = [];
+  const b = await resolveAiBlocks(blocks || [], { contact, sourceType, sourceId, errors });
+  let html = buildPreheaderHtml(previewText) + renderEmailBody(b, resolveFooterHtml(footerTemplateId, contact?.id), theme);
+  html = absolutizeUploadUrls(html, getPublicBaseUrl());
+  if (contact) html = applyMergeTags(html, contact);
+  html = applyAppliedAgo(html, contact).replace(/%UNSUBSCRIBE%/gi, "#");
+  return { html, subject: applyAppliedAgo(contact ? applyMergeTags(subject || "", contact) : (subject || ""), contact), errors };
+}
+
 // A random contact with application answers -- from the segment when one is
 // given -- for AI Text previews and test sends.
 function pickSampleApplicant(segmentId) {
@@ -460,7 +473,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // own new content, and the footer belongs right after that new content,
   // not after the whole quoted thread underneath it.
   if (trailingHtml) html += trailingHtml;
-  const renderedSubject = contact ? applyMergeTags(subject, contact) : subject;
+  const renderedSubject = applyAppliedAgo(contact ? applyMergeTags(subject, contact) : subject, contact);
   const fromAddress = from || ses.fromAddress;
 
   // Stripped and entity-decoded now, not a raw HTML slice -- the inbox
