@@ -115,9 +115,9 @@ window.BlockEditor = (function () {
   // AI Text block (ai_email_block.js on the server writes it per recipient).
   // Models and cost hints mirror AI_BLOCK_MODELS there.
   const AI_MODELS = [
-    ['claude-opus-5-5', 'Claude Opus 5.5 (best writing) -- about $14 per 1,000 emails'],
-    ['claude-sonnet-5-5', 'Claude Sonnet 5.5 -- about $7 per 1,000 emails'],
-    ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest) -- about $0.35 per 1,000 emails'],
+    ['claude-opus-5-5', 'Claude Opus 5.5 (best writing) -- about $17 per 1,000 emails'],
+    ['claude-sonnet-5-5', 'Claude Sonnet 5.5 -- about $8 per 1,000 emails'],
+    ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest) -- about $0.50 per 1,000 emails'],
   ];
   const AI_DEFAULT_PROMPT = "A quick dig into their problems and situation from their application, 1-2 short paragraphs, under 90 words: their pain, injuries, what keeps them stuck, what they've tried that hasn't worked -- and that they're still stuck. Don't tell them things about themselves they already know (their job, height, weight, age, where they live); use those only to understand them. Don't pitch or offer a solution -- the rest of the email does that. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase.";
   const escHtml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
