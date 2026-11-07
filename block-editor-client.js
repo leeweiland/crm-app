@@ -26,6 +26,7 @@ window.BlockEditor = (function () {
     close: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     image: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
     button: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="3"/></svg>',
+    ai: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z"/></svg>',
     text: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>',
     gear: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
     alignLeft: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>',
@@ -111,7 +112,22 @@ window.BlockEditor = (function () {
         return kept.length ? ` style=${q}${kept.join('; ')}${q}` : '';
       });
   }
+  // AI Text block (ai_email_block.js on the server writes it per recipient).
+  // Models and cost hints mirror AI_BLOCK_MODELS there.
+  const AI_MODELS = [
+    ['claude-opus-5-5', 'Claude Opus 5.5 (best writing) -- about $14 per 1,000 emails'],
+    ['claude-sonnet-5-5', 'Claude Sonnet 5.5 -- about $7 per 1,000 emails'],
+    ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest) -- about $0.35 per 1,000 emails'],
+  ];
+  const AI_DEFAULT_PROMPT = "Problem-Agitate-Solve, 2-3 short paragraphs, from their application. Problem: name their real situation in their own terms (their goals, injuries, what they've tried, what's held them back). Agitate: what staying stuck keeps costing them -- time, pain, years, the moves they still can't do. Solve: proper training with Coach Lee's team is how that changes. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase, e.g. \"you told us...\".";
+  const escHtml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   function renderBlockHtml(block) {
+    if (block.type === 'ai') {
+      const body = block.previewText
+        ? block.previewText.split(/\n\s*\n/).map(p => `<p>${escHtml(p.trim())}</p>`).join('')
+        : '<p style="color:#888;font-style:italic">AI paragraph -- written for each recipient from their application when the email sends. Select this block and click Preview to see one.</p>';
+      return `<div${styleAttr(block.style)}><div style="border:1px dashed #b9a6ff;border-radius:6px;padding:4px 10px">${body}</div></div>`;
+    }
     if (block.type === 'text') return `<div${styleAttr(block.style)}>${cleanPastedHtml(block.html)}</div>`;
     if (block.type === 'image') {
       const img = `<img src="${block.src || ''}" width="${block.width || 600}" style="max-width:100%;display:inline-block;border:0"/>`;
@@ -492,6 +508,7 @@ window.BlockEditor = (function () {
     });
 
     function newBlock(type) {
+      if (type === 'ai') return { id: uid(), type, prompt: AI_DEFAULT_PROMPT, model: AI_MODELS[0][0], style: {} };
       return type === 'text' ? { id: uid(), type, html: 'New text block', style: {} }
         : type === 'image' ? { id: uid(), type, src: '', link: '', width: 600, style: {}, linkAction: null }
         : { id: uid(), type, text: 'Click here', link: '', style: { textAlign: 'center' }, linkAction: null };
@@ -546,6 +563,7 @@ window.BlockEditor = (function () {
               <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="text">${ICON.text} Text</button>
               <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="image">${ICON.image} Image</button>
               <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="button">${ICON.button} Button</button>
+              <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm be-palette-item" draggable="true" data-add="ai" title="A paragraph AI writes for each recipient from their application">${ICON.ai} AI Text</button>
             </div>
           </div>
           <div class="be-style-panel" id="beStylePanel"></div>
@@ -632,6 +650,17 @@ window.BlockEditor = (function () {
           <div class="field"><label class="pra-label">Link (optional)</label><input class="pra-input" type="text" id="imgLink" value="${block.link || ''}"/></div>
           <div class="field"><label class="pra-label">Width (px)</label><input class="pra-input" type="number" id="imgWidth" value="${block.width || 600}"/></div>
         ` : ''}
+        ${block.type === 'ai' ? `
+          <div class="field"><label class="pra-label">AI model</label>
+            <select class="pra-select" id="aiModel">${AI_MODELS.map(([v, l]) => `<option value="${v}" ${(block.model || AI_MODELS[0][0]) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          </div>
+          <div class="field"><label class="pra-label">What to write</label>
+            <textarea class="pra-input" id="aiPrompt" rows="8" style="resize:vertical">${escHtml(block.prompt || '')}</textarea>
+            <div class="pra-muted" style="font-size:.72rem;margin-top:4px">Uses their application answers (goals, injuries, what they've tried...). Written once per person when the email sends; a test send uses a real sample applicant.</div>
+          </div>
+          <button type="button" class="pra-btn pra-btn-ghost pra-btn-sm" id="aiPreviewBtn" style="width:100%">Preview for a real applicant</button>
+          <div class="pra-muted" id="aiPreviewStatus" style="font-size:.74rem;margin-top:6px;min-height:1em"></div>
+        ` : ''}
         ${block.type === 'button' ? `
           <div class="field"><label class="pra-label">Button text</label><input class="pra-input" type="text" id="btnText" value="${block.text || ''}"/></div>
           <div class="field"><label class="pra-label">Link URL</label><input class="pra-input" type="text" id="btnLink" value="${block.link || ''}"/></div>
@@ -672,6 +701,23 @@ window.BlockEditor = (function () {
         });
       }
       if (block.type === 'button') { bind('btnText', 'text', block); bind('btnLink', 'link', block); }
+      if (block.type === 'ai') {
+        stylePanel.querySelector('#aiModel').addEventListener('change', (e) => { block.model = e.target.value; notifyChange(isFooter); });
+        stylePanel.querySelector('#aiPrompt').addEventListener('input', (e) => { block.prompt = e.target.value; notifyChange(isFooter); });
+        const status = stylePanel.querySelector('#aiPreviewStatus');
+        stylePanel.querySelector('#aiPreviewBtn').addEventListener('click', async (e) => {
+          const btn = e.currentTarget; btn.disabled = true; status.textContent = 'Writing a preview...';
+          try {
+            const r = await fetch('/api/email/ai-block-preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: block.prompt, model: block.model, segmentId: opts.aiPreviewSegmentId ? opts.aiPreviewSegmentId() : null }) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) { status.textContent = d.error || 'Preview failed'; return; }
+            block.previewText = d.text;
+            status.textContent = `Preview for ${d.contactName} (applied ${d.appliedAgo}). Each recipient gets their own.`;
+            render(); notifyChange(isFooter);
+          } catch { status.textContent = 'Could not reach the server'; }
+          finally { btn.disabled = false; }
+        });
+      }
       stylePanel.querySelectorAll('[data-align]').forEach(btn => btn.onclick = () => { block.style = block.style || {}; block.style.textAlign = btn.dataset.align; render(); notifyChange(isFooter); });
       const actionTypeSel = stylePanel.querySelector('#linkActionType');
       const tagField = stylePanel.querySelector('#linkActionTagField');
@@ -1226,6 +1272,7 @@ window.BlockEditor = (function () {
     const pzOptions = [
       { value: '%FIRSTNAME%', label: 'First name' }, { value: '%LASTNAME%', label: 'Last name' },
       { value: '%EMAIL%', label: 'Email' }, { value: '%UNSUBSCRIBE%', label: 'Unsubscribe link' },
+      { value: '%APPLIEDAGO%', label: 'Applied (time ago)' },
       ...(opts.extraPersonalizeOptions || []),
     ];
     let pzRange = null;

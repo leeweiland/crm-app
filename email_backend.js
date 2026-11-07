@@ -13,10 +13,12 @@ import { getBackgroundWorker } from "./background_worker_handle.js";
 import { getSendWorker } from "./send_worker_handle.js";
 import { getSesNotificationWorker } from "./ses_notification_worker_handle.js";
 import { getContactByIdFast, syncContactFields } from "./sqlite_inbox.js";
-import { getContactById, updateContactByField } from "./contacts_db.js";
+import { getContactById, updateContactByField, getAllContactsNoCopy } from "./contacts_db.js";
 import { recordSendTiming } from "./send_timing.js";
 import { campaignCalendarLinks, applyCalendarLinksToBlocks } from "./calendar_links.js";
 import { completeActiveEnrollments } from "./automation_enrollments_db.js";
+import { resolveAiBlocks, hasAiBlocks, applyAppliedAgo, applicationAnswers, generateAiParagraph } from "./ai_email_block.js";
+import { matchesSegment } from "./segments_shared.js";
 import { getContactMessages } from "./messages_db.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
@@ -217,7 +219,7 @@ export function reconstructEmailBody(message) {
   if (cached === undefined) return null;
   let html = cached.replaceAll(EMAIL_TEMPLATE_SENTINEL_CID, encodeURIComponent(message.contactId || ""));
   const contact = message.contactId ? getContact(message.contactId) : null;
-  if (contact) html = applyMergeTags(html, contact);
+  if (contact) html = applyAppliedAgo(applyMergeTags(html, contact), contact);
   html = tagHtmlLinksWithSource(html, `email-${resolveSendSourceSlug(message.sourceType, message.sourceId)}`, "e");
   html = wrapLinksForClickTracking(html, message.id);
   html = html.replace(/%UNSUBSCRIBE%/gi, `${getPublicBaseUrl()}/api/email/unsubscribe?c=${encodeURIComponent(message.contactId || "")}`);
@@ -253,6 +255,20 @@ function unsubscribeListIds(sourceType, sourceId) {
 export function tagUnsubscribeLinks(html, contactId, sourceType, sourceId) {
   const link = `/api/email/unsubscribe?c=${encodeURIComponent(contactId || "")}`;
   return String(html || "").replaceAll(link, `${link}&st=${encodeURIComponent(sourceType || "manual")}&si=${encodeURIComponent(sourceId || "")}`);
+}
+
+// A random contact with application answers -- from the segment when one is
+// given -- for AI Text previews and test sends.
+function pickSampleApplicant(segmentId) {
+  const segment = segmentId ? readJson("crm_segments.json", []).find(s => s.id === segmentId) : null;
+  const all = getAllContactsNoCopy();
+  for (let tries = 0, start = Math.floor(Math.random() * all.length); tries < all.length && tries < 200000; tries++) {
+    const c = all[(start + tries) % all.length];
+    if (!c?.email || applicationAnswers(c).length < 3) continue;
+    if (segment && !matchesSegment(c, segment.filter)) continue;
+    return c;
+  }
+  return null;
 }
 
 export function resolveFooterHtml(footerTemplateId, contactId) {
@@ -402,6 +418,10 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     return { ok: false, reason: "opted_out" };
   }
 
+  // AI Text blocks become this contact's own paragraph (ai_email_block.js).
+  const aiBlocks = hasAiBlocks(blocks);
+  if (aiBlocks) blocks = await resolveAiBlocks(blocks, { contact, sourceType, sourceId });
+
   // Minted before the send (not left to logMessage) so it can be baked into
   // the click-tracking redirect below -- /api/email/click looks a click back
   // up by this exact id via MESSAGE_ID_INDEX_FILE.
@@ -410,6 +430,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   let html = buildPreheaderHtml(previewText) + renderEmailBody(blocks, resolveFooterHtml(footerTemplateId, contactId), theme);
   html = absolutizeUploadUrls(html, getPublicBaseUrl());
   if (contact) html = applyMergeTags(html, contact);
+  html = applyAppliedAgo(html, contact);
   // Tagged before logging, so the stored body matches exactly what the
   // recipient received (same convention sms_backend.js's sendSms() uses).
   // "e=email-<slug>" resolved from THIS send's own sourceType/sourceId
@@ -456,7 +477,8 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
   // Only ever empties the stored body when the shared template is
   // CONFIRMED cached (see ensureEmailTemplateCached's own comment) --
   // `html` itself (what's actually transmitted below) is never touched.
-  const storedBody = ensureEmailTemplateCached({ sourceType, sourceId, blocks, theme, footerTemplateId, previewText }) ? "" : html;
+  // An email with AI Text differs per recipient, so it never shares a template.
+  const storedBody = !aiBlocks && ensureEmailTemplateCached({ sourceType, sourceId, blocks, theme, footerTemplateId, previewText }) ? "" : html;
   const baseRow = {
     id: rowId,
     channel: "email", direction: "outbound", contactId, sourceType, sourceId,
@@ -753,16 +775,39 @@ export async function handleEmailRequest(req, res, url) {
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
+  // AI Text block "Preview" in the email designer: writes it once for a real
+  // applicant (from the campaign's segment when it has one) without sending.
+  if (p === "/api/email/ai-block-preview" && req.method === "POST") {
+    const { prompt, model, segmentId } = await readJsonBody(req);
+    const sample = pickSampleApplicant(segmentId);
+    if (!sample) return sendJson(res, 404, { error: "No contact with application answers found to preview with." });
+    try {
+      const text = await generateAiParagraph({ prompt, model, contact: sample });
+      return sendJson(res, 200, { ok: true, text, contactName: `${sample.first || ""} ${sample.last || ""}`.trim() || sample.email, appliedAgo: applyAppliedAgo("%APPLIEDAGO%", sample) });
+    } catch (e) {
+      return sendJson(res, 502, { error: `Couldn't write the preview: ${e.message}` });
+    }
+  }
+
   if (p === "/api/email/config-status" && req.method === "GET") {
     return sendJson(res, 200, { configured: sesConfigured() });
   }
 
   if (p === "/api/email/test-send" && req.method === "POST") {
-    const { to, subject, previewText, blocks, theme, footerTemplateId, campaignId, calendarEvent } = await readJsonBody(req);
+    const { to, subject, previewText, blocks, theme, footerTemplateId, campaignId, calendarEvent, segmentId } = await readJsonBody(req);
     if (!to || !subject) return sendJson(res, 400, { error: "to and subject are required" });
     // Campaign builder tests pass their (possibly unsaved) event so Add to
     // Calendar buttons arrive working, same as the real send.
-    const testBlocks = campaignId ? applyCalendarLinksToBlocks(blocks || [], campaignCalendarLinks({ id: campaignId, subject, calendarEvent })) : (blocks || []);
+    let testBlocks = campaignId ? applyCalendarLinksToBlocks(blocks || [], campaignCalendarLinks({ id: campaignId, subject, calendarEvent })) : (blocks || []);
+    // AI Text / %APPLIEDAGO%: filled in for one real sample applicant from the
+    // campaign's audience, so the test shows what a recipient actually gets.
+    if (hasAiBlocks(testBlocks) || /%APPLIEDAGO%/i.test(JSON.stringify(testBlocks))) {
+      const sample = pickSampleApplicant(segmentId);
+      if (sample) {
+        testBlocks = (await resolveAiBlocks(testBlocks, { contact: sample, sourceType: "test", sourceId: `${campaignId || "manual"}:${Date.now()}` }))
+          .map(b => b.html ? { ...b, html: applyAppliedAgo(b.html, sample) } : b);
+      }
+    }
     const result = await sendEmail({ to, subject, previewText, blocks: testBlocks, theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
     if (!result.ok) return sendJson(res, 400, { error: result.reason === "ses_not_configured" ? "Amazon SES isn't configured yet -- add AWS credentials to .env first." : result.reason });
     return sendJson(res, 200, { ok: true });

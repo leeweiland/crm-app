@@ -473,7 +473,7 @@ document.getElementById('scheduleBtn').onclick = async () => {
 document.getElementById('testSendBtn').onclick = async () => {
   const to = document.getElementById('testEmailInput').value.trim();
   if (!to) return;
-  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, campaignId: campaign.id, calendarEvent: campaign.calendarEvent || null }) });
+  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, campaignId: campaign.id, calendarEvent: campaign.calendarEvent || null, segmentId: campaign.recipients?.segmentId || null }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { showToast(d.error || 'Test send failed', true); return; }
   showToast('Test sent');
@@ -503,7 +503,7 @@ async function loadCampaign() {
       document.getElementById('blockEditorRoot'), { blocks: campaign.blocks, theme: campaign.theme },
       (state) => { campaign.blocks = state.blocks; campaign.theme = state.theme; saveDebounced(); },
       () => { document.getElementById('footerDirtyBar').style.display = 'block'; },
-      { extraPersonalizeOptions: [
+      { aiPreviewSegmentId: () => campaign.recipients?.segmentId || null, extraPersonalizeOptions: [
         { value: '%ADDTOCALENDARGOOGLE%', label: 'Add to Google Calendar button' },
         { value: '%ADDTOCALENDAROUTLOOK%', label: 'Add to Outlook Calendar button' },
         { value: '%ADDTOCALENDARAPPLE%', label: 'Add to Apple Calendar button' },
