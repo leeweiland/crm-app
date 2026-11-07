@@ -387,7 +387,7 @@ function wrapLinksForClickTracking(html, rowId) {
 // logMessagesBatch once the whole batch's sends have settled. Every other
 // caller (automations, Inbox replies, AI agents, etc.) omits this and keeps
 // logging immediately via logMessage, exactly as before.
-export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from, trailingHtml, batchLog }) {
+export async function sendEmail({ to, subject, previewText, blocks, theme, footerTemplateId, contactId, sourceType, sourceId, from, trailingHtml, batchLog, headers }) {
   const client = await getSesClient();
   const ses = getSesSettings();
   const contact = contactId ? getContact(contactId) : null;
@@ -474,7 +474,7 @@ export async function sendEmail({ to, subject, previewText, blocks, theme, foote
     const cmd = new SendEmailCommand({
       FromEmailAddress: fromAddress,
       Destination: { ToAddresses: [to] },
-      Content: { Simple: { Subject: { Data: renderedSubject }, Body: { Html: { Data: html } } } },
+      Content: { Simple: { Subject: { Data: renderedSubject }, Body: { Html: { Data: html } }, ...(headers?.length ? { Headers: headers } : {}) } },
       ...(ses.configurationSet ? { ConfigurationSetName: ses.configurationSet } : {}),
     });
     const result = await client.send(cmd);

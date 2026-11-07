@@ -510,6 +510,12 @@ async function processGmailMessage(user, msg) {
   // see markPriorOutboundEmailsOpenedByReply's own comment for why that
   // makes it more trustworthy than the tracking pixel itself.
   markPriorOutboundEmailsOpenedByReply(contactId, createdAt || new Date().toISOString());
+  // Automation "If they reply" branches. Dynamic import: automations_backend
+  // reaches this module through email_backend, so a static one would be circular.
+  import("./automations_backend.js").then(m => m.handleEmailReply(contactId, {
+    inReplyTo: headerValue(msg.payload?.headers, "In-Reply-To"), references: headerValue(msg.payload?.headers, "References"),
+    messageIdHeader: headerValue(msg.payload?.headers, "Message-ID"),
+  })).catch(e => console.error("[automations] reply branch failed:", e.message));
   maybeCoverInboundReply(contactId); // no-op unless this lead's owner is Away and an agent covers for them
 }
 

@@ -72,6 +72,12 @@
   .branch-row { display: flex; gap: 40px; margin-top: 4px; }
   .branch-col { display: flex; flex-direction: column; align-items: center; }
   .branch-label { font-family: var(--font-secondary); font-size: .68rem; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 6px; }
+  /* "If they reply" branch: hangs off the right of its email card, outside
+     the main chain's flow, joined by a gray line. */
+  .reply-host { position: relative; }
+  .reply-branch { position: absolute; left: 100%; top: 0; margin-left: 56px; display: flex; flex-direction: column; align-items: center; width: max-content; }
+  .reply-branch::before { content: ''; position: absolute; right: 100%; top: 34px; width: 56px; height: 1px; background: var(--pra-dim); }
+  .reply-branch > .branch-label { margin: 0 0 6px; }
   .type-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .type-picker button { background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: #fff; border-radius: 8px; padding: 12px; cursor: pointer; font-size: .82rem; text-align: left; }
   .type-picker button:hover { border-color: var(--pra-blue); }
@@ -356,7 +362,7 @@ function computeEmailNumbers(startId, seen) {
 function stepSummary(step) {
   if (step.type === 'send_email') {
     const n = emailNumbers.get(step.id);
-    const label = n ? `Email ${n}` : 'Email';
+    const label = n ? `Email ${n}` : 'Reply email';
     return `${label}: ${escapeHtml(step.config.subject || '(empty)')}`;
   }
   if (step.type === 'wait') return `Wait ${step.config.amount || 0} ${step.config.unit || 'minutes'}`;
@@ -409,10 +415,11 @@ function stepCardHtml(stepId, isLast) {
   return `
     <div class="step-card${step.type === 'goal' ? ' goal-step' : ''}" data-step-id="${stepId}"${step.type !== 'condition' ? ' draggable="true"' : ''}>
       <div class="step-actions">
+        ${step.type === 'send_email' && !step.onReplyStepId && emailNumbers.has(stepId) ? `<button data-add-reply="${stepId}" title="Add an &quot;If they reply&quot; branch">&#8617;</button>` : ''}
         <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
       ${cardOpener}
-      ${step.type === 'send_email' ? predictiveToggleHtml(step) : ''}
+      ${step.type === 'send_email' && emailNumbers.has(stepId) ? predictiveToggleHtml(step) : ''}
     </div>
   `;
 }
@@ -448,7 +455,13 @@ function renderChainHtml(startId, path) {
     const step = automation.steps[cur];
     cur = step.type === 'condition' ? null : (step.nextStepId || null);
   }
-  let html = ids.map((id, i) => stepCardHtml(id, i === ids.length - 1) + (i < ids.length - 1
+  const cardWithReply = (id, isLast) => {
+    const card = stepCardHtml(id, isLast);
+    const st = automation.steps[id];
+    if (st.type !== 'send_email' || !st.onReplyStepId) return card;
+    return `<div class="reply-host">${card}<div class="reply-branch"><div class="branch-label">IF THEY REPLY</div>${renderChainHtml(st.onReplyStepId, 'reply:' + id)}</div></div>`;
+  };
+  let html = ids.map((id, i) => cardWithReply(id, i === ids.length - 1) + (i < ids.length - 1
     ? `<div class="chain-arrow-wrap"><div class="chain-arrow">&darr;</div><button class="insert-step-btn" data-path="${path}" data-after="${id}" title="Insert a step here">+</button></div>`
     : '')).join('');
   const lastId = ids[ids.length - 1] || null;
@@ -597,8 +610,24 @@ function renderCanvasContent() {
   canvas.querySelectorAll('[data-path]').forEach(btn => btn.onclick = () => {
     pendingAddPath = btn.dataset.path;
     pendingAddAfter = btn.dataset.after || null;
-    openModal('typePickerModal');
+    openTypePicker();
   });
+  canvas.querySelectorAll('[data-add-reply]').forEach(btn => btn.onclick = (e) => {
+    e.stopPropagation();
+    pendingAddPath = 'reply:' + btn.dataset.addReply;
+    pendingAddAfter = null;
+    openTypePicker();
+  });
+}
+
+// A reply branch runs straight through the moment the reply arrives, so it
+// has no Wait, Drip or Goal steps.
+function openTypePicker() {
+  const inReply = String(pendingAddPath || '').startsWith('reply:');
+  document.querySelectorAll('#typePickerModal [data-type]').forEach(b => {
+    b.style.display = inReply && ['wait', 'drip', 'goal'].includes(b.dataset.type) ? 'none' : '';
+  });
+  openModal('typePickerModal');
 }
 
 function saveDebounced() {
@@ -746,6 +775,8 @@ function attachNewStep(step) {
     automation.steps[pendingAddPath.slice(4)].yesStepId = step.id;
   } else if (pendingAddPath.startsWith('no:')) {
     automation.steps[pendingAddPath.slice(3)].noStepId = step.id;
+  } else if (pendingAddPath.startsWith('reply:')) {
+    automation.steps[pendingAddPath.slice(6)].onReplyStepId = step.id;
   }
 }
 document.querySelectorAll('#typePickerModal [data-type]').forEach(btn => {
@@ -783,7 +814,7 @@ function collectChainIds(startId, out) {
     out.push(cur);
     const s = automation.steps[cur];
     if (s.type === 'condition') { collectChainIds(s.yesStepId, out); collectChainIds(s.noStepId, out); cur = null; }
-    else cur = s.nextStepId || null;
+    else { if (s.onReplyStepId) collectChainIds(s.onReplyStepId, out); cur = s.nextStepId || null; }
   }
 }
 // Deleting a step splices it out: whatever pointed at it now points at
@@ -798,12 +829,12 @@ function deleteStep(stepId) {
   if (!step) return;
   const gone = [];
   if (step.type === 'condition') { collectChainIds(stepId, gone); }
-  else gone.push(stepId);
+  else { gone.push(stepId); if (step.onReplyStepId) collectChainIds(step.onReplyStepId, gone); }
   const branchCount = gone.length - 1;
   const here = gone.reduce((n, id) => n + (stepCounts[id] || 0), 0);
   let msg = step.type === 'condition' && branchCount > 0
     ? `Delete this condition and the ${branchCount} step${branchCount === 1 ? '' : 's'} in its YES/NO branches?`
-    : 'Delete this step?';
+    : branchCount > 0 ? `Delete this email and the ${branchCount} step${branchCount === 1 ? '' : 's'} in its "If they reply" branch?` : 'Delete this step?';
   if (here > 0) {
     msg += step.type === 'condition' && branchCount > 0
       ? `\n\n${here} contact${here === 1 ? ' is' : 's are'} on these steps right now and will be marked completed.`
@@ -839,12 +870,13 @@ function pathRef(path) { // 'root' | 'yes:<conditionId>' | 'no:<conditionId>'
 function getRef(ref) {
   if (ref.type === 'start') return automation.startStepId || null;
   const s = automation.steps[ref.id];
-  return (ref.type === 'yes' ? s.yesStepId : ref.type === 'no' ? s.noStepId : s.nextStepId) || null;
+  return (ref.type === 'yes' ? s.yesStepId : ref.type === 'no' ? s.noStepId : ref.type === 'reply' ? s.onReplyStepId : s.nextStepId) || null;
 }
 function setRef(ref, value) {
   if (ref.type === 'start') automation.startStepId = value;
   else if (ref.type === 'yes') automation.steps[ref.id].yesStepId = value;
   else if (ref.type === 'no') automation.steps[ref.id].noStepId = value;
+  else if (ref.type === 'reply') automation.steps[ref.id].onReplyStepId = value;
   else automation.steps[ref.id].nextStepId = value;
 }
 function findParentRef(stepId) {
@@ -855,6 +887,8 @@ function findParentRef(stepId) {
       if (s.noStepId === stepId) return { type: 'no', id: s.id };
     } else if (s.nextStepId === stepId) {
       return { type: 'next', id: s.id };
+    } else if (s.onReplyStepId === stepId) {
+      return { type: 'reply', id: s.id };
     }
   }
   return null;
@@ -1195,7 +1229,7 @@ document.getElementById('zoomResetBtn').onclick = () => fitToScreen();
 function fitToScreen() {
   const wrap = document.getElementById('canvasWrap');
   const canvas = document.getElementById('canvas');
-  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card, .branch-row')];
+  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card, .branch-row, .reply-branch')];
   if (!cards.length) { zoom = 1; panX = 0; panY = 0; applyTransform(); return; }
   const zoomLayer = document.getElementById('zoomLayer');
   const prevTransform = zoomLayer.style.transform;
@@ -1225,7 +1259,7 @@ function fitToScreen() {
 function centerAt100() {
   const wrap = document.getElementById('canvasWrap');
   const canvas = document.getElementById('canvas');
-  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card, .branch-row')];
+  const cards = [...canvas.querySelectorAll('.trigger-card, .step-card, .goal-card, .branch-row, .reply-branch')];
   zoom = 1;
   if (!cards.length) { panX = 0; panY = 0; applyTransform(); return; }
   const zoomLayer = document.getElementById('zoomLayer');

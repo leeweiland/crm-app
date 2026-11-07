@@ -16,6 +16,7 @@ import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_share
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
 import { getMessagesForSource } from "./message_log.js";
+import { getMessageByProviderId } from "./messages_db.js";
 import { bestSendHourFor, releaseAtForHour } from "./send_time_db.js";
 import { AC_CAMPAIGN_META_FILE, AC_CAMPAIGN_BODIES_FILE, AC_CAMPAIGN_STATS_FILE, getAcCampaignHtml, acPlainPreview } from "./ac_sync.js";
 
@@ -92,7 +93,8 @@ function predictiveHoldUntil(enrollment, automation, step) {
   return at > now + 60000 ? new Date(at).toISOString() : null;
 }
 
-function saveEnrollment(enrollment) { dbSaveEnrollment(enrollment); }
+// A reply-branch run (see handleEmailReply) is never stored -- it runs once, start to finish.
+function saveEnrollment(enrollment) { if (!enrollment.transient) dbSaveEnrollment(enrollment); }
 function completeEnrollment(enrollment) {
   enrollment.status = "completed";
   enrollment.updatedAt = new Date().toISOString();
@@ -192,6 +194,36 @@ export function fireTrigger(type, { contactId, listId, tagId, path, formId, even
 // after a wait step, well after the triggering request has returned --
 // can still look up which specific booking this contact's journey through
 // the automation is about, to resolve %WHEN%/%DATE%/%TIME% etc.
+// "If they reply" branch on a send_email step (step.onReplyStepId). An inbound
+// email whose In-Reply-To/References names one of our sends (SES wraps its
+// MessageId as <id@region.amazonses.com>) runs that step's reply branch for
+// the contact -- once per contact per email, straight through, without moving
+// them anywhere in the main chain. Its emails go out as replies in the same
+// thread. Called from gmail_backend.js for every inbound email from a contact.
+export async function handleEmailReply(contactId, { inReplyTo, references, messageIdHeader } = {}) {
+  if (!contactId) return;
+  const ids = [...new Set((`${references || ""} ${inReplyTo || ""}`.match(/<[^<>\s]+>/g) || []).map(t => t.slice(1, -1).split("@")[0]))].reverse();
+  for (const providerId of ids) {
+    const sent = getMessageByProviderId(providerId);
+    if (!sent || sent.contactId !== contactId || sent.sourceType !== "automation_step") continue;
+    const [automationId, stepId] = String(sent.sourceId || "").split(":");
+    const automation = readJson(AUTOMATIONS_FILE, []).find(a => a.id === automationId);
+    const step = automation?.steps?.[stepId];
+    if (!automation?.active || step?.type !== "send_email" || !step.onReplyStepId) return;
+    const onceKey = `${automationId}:reply:${stepId}`;
+    if (listEnrollments({ automationId: onceKey, contactId }).length) return;
+    const now = new Date().toISOString();
+    dbSaveEnrollment({ id: randomUUID(), automationId: onceKey, contactId, status: "completed", currentStepId: null, enteredAt: now, updatedAt: now, waitUntil: null, history: [] });
+    const run = {
+      id: randomUUID(), automationId, contactId, status: "active", currentStepId: step.onReplyStepId,
+      enteredAt: now, updatedAt: now, waitUntil: null, history: [], transient: true,
+      replyHeaders: messageIdHeader ? [{ Name: "In-Reply-To", Value: messageIdHeader }, { Name: "References", Value: [references, messageIdHeader].filter(Boolean).join(" ") }] : null,
+    };
+    await advanceEnrollment(run, automation);
+    return;
+  }
+}
+
 export function enrollContact(automation, contactId, context) {
   // An inactive automation must never start (or resume) sending -- the
   // trigger-fired path already filtered on `.active` before calling here,
@@ -279,6 +311,7 @@ async function advanceEnrollment(enrollment, automation) {
           to: contact.email, subject, previewText, blocks, theme: step.config.theme,
           footerTemplateId: step.config.footerTemplateId, contactId: contact.id,
           sourceType: "automation_step", sourceId: `${automation.id}:${step.id}`,
+          ...(enrollment.replyHeaders ? { headers: enrollment.replyHeaders } : {}),
         });
         // A transient failure here used to be permanent -- silently logged
         // "failed" and the enrollment moved straight past this step with no
