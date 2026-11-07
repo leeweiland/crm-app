@@ -119,7 +119,7 @@ window.BlockEditor = (function () {
     ['claude-sonnet-5-5', 'Claude Sonnet 5.5 -- about $7 per 1,000 emails'],
     ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest) -- about $0.35 per 1,000 emails'],
   ];
-  const AI_DEFAULT_PROMPT = "Problem-Agitate-Solve, 2-3 short paragraphs, from their application. Problem: name their real situation in their own terms (their goals, injuries, what they've tried, what's held them back). Agitate: what staying stuck keeps costing them -- time, pain, years, the moves they still can't do. Solve: proper training with Coach Lee's team is how that changes. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase, e.g. \"you told us...\".";
+  const AI_DEFAULT_PROMPT = "A quick dig into their problems and situation from their application, 1-2 short paragraphs, under 90 words: their pain, injuries, what keeps them stuck, what they've tried that hasn't worked -- and that they're still stuck. Don't tell them things about themselves they already know (their job, height, weight, age, where they live); use those only to understand them. Don't pitch or offer a solution -- the rest of the email does that. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase.";
   const escHtml = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   function renderBlockHtml(block) {
     if (block.type === 'ai') {

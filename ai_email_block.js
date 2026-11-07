@@ -20,7 +20,7 @@ export const AI_BLOCK_MODELS = {
   "claude-haiku-5-5": { label: "Claude Haiku 5.5 (cheapest)", per1k: "≈ $0.35 per 1,000 emails" },
 };
 export const DEFAULT_AI_BLOCK_MODEL = "claude-opus-5-5";
-export const DEFAULT_AI_BLOCK_PROMPT = "Problem-Agitate-Solve, 2-3 short paragraphs, from their application. Problem: name their real situation in their own terms (their goals, injuries, what they've tried, what's held them back). Agitate: what staying stuck keeps costing them -- time, pain, years, the moves they still can't do. Solve: proper training with Coach Lee's team is how that changes. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase, e.g. \"you told us...\".";
+export const DEFAULT_AI_BLOCK_PROMPT = "A quick dig into their problems and situation from their application, 1-2 short paragraphs, under 90 words: their pain, injuries, what keeps them stuck, what they've tried that hasn't worked -- and that they're still stuck. Don't tell them things about themselves they already know (their job, height, weight, age, where they live); use those only to understand them. Don't pitch or offer a solution -- the rest of the email does that. It continues straight from the sentence before it (\"...it looks like you applied 3 months ago and...\"), so start mid-thought, lowercase.";
 
 // ── application fields on the contact ────────────────────────────────────
 const APPLICATION_LABELS = ["APPLIED WHEN?", "CAREER", "AGE, HEIGHT, WEIGHT, ETC.", "CURRENT SITUATION?", "GOALS", "INJURIES", "WHAT HAVE THEY TRIED?", "WHAT HELP DO THEY WANT?", "READY TODAY?", "READYINESS LEVEL", "STRESS", "PERSONALITY TYPE"];
@@ -53,7 +53,7 @@ export function applyAppliedAgo(text, contact) {
 // ── generation ───────────────────────────────────────────────────────────
 const SYSTEM = `You write one section of a marketing email from Coach Lee Weiland of Pacific Rim Athletics (bodyweight strength, skill and mobility coaching -- Powerbatics; online worldwide and a gym in Anchorage, Alaska).
 Write in Lee's voice: direct, warm, a little blunt, short sentences, plain words, "..." for pauses. Speak to the reader as "you".
-Rules: plain text only -- no greeting, no sign-off, no headings, no lists, no links, no emoji, no em dashes. Separate paragraphs with a blank line. Never shame or insult the reader; their body is the starting point, stated as fact. Never mention Lee's age. Never invent facts that aren't in their application -- if an answer is missing, stay general rather than guessing. Never mention prices or guarantees.
+Rules: plain text only -- no greeting, no sign-off, no headings, no lists, no links, no emoji, no em dashes. Separate paragraphs with a blank line. Never shame or insult the reader; their body is the starting point, stated as fact. Never recite their own details back to them (job, height, weight, age, location) -- they know them; talk about their problems instead. Never mention Lee's age. Never invent facts that aren't in their application -- if an answer is missing, stay general rather than guessing. Never mention prices or guarantees.
 Return only the section text.`;
 
 export async function generateAiParagraph({ prompt, model, contact }) {

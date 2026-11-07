@@ -25,6 +25,10 @@
     .cb-sidebar, .be-side-panel { top: calc(var(--cb-sticky-top, 0px) + 12px); max-height: calc(100vh - var(--cb-sticky-top, 0px) - 24px); overflow-y: auto; }
   }
   /* Calendar event: a collapsed row with a chevron until opened. */
+  .cb-pv > summary { cursor: pointer; list-style: none; margin: 0; }
+  .cb-pv > summary::-webkit-details-marker { display: none; }
+  .cb-pv > summary::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 10px 3px 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+  .cb-pv[open] > summary::before { transform: rotate(45deg); }
   .pv-list { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 8px; }
   .pv-list:empty { display: none; }
   .pv-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--pra-border); padding: 7px 10px; color: var(--pra-white, #fff); cursor: pointer; font: inherit; font-size: .82rem; }
@@ -106,13 +110,19 @@
           </div>
 
           <!-- Preview as recipient: pick a real recipient, see exactly what
-               they'd get (their %APPLIEDAGO%, their AI paragraph). -->
-          <div class="pra-panel">
-            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Preview as recipient</div>
-            <input class="pra-input" id="pvSearch" placeholder="Search name or email..." autocomplete="off" data-lpignore="true"/>
+               they'd get (their %APPLIEDAGO%, their AI paragraph). Collapsed
+               until needed; holds the AI Text instructions too. -->
+          <details class="pra-panel cb-pv" id="pvPanel">
+            <summary class="pra-h2" style="font-size:1rem">Preview as recipient</summary>
+            <div id="pvPromptWrap" style="display:none;margin-top:12px">
+              <label class="pra-label">AI paragraph instructions</label>
+              <textarea class="pra-input" id="pvPrompt" rows="6" style="resize:vertical;font-size:.8rem"></textarea>
+              <div class="pra-muted" style="font-size:.72rem;margin-top:4px">Same box as the AI Text block's settings. Changing it writes fresh paragraphs.</div>
+            </div>
+            <input class="pra-input" id="pvSearch" placeholder="Search name or email..." autocomplete="off" data-lpignore="true" style="margin-top:12px"/>
             <div id="pvList" class="pv-list"></div>
             <div class="pra-muted" id="pvCount" style="font-size:.74rem;margin-top:6px"></div>
-          </div>
+          </details>
 
           <div class="pra-panel">
             <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
@@ -349,8 +359,31 @@ function toggleId(arr, id) {
 // Pages through the campaign's saved audience (50 at a time, more as you
 // scroll); clicking a name renders exactly what that person would get.
 const pv = { offset: 0, total: 0, loading: false, q: '', seq: 0 };
+const pvPanel = document.getElementById('pvPanel');
+function pvAiBlock(state) { return (state?.blocks || []).find(b => b.type === 'ai') || null; }
+pvPanel.addEventListener('toggle', () => {
+  if (!pvPanel.open) return;
+  const ai = editor ? pvAiBlock(editor.getState()) : null;
+  document.getElementById('pvPromptWrap').style.display = ai ? '' : 'none';
+  if (ai) document.getElementById('pvPrompt').value = ai.prompt || '';
+  pvLoad(true);
+});
+let pvPromptTimer = null;
+document.getElementById('pvPrompt').addEventListener('input', (e) => {
+  clearTimeout(pvPromptTimer);
+  const value = e.target.value;
+  pvPromptTimer = setTimeout(() => {
+    const state = editor.getState();
+    const ai = pvAiBlock(state);
+    if (!ai) return;
+    ai.prompt = value;
+    editor.setState(state);
+    campaign.blocks = state.blocks;
+    saveDebounced();
+  }, 500);
+});
 async function pvLoad(reset) {
-  if (!campaign?.id || pv.loading) return;
+  if (!campaign?.id || pv.loading || !pvPanel.open) return;
   if (reset) { pv.offset = 0; pv.total = 0; document.getElementById('pvList').innerHTML = ''; }
   else if (pv.offset >= pv.total) return;
   pv.loading = true;
