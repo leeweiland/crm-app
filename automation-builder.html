@@ -75,9 +75,14 @@
   /* "If they reply" branch: hangs off the right of its email card, outside
      the main chain's flow, joined by a gray line. */
   .reply-host { position: relative; }
+  /* Top-aligned with its email card (label floats above), so the joining
+     line runs level into both cards. */
   .reply-branch { position: absolute; left: 100%; top: 0; margin-left: 56px; display: flex; flex-direction: column; align-items: center; width: max-content; }
   .reply-branch::before { content: ''; position: absolute; right: 100%; top: 34px; width: 56px; height: 1px; background: var(--pra-dim); }
-  .reply-branch > .branch-label { margin: 0 0 6px; }
+  .reply-branch > .branch-label { position: absolute; bottom: 100%; left: 0; right: 0; text-align: center; margin: 0 0 6px; white-space: nowrap; }
+  /* "+" on the right edge of an email card: adds its "If they reply" branch. */
+  .reply-add-btn { position: absolute; left: 100%; top: 34px; transform: translate(10px, -50%); width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--pra-border); background: var(--pra-panel-2); color: var(--pra-dim); font-size: 14px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; opacity: .55; transition: opacity .15s, color .15s, border-color .15s; }
+  .step-card:hover .reply-add-btn, .reply-add-btn:hover { opacity: 1; color: #fff; border-color: var(--pra-blue); }
   .type-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .type-picker button { background: var(--pra-panel-2); border: 1px solid var(--pra-border); color: #fff; border-radius: 8px; padding: 12px; cursor: pointer; font-size: .82rem; text-align: left; }
   .type-picker button:hover { border-color: var(--pra-blue); }
@@ -415,9 +420,9 @@ function stepCardHtml(stepId, isLast) {
   return `
     <div class="step-card${step.type === 'goal' ? ' goal-step' : ''}" data-step-id="${stepId}"${step.type !== 'condition' ? ' draggable="true"' : ''}>
       <div class="step-actions">
-        ${step.type === 'send_email' && !step.onReplyStepId && emailNumbers.has(stepId) ? `<button data-add-reply="${stepId}" title="Add an &quot;If they reply&quot; branch">&#8617;</button>` : ''}
         <button data-delete="${stepId}" title="Delete">&times;</button>
       </div>
+      ${step.type === 'send_email' && !step.onReplyStepId && emailNumbers.has(stepId) ? `<button class="reply-add-btn" data-add-reply="${stepId}" title="Add an &quot;If they reply&quot; branch">+</button>` : ''}
       ${cardOpener}
       ${step.type === 'send_email' && emailNumbers.has(stepId) ? predictiveToggleHtml(step) : ''}
     </div>
@@ -1342,7 +1347,7 @@ canvasWrap.addEventListener('touchstart', (e) => {
   // still arm panning -- touchmove below only commits to it past a small
   // move threshold, so a plain tap (no threshold crossed) still reaches
   // the card's own click handler and opens it as before.
-  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, [data-delete], [data-path], [data-predictive]')) return;
+  if (e.target.closest('.add-step-btn, .ab-zoom-controls, .step-actions, [data-delete], [data-path], [data-predictive], [data-add-reply]')) return;
   if (e.touches.length === 1) {
     panning = true; touchMoved = false; canvasWrap.classList.add('panning');
     panStartX = e.touches[0].clientX; panStartY = e.touches[0].clientY; panOrigX = panX; panOrigY = panY;
