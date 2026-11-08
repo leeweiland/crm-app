@@ -79,7 +79,7 @@ window.ConditionRowBuilder = (function () {
     }
     // gt/gte/lt/lte compare numerically (segments_shared.js) -- for number-like
     // fields such as the estimated income; a non-numeric value never matches.
-    if (field.startsWith("customFields.")) return `<option value="eq">Is</option><option value="neq">Is not</option><option value="exists">Is set</option><option value="gt">Is greater than</option><option value="gte">Is at least</option><option value="lt">Is less than</option><option value="lte">Is at most</option>`;
+    if (field.startsWith("customFields.")) return `<option value="eq">Is</option><option value="neq">Is not</option><option value="exists">Is set</option><option value="gt">Is greater than</option><option value="gte">Is at least</option><option value="lt">Is less than</option><option value="lte">Is at most</option><option value="older_than_days">Is a date more than N days ago</option>`;
     // Opened/Clicked Email can also be windowed: "in the last N days" (latest
     // event, including the imported ActiveCampaign history).
     if (field === "emailOpened" || field === "emailClicked") return `<option value="eq">Is</option><option value="neq">Is not</option><option value="within_last_days">In the last (days)</option>`;
@@ -147,6 +147,7 @@ window.ConditionRowBuilder = (function () {
     if (field === 'type') return `<select class="pra-select" data-cond-value><option value="lead">Lead</option><option value="contact">Contact</option></select>`; // legacy field, kept only so a pre-existing saved segment still renders correctly
     if (field === 'programType') return `<select class="pra-select" data-cond-value><option value="online">Online</option><option value="gym">Gym</option></select>`;
     if (op === 'within_last_days' || op === 'not_within_last_days') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="# of days, e.g. 30 (36500 = ever)"/>`;
+    if (op === 'older_than_days') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="# of days, e.g. 14"/>`;
     if (['gt', 'gte', 'lt', 'lte'].includes(op)) return `<input class="pra-input" type="number" data-cond-value placeholder="e.g. 60000"/>`;
     if (op === 'between') return `<span data-cond-range style="display:inline-flex;gap:6px;align-items:center"><input class="pra-input" type="date" data-cond-from title="First day (your local time)"/> and <input class="pra-input" type="date" data-cond-to title="Last day, included (your local time)"/></span>`;
     if (BOOL_FIELDS.includes(field)) return `<select class="pra-select" data-cond-value><option value="true">Yes</option><option value="false">No</option></select>`;
@@ -284,7 +285,7 @@ window.ConditionRowBuilder = (function () {
     eq: 'is', neq: 'is not', includes: 'includes', excludes: 'excludes', exists: 'is set', not_exists: 'is not set', contains: 'contains',
     any_of: 'is any of', all_of: 'is all of', not_any_of: 'is not any of', not_all_of: 'is not all of',
     within_last_hours: 'is within the last', within_last_days: 'in the last', after: 'is on or after', between: 'is between',
-    not_within_last_days: 'not in the last', gt: 'is greater than', gte: 'is at least', lt: 'is less than', lte: 'is at most',
+    not_within_last_days: 'not in the last', older_than_days: 'is more than', gt: 'is greater than', gte: 'is at least', lt: 'is less than', lte: 'is at most',
     on_or_after: 'is on or after', on_or_before: 'is on or before',
   };
   // Can this row builder faithfully show + re-save this stored condition? A
@@ -334,6 +335,7 @@ window.ConditionRowBuilder = (function () {
     }
     if (cond.op === 'within_last_hours') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} hours`;
     if (cond.op === 'within_last_days' || cond.op === 'not_within_last_days') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} days`;
+    if (cond.op === 'older_than_days') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} days ago`;
     if (cond.op === 'after' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
     if (['eq', 'on_or_after', 'on_or_before'].includes(cond.op) && cond.field === 'bookedAt' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleDateString([], { dateStyle: 'medium' });
     if (cond.op === 'between' && valueLabel && typeof valueLabel === 'object' && !Array.isArray(valueLabel)) {

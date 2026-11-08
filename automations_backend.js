@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
-import { matchesSegment, resolveBulkContactIds } from "./segments_shared.js";
+import { matchesSegment, resolveBulkContactIds, segmentMembers } from "./segments_shared.js";
 import { getAllContacts, getContactById, queueContactTagChange, getContactsMapByIds } from "./contacts_db.js";
 // Enrollments live in SQLite now (2026-10-08) -- see automation_enrollments_db.js
 // for why the JSON file they used to live in was the single largest cost
@@ -59,7 +59,7 @@ function automationSnapshotFields(automation) {
 // has been matched/upserted to a contact -- same shape as form_submitted.
 // "add_to_facebook_audience" degrades gracefully -- see facebook_backend.js
 // -- same "not configured yet" pattern as SES/Twilio.
-export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created"];
+export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created", "segment_member"];
 export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal", "drip"];
 
 function getContact(id) { return getContactById(id); }
@@ -425,7 +425,48 @@ function releaseDripQueues() {
 
 // Called by scheduler.js every tick -- resumes any enrollment whose wait
 // step has expired.
+// "Contact is in a segment" start trigger (config: { segmentId, time "HH:MM"
+// Anchorage }), same idea as the SMS sequences' one: once per Alaska day, at
+// or after that time, everyone in the segment who has never been in this
+// automation is enrolled -- once ever, never re-enrolled after they finish.
+// A Drip first step takes them straight into its queue in one batch write.
+const SEGMENT_TRIGGER_STATE_FILE = "crm_automation_segment_trigger_state.json";
+function runAutomationSegmentTriggers() {
+  const autos = readJson(AUTOMATIONS_FILE, []).filter(a => a.active && (a.triggers || []).some(t => t.type === "segment_member" && t.config?.segmentId));
+  if (!autos.length) return;
+  const { day, secs } = dripClock(new Date());
+  const state = readJson(SEGMENT_TRIGGER_STATE_FILE, {});
+  let changed = false;
+  for (const a of autos) {
+    (a.triggers || []).forEach((t, i) => {
+      if (t.type !== "segment_member" || !t.config?.segmentId) return;
+      const key = `${a.id}:${i}:${t.config.segmentId}`;
+      if (state[key] === day) return;
+      const [h, m] = String(t.config.time || "09:00").split(":").map(Number);
+      if (secs < (h || 0) * 3600 + (m || 0) * 60) return;
+      state[key] = day; changed = true;
+      const segment = readJson("crm_segments.json", []).find(sg => sg.id === t.config.segmentId);
+      if (!segment || !a.startStepId) return;
+      const already = new Set(listEnrollments({ automationId: a.id }).map(e => e.contactId));
+      const start = a.steps[a.startStepId];
+      const now = new Date().toISOString();
+      const rows = [];
+      for (const ct of segmentMembers(segment)) {
+        if (already.has(ct.id)) continue;
+        already.add(ct.id);
+        rows.push(start?.type === "drip"
+          ? { id: randomUUID(), automationId: a.id, contactId: ct.id, status: "active", currentStepId: a.startStepId, enteredAt: now, updatedAt: now, waitUntil: null, history: [{ stepId: a.startStepId, at: now }], bookingId: null }
+          : { id: randomUUID(), automationId: a.id, contactId: ct.id, status: "active", currentStepId: a.startStepId, enteredAt: now, updatedAt: now, waitUntil: now, history: [], bookingId: null });
+      }
+      if (rows.length) saveEnrollments(rows);
+      console.log(`[automations] segment trigger: "${segment.name}" -> "${a.name}": ${rows.length} enrolled`);
+    });
+  }
+  if (changed) writeJson(SEGMENT_TRIGGER_STATE_FILE, state);
+}
+
 export async function advanceDueEnrollments() {
+  try { runAutomationSegmentTriggers(); } catch (e) { console.error("[automations] segment trigger failed", e.message); }
   try { releaseDripQueues(); } catch (e) { console.error("[automations] drip release failed", e.message); }
   const due = listDueEnrollments(new Date().toISOString());
   for (const enrollment of due) {

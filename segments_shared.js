@@ -335,6 +335,12 @@ function evalCondition(contact, cond, payload) {
     case "all_of": return Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v));
     case "not_any_of": return !(Array.isArray(value) && (Array.isArray(actual) ? value.some(v => actual.includes(v)) : value.includes(actual)));
     case "not_all_of": return !(Array.isArray(actual) && Array.isArray(value) && value.length > 0 && value.every(v => actual.includes(v)));
+    // A date custom field (free-form text like "Sep 15, 2026" or an ISO date)
+    // at least N days in the past; blank/unparseable never matches.
+    case "older_than_days": {
+      const t = actual ? Date.parse(String(actual).replace(/(\d)(st|nd|rd|th)\b/gi, "$1")) : NaN;
+      return !isNaN(t) && Date.now() - t >= Number(value) * 86400000;
+    }
     case "gt": case "gte": case "lt": case "lte": {
       const a = toNumber(actual), b = toNumber(value);
       if (isNaN(a) || isNaN(b)) return false;

@@ -140,11 +140,16 @@
         <option value="page_visit">Contact visits a page</option>
         <option value="form_submitted">Form is submitted</option>
         <option value="booking_created">Booking is created</option>
+        <option value="segment_member">Contact is in a segment (checked once a day)</option>
       </select>
     </div>
     <div class="field" id="triggerTargetField" style="display:none">
       <label class="pra-label" id="triggerTargetLabel">List</label>
       <select class="pra-select" id="triggerTarget"></select>
+    </div>
+    <div class="field" id="triggerTimeField" style="display:none">
+      <label class="pra-label">Check daily at (Anchorage time)</label>
+      <input class="pra-input" type="time" id="triggerTime" value="09:00"/>
     </div>
     <div class="field" id="triggerPathField" style="display:none">
       <label class="pra-label">Path contains (leave blank for any page)</label>
@@ -277,7 +282,7 @@ function escapeHtml(s) { const d = document.createElement('div'); d.textContent 
 function uid() { return 'st' + Math.random().toString(36).slice(2, 10); }
 
 const automationId = new URLSearchParams(location.search).get('id');
-let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [], allForms = [], allEventTypes = [];
+let automation = null, stepCounts = {}, stepEmailStats = {}, allLists = [], allTags = [], allStatuses = [], allFooters = [], allAutomations = [], allForms = [], allEventTypes = [], allSegments = [];
 let saveTimer, emailStepEditor = null, editingStepId = null, pendingAddPath = null, pendingAddAfter = null;
 // Fetched once at load, not per-step -- a brand new send_email step starts
 // from the org's current email theme (Settings > Email Theme), same as a
@@ -289,6 +294,7 @@ async function loadRefs() {
     fetch('/api/lists'), fetch('/api/tags'), fetch('/api/statuses'), fetch('/api/footer-templates'), fetch('/api/automations'), fetch('/api/facebook/config-status'), fetch('/api/forms'), fetch('/api/scheduling/admin/event-types'), fetch('/api/integrations/email-theme')
   ]);
   allLists = (await listsRes.json()).lists;
+  fetch('/api/segments').then(r => r.ok ? r.json() : {}).then(d => { allSegments = d.segments || []; if (automation) render(); }).catch(() => {});
   allTags = (await tagsRes.json()).tags;
   allStatuses = (await statusesRes.json()).statuses;
   allFooters = (await footersRes.json()).templates;
@@ -540,6 +546,7 @@ function renderCanvasContent() {
       page_visit: trig.config?.urlContains ? `Contact visits page containing "${trig.config.urlContains}"` : 'Contact visits any page',
       form_submitted: trig.config?.formId ? `Form "${escapeHtml(allForms.find(f => f.id === trig.config.formId)?.name || '—')}" is submitted` : 'Any form is submitted',
       booking_created: trig.config?.eventTypeId ? `Booking for "${escapeHtml(allEventTypes.find(e => e.id === trig.config.eventTypeId)?.name || '—')}" is created` : 'Any booking is created',
+      segment_member: `Contact is in segment "${escapeHtml(allSegments.find(sg => sg.id === trig.config?.segmentId)?.name || '—')}" (checked daily at ${escapeHtml(trig.config?.time || '09:00')} Anchorage)`,
     };
     return map[trig.type] || trig.type;
   }
@@ -714,6 +721,7 @@ function openTriggerModal(index) {
   if (trig.type === 'page_visit') document.getElementById('triggerPath').value = trig.config.urlContains || '';
   if (trig.type === 'form_submitted') document.getElementById('triggerTarget').value = trig.config.formId || '';
   if (trig.type === 'booking_created') document.getElementById('triggerTarget').value = trig.config.eventTypeId || '';
+  if (trig.type === 'segment_member') { document.getElementById('triggerTarget').value = trig.config.segmentId || ''; document.getElementById('triggerTime').value = trig.config.time || '09:00'; }
   document.getElementById('deleteTriggerBtn').style.display = editingTriggerIndex !== null ? 'block' : 'none';
   openModal('triggerModal');
 }
@@ -728,7 +736,11 @@ function updateTriggerTargetField() {
   const label = document.getElementById('triggerTargetLabel');
   const select = document.getElementById('triggerTarget');
   document.getElementById('triggerPathField').style.display = type === 'page_visit' ? 'block' : 'none';
-  if (type === 'list_subscribe') {
+  document.getElementById('triggerTimeField').style.display = type === 'segment_member' ? 'block' : 'none';
+  if (type === 'segment_member') {
+    field.style.display = 'block'; label.textContent = 'Segment';
+    select.innerHTML = allSegments.map(sg => `<option value="${sg.id}">${escapeHtml(sg.name)}</option>`).join('');
+  } else if (type === 'list_subscribe') {
     field.style.display = 'block'; label.textContent = 'List (any list if left blank)';
     select.innerHTML = '<option value="">Any list</option>' + allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
   } else if (type === 'tag_added') {
@@ -752,7 +764,8 @@ document.getElementById('saveTriggerBtn').onclick = () => {
   const config = type === 'list_subscribe' ? { listId: target || null } : type === 'tag_added' ? { tagId: target || null }
     : type === 'page_visit' ? { urlContains: document.getElementById('triggerPath').value.trim() || null }
     : type === 'form_submitted' ? { formId: target || null }
-    : type === 'booking_created' ? { eventTypeId: target || null } : {};
+    : type === 'booking_created' ? { eventTypeId: target || null }
+    : type === 'segment_member' ? { segmentId: target || null, time: document.getElementById('triggerTime').value || '09:00' } : {};
   if (!automation.triggers) automation.triggers = [];
   if (editingTriggerIndex !== null) automation.triggers[editingTriggerIndex] = { type, config };
   else automation.triggers.push({ type, config });
