@@ -695,12 +695,12 @@ async function pvLoad(reset) {
   const seq = ++pv.seq;
   const seg = pvSegmentId();
   try {
-    const r = await fetch(`/api/email/preview-recipients?${seg ? 'segmentId=' + seg : 'automationId=' + automation.id}&offset=${pv.offset}&limit=50&q=${encodeURIComponent(pv.q)}`);
+    const r = await fetch(`/api/email/preview-recipients?segmentId=${seg || ''}&automationId=${automation.id}&stepId=${editingStepId || ''}&offset=${pv.offset}&limit=50&q=${encodeURIComponent(pv.q)}`);
     const d = await r.json();
     if (seq !== pv.seq || !r.ok) return;
     pv.total = d.total; pv.offset += d.items.length;
-    document.getElementById('pvList').insertAdjacentHTML('beforeend', d.items.map(it => `<button type="button" class="pv-item" data-cid="${it.id}">${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}</small></button>`).join(''));
-    document.getElementById('pvCount').textContent = pv.total ? `${pv.total.toLocaleString()} recipient${pv.total === 1 ? '' : 's'} ${seg ? 'in the trigger\'s segment' : 'enrolled'} -- click one to see their email` : 'Nobody to preview yet';
+    document.getElementById('pvList').insertAdjacentHTML('beforeend', d.items.map((it, i) => `<button type="button" class="pv-item" data-cid="${it.id}">${pv.q ? '' : `<span style="color:var(--pra-dim);margin-right:6px">${pv.offset - d.items.length + i + 1}.</span>`}${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}${it.tag === 'queued' ? ' -- already in the queue' : ''}</small></button>`).join(''));
+    document.getElementById('pvCount').textContent = pv.total ? `${pv.total.toLocaleString()} still to get this email, in the order they'll get it -- click one to see theirs` : 'Nobody left to get this email';
   } catch {} finally { pv.loading = false; }
 }
 document.getElementById('pvPanel').addEventListener('toggle', () => {

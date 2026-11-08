@@ -790,20 +790,34 @@ export async function handleEmailRequest(req, res, url) {
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
 
-  // "Preview as recipient" for any email editor: a segment's members (or an
-  // automation's enrolled contacts), a page at a time, name-sorted, optional
-  // search -- kept a minute so scrolling doesn't re-resolve per page.
+  // "Preview as recipient" for an automation email step, in the order they'll
+  // actually get it: people already on their way (closest to this email
+  // first, then drip-queue order), then the segment members the daily
+  // trigger will add next. Anyone already past this email is left out. Kept a
+  // minute so scrolling doesn't recompute per page; optional search.
   if (p === "/api/email/preview-recipients" && req.method === "GET") {
-    const segmentId = url.searchParams.get("segmentId") || "", automationId = url.searchParams.get("automationId") || "";
-    const key = `${segmentId}|${automationId}`;
+    const segmentId = url.searchParams.get("segmentId") || "", automationId = url.searchParams.get("automationId") || "", stepId = url.searchParams.get("stepId") || "";
+    const key = `${segmentId}|${automationId}|${stepId}`;
     let cached = previewRecipientCache.get(key);
     if (!cached || Date.now() - cached.at > 60000) {
-      let people = [];
+      const byId = new Map(getAllContactsNoCopy().map(ct => [ct.id, ct]));
+      const ordered = [], seen = new Set();
+      const add = (ct, tag) => { if (!ct || seen.has(ct.id)) return; seen.add(ct.id); if (ct.email && !ct.emailOptOut) ordered.push({ id: ct.id, name: `${ct.first || ""} ${ct.last || ""}`.trim(), email: ct.email || "", tag }); };
+      const automation = automationId ? readJson(AUTOMATIONS_FILE, []).find(a => a.id === automationId) : null;
+      if (automation) {
+        // Main-chain position of each step; the email's own index splits "on their way" from "already got it".
+        const pos = new Map();
+        for (let cur = automation.startStepId, i = 0; cur && !pos.has(cur) && automation.steps[cur]; cur = automation.steps[cur].nextStepId, i++) pos.set(cur, i);
+        const target = pos.has(stepId) ? pos.get(stepId) : Infinity;
+        const enrolled = listEnrollments({ automationId });
+        for (const e of enrolled) if (e.status !== "active" || !(pos.get(e.currentStepId) <= target)) seen.add(e.contactId); // finished, or already past this email
+        enrolled.filter(e => e.status === "active" && pos.get(e.currentStepId) <= target)
+          .sort((a, b) => (pos.get(b.currentStepId) - pos.get(a.currentStepId)) || String(a.enteredAt).localeCompare(String(b.enteredAt)))
+          .forEach(e => add(byId.get(e.contactId), "queued"));
+      }
       const segment = segmentId ? readJson("crm_segments.json", []).find(s => s.id === segmentId) : null;
-      if (segment) people = segmentMembers(segment);
-      else if (automationId) { const ids = new Set(listEnrollments({ automationId }).map(e => e.contactId)); people = getAllContactsNoCopy().filter(ct => ids.has(ct.id)); }
-      const list = people.filter(ct => ct.email && !ct.emailOptOut).map(ct => ({ id: ct.id, name: `${ct.first || ""} ${ct.last || ""}`.trim(), email: ct.email || "" }))
-        .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+      if (segment) for (const ct of segmentMembers(segment)) add(ct, "next");
+      const list = ordered;
       cached = { at: Date.now(), list };
       previewRecipientCache.set(key, cached);
     }
