@@ -74,6 +74,16 @@
   .branch-label { font-family: var(--font-secondary); font-size: .68rem; letter-spacing: .06em; color: var(--pra-dim); margin-bottom: 6px; }
   /* "If they reply" branch: hangs off the right of its email card, outside
      the main chain's flow, joined by a gray line. */
+  .cb-pv > summary { cursor: pointer; list-style: none; margin: 0; }
+  .cb-pv > summary::-webkit-details-marker { display: none; }
+  .cb-pv > summary::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 10px 3px 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+  .cb-pv[open] > summary::before { transform: rotate(45deg); }
+  .pv-list { margin-top: 8px; max-height: 220px; overflow-y: auto; border: 1px solid var(--pra-border); border-radius: 8px; }
+  .pv-list:empty { display: none; }
+  .pv-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--pra-border); padding: 7px 10px; color: var(--pra-white, #fff); cursor: pointer; font: inherit; font-size: .82rem; }
+  .pv-item:last-child { border-bottom: 0; }
+  .pv-item:hover, .pv-item.active { background: rgba(0,155,255,.12); }
+  .pv-item small { display: block; color: var(--pra-dim); font-size: .72rem; }
   .reply-host { position: relative; }
   /* Top-aligned with its email card (label floats above), so the joining
      line runs level into both cards. */
@@ -200,6 +210,18 @@
      embedded BlockEditor as campaign-builder.html, just inside a
      near-fullscreen modal instead of its own page, since a step's email
      doesn't need its own URL/recipients panel. -->
+<div class="modal-backdrop" id="pvModal" style="z-index:2000">
+  <div class="pra-panel modal-box" style="max-width:760px;width:95vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px">
+      <div class="pra-h2" id="pvTitle" style="margin:0;font-size:1.05rem">Preview</div>
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" type="button" onclick="closeModal('pvModal')">Close</button>
+    </div>
+    <div class="pra-muted" id="pvSubject" style="font-size:.84rem;margin-bottom:4px"></div>
+    <div class="pra-muted" id="pvNote" style="font-size:.74rem;margin-bottom:10px"></div>
+    <iframe id="pvFrame" title="Email preview" style="width:100%;height:62vh;border:1px solid var(--pra-border);border-radius:8px;background:#fff"></iframe>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="emailStepModal">
   <div class="pra-panel modal-box eb-fullscreen">
     <div class="eb-modal-head">
@@ -237,6 +259,20 @@
           <button class="pra-btn pra-btn-ghost" id="emailStepTestSendBtn" style="width:100%">Send Test</button>
           <div class="pra-muted" id="emailStepTestSendMsg" style="font-size:.78rem;margin-top:8px;min-height:1em"></div>
         </div>
+        <!-- Preview as recipient: who this email goes to (the "Contact is in a
+             segment" trigger's segment, else who's enrolled); click a name to
+             see exactly what they'd get. Holds the AI Text instructions too. -->
+        <details class="pra-panel cb-pv" id="pvPanel">
+          <summary class="pra-h2" style="font-size:1rem">Preview as recipient</summary>
+          <div id="pvPromptWrap" style="display:none;margin-top:12px">
+            <label class="pra-label">AI paragraph instructions</label>
+            <textarea class="pra-input" id="pvPrompt" rows="6" style="resize:vertical;font-size:.8rem"></textarea>
+            <div class="pra-muted" style="font-size:.72rem;margin-top:4px">Same box as the AI Text block's settings. Changing it writes fresh paragraphs.</div>
+          </div>
+          <input class="pra-input" id="pvSearch" placeholder="Search name or email..." autocomplete="off" data-lpignore="true" style="margin-top:12px"/>
+          <div id="pvList" class="pv-list"></div>
+          <div class="pra-muted" id="pvCount" style="font-size:.74rem;margin-top:6px"></div>
+        </details>
       </div>
     </div>
   </div>
@@ -641,6 +677,77 @@ function openTypePicker() {
   });
   openModal('typePickerModal');
 }
+
+// ── Preview as recipient (email step) ─────────────────────────────────────
+const pv = { offset: 0, total: 0, loading: false, q: '', seq: 0 };
+function pvSegmentId() { return (automation?.triggers || []).find(t => t.type === 'segment_member')?.config?.segmentId || null; }
+function pvAiBlock(state) { return (state?.blocks || []).find(b => b.type === 'ai') || null; }
+function pvResetForStep() {
+  const panel = document.getElementById('pvPanel');
+  panel.open = false;
+  document.getElementById('pvList').innerHTML = ''; document.getElementById('pvCount').textContent = ''; document.getElementById('pvSearch').value = ''; pv.q = '';
+}
+async function pvLoad(reset) {
+  if (pv.loading || !document.getElementById('pvPanel').open) return;
+  if (reset) { pv.offset = 0; pv.total = 0; document.getElementById('pvList').innerHTML = ''; }
+  else if (pv.offset >= pv.total) return;
+  pv.loading = true;
+  const seq = ++pv.seq;
+  const seg = pvSegmentId();
+  try {
+    const r = await fetch(`/api/email/preview-recipients?${seg ? 'segmentId=' + seg : 'automationId=' + automation.id}&offset=${pv.offset}&limit=50&q=${encodeURIComponent(pv.q)}`);
+    const d = await r.json();
+    if (seq !== pv.seq || !r.ok) return;
+    pv.total = d.total; pv.offset += d.items.length;
+    document.getElementById('pvList').insertAdjacentHTML('beforeend', d.items.map(it => `<button type="button" class="pv-item" data-cid="${it.id}">${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}</small></button>`).join(''));
+    document.getElementById('pvCount').textContent = pv.total ? `${pv.total.toLocaleString()} recipient${pv.total === 1 ? '' : 's'} ${seg ? 'in the trigger\'s segment' : 'enrolled'} -- click one to see their email` : 'Nobody to preview yet';
+  } catch {} finally { pv.loading = false; }
+}
+document.getElementById('pvPanel').addEventListener('toggle', () => {
+  if (!document.getElementById('pvPanel').open || !emailStepEditor) return;
+  const ai = pvAiBlock(emailStepEditor.getState());
+  document.getElementById('pvPromptWrap').style.display = ai ? '' : 'none';
+  if (ai) document.getElementById('pvPrompt').value = ai.prompt || '';
+  pvLoad(true);
+});
+document.getElementById('pvList').addEventListener('scroll', (e) => { const el = e.currentTarget; if (el.scrollTop + el.clientHeight > el.scrollHeight - 60) pvLoad(false); });
+let pvSearchTimer = null;
+document.getElementById('pvSearch').addEventListener('input', (e) => { clearTimeout(pvSearchTimer); pvSearchTimer = setTimeout(() => { pv.q = e.target.value.trim(); pvLoad(true); }, 250); });
+let pvPromptTimer = null;
+document.getElementById('pvPrompt').addEventListener('input', (e) => {
+  clearTimeout(pvPromptTimer);
+  const value = e.target.value;
+  pvPromptTimer = setTimeout(() => {
+    const state = emailStepEditor.getState();
+    const ai = pvAiBlock(state);
+    if (!ai) return;
+    ai.prompt = value;
+    emailStepEditor.setState(state);
+  }, 400);
+});
+document.getElementById('pvList').addEventListener('click', async (e) => {
+  const item = e.target.closest('.pv-item');
+  if (!item || !emailStepEditor) return;
+  document.querySelectorAll('.pv-item.active').forEach(x => x.classList.remove('active'));
+  item.classList.add('active');
+  const state = emailStepEditor.getState();
+  const hasAi = !!pvAiBlock(state);
+  document.getElementById('pvTitle').textContent = 'What ' + item.firstChild.textContent + ' gets';
+  document.getElementById('pvSubject').textContent = hasAi ? 'Writing their AI paragraph...' : 'Loading...';
+  document.getElementById('pvNote').textContent = '';
+  document.getElementById('pvFrame').srcdoc = '';
+  openModal('pvModal');
+  try {
+    const r = await fetch('/api/email/preview-for', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contactId: item.dataset.cid, subject: document.getElementById('emailStepSubject').value, previewText: document.getElementById('emailStepPreviewText').value, blocks: state.blocks, theme: state.theme, footerTemplateId: document.getElementById('emailStepFooter').value || null, sourceType: 'automation_step', sourceId: `${automation.id}:${editingStepId}` }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { document.getElementById('pvSubject').textContent = d.error || 'Preview failed'; return; }
+    document.getElementById('pvSubject').textContent = 'Subject: ' + d.subject;
+    document.getElementById('pvNote').textContent = d.errors?.length
+      ? `AI paragraph couldn't be written (${d.errors[0]}) -- this is how their email would go out without it.`
+      : hasAi ? 'Their AI paragraph is saved -- the real send uses this exact text (until the instructions change).' : '';
+    document.getElementById('pvFrame').srcdoc = d.html;
+  } catch { document.getElementById('pvSubject').textContent = 'Could not reach the server'; }
+});
 
 function saveDebounced() {
   clearTimeout(saveTimer);
@@ -1129,7 +1236,8 @@ function openEmailStepEditor(step, isNew) {
   ];
   emailStepEditor = BlockEditor.init(root, { blocks: step.config.blocks || [], theme: step.config.theme }, () => {},
     () => { document.getElementById('emailStepFooterDirtyBar').style.display = 'block'; },
-    { extraPersonalizeOptions: bookingPersonalizeOptions });
+    { extraPersonalizeOptions: bookingPersonalizeOptions, aiPreviewSegmentId: pvSegmentId });
+  pvResetForStep();
   function currentFooter() {
     return allFooters.find(f => f.id === footerSel.value) || allFooters.find(f => f.isDefault) || null;
   }

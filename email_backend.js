@@ -18,7 +18,8 @@ import { recordSendTiming } from "./send_timing.js";
 import { campaignCalendarLinks, applyCalendarLinksToBlocks } from "./calendar_links.js";
 import { completeActiveEnrollments } from "./automation_enrollments_db.js";
 import { resolveAiBlocks, hasAiBlocks, applyAppliedAgo, applicationAnswers, generateAiParagraph } from "./ai_email_block.js";
-import { matchesSegment } from "./segments_shared.js";
+import { matchesSegment, segmentMembers } from "./segments_shared.js";
+import { listEnrollments } from "./automation_enrollments_db.js";
 import { getContactMessages } from "./messages_db.js";
 
 export const FOOTER_TEMPLATES_FILE = "crm_footer_templates.json";
@@ -270,6 +271,7 @@ export async function previewEmailForContact({ contact, subject, previewText, bl
   return { html, subject: applyAppliedAgo(contact ? applyMergeTags(subject || "", contact) : (subject || ""), contact), errors };
 }
 
+const previewRecipientCache = new Map();
 // A random contact with application answers -- from the segment when one is
 // given -- for AI Text previews and test sends.
 function pickSampleApplicant(segmentId) {
@@ -787,6 +789,36 @@ export async function handleEmailRequest(req, res, url) {
   if (!owned) return false;
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
+
+  // "Preview as recipient" for any email editor: a segment's members (or an
+  // automation's enrolled contacts), a page at a time, name-sorted, optional
+  // search -- kept a minute so scrolling doesn't re-resolve per page.
+  if (p === "/api/email/preview-recipients" && req.method === "GET") {
+    const segmentId = url.searchParams.get("segmentId") || "", automationId = url.searchParams.get("automationId") || "";
+    const key = `${segmentId}|${automationId}`;
+    let cached = previewRecipientCache.get(key);
+    if (!cached || Date.now() - cached.at > 60000) {
+      let people = [];
+      const segment = segmentId ? readJson("crm_segments.json", []).find(s => s.id === segmentId) : null;
+      if (segment) people = segmentMembers(segment);
+      else if (automationId) { const ids = new Set(listEnrollments({ automationId }).map(e => e.contactId)); people = getAllContactsNoCopy().filter(ct => ids.has(ct.id)); }
+      const list = people.filter(ct => ct.email && !ct.emailOptOut).map(ct => ({ id: ct.id, name: `${ct.first || ""} ${ct.last || ""}`.trim(), email: ct.email || "" }))
+        .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+      cached = { at: Date.now(), list };
+      previewRecipientCache.set(key, cached);
+    }
+    const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+    const items = q ? cached.list.filter(r => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q)) : cached.list;
+    const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0), limit = Math.min(100, Number(url.searchParams.get("limit")) || 50);
+    return sendJson(res, 200, { total: items.length, items: items.slice(offset, offset + limit) });
+  }
+  if (p === "/api/email/preview-for" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const contact = getContactById(body.contactId);
+    if (!contact) return sendJson(res, 404, { error: "Contact not found" });
+    const out = await previewEmailForContact({ contact, subject: body.subject, previewText: body.previewText, blocks: body.blocks || [], theme: body.theme, footerTemplateId: body.footerTemplateId || null, sourceType: body.sourceType || "manual", sourceId: body.sourceId || null });
+    return sendJson(res, 200, { ok: true, ...out, contactName: `${contact.first || ""} ${contact.last || ""}`.trim() || contact.email });
+  }
 
   // AI Text block "Preview" in the email designer: writes it once for a real
   // applicant (from the campaign's segment when it has one) without sending.
