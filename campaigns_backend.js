@@ -596,6 +596,12 @@ export async function handleCampaignsRequest(req, res, url) {
       // whatever changed), so a locked campaign quietly no-ops every field
       // except name instead of rejecting the whole request.
       if (locked && !("name" in body)) return sendJson(res, 400, { error: "Can't edit a campaign that's already sending or sent" });
+      // A builder tab sends the version it was editing; a stale one (left
+      // open while the campaign changed elsewhere) is refused rather than
+      // allowed to overwrite the newer content.
+      if (!locked && body.expectedUpdatedAt && campaign.updatedAt && body.expectedUpdatedAt !== campaign.updatedAt) {
+        return sendJson(res, 409, { error: "This campaign changed since this page loaded", campaign });
+      }
       const fieldsToApply = locked ? ["name"] : VERSIONED_FIELDS;
       // Snapshot the pre-change state before overwriting it -- throttled
       // (see versions_shared.js) so this doesn't create a new version on

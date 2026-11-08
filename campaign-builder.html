@@ -437,17 +437,41 @@ async function updateRecipientCount() {
   if (r.ok) document.getElementById('recipientCount').textContent = (await r.json()).count + ' recipients match';
 }
 
+// Saves only real edits (dirty), one at a time, and say which version they
+// were made against (expectedUpdatedAt): a tab left open on an older copy can
+// no longer overwrite newer changes -- the server refuses, and this tab
+// reloads the current version instead. Before this, refreshing or closing any
+// open builder tab saved its (possibly stale) copy on the way out.
+let saveDirty = false, saveInFlight = null;
 function saveDebounced() {
+  saveDirty = true;
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(saveCampaign, 500);
 }
 async function saveCampaign(opts) {
+  if (!opts?.force && !saveDirty) return;
+  if (saveInFlight && !opts?.keepalive) await saveInFlight.catch(() => {});
+  saveDirty = false;
+  saveInFlight = doSaveCampaign(opts);
+  return saveInFlight;
+}
+async function doSaveCampaign(opts) {
   const r = await fetch('/api/campaigns/' + campaign.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend, calendarEvent: campaign.calendarEvent || null }),
+    body: JSON.stringify({ expectedUpdatedAt: campaign.updatedAt || null, name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend, calendarEvent: campaign.calendarEvent || null }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
-  if (r.ok && !opts?.keepalive) updateRecipientCount();
+  if (opts?.keepalive) return;
+  if (r.status === 409) {
+    showToast('This campaign was changed somewhere else -- loaded the latest version', true);
+    await loadCampaign();
+    return;
+  }
+  if (r.ok) {
+    const d = await r.json().catch(() => ({}));
+    if (d.campaign?.updatedAt) campaign.updatedAt = d.campaign.updatedAt;
+    updateRecipientCount();
+  }
 }
 // Flushes any pending debounced save immediately, for moments a 500ms wait
 // isn't safe to assume: navigating away via the Back link, or the tab/
@@ -463,7 +487,7 @@ document.getElementById('backLink').addEventListener('click', async (e) => {
   location.href = '/campaigns.html';
 });
 window.addEventListener('beforeunload', () => {
-  if (!campaign?.id) return;
+  if (!campaign?.id || !saveDirty) return;
   clearTimeout(debounceTimer);
   saveCampaign({ keepalive: true });
 });
