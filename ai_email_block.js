@@ -173,6 +173,9 @@ export async function resolveAiBlocks(blocks, { contact, sourceType, sourceId, e
         continue;
       }
     }
+    // Its own paragraph in the email, so it starts with a capital even though
+    // it reads on from "...and..." (applies to already-saved text too).
+    text = text.replace(/^(\s*["'(]*)([a-z])/, (m, lead, ch) => lead + ch.toUpperCase());
     out.push({ id: b.id, type: "text", style: b.style || {}, html: textToHtml(text) });
   }
   return out;

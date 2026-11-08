@@ -394,7 +394,7 @@ async function pvLoad(reset) {
     if (seq !== pv.seq || !r.ok) return;
     pv.total = d.total; pv.offset += d.items.length;
     const list = document.getElementById('pvList');
-    list.insertAdjacentHTML('beforeend', d.items.map(it => `<button type="button" class="pv-item" data-cid="${it.id}">${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}</small></button>`).join(''));
+    list.insertAdjacentHTML('beforeend', d.items.map(it => `<button type="button" class="pv-item" data-cid="${it.id}" data-name="${escapeHtml(it.name || it.email)}">${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}</small></button>`).join(''));
     document.getElementById('pvCount').textContent = pv.total ? `${pv.total.toLocaleString()} recipient${pv.total === 1 ? '' : 's'} -- click one to see their email` : 'No recipients match yet';
   } catch {} finally { pv.loading = false; }
 }
@@ -413,7 +413,7 @@ document.getElementById('pvList').addEventListener('click', async (e) => {
   document.querySelectorAll('.pv-item.active').forEach(x => x.classList.remove('active'));
   item.classList.add('active');
   const hasAi = (campaign.blocks || []).some(b => b.type === 'ai');
-  document.getElementById('pvTitle').textContent = 'What ' + item.firstChild.textContent + ' gets';
+  document.getElementById('pvTitle').textContent = 'What ' + item.dataset.name + ' gets';
   document.getElementById('pvSubject').textContent = hasAi ? 'Writing their AI paragraph...' : 'Loading...';
   document.getElementById('pvNote').textContent = '';
   document.getElementById('pvFrame').srcdoc = '';

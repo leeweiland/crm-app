@@ -699,7 +699,7 @@ async function pvLoad(reset) {
     const d = await r.json();
     if (seq !== pv.seq || !r.ok) return;
     pv.total = d.total; pv.offset += d.items.length;
-    document.getElementById('pvList').insertAdjacentHTML('beforeend', d.items.map((it, i) => `<button type="button" class="pv-item" data-cid="${it.id}">${pv.q ? '' : `<span style="color:var(--pra-dim);margin-right:6px">${pv.offset - d.items.length + i + 1}.</span>`}${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}${it.tag === 'queued' ? ' -- already in the queue' : ''}</small></button>`).join(''));
+    document.getElementById('pvList').insertAdjacentHTML('beforeend', d.items.map((it, i) => `<button type="button" class="pv-item" data-cid="${it.id}" data-name="${escapeHtml(it.name || it.email)}">${pv.q ? '' : `<span style="color:var(--pra-dim);margin-right:6px">${pv.offset - d.items.length + i + 1}.</span>`}${escapeHtml(it.name || it.email)}<small>${escapeHtml(it.name ? it.email : '')}${it.tag === 'queued' ? ' -- already in the queue' : ''}</small></button>`).join(''));
     document.getElementById('pvCount').textContent = pv.total ? `${pv.total.toLocaleString()} still to get this email, in the order they'll get it -- click one to see theirs` : 'Nobody left to get this email';
   } catch {} finally { pv.loading = false; }
 }
@@ -732,7 +732,7 @@ document.getElementById('pvList').addEventListener('click', async (e) => {
   item.classList.add('active');
   const state = emailStepEditor.getState();
   const hasAi = !!pvAiBlock(state);
-  document.getElementById('pvTitle').textContent = 'What ' + item.firstChild.textContent + ' gets';
+  document.getElementById('pvTitle').textContent = 'What ' + item.dataset.name + ' gets';
   document.getElementById('pvSubject').textContent = hasAi ? 'Writing their AI paragraph...' : 'Loading...';
   document.getElementById('pvNote').textContent = '';
   document.getElementById('pvFrame').srcdoc = '';
