@@ -1240,7 +1240,24 @@ function devAutoUser() {
   const users = readJson(USERS_FILE, []);
   return users.find(u => !u.archived) || null;
 }
+// The PRA chat app (its Students panel) calls the CRM server-to-server with
+// a shared key (PRA_APP_BRIDGE_KEY, set on both Railway services) instead of
+// a login cookie. Only two routes accept it: listing contacts and changing
+// one contact (status FINISHED/BLACKLIST) -- the same endpoints staff use, so
+// every side effect of a status change (opt-outs, Blacklist sheet,
+// automations) runs exactly as if done by hand in the CRM.
+const PRA_APP_USER = { id: "pra-app-bridge", first: "PRA", last: "App", email: "app@pacificrimathletics.com", role: "admin", archived: false };
+function praAppBridgeUser(req) {
+  const want = process.env.PRA_APP_BRIDGE_KEY || "";
+  const got = String(req.headers["x-pra-app-key"] || "");
+  if (!want || !got || got.length !== want.length) return null;
+  if (!timingSafeEqual(Buffer.from(got), Buffer.from(want))) return null;
+  const path = String(req.url || "").split("?")[0];
+  const ok = (req.method === "GET" && path === "/api/contacts") || (req.method === "PATCH" && /^\/api\/contacts\/[^/]+$/.test(path));
+  return ok ? PRA_APP_USER : null;
+}
 export function getSessionUser(req) {
+  if (req.headers?.["x-pra-app-key"]) return praAppBridgeUser(req);
   const token = getCookie(req, "crm_session");
   if (!token) return devAutoUser();
   const sessions = readJson(SESSIONS_FILE, {});
