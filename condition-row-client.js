@@ -48,7 +48,7 @@ window.ConditionRowBuilder = (function () {
       <option value="emailClicked">Clicked Email</option>
       <option value="visitedPage">Visited Webpage</option>
       <option value="firstSeenAt">Lead date (oldest of Hyros / Close / AC)</option>
-      <option value="bookedAt">Booked date (most recent confirmed booking)</option>
+      <option value="bookedAt">Booked date (meeting date, most recent confirmed booking)</option>
       ${allSequences.map(w => `<option value="smsSequence:${escapeHtml(w.id)}">Has been in SMS sequence: ${escapeHtml(w.name)}</option>`).join('')}
       ${(window.crmTeamUsers || []).filter(u => !u.archived).map(u => `<option value="staffActivity:${escapeHtml(u.id)}">Emailed / texted with ${escapeHtml(u.first || u.email)}</option>`).join('')}
       ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
