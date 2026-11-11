@@ -25,6 +25,9 @@ const STATUSES_FILE = "crm_statuses.json";
 // Just a filename string, safe to duplicate (same reasoning as STATUSES_FILE
 // just above).
 const BOOKINGS_FILE = "crm_bookings.json";
+// Same reasoning: forms_backend.js's RESPONSES_FILE, duplicated as a string.
+const FORM_RESPONSES_FILE = "crm_form_responses.json";
+const APPLIED_WHEN_FIELD = "75b51532-68b5-4d10-a377-48e1dafc462f";
 
 export function digitsOnly(phone) { return String(phone || "").replace(/\D/g, ""); }
 
@@ -238,16 +241,18 @@ function evalCondition(contact, cond, payload) {
     // Real bookings only: the date the meeting is scheduled FOR. No fallback
     // to "APPLIED WHEN?" (the form date) -- someone who applied but never
     // booked must never match a "booked" condition (Lee, 2026-11-11).
-    const at = Date.parse(bookingIndex()[contact.id] || "");
-    if (isNaN(at)) return false;
-    const dayMs = 24 * 3600 * 1000;
-    switch (op) {
-      case "eq": { const d = new Date(value).getTime(); return at >= d && at < d + dayMs; }
-      case "on_or_after": return at >= new Date(value).getTime();
-      case "on_or_before": return at < new Date(value).getTime() + dayMs;
-      case "between": return at >= new Date(value.from).getTime() && at < new Date(value.to).getTime();
-      default: return false;
-    }
+    return dayCondition(Date.parse(bookingIndex()[contact.id] || ""), op, value);
+  }
+  // "Applied date" -- the day they submitted an application form.
+  // "appliedAt:<formId>" = that form's latest submission (2 ONLINE APP,
+  // 2 GYM APP, 3 ONLINE/GYM APP & BOOKING); "appliedAt:any" = their latest
+  // submission of any form, else the "APPLIED WHEN?" field (the submit date
+  // captured for applications from before the CRM's own forms).
+  if (field.startsWith("appliedAt:")) {
+    const key = field.slice("appliedAt:".length);
+    let at = Date.parse(formResponseIndex()[contact.id]?.[key] || "");
+    if (isNaN(at) && key === "any") at = Date.parse(contact.customFields?.[APPLIED_WHEN_FIELD] || "");
+    return dayCondition(at, op, value);
   }
 
   if (field.startsWith("staffActivity:") && (op === "within_last_days" || op === "not_within_last_days")) {
@@ -365,6 +370,33 @@ function staffActivityIndex() {
 // a segment pass calls evalCondition once per contact, so this keeps a
 // full-contacts pass to one read of crm_bookings.json instead of one per
 // contact.
+// Whole-calendar-day date ops shared by bookedAt and appliedAt:*.
+function dayCondition(at, op, value) {
+  if (isNaN(at)) return false;
+  const dayMs = 24 * 3600 * 1000;
+  switch (op) {
+    case "eq": { const d = new Date(value).getTime(); return at >= d && at < d + dayMs; }
+    case "on_or_after": return at >= new Date(value).getTime();
+    case "on_or_before": return at < new Date(value).getTime() + dayMs;
+    case "between": return at >= new Date(value.from).getTime() && at < new Date(value.to).getTime();
+    default: return false;
+  }
+}
+// contactId -> { [formId]: latest submittedAt, any: latest of all }, 2s memo.
+let _formIdx = null, _formIdxAt = 0;
+function formResponseIndex() {
+  if (!_formIdx || Date.now() - _formIdxAt > 2000) {
+    const idx = {};
+    for (const r of readJson(FORM_RESPONSES_FILE, [])) {
+      if (!r.contactId || !r.submittedAt) continue;
+      const e = idx[r.contactId] || (idx[r.contactId] = {});
+      if (!e[r.formId] || r.submittedAt > e[r.formId]) e[r.formId] = r.submittedAt;
+      if (!e.any || r.submittedAt > e.any) e.any = r.submittedAt;
+    }
+    _formIdx = idx; _formIdxAt = Date.now();
+  }
+  return _formIdx;
+}
 let _bookingIdx = null, _bookingIdxAt = 0;
 function bookingIndex() {
   if (!_bookingIdx || Date.now() - _bookingIdxAt > 2000) {

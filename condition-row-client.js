@@ -12,6 +12,11 @@ window.ConditionRowBuilder = (function () {
   // SMS sequences for the "Has been in SMS sequence" condition -- fetched once here
   // so every page using this builder gets them without passing them in.
   let allSequences = [];
+  // Application forms for the "Applied date" condition, same once-per-page fetch.
+  let allAppForms = [];
+  fetch('/api/forms').then(r => r.ok ? r.json() : null).then(d => { allAppForms = (d?.forms || []).filter(f => /APP/i.test(f.name)).map(f => ({ id: f.id, name: f.name })).sort((a, b) => a.name.localeCompare(b.name)); }).catch(() => {});
+  const isDayField = f => f === 'bookedAt' || String(f).startsWith('appliedAt:');
+  const appliedLabel = f => f === 'appliedAt:any' ? 'Applied date (any application form)' : `Applied date (${allAppForms.find(x => x.id === f.slice(10))?.name || 'form'})`;
   fetch('/api/workflows').then(r => r.ok ? r.json() : null).then(d => { allSequences = (d?.workflows || []).map(w => ({ id: w.id, name: w.name })); }).catch(() => {});
   function init(refData) {
     allStatuses = refData?.statuses || [];
@@ -49,6 +54,8 @@ window.ConditionRowBuilder = (function () {
       <option value="visitedPage">Visited Webpage</option>
       <option value="firstSeenAt">Lead date (oldest of Hyros / Close / AC)</option>
       <option value="bookedAt">Booked date (meeting date, most recent confirmed booking)</option>
+      <option value="appliedAt:any">Applied date (any application form)</option>
+      ${allAppForms.map(f => `<option value="appliedAt:${escapeHtml(f.id)}">Applied date (${escapeHtml(f.name)})</option>`).join('')}
       ${allSequences.map(w => `<option value="smsSequence:${escapeHtml(w.id)}">Has been in SMS sequence: ${escapeHtml(w.name)}</option>`).join('')}
       ${(window.crmTeamUsers || []).filter(u => !u.archived).map(u => `<option value="staffActivity:${escapeHtml(u.id)}">Emailed / texted with ${escapeHtml(u.first || u.email)}</option>`).join('')}
       ${allCustomFields.map(f => `<option value="customFields.${f.id}">${escapeHtml(f.label)}</option>`).join('')}
@@ -63,7 +70,7 @@ window.ConditionRowBuilder = (function () {
     // "after" = a FIXED lower bound (segments_shared.js) -- e.g. "leads since
     // Sep 6, ongoing" -- as opposed to within_last_hours' rolling window.
     if (field === "firstSeenAt" || field === "createdAt") return `<option value="within_last_hours">Within the last (hours)</option><option value="after">Is on or after (date &amp; time)</option><option value="between">Is between (dates, inclusive)</option>`;
-    if (field === "bookedAt") return `<option value="eq">Is (on this date)</option><option value="on_or_after">Is on or after</option><option value="on_or_before">Is on or before</option><option value="between">Is between (dates, inclusive)</option>`;
+    if (isDayField(field)) return `<option value="eq">Is (on this date)</option><option value="on_or_after">Is on or after</option><option value="on_or_before">Is on or before</option><option value="between">Is between (dates, inclusive)</option>`;
     // "Has emailed/texted with <team member> in the last N days" and its
     // opposite -- the second is what keeps another rep's leads out of a segment.
     if (field === "phone") return `<option value="exists">Is set (has a phone number)</option><option value="not_exists">Is not set</option>`;
@@ -156,7 +163,7 @@ window.ConditionRowBuilder = (function () {
     if (field === 'visitedPage') return `<input class="pra-input" data-cond-value placeholder="/some-page"/>`;
     if ((field === 'firstSeenAt' || field === 'createdAt') && op === 'after') return `<input class="pra-input" type="datetime-local" data-cond-value title="Your local time"/>`;
     if (field === 'firstSeenAt' || field === 'createdAt') return `<input class="pra-input" type="number" min="1" data-cond-value placeholder="e.g. 72"/>`;
-    if (field === 'bookedAt') return `<input class="pra-input" type="date" data-cond-value/>`;
+    if (isDayField(field)) return `<input class="pra-input" type="date" data-cond-value/>`;
     if (field === 'tags') return `<select class="pra-select" data-cond-value>${allTags.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}</select>`;
     if (field === 'listIds') return `<select class="pra-select" data-cond-value>${allLists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('')}</select>`;
     return `<input class="pra-input" data-cond-value placeholder="Value..."/>`;
@@ -243,7 +250,7 @@ window.ConditionRowBuilder = (function () {
       } else if (!MULTI_VALUE_OPS.includes(initial.op)) {
         const valEl = row.querySelector('[data-cond-value]');
         if (valEl) valEl.value = initial.op === 'after' ? isoToLocalInput(initial.value)
-          : (initial.field === 'bookedAt' && ['eq', 'on_or_after', 'on_or_before'].includes(initial.op)) ? isoToDateInput(initial.value, 0)
+          : (isDayField(initial.field) && ['eq', 'on_or_after', 'on_or_before'].includes(initial.op)) ? isoToDateInput(initial.value, 0)
           : (initial.value ?? '');
       }
     }
@@ -264,7 +271,7 @@ window.ConditionRowBuilder = (function () {
       }
       else value = row.querySelector('[data-cond-value]')?.value;
       if (op === 'after') value = localInputToIso(value);
-      if (field === 'bookedAt' && ['eq', 'on_or_after', 'on_or_before'].includes(op)) value = dateInputToIso(value, 0);
+      if (isDayField(field) && ['eq', 'on_or_after', 'on_or_before'].includes(op)) value = dateInputToIso(value, 0);
       return { field, op, value };
     // A blank value is meaningful for visitedPage's "contains" op --
     // matchesSegment (segments_shared.js) matches it against ANY visited
@@ -315,7 +322,7 @@ window.ConditionRowBuilder = (function () {
   }
   function describeCondition(cond) {
     const staffUser = cond.field.startsWith('staffActivity:') ? (window.crmTeamUsers || []).find(u => u.id === cond.field.slice(14)) : null;
-    const fieldLabel = FIELD_LABELS[cond.field] || (staffUser ? `Emailed / texted with ${staffUser.first || staffUser.email}` : cond.field.startsWith('staffActivity:') ? 'Emailed / texted with a team member' : null) || (cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field);
+    const fieldLabel = FIELD_LABELS[cond.field] || (cond.field.startsWith('appliedAt:') ? appliedLabel(cond.field) : null) || (staffUser ? `Emailed / texted with ${staffUser.first || staffUser.email}` : cond.field.startsWith('staffActivity:') ? 'Emailed / texted with a team member' : null) || (cond.field.startsWith('customFields.') ? (allCustomFields.find(f => f.id === cond.field.slice(13))?.label || 'Custom field') : cond.field);
     if (cond.field.startsWith('smsSequence:')) {
       const seq = allSequences.find(w => w.id === cond.field.slice(12));
       return `${cond.op === 'never' ? 'Has NOT been' : 'Has been'} in SMS sequence ${escapeHtml(seq?.name || '(sequence)')}`;
@@ -337,7 +344,7 @@ window.ConditionRowBuilder = (function () {
     if (cond.op === 'within_last_days' || cond.op === 'not_within_last_days') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} days`;
     if (cond.op === 'older_than_days') return `${fieldLabel} ${opLabel} ${escapeHtml(String(valueLabel ?? ''))} days ago`;
     if (cond.op === 'after' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    if (['eq', 'on_or_after', 'on_or_before'].includes(cond.op) && cond.field === 'bookedAt' && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleDateString([], { dateStyle: 'medium' });
+    if (['eq', 'on_or_after', 'on_or_before'].includes(cond.op) && isDayField(cond.field) && valueLabel && !isNaN(new Date(valueLabel))) valueLabel = new Date(valueLabel).toLocaleDateString([], { dateStyle: 'medium' });
     if (cond.op === 'between' && valueLabel && typeof valueLabel === 'object' && !Array.isArray(valueLabel)) {
       // Whole-day windows read as dates ("Jan 1, 2026 and May 1, 2026" -- the
       // stored end is the exclusive start of the NEXT day); anything else keeps its time.
