@@ -43,6 +43,10 @@ const COUNTS_CACHE_TTL_MS = 3 * 60 * 1000;
 // it as a fallback when their SQLite fast path is unavailable; testContactIds
 // piggybacks on whichever of those already paid the cost) specifically so a
 // single cache refresh never reads this file more than once.
+// "Subscribed" for a segment row: still reachable on that segment's channel.
+function segmentSubscribed(segment, c) {
+  return segment.channel === "sms" ? !!(c.phone && !c.smsOptOut) : !!(c.email && !c.emailOptOut);
+}
 function computeAllCounts() {
   const sqliteTags = tagCountsSqlite();
   const sqliteLists = listCountsSqlite();
@@ -50,7 +54,7 @@ function computeAllCounts() {
   const lists = sqliteLists || {};
   const segmentList = readJson(SEGMENTS_FILE, []);
   const segments = {};
-  for (const s of segmentList) segments[s.id] = 0;
+  for (const s of segmentList) segments[s.id] = { total: 0, subscribed: 0 };
   // testContact IDs, for reporting_backend.js's excludeTestContacts (was a
   // full contacts read per campaign report request -- piggybacks on this
   // pass instead).
@@ -67,7 +71,7 @@ function computeAllCounts() {
         if (!c.emailOptOut) entry.subscribed++;
       }
     }
-    for (const s of segmentList) if (matchesSegment(c, s.filter)) segments[s.id]++;
+    for (const s of segmentList) if (matchesSegment(c, s.filter)) { const e = segments[s.id]; e.total++; if (segmentSubscribed(s, c)) e.subscribed++; }
     if (c.testContact) testContactIds.push(c.id);
   });
   return { tags, lists, segments, testContactIds, computedAt: new Date().toISOString() };
@@ -808,8 +812,8 @@ export async function handleContactsRequest(req, res, url) {
     if (cached?.segments) return sendJson(res, 200, { counts: cached.segments });
     const segments = readJson(SEGMENTS_FILE, []);
     const counts = {};
-    for (const s of segments) counts[s.id] = 0;
-    forEachContact((c) => { for (const s of segments) if (matchesSegment(c, s.filter)) counts[s.id]++; });
+    for (const s of segments) counts[s.id] = { total: 0, subscribed: 0 };
+    forEachContact((c) => { for (const s of segments) if (matchesSegment(c, s.filter)) { counts[s.id].total++; if (segmentSubscribed(s, c)) counts[s.id].subscribed++; } });
     return sendJson(res, 200, { counts });
   }
   const segmentMatch = p.match(/^\/api\/segments\/([^/]+)$/);

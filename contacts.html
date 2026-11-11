@@ -572,12 +572,12 @@ const KIND_CONFIG = {
 // two count columns (subscribed vs total membership); tags/segments just one.
 const KIND_COLUMNS = {
   tag: [{ key: 'name', label: 'Name' }, { key: 'count', label: 'Contacts' }],
-  segment: [{ key: 'name', label: 'Name' }, { key: 'count', label: 'Contacts' }],
+  segment: [{ key: 'name', label: 'Name' }, { key: 'subscribed', label: 'Subscribed' }, { key: 'count', label: 'Total Contacts' }],
   list: [{ key: 'name', label: 'Name' }, { key: 'subscribed', label: 'Subscribed' }, { key: 'count', label: 'Total Contacts' }],
 };
 const KIND_DEFAULT_WIDTHS = {
   tag: { name: 400, count: 140 },
-  segment: { name: 500, count: 140 },
+  segment: { name: 500, subscribed: 140, count: 160 },
   list: { name: 340, subscribed: 140, count: 160 },
 };
 // Page/sort state per kind -- page size and sort persist across reloads
@@ -621,12 +621,13 @@ async function fetchCount(kind, item) {
 async function loadAndRenderKind(kind, rawItems, barId, nameHtmlFn) {
   let prefetchedCounts = null;
   const countsUrl = kind === 'tag' ? '/api/tags/counts' : kind === 'list' ? '/api/lists/counts' : '/api/segments/counts';
-  const emptyCount = kind === 'list' ? { total: 0, subscribed: 0 } : 0;
+  const emptyCount = (kind === 'list' || kind === 'segment') ? { total: 0, subscribed: 0 } : 0;
   try {
     const r = await fetch(countsUrl);
     if (r.ok) {
       const { counts } = await r.json();
-      prefetchedCounts = new Map(rawItems.map(item => [item.id, counts[item.id] ?? emptyCount]));
+      // A segment count cached before Subscribed existed is a bare number.
+      prefetchedCounts = new Map(rawItems.map(item => { const v = counts[item.id] ?? emptyCount; return [item.id, kind === 'segment' && typeof v === 'number' ? { total: v, subscribed: null } : v]; }));
     }
   } catch {}
   const st = tableState[kind];
@@ -719,7 +720,7 @@ function renderManagedTable(kind, barId) {
   const body = document.getElementById(p + 'Body');
   body.innerHTML = pageItems.map(item => {
     const c = prefetchedCounts?.get(item.id);
-    const countCell = kind === 'list'
+    const countCell = (kind === 'list' || kind === 'segment')
       ? `<td><a class="pra-link" data-count="${item.id}">${typeof c?.subscribed === 'number' ? c.subscribed.toLocaleString() : '—'}</a></td><td><a class="pra-link" data-count="${item.id}">${typeof c?.total === 'number' ? c.total.toLocaleString() : '—'}</a></td>`
       : `<td><a class="pra-link" data-count="${item.id}">${typeof c === 'number' ? c.toLocaleString() : '—'}</a></td>`;
     return `
@@ -970,10 +971,14 @@ document.getElementById('editSegmentSaveBtn').onclick = async () => {
   await loadSegments();
   // The counts cache lags a few minutes behind an edit -- fetch this one's
   // real count now (a live filter query) instead of showing the stale one.
-  const countEl = document.querySelector(`#segmentsBody [data-count="${segment.id}"]`);
+  const [subEl, countEl] = document.querySelectorAll(`#segmentsBody [data-count="${segment.id}"]`);
+  if (subEl) subEl.textContent = '…';
   if (countEl) countEl.textContent = '…';
-  const n = await fetchCount('segment', segment);
-  tableState.segment.prefetchedCounts?.set(segment.id, n ?? 0);
+  const optField = segment.channel === 'sms' ? 'smsOptOut' : 'emailOptOut';
+  const subItem = segment.filter?.all ? { filter: { all: [...segment.filter.all, { field: optField, op: 'eq', value: false }, { field: segment.channel === 'sms' ? 'phone' : 'email', op: 'exists' }] } } : null;
+  const [n, sub] = await Promise.all([fetchCount('segment', segment), subItem ? fetchCount('segment', subItem) : null]);
+  tableState.segment.prefetchedCounts?.set(segment.id, { total: n ?? 0, subscribed: sub });
+  if (subEl) subEl.textContent = typeof sub === 'number' ? sub.toLocaleString() : '—';
   if (countEl) countEl.textContent = typeof n === 'number' ? n.toLocaleString() : '—';
 };
 
