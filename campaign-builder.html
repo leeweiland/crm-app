@@ -125,6 +125,8 @@
           </details>
 
           <div class="pra-panel">
+            <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">From</div>
+            <select class="pra-select" id="fromSelect" style="margin-bottom:14px"><option value="">Default sender</option></select>
             <div class="pra-h2" style="margin-bottom:10px;font-size:1rem">Footer</div>
             <select class="pra-select" id="footerSelect"><option value="">Default</option></select>
             <div id="footerDirtyBar" style="display:none;margin-top:12px">
@@ -338,6 +340,8 @@ function renderAll() {
   renderSearchableMultiSelect('excludeChips', allLists, campaign.recipients.excludeListIds, (id) => toggleId(campaign.recipients.excludeListIds, id));
   const segSel = document.getElementById('segmentSelect');
   segSel.innerHTML = '<option value="">None</option>' + allSegments.map(s => `<option value="${s.id}" ${campaign.recipients.segmentId === s.id ? 'selected' : ''}>${s.name}</option>`).join('');
+  const fromSel = document.getElementById('fromSelect');
+  fromSel.innerHTML = '<option value="">Default sender</option>' + senderUsers().map(u => `<option value="${u.id}" ${campaign.fromUserId === u.id ? 'selected' : ''}>${escapeHtml(`${u.first || ''} ${u.last || ''}`.trim())} &lt;${escapeHtml(u.email)}&gt;</option>`).join('');
   const footerSel = document.getElementById('footerSelect');
   footerSel.innerHTML = `<option value="">${escapeHtml(defaultFooterLabel())}</option>` + allFooters.map(f => `<option value="${f.id}" ${campaign.footerTemplateId === f.id ? 'selected' : ''}>${f.name}</option>`).join('');
   updateRecipientCount();
@@ -458,7 +462,7 @@ async function saveCampaign(opts) {
 async function doSaveCampaign(opts) {
   const r = await fetch('/api/campaigns/' + campaign.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expectedUpdatedAt: campaign.updatedAt || null, name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend, calendarEvent: campaign.calendarEvent || null }),
+    body: JSON.stringify({ expectedUpdatedAt: campaign.updatedAt || null, name: campaign.name, subject: campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, recipients: campaign.recipients, predictiveSend: !!campaign.predictiveSend, calendarEvent: campaign.calendarEvent || null, fromUserId: campaign.fromUserId || null }),
     ...(opts?.keepalive ? { keepalive: true } : {}),
   });
   if (opts?.keepalive) return;
@@ -516,6 +520,17 @@ function readEventInputs() {
 document.getElementById('eventStartInput').addEventListener('click', (e) => { try { e.target.showPicker(); } catch {} });
 document.getElementById('segmentSelect').addEventListener('change', (e) => { campaign.recipients.segmentId = e.target.value || null; saveDebounced(); updateRecipientCount(); });
 document.getElementById('footerSelect').addEventListener('change', (e) => { campaign.footerTemplateId = e.target.value || null; saveDebounced(); updateEditorFooter(); });
+// Sender list: full user records (admins get footerTemplateId) else the team roster.
+let allSenders = null;
+fetch('/api/auth/users').then(r => r.ok ? r.json() : null).then(d => { if (d?.users) { allSenders = d.users; if (typeof campaign !== 'undefined' && campaign) renderAll(); } }).catch(() => {});
+function senderUsers() { return (allSenders || window.crmTeamUsers || []).filter(u => !u.archived && u.email); }
+// Picking a sender also switches to that person's own footer, when they have one.
+document.getElementById('fromSelect').addEventListener('change', (e) => {
+  campaign.fromUserId = e.target.value || null;
+  const u = senderUsers().find(x => x.id === campaign.fromUserId);
+  if (u?.footerTemplateId && allFooters.some(f => f.id === u.footerTemplateId)) { campaign.footerTemplateId = u.footerTemplateId; document.getElementById('footerSelect').value = u.footerTemplateId; updateEditorFooter(); }
+  saveDebounced();
+});
 function currentFooter() {
   return allFooters.find(f => f.id === campaign.footerTemplateId) || allFooters.find(f => f.isDefault) || null;
 }
@@ -610,7 +625,7 @@ document.getElementById('scheduleBtn').onclick = async () => {
 document.getElementById('testSendBtn').onclick = async () => {
   const to = document.getElementById('testEmailInput').value.trim();
   if (!to) return;
-  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, campaignId: campaign.id, calendarEvent: campaign.calendarEvent || null, segmentId: campaign.recipients?.segmentId || null }) });
+  const r = await fetch('/api/email/test-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject: '[TEST] ' + campaign.subject, previewText: campaign.previewText, blocks: campaign.blocks, theme: campaign.theme, footerTemplateId: campaign.footerTemplateId, campaignId: campaign.id, calendarEvent: campaign.calendarEvent || null, segmentId: campaign.recipients?.segmentId || null, fromUserId: campaign.fromUserId || null }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { showToast(d.error || 'Test send failed', true); return; }
   showToast('Test sent');

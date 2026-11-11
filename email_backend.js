@@ -853,7 +853,7 @@ export async function handleEmailRequest(req, res, url) {
   }
 
   if (p === "/api/email/test-send" && req.method === "POST") {
-    const { to, subject, previewText, blocks, theme, footerTemplateId, campaignId, calendarEvent, segmentId } = await readJsonBody(req);
+    const { to, subject, previewText, blocks, theme, footerTemplateId, campaignId, calendarEvent, segmentId, fromUserId } = await readJsonBody(req);
     if (!to || !subject) return sendJson(res, 400, { error: "to and subject are required" });
     // Campaign builder tests pass their (possibly unsaved) event so Add to
     // Calendar buttons arrive working, same as the real send.
@@ -867,7 +867,8 @@ export async function handleEmailRequest(req, res, url) {
           .map(b => b.html ? { ...b, html: applyAppliedAgo(b.html, sample) } : b);
       }
     }
-    const result = await sendEmail({ to, subject, previewText, blocks: testBlocks, theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null });
+    const testFrom = fromUserId ? (await import("./campaigns_backend.js")).campaignFromAddress({ fromUserId }) : null;
+    const result = await sendEmail({ to, subject, previewText, blocks: testBlocks, theme, footerTemplateId, contactId: null, sourceType: "manual", sourceId: null, from: testFrom });
     if (!result.ok) return sendJson(res, 400, { error: result.reason === "ses_not_configured" ? "Amazon SES isn't configured yet -- add AWS credentials to .env first." : result.reason });
     return sendJson(res, 200, { ok: true });
   }

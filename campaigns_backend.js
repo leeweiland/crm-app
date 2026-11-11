@@ -18,7 +18,14 @@ import { buildIcs, campaignEventDetails, campaignCalendarLinks, applyCalendarLin
 
 export const CAMPAIGNS_FILE = "crm_campaigns.json";
 export const CAMPAIGN_VERSIONS_FILE = "crm_campaign_versions.json";
-const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients", "predictiveSend", "calendarEvent"];
+const VERSIONED_FIELDS = ["name", "subject", "previewText", "blocks", "theme", "footerTemplateId", "recipients", "predictiveSend", "calendarEvent", "fromUserId"];
+// "From" on a campaign: a CRM user's own name + address (e.g. Alexis), or
+// null = the account's default sender. Archived users fall back to default.
+export function campaignFromAddress(campaign) {
+  if (!campaign?.fromUserId) return null;
+  const u = readJson("crm_users.json", []).find(x => x.id === campaign.fromUserId && !x.archived);
+  return u?.email ? `${`${u.first || ""} ${u.last || ""}`.trim() || u.email} <${u.email}>` : null;
+}
 function campaignSnapshotFields(campaign) {
   const out = {};
   for (const k of VERSIONED_FIELDS) out[k] = campaign[k];
@@ -361,7 +368,7 @@ export async function runCampaignSendLoop(campaignId) {
           sendEmail({
             to: contact.email, subject: campaign.subject, previewText: campaign.previewText, blocks: sendBlocks, theme: campaign.theme,
             footerTemplateId: campaign.footerTemplateId, contactId: contact.id,
-            sourceType: "campaign", sourceId: campaign.id, batchLog,
+            sourceType: "campaign", sourceId: campaign.id, batchLog, from: campaignFromAddress(campaign),
           }).catch((e) => console.error(`[campaign send] ${campaignId} contact ${contact.id} failed:`, e.message))
         ));
         logMessagesBatch(batchLog);
