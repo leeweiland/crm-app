@@ -340,6 +340,25 @@
         if (!container.contains(document.activeElement) || !document.activeElement.closest('.compose-bar')) container.classList.remove('compose-focused');
       }, 0);
     });
+    // Reply box: ONE line when empty, grows line by line with what's typed
+    // and shrinks back -- same as the student chat app's composer. CSS
+    // max-height (var --compose-max-h, set by the drag handle) is where it
+    // stops growing and scrolls inside. Re-fit after every render() too, so
+    // a restored draft or a cleared box after Send gets the right height.
+    const COMPOSE_MAX_KEY = 'crm-compose-max-h';
+    const composeMaxH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--compose-max-h')) || 120;
+    const setComposeMaxH = (px) => document.documentElement.style.setProperty('--compose-max-h', Math.max(120, Math.min(360, Math.round(px))) + 'px');
+    try { const saved = Number(localStorage.getItem(COMPOSE_MAX_KEY)); if (saved) setComposeMaxH(saved); } catch {}
+    function fitComposeBody() {
+      const ta = container.querySelector('#composeBody');
+      if (!ta) return;
+      ta.style.height = 'auto';
+      const cs = getComputedStyle(ta);
+      const oneLine = (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.35) + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2;
+      // Never shorter than one full line (Android's WebView can under-report scrollHeight).
+      ta.style.height = Math.max(ta.scrollHeight + 2, oneLine) + 'px';
+    }
+    container.addEventListener('input', (e) => { if (e.target.id === 'composeBody') fitComposeBody(); });
     (window.visualViewport || window).addEventListener('resize', () => {
       if (!container.classList.contains('compose-focused')) return;
       const h = viewportH();
@@ -1026,6 +1045,7 @@
         render();
         if (channel === 'email' && d.subject) container.querySelector('#composeSubject').value = d.subject;
         container.querySelector('#composeBody').value = d.body || '';
+        fitComposeBody(); // AI Assist draft can be several lines
         if (d.buyingSignal) showToast('🔥 Buying signal detected — consider taking over');
       } catch {
         showToast('Could not generate', true);
@@ -1059,25 +1079,22 @@
     // capture on the handle itself so move/up keep firing even once the
     // pointer leaves the thin 8px strip, instead of needing document-level
     // listeners.
+    // Same model as the student chat app (chat.html setupComposerResize):
+    // the reply box is always exactly as tall as what's typed, and dragging
+    // the handle on its top edge sets how tall it may GROW before it scrolls
+    // inside (120-360px) -- a cap, never a starting size. Saved per device.
     function wireComposeResize() {
       const handle = container.querySelector('#composeResizeHandle');
-      const composeBar = container.querySelector('#composeBar');
-      const thread = container.querySelector('#chatThread');
-      if (!handle || !composeBar || !thread) return;
-      const MIN_COMPOSE = 90, MIN_THREAD = 100;
+      if (!handle) return;
       handle.onpointerdown = (e) => {
         e.preventDefault();
         handle.setPointerCapture(e.pointerId);
         const startY = e.clientY;
-        const startHeight = composeBar.getBoundingClientRect().height;
-        const fixedChrome = container.clientHeight - thread.getBoundingClientRect().height - startHeight;
+        const startCap = composeMaxH();
         handle.classList.add('dragging');
         const onMove = (ev) => {
-          const delta = startY - ev.clientY; // dragging up (delta > 0) grows compose-bar
-          const maxHeight = Math.max(MIN_COMPOSE, container.clientHeight - fixedChrome - MIN_THREAD);
-          const next = Math.max(MIN_COMPOSE, Math.min(startHeight + delta, maxHeight));
-          composeBar.style.height = next + 'px';
-          composeBar.style.flex = `0 0 ${next}px`;
+          setComposeMaxH(startCap + (startY - ev.clientY)); // dragging up raises the cap
+          fitComposeBody();
         };
         const onUp = () => {
           handle.releasePointerCapture(e.pointerId);
@@ -1085,7 +1102,7 @@
           handle.removeEventListener('pointerup', onUp);
           handle.removeEventListener('pointercancel', onUp);
           handle.classList.remove('dragging');
-          state.composeBarHeight = composeBar.getBoundingClientRect().height;
+          try { localStorage.setItem(COMPOSE_MAX_KEY, String(composeMaxH())); } catch {}
         };
         handle.addEventListener('pointermove', onMove);
         handle.addEventListener('pointerup', onUp);
@@ -1323,7 +1340,7 @@
         </div>
         ` : ''}
         <div class="compose-resize-handle" id="composeResizeHandle" title="Drag to resize"></div>
-        <div class="compose-bar" id="composeBar" style="${state.composeBarHeight ? `height:${state.composeBarHeight}px;flex:0 0 ${state.composeBarHeight}px;` : ''}">
+        <div class="compose-bar" id="composeBar">
           ${showToolbar ? `
             <div class="compose-toolbar-row">
               ${state.composeChannel === 'email' && (config.teamUsers || []).length > 1 && config.currentUser?.role === 'admin' ? `
@@ -1372,7 +1389,7 @@
                   </div>
                 </div>
               </div>
-              <textarea class="pra-textarea" id="composeBody" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}">${escapeHtml(state.composeDraftByContact[contactId] || '')}</textarea>
+              <textarea class="pra-textarea" id="composeBody" rows="1" placeholder="${state.composeChannel === 'email' ? 'Write an email…' : 'Write a text message…'}">${escapeHtml(state.composeDraftByContact[contactId] || '')}</textarea>
               <div class="compose-send-group">
                 <button class="pra-btn compose-mini-btn compose-send-btn ${state.composeChannel === 'email' && state.composeReplyTo ? 'reply-mode' : ''}" id="composeSendBtn">${state.composeChannel === 'email' && state.composeReplyTo ? 'Reply' : 'Send'}</button>
                 <div class="chat-panel-task-btn compose-schedule-wrap">
@@ -1437,7 +1454,7 @@
         const subjEl = container.querySelector('#composeSubject');
         const bodyEl = container.querySelector('#composeBody');
         if (subjEl) subjEl.value = state.composeReplyTo.subject;
-        if (bodyEl) { bodyEl.value = ''; bodyEl.focus(); }
+        if (bodyEl) { bodyEl.value = ''; bodyEl.focus(); fitComposeBody(); }
       });
       threadEl.scrollTop = threadEl.scrollHeight;
 
@@ -1668,6 +1685,8 @@
           window.open('/summary-image.html?contactId=' + encodeURIComponent(contactId) + '&name=' + encodeURIComponent(name), '_blank');
         });
       }
+
+      fitComposeBody();
 
       // Just VIEWING a thread is deliberately NOT the same as responding to
       // it -- see sendComposeMessage/Mark Done above for the only two things

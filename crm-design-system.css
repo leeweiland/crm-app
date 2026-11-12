@@ -975,3 +975,10 @@ body { margin: 0; }
   }
   #composeBody::placeholder { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
+
+/* Reply box, every screen size (same as the student chat app's composer):
+   one line when empty, grows as you type (conversation-panel.js
+   fitComposeBody), scrolls inside past --compose-max-h, which the drag
+   handle above the compose bar sets (120-360px, saved per device). */
+.compose-row { flex: 0 0 auto; align-items: flex-end; }
+.compose-row textarea#composeBody { resize: none; min-height: 0; height: 38px; max-height: var(--compose-max-h, 120px); overflow-y: auto; line-height: 1.35; padding: 8px 12px; }
