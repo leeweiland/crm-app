@@ -1514,10 +1514,25 @@ export async function handleAuthRequest(req, res, url) {
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
-  // Settings > Team Users "Send login": new random password, saved as a hash,
-  // then texted (Personal Phone) + emailed to that user -- see send_login.js
-  // for why this skips the normal logged senders. The password is never
-  // returned to the admin's browser, only where it was sent.
+  // Settings > Team Users Password column: the admin types a password for a
+  // user. "/password" just saves it (hash only); "/send-login" saves it AND
+  // texts (Personal Phone) + emails it to them -- see send_login.js for why
+  // that skips the normal logged senders. Neither ever echoes it back.
+  const setPwMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/password$/);
+  if (setPwMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const { password } = await readJsonBody(req);
+    if (!password || String(password).length < 8) return sendJson(res, 400, { error: "Password must be at least 8 characters" });
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === setPwMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    const { salt, hash } = hashPassword(String(password));
+    target.passwordSalt = salt;
+    target.passwordHash = hash;
+    writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true });
+  }
   const sendLoginMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/send-login$/);
   if (sendLoginMatch && req.method === "POST") {
     const me = getSessionUser(req);
@@ -1526,8 +1541,10 @@ export async function handleAuthRequest(req, res, url) {
     const target = users.find(u => u.id === sendLoginMatch[1]);
     if (!target) return sendJson(res, 404, { error: "User not found" });
     if (target.archived) return sendJson(res, 400, { error: "User is archived" });
-    const { generatePassword, sendLoginCredentials } = await import("./send_login.js");
-    const password = generatePassword();
+    const body = await readJsonBody(req);
+    const password = String(body?.password || "");
+    if (password.length < 8) return sendJson(res, 400, { error: "Type a password (8+ characters) in their Password box first" });
+    const { sendLoginCredentials } = await import("./send_login.js");
     const { salt, hash } = hashPassword(password);
     const oldSalt = target.passwordSalt, oldHash = target.passwordHash;
     target.passwordSalt = salt;

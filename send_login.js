@@ -1,22 +1,13 @@
-// Settings > Team Users "Send login": an admin gives a team member a fresh
-// random password, and the CRM texts (their Personal Phone) + emails it to
-// them with the login link. The CRM never stores real passwords (scrypt hash
-// only), so a NEW one is the only thing it can send.
+// Settings > Team Users "Send login": the admin types a password in that
+// user's Password box; the CRM saves it (hash only) and texts (their Personal
+// Phone) + emails it to them with the login link.
 //
 // Deliberately bypasses sendSms()/sendEmail(): both write every message into
 // the message log, which shows in the Inbox -- a password must never land
 // there for every staff member to read. This goes straight to Twilio / SES
 // and logs nothing but "sent to <channel>".
-import { randomInt } from "crypto";
 import twilio from "twilio";
 import { getTwilioSettings, getSesSettings, getPublicBaseUrl } from "./integrations_backend.js";
-
-// No look-alike characters (0/O, 1/l/I) -- it's read off a phone screen.
-const ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-export function generatePassword() {
-  const pick = n => Array.from({ length: n }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
-  return `${pick(4)}-${pick(4)}-${pick(4)}`;
-}
 
 function toE164(phone) {
   const d = String(phone || "").replace(/\D/g, "");
