@@ -8,6 +8,7 @@ import { getSmsWorker } from "./sms_worker_handle.js";
 import { checkConversionGoal } from "./workflows_backend.js";
 import { getTwilioSettings, getPublicBaseUrl } from "./integrations_backend.js";
 import { recheckStopStatus, checkAutoTriggers } from "./compliance_backend.js";
+import { pushInboundSms } from "./crm_push.js";
 import { maybeCoverInboundReply } from "./ai_coverage_backend.js";
 import { recordSendTiming } from "./send_timing.js";
 
@@ -203,6 +204,8 @@ export function processTwilioInboundMessage(from, body) {
     // (contactId: null) so it's visible in the Inbox, just unattributed.
     logMessage({ channel: "sms", direction: "inbound", contactId: null, sourceType: "inbound", sourceId: null, to: twilioSettings.fromNumber || null, from, body, bodyPreview: body.slice(0, 140), status: "received" });
   }
+  // PRA Inbox Android app: push every inbound text to registered devices.
+  pushInboundSms({ contact, from, body });
 }
 
 function readRawBody(req) {

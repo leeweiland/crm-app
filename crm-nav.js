@@ -1,3 +1,9 @@
+// PRA Inbox Android app = a Capacitor shell around /inbox.html whose
+// WebView user agent carries "PRAInboxApp" (capacitor.config.json's
+// appendUserAgent). Set before anything else so the nav filter below and
+// the bell/push block at the bottom of this file can read it.
+window.crmAppMode = /PRAInboxApp/.test(navigator.userAgent);
+
 // Shared sidebar nav — injected into any page with an empty <div id="appSidebar">,
 // same "one shared script, injected per page" pattern chat-app uses for chat-header.js.
 //
@@ -67,7 +73,14 @@ window.crmNavReady = (async function () {
   // just Inbox + Contacts.
   const navPerms = navPermRes.ok ? await navPermRes.json() : { user: [], superuser: [] };
   const allowedHrefs = me.role === "admin" ? null : new Set(navPerms[me.role] || []);
-  const visibleItems = allowedHrefs ? NAV_ITEMS.filter(item => allowedHrefs.has(item.href)) : NAV_ITEMS;
+  let visibleItems = allowedHrefs ? NAV_ITEMS.filter(item => allowedHrefs.has(item.href)) : NAV_ITEMS;
+  // PRA Inbox Android app (see crmAppMode below): the menu holds only the
+  // Inbox (plus Log out), and any other page bounces back to it. Contact
+  // detail pages stay reachable from a thread's "Open Full Page".
+  if (window.crmAppMode) {
+    visibleItems = [{ href: "/inbox.html", label: "Inbox" }];
+    if (!["/inbox.html", "/contact-detail.html", "/summary-image.html"].includes(location.pathname)) { location.href = "/inbox.html"; return; }
+  }
   // A logo replaces the text wordmark entirely rather than sitting next to
   // it -- matches how the booking page's branding works (logo present hides
   // the brand-name line there too).
@@ -474,3 +487,92 @@ function praResizeTablePanel(panelId, paginationContainerId) {
   panel.style.maxHeight = Math.max(240, Math.round(available)) + 'px';
 }
 window.praResizeTablePanel = praResizeTablePanel;
+
+// ── PRA Inbox Android app: bell icon (turns inbound-SMS push on/off for this
+// phone) + notification taps open that contact's thread. Only runs inside
+// the app; the regular CRM in a browser never sees any of this.
+if (window.crmAppMode) (function () {
+  const style = document.createElement("style");
+  style.textContent = `
+    #crmPushBell { position: fixed; top: 14px; right: 14px; z-index: 300; width: 40px; height: 40px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; background: var(--pra-panel-2); border: 1px solid var(--pra-border);
+      color: var(--pra-dim); cursor: pointer; padding: 0; }
+    #crmPushBell svg { width: 20px; height: 20px; }
+    #crmPushBell.on { color: var(--pra-blue); border-color: var(--pra-blue); }
+    #crmPushBell.on .bell-slash { display: none; }
+    body:has(#chatView.thread-open) #crmPushBell { display: none; }`;
+  document.head.appendChild(style);
+
+  const TOKEN_KEY = "praInboxPushToken";
+  const OFF_KEY = "praInboxPushOff";
+  const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+
+  function plugin() { return window.Capacitor?.Plugins?.PushNotifications || null; }
+
+  const bell = document.createElement("button");
+  bell.id = "crmPushBell";
+  bell.type = "button";
+  bell.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path class="bell-slash" d="M3 3l18 18"/></svg>';
+  function paint(on) {
+    bell.classList.toggle("on", !!on);
+    bell.setAttribute("aria-label", on ? "Text notifications on" : "Text notifications off");
+    bell.title = on ? "Text notifications on (tap to turn off)" : "Turn on text notifications";
+  }
+  paint(!!ls.get(TOKEN_KEY) && !ls.get(OFF_KEY));
+
+  async function register() {
+    const P = plugin();
+    if (!P) { window.showToast?.("Notifications need the PRA Inbox app", true); return; }
+    let perm = await P.checkPermissions();
+    if (perm.receive !== "granted") perm = await P.requestPermissions();
+    if (perm.receive !== "granted") { window.showToast?.("Notifications are blocked. Allow them in Android Settings > Apps > PRA Inbox.", true); paint(false); return; }
+    await P.register(); // token arrives on the "registration" listener below
+  }
+  async function saveToken(token) {
+    ls.set(TOKEN_KEY, token);
+    if (ls.get(OFF_KEY)) return;
+    const r = await fetch("/api/push/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, platform: "android" }) });
+    paint(r.ok);
+    return r.ok;
+  }
+
+  bell.onclick = async () => {
+    const on = bell.classList.contains("on");
+    if (on) {
+      ls.set(OFF_KEY, "1");
+      const token = ls.get(TOKEN_KEY);
+      if (token) await fetch("/api/push/unregister", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+      paint(false);
+      window.showToast?.("Text notifications off");
+    } else {
+      ls.set(OFF_KEY, null);
+      window._praInboxAnnounce = true;
+      await register();
+    }
+  };
+
+  function boot() {
+    document.body.appendChild(bell);
+    const P = plugin();
+    if (!P) return;
+    P.addListener("registration", async t => {
+      const ok = await saveToken(t.value);
+      if (window._praInboxAnnounce) { window._praInboxAnnounce = false; window.showToast?.(ok ? "Text notifications on" : "Could not turn on notifications", !ok); }
+    });
+    P.addListener("registrationError", e => { paint(false); window.showToast?.("Notification setup failed: " + (e?.error || "unknown"), true); });
+    // App open in the foreground: Android shows no system notification, so
+    // surface it as a toast instead.
+    P.addListener("pushNotificationReceived", n => { window.showToast?.(`${n.title || "New text"}: ${n.body || ""}`); });
+    // Tapped a notification: open that contact's thread.
+    P.addListener("pushNotificationActionPerformed", a => {
+      const id = a?.notification?.data?.contactId;
+      location.href = id ? "/inbox.html?contact=" + encodeURIComponent(id) : "/inbox.html";
+    });
+    // Refresh the token every launch (FCM can rotate it), unless switched off.
+    // First launch turns notifications on by default (asks permission once).
+    if (!ls.get(OFF_KEY) && location.pathname !== "/login.html") {
+      window.crmNavReady?.then(() => { if (window.crmMe) { if (!ls.get(TOKEN_KEY)) window._praInboxAnnounce = true; register().catch(() => {}); } });
+    }
+  }
+  if (document.body) boot(); else document.addEventListener("DOMContentLoaded", boot);
+})();
