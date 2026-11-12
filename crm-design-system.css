@@ -956,3 +956,22 @@ body { margin: 0; }
 @keyframes call-bar-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 .call-bar-hangup { background: var(--pra-red); color: #fff; border: none; border-radius: 6px; padding: 6px 12px; font-size: .8rem; font-weight: 700; cursor: pointer; font-family: inherit; }
 .call-bar-hangup:hover { background: #ff5252; }
+
+/* ── Phones: compose-focused accordion + one-line compose placeholder ──
+   conversation-panel.js adds .compose-focused to the panel while the reply
+   box has focus on a phone; the contact info slides up so the thread and
+   compose bar get the room above the keyboard. */
+@media (max-width: 900px) {
+  .chat-panel .chat-panel-header,
+  .chat-panel .chat-panel-actions,
+  .chat-panel .track-summary {
+    max-height: 420px; overflow: hidden;
+    transition: max-height .22s ease, padding .22s ease, opacity .18s ease, border-width .22s ease;
+  }
+  .chat-panel.compose-focused .chat-panel-header,
+  .chat-panel.compose-focused .chat-panel-actions,
+  .chat-panel.compose-focused .track-summary {
+    max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0;
+  }
+  #composeBody::placeholder { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}

@@ -320,6 +320,33 @@
     container.classList.add('chat-panel');
     container.setAttribute('data-convo-panel-root', '');
 
+    // Phones: while typing in the compose bar, slide the contact info
+    // (header, Tasks/Notes/status row, email stats) up out of the way so the
+    // thread + reply box get the space above the keyboard (CSS:
+    // .chat-panel.compose-focused in crm-design-system.css). Delegated on the
+    // container, which survives render()'s innerHTML rebuilds. Closing the
+    // keyboard with Android back keeps focus in the textarea, so a viewport
+    // that grows back to full height also counts as "done typing".
+    const isPhone = () => window.matchMedia('(max-width: 900px)').matches;
+    let fullViewportH = 0, keyboardSeen = false;
+    const viewportH = () => (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+    container.addEventListener('focusin', (e) => {
+      if (!isPhone() || !e.target.closest('.compose-bar')) return;
+      if (!container.classList.contains('compose-focused')) { fullViewportH = viewportH(); keyboardSeen = false; }
+      container.classList.add('compose-focused');
+    });
+    container.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (!container.contains(document.activeElement) || !document.activeElement.closest('.compose-bar')) container.classList.remove('compose-focused');
+      }, 0);
+    });
+    (window.visualViewport || window).addEventListener('resize', () => {
+      if (!container.classList.contains('compose-focused')) return;
+      const h = viewportH();
+      if (h < fullViewportH - 150) keyboardSeen = true;
+      else if (keyboardSeen && h >= fullViewportH - 60) { keyboardSeen = false; document.activeElement?.blur?.(); container.classList.remove('compose-focused'); }
+    });
+
     const isFull = config.layout === 'full';
     const state = {
       contactId: config.contactId || null,
