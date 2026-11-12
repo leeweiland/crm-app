@@ -570,8 +570,23 @@ if (window.crmAppMode) (function () {
     });
     // Refresh the token every launch (FCM can rotate it), unless switched off.
     // First launch turns notifications on by default (asks permission once).
+    // Only the very first launch ever ASKS for permission; after that this
+    // just refreshes silently when permission is already granted. Asking on
+    // every page load re-opened Android's permission prompt on each screen
+    // for anyone who tapped "Don't allow" (and a prompt landing mid page
+    // change crashed the app on the test emulator). The bell still asks.
     if (!ls.get(OFF_KEY) && location.pathname !== "/login.html") {
-      window.crmNavReady?.then(() => { if (window.crmMe) { if (!ls.get(TOKEN_KEY)) window._praInboxAnnounce = true; register().catch(() => {}); } });
+      window.crmNavReady?.then(async () => {
+        if (!window.crmMe || !P) return;
+        try {
+          const perm = await P.checkPermissions();
+          if (perm.receive === "granted") { register().catch(() => {}); return; }
+          if (ls.get("praInboxPushAsked")) { paint(false); return; }
+          ls.set("praInboxPushAsked", "1");
+          window._praInboxAnnounce = true;
+          register().catch(() => {});
+        } catch {}
+      });
     }
   }
   if (document.body) boot(); else document.addEventListener("DOMContentLoaded", boot);

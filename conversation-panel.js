@@ -108,6 +108,44 @@
     const m = String(raw || '').match(/<([^>]+)>/);
     return (m ? m[1] : raw || '').trim();
   }
+  // Just the NEW text of an inbound email reply -- everything from the quoted
+  // thread down ("On ... wrote:", Gmail/Outlook/Yahoo quote blocks, ">"
+  // lines, "Sent from my iPhone") is cut. Shown as its own chat bubble under
+  // the email card so you can read what they said without opening it.
+  // Cached per message (DOMParser on every render would be wasteful).
+  const _replyTextCache = new Map();
+  function extractEmailReplyText(item) {
+    const key = item.id || item.providerMessageId || item.at;
+    if (_replyTextCache.has(key)) return _replyTextCache.get(key);
+    let t = '';
+    try {
+      const html = String(item.body || '');
+      const isHtml = /<[a-z][\s\S]*>/i.test(html);
+      const doc = new DOMParser().parseFromString(isHtml ? html : '<pre>' + html.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</pre>', 'text/html');
+      doc.querySelectorAll('style,script,head,title').forEach(e => e.remove());
+      const cutFrom = (el) => { // drop el and everything after it in document order
+        let n = el;
+        while (n && n !== doc.body) { let sib = n.nextSibling; while (sib) { const nx = sib.nextSibling; sib.remove(); sib = nx; } n = n.parentNode; }
+        el.remove();
+      };
+      ['.gmail_quote', '.gmail_attr', 'blockquote', '.yahoo_quoted', '#appendonsend', '#divRplyFwdMsg', '[id^="divRplyFwdMsg"]', '.moz-cite-prefix', '#mail-editor-reference-message-container', '.zmail_extra']
+        .forEach(sel => { const el = doc.body && doc.body.querySelector(sel); if (el) cutFrom(el); });
+      doc.querySelectorAll('br').forEach(b => b.replaceWith('\n'));
+      doc.querySelectorAll('p,div,li,tr,h1,h2,h3,h4,pre').forEach(b => b.append('\n'));
+      t = '\n' + (doc.body ? doc.body.textContent : '').replace(/\u00a0/g, ' ').replace(/\r/g, '');
+      for (const re of [
+        /\n[ \t]*On [^\n]{0,200}(\n[^\n]{0,120})?wrote:[ \t]*(\n|$)/i,
+        /\n[ \t]*-{2,}[ \t]*(Original|Forwarded) Message[ \t]*-{2,}/i,
+        /\n[ \t]*From:[^\n]*\n[ \t]*(Sent|Date):/i,
+        /\n[ \t]*Sent from my [^\n]*/i,
+        /\n[ \t]*Get Outlook for [^\n]*/i,
+      ]) { const m = t.match(re); if (m) t = t.slice(0, m.index); }
+      t = t.split('\n').filter(l => !/^\s*>/.test(l)).map(l => l.replace(/[ \t]+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      if (t.length > 700) t = t.slice(0, 700).trimEnd() + '…'; // calendar invites etc. -- the full email is one tap away
+    } catch { t = ''; }
+    _replyTextCache.set(key, t);
+    return t;
+  }
   function emailBubbleHtml(item, idx) {
     const clicked = (item.statusHistory || []).find(h => h.status === 'clicked');
     const opened = (item.statusHistory || []).find(h => h.status === 'opened') || clicked;
@@ -129,6 +167,10 @@
           </div>
         </div>
       </div>
+      ${item.direction === 'inbound' ? (() => { const reply = extractEmailReplyText(item); return reply ? `
+      <div class="bubble-row inbound email-reply-row">
+        <div class="bubble-content"><div class="sms-bubble email-reply-text">${escapeHtml(reply)}</div></div>
+      </div>` : ''; })() : ''}
     `;
   }
   function smsBubbleHtml(item) {
@@ -1440,13 +1482,7 @@
       threadEl.querySelectorAll('[data-reply-idx]').forEach(el => el.onclick = (e) => {
         e.stopPropagation();
         const item = items[Number(el.dataset.replyIdx)];
-        const c2 = getContact();
-        const fromAddr = extractEmailAddr(item.from) || (c2 ? `${c2.first || ''} ${c2.last || ''}`.trim() : '') || 'they';
-        state.composeReplyTo = {
-          subject: /^re:/i.test(item.subject || '') ? item.subject : `Re: ${item.subject || ''}`,
-          quotedHtml: item.body || `<p style="color:#888">${escapeHtml(item.bodyPreview || '(no content stored)')}</p>`,
-          quotedMeta: `On ${fmtDate(item.at)}, ${fromAddr} wrote:`,
-        };
+        state.composeReplyTo = replyToFor(item);
         state.composeChannel = 'email';
         storeChannel(state.contactId, 'email');
         state.composeView = 'compose';
@@ -1504,6 +1540,8 @@
       if (state.composeChannel === 'email' && state.composeReplyTo) {
         const quoteFrame = container.querySelector('#composeQuoteFrame');
         if (quoteFrame) quoteFrame.srcdoc = `<style>body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:8px;color:#333}</style>${state.composeReplyTo.quotedHtml}`;
+        const subjFill = container.querySelector('#composeSubject');
+        if (subjFill && !subjFill.value) subjFill.value = state.composeReplyTo.subject;
         const quoteRemoveBtn = container.querySelector('#composeQuoteRemoveBtn');
         if (quoteRemoveBtn) quoteRemoveBtn.onclick = () => { state.composeReplyTo = null; render(); };
       }
@@ -1699,6 +1737,33 @@
     }
 
     // ── Public instance API ─────────────────────────────────────────────
+    function replyToFor(item) {
+      const c2 = getContact();
+      const fromAddr = extractEmailAddr(item.from) || (c2 ? `${c2.first || ''} ${c2.last || ''}`.trim() : '') || 'they';
+      return {
+        subject: /^re:/i.test(item.subject || '') ? item.subject : `Re: ${item.subject || ''}`,
+        quotedHtml: item.body || `<p style="color:#888">${escapeHtml(item.bodyPreview || '(no content stored)')}</p>`,
+        quotedMeta: `On ${fmtDate(item.at)}, ${fromAddr} wrote:`,
+      };
+    }
+    // Reply box follows their MOST RECENT inbound message: a text -> SMS, an
+    // email -> threaded Reply to that email (same as clicking its Reply
+    // button). Always on opening a conversation; for a new inbound that
+    // arrives while it's open, only if nothing has been typed yet.
+    function autoPickReplyChannel(contactId) {
+      const latest = state.threadItems
+        .filter(i => i.direction === 'inbound' && (i.itemType === 'sms' || i.itemType === 'email'))
+        .sort((a, b) => new Date(b.at) - new Date(a.at))[0];
+      if (!latest) return;
+      const key = latest.id || latest.at;
+      if (key === state.lastAutoInboundKey) return;
+      const firstLoad = state.lastAutoInboundKey == null;
+      state.lastAutoInboundKey = key;
+      if (!firstLoad && (state.composeDraftByContact[contactId] || '').trim()) return;
+      if (latest.itemType === 'sms') { state.composeChannel = 'sms'; state.composeReplyTo = null; }
+      else { state.composeChannel = 'email'; state.composeReplyTo = replyToFor(latest); }
+      state.composeView = 'compose';
+    }
     async function loadThread() {
       const contactId = state.contactId;
       if (!contactId) { state.threadItems = []; state.aiAssistAvailable = false; render(); return; }
@@ -1727,6 +1792,7 @@
         .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
       if (state.contactId !== contactId) return;
       state.loading = false;
+      autoPickReplyChannel(contactId);
       render();
       config.onThreadLoaded?.(state.threadItems);
     }
@@ -1751,6 +1817,7 @@
       state.composeView = 'compose';
       state.aiAssistAvailable = false;
       state.upcomingBooking = null; // else the previous contact's booking shows in the instant render below
+      state.lastAutoInboundKey = null; // auto-pick the reply channel again for this contact (autoPickReplyChannel)
       state.done = opts.done === undefined ? null : opts.done;
       if (!hasSwitchedOnce) {
         hasSwitchedOnce = true;
