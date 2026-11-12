@@ -990,11 +990,10 @@ body { margin: 0; }
   .chat-panel.compose-focused .chat-panel-sub,
   .chat-panel.compose-focused #chatMarkDoneBtn,
   .chat-panel.compose-focused .chat-panel-name-row > *:not(#chatPanelTypeBadge):not(.chat-panel-name) { display: none; }
-  /* Reply mode opens on its own now (latest inbound was an email), so keep
-     the quoted-email preview small on phones, and just its "On ... wrote:"
-     line while typing. */
-  #composeQuoteFrame { height: 64px; }
-  .chat-panel.compose-focused #composeQuoteFrame { display: none; }
+  /* No quoted-email preview box under the reply box on phones (Lee: it
+     "should not be there"). The reply still goes out threaded with their
+     email quoted underneath, like any normal email reply. */
+  .compose-quote-preview { display: none; }
   #composeBody::placeholder { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
