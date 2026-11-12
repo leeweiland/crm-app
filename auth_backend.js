@@ -1514,6 +1514,35 @@ export async function handleAuthRequest(req, res, url) {
     writeJson(USERS_FILE, users);
     return sendJson(res, 200, { ok: true, user: publicUser(target) });
   }
+  // Settings > Team Users "Send login": new random password, saved as a hash,
+  // then texted (Personal Phone) + emailed to that user -- see send_login.js
+  // for why this skips the normal logged senders. The password is never
+  // returned to the admin's browser, only where it was sent.
+  const sendLoginMatch = p.match(/^\/api\/auth\/users\/([^/]+)\/send-login$/);
+  if (sendLoginMatch && req.method === "POST") {
+    const me = getSessionUser(req);
+    if (!isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });
+    const users = readJson(USERS_FILE, []);
+    const target = users.find(u => u.id === sendLoginMatch[1]);
+    if (!target) return sendJson(res, 404, { error: "User not found" });
+    if (target.archived) return sendJson(res, 400, { error: "User is archived" });
+    const { generatePassword, sendLoginCredentials } = await import("./send_login.js");
+    const password = generatePassword();
+    const { salt, hash } = hashPassword(password);
+    const oldSalt = target.passwordSalt, oldHash = target.passwordHash;
+    target.passwordSalt = salt;
+    target.passwordHash = hash;
+    writeJson(USERS_FILE, users);
+    const results = await sendLoginCredentials(target, password);
+    // Nothing reached them -> put the old password back so nobody is locked out.
+    if (!results.sms?.ok && !results.email?.ok) {
+      const fresh = readJson(USERS_FILE, []);
+      const t = fresh.find(u => u.id === target.id);
+      if (t) { t.passwordSalt = oldSalt; t.passwordHash = oldHash; writeJson(USERS_FILE, fresh); }
+      return sendJson(res, 502, { error: "Could not send by text or email -- password left unchanged", results });
+    }
+    return sendJson(res, 200, { ok: true, results });
+  }
   // personalPhone: the number "Call From Personal Phone" (calls_backend.js's
   // click-to-call) rings first, before bridging to the lead -- same
   // admin-edits-everyone's-own-field convention as zoomLink/calendarEmail

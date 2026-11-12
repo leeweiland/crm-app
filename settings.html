@@ -674,7 +674,8 @@ async function loadUsers() {
       <td>
         ${u.archived
           ? `<span class="pra-muted" style="margin-right:8px">Archived</span><button class="pra-btn pra-btn-ghost pra-btn-sm" data-user-unarchive="${u.id}">Unarchive</button>`
-          : `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-user-archive="${u.id}">Archive</button>`}
+          : `<button class="pra-btn pra-btn-ghost pra-btn-sm" data-user-send-login="${u.id}" data-user-name="${escapeHtml(u.first || u.email)}" title="Makes a new password and texts it (Personal Phone) + emails it to them">Send login</button>
+             <button class="pra-btn pra-btn-ghost pra-btn-sm" data-user-archive="${u.id}">Archive</button>`}
       </td>
     </tr>
   `).join('');
@@ -685,6 +686,22 @@ async function loadUsers() {
   // where they left off instead of needing the account rebuilt from
   // scratch. The backend already refuses to let an admin archive their
   // own account (auth_backend.js), so this can't lock everyone out.
+  // Send login: new random password, texted + emailed straight to them by the
+  // server (auth_backend.js /send-login). The password never comes back here.
+  body.querySelectorAll('[data-user-send-login]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Give ${btn.dataset.userName} a NEW password and text + email it to them? Their old password stops working.`)) return;
+      btn.disabled = true; btn.textContent = 'Sending...';
+      const r = await fetch(`/api/auth/users/${btn.dataset.userSendLogin}/send-login`, { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      btn.disabled = false; btn.textContent = 'Send login';
+      const res = d.results || {};
+      const where = [res.sms?.ok ? 'text to ' + res.sms.to : null, res.email?.ok ? 'email to ' + res.email.to : null].filter(Boolean).join(' and ');
+      if (!r.ok) { showToast(d.error || 'Could not send login', true); return; }
+      const missed = [!res.sms?.ok ? 'text (' + (res.sms?.reason || 'failed') + ')' : null, !res.email?.ok ? 'email (' + (res.email?.reason || 'failed') + ')' : null].filter(Boolean).join(', ');
+      showToast('Login sent by ' + where + (missed ? '. Not sent: ' + missed : ''), !!missed);
+    });
+  });
   body.querySelectorAll('[data-user-archive]').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!confirm('Archive this user? They will not be able to log in until unarchived.')) return;
