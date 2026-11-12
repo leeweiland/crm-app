@@ -1,5 +1,5 @@
 // BACK CHANNEL: fills the START DATE / END DATE contact custom fields from the
-// "ONLINE KICKOFF / BUYERS" and "GYM KICKOFF / BUYERS" sheet tabs.
+// "ONLINE BUYERS" and "GYM BUYERS" sheet tabs.
 //
 // Runs as its OWN process (via `railway ssh`), never inside the web server: the
 // server is a single Node thread, and streaming the ~180MB contacts file from
@@ -31,7 +31,7 @@ import { pathToFileURL } from "url";
 
 const APPLY = process.argv.includes("--apply");
 const SHEET_ID = "1SQPcRayDql4Fe4BJ5kcHUczMzJGCocy6jAblt3hPplI";
-const TABS = ["ONLINE KICKOFF / BUYERS", "GYM KICKOFF / BUYERS"];
+const TABS = ["ONLINE BUYERS", "GYM BUYERS"];
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
 const REPORT = path.join(DATA_DIR, "_kickoff_dates_backchannel_report.json");
 const APP_DIR = process.env.APP_DIR || "/app";

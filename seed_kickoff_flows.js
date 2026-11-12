@@ -3,7 +3,7 @@
 // ActiveCampaign contact + list -> Google Sheets row -> Formatter -> Close
 // lead). Built CRM-only, per Lee: the form submission is the trigger, the
 // contact is set ENROLLED and put on the STUDENTS list, and one row goes to
-// the matching "... KICKOFF / BUYERS" tab. ActiveCampaign, Close and the
+// the matching "... BUYERS" tab. ActiveCampaign, Close and the
 // Formatter step are deliberately NOT reproduced (the CRM owns the contact,
 // and phone numbers are already normalized at capture -- see phone_util.js).
 //
@@ -31,8 +31,8 @@ const HEADER_VALUE = {
   "Weight": "{{payload.weight}}", "Restrictions": "{{payload.food_restrictions}}", "T Shirt Size": "{{payload.t_shirt_size}}",
 };
 const TABS = {
-  GYM: { tab: "GYM KICKOFF / BUYERS", headers: ["First Name", "Last Name", "Start Date", "End Date", "Status", "Email", "Phone", "Address 1", "City", "State", "Postal Code", "Country", "Birthday", "Age", "Height", "Weight", "Restrictions", "T Shirt Size", "Clicks"], list: "GYM STUDENTS" },
-  ONLINE: { tab: "ONLINE KICKOFF / BUYERS", headers: ["First Name", "Last Name", "Start Date", "End Date", "Status", "Phone", "Email", "Address 1", "City", "State", "Postal Code", "Country", "Birthday", "Age", "Height", "Weight", "Restrictions", "T Shirt Size"], list: "ONLINE STUDENTS" },
+  GYM: { tab: "GYM BUYERS", headers: ["First Name", "Last Name", "Start Date", "End Date", "Status", "Email", "Phone", "Address 1", "City", "State", "Postal Code", "Country", "Birthday", "Age", "Height", "Weight", "Restrictions", "T Shirt Size", "Clicks"], list: "GYM STUDENTS" },
+  ONLINE: { tab: "ONLINE BUYERS", headers: ["First Name", "Last Name", "Start Date", "End Date", "Status", "Phone", "Email", "Address 1", "City", "State", "Postal Code", "Country", "Birthday", "Age", "Height", "Weight", "Restrictions", "T Shirt Size"], list: "ONLINE STUDENTS" },
 };
 
 function buildFlow(kind, form, listId) {
