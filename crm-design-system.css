@@ -726,7 +726,7 @@ body { margin: 0; }
 .bubble-content { max-width: 62%; }
 .sms-bubble { max-width: 100%; padding: 9px 13px; border-radius: 14px; font-size: .87rem; font-weight: 400; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble-row.outbound .sms-bubble { background: var(--pra-blue); color: #fff; border-bottom-right-radius: 3px; }
-.bubble-row.inbound .sms-bubble { background: #fff; color: #0a0a0d; border: 1px solid #fff; border-bottom-left-radius: 3px; }
+.bubble-row.inbound .sms-bubble { background: #5f6670; color: #fff; border: 1px solid #5f6670; border-bottom-left-radius: 3px; }
 /* Their reply text pulled out of an inbound email (conversation-panel.js
    extractEmailReplyText) -- sits right under the email card. */
 .email-reply-row { margin-top: -4px; }
@@ -739,12 +739,12 @@ body { margin: 0; }
 .email-bubble { width: 100%; max-width: 90%; border: 1px solid var(--pra-border); border-radius: 10px; overflow: hidden; cursor: pointer; }
 .bubble-row.outbound .email-bubble { margin-left: auto; border-color: rgba(0,155,255,0.4); }
 .email-bubble-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--pra-panel-2); }
-/* Their (inbound) email card: white with black text, like their SMS bubbles. */
-.bubble-row.inbound .email-bubble { background: #fff; border-color: #fff; }
-.bubble-row.inbound .email-bubble-head { background: #f1f2f4; }
-.bubble-row.inbound .email-bubble-subject { color: #0a0a0d; }
-.bubble-row.inbound .email-bubble-from, .bubble-row.inbound .email-bubble-preview, .bubble-row.inbound .email-bubble-meta { color: #4a4f57; }
-.bubble-row.inbound .email-bubble-meta { border-top-color: #e3e5e8; }
+/* Their (inbound) email card: mid gray with white text, like their SMS bubbles. */
+.bubble-row.inbound .email-bubble { background: #5f6670; border-color: #5f6670; }
+.bubble-row.inbound .email-bubble-head { background: #535a63; }
+.bubble-row.inbound .email-bubble-subject { color: #fff; }
+.bubble-row.inbound .email-bubble-from, .bubble-row.inbound .email-bubble-preview, .bubble-row.inbound .email-bubble-meta { color: #e6e8eb; }
+.bubble-row.inbound .email-bubble-meta { border-top-color: #6d747e; }
 .email-bubble-icon { flex-shrink: 0; }
 .email-bubble-subject { font-weight: 700; font-size: .85rem; color: var(--pra-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .email-bubble-from { font-size: .7rem; font-weight: 400; color: var(--pra-dim); opacity: .7; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
