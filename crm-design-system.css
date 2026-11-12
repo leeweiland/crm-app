@@ -709,6 +709,9 @@ body { margin: 0; }
 .zoom-copy-btn svg { width: 13px; height: 13px; }
 .chat-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--pra-dim); font-size: .88rem; }
 .chat-back-btn { display: none; background: none; border: none; color: var(--pra-white); font-size: 1.3rem; cursor: pointer; padding: 0 2px 0 0; flex-shrink: 0; }
+/* Pinned to the top of the header so it sits level with the name + badge,
+   not centered against the whole (email/phone/opt-outs) block. */
+.chat-back-btn { align-self: flex-start; line-height: 1; }
 
 .chat-thread { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
 .bubble-row { display: flex; }
@@ -968,11 +971,16 @@ body { margin: 0; }
     max-height: 420px; overflow: hidden;
     transition: max-height .22s ease, padding .22s ease, opacity .18s ease, border-width .22s ease;
   }
-  .chat-panel.compose-focused .chat-panel-header,
   .chat-panel.compose-focused .chat-panel-actions,
   .chat-panel.compose-focused .track-summary {
     max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0;
   }
+  /* The header doesn't vanish: it shrinks to one slim row with the back
+     arrow, the Online/Gym badge and the name. */
+  .chat-panel.compose-focused .chat-panel-header { max-height: 56px; padding-top: 6px; padding-bottom: 6px; }
+  .chat-panel.compose-focused .chat-panel-sub,
+  .chat-panel.compose-focused #chatMarkDoneBtn,
+  .chat-panel.compose-focused .chat-panel-name-row > *:not(#chatPanelTypeBadge):not(.chat-panel-name) { display: none; }
   #composeBody::placeholder { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
