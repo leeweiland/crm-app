@@ -1383,7 +1383,7 @@
 
       const items = [...state.threadItems].filter(i => ['email', 'sms', 'form', 'booking', 'activity', 'meeting', 'click', 'task_due', 'buying_signal'].includes(i.itemType)).sort((a, b) => new Date(a.at) - new Date(b.at));
       const threadEl = container.querySelector('#chatThread');
-      threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : item.itemType === 'click' ? clickBubbleHtml(item) : noteBubbleHtml(item)).join('') : '<div class="pra-muted" style="text-align:center;padding:30px">No messages yet.</div>';
+      threadEl.innerHTML = items.length ? items.map((item, idx) => item.itemType === 'email' ? emailBubbleHtml(item, idx) : item.itemType === 'sms' ? smsBubbleHtml(item) : item.itemType === 'click' ? clickBubbleHtml(item) : noteBubbleHtml(item)).join('') : `<div class="pra-muted" style="text-align:center;padding:30px">${state.loading ? 'Loading…' : 'No messages yet.'}</div>`;
       threadEl.querySelectorAll('[data-email-toggle]').forEach(el => el.onclick = () => {
         const wasExpanded = el.classList.contains('expanded');
         el.classList.toggle('expanded');
@@ -1646,7 +1646,7 @@
       // it -- see sendComposeMessage/Mark Done above for the only two things
       // that actually count as responding. /opened still fires on every
       // render, though, and clears the row's visual glow immediately.
-      if (contactId) {
+      if (contactId && !state.loading) { // the instant pre-load render from switchContact isn't a real view yet
         fetch(`/api/inbox/conversations/${contactId}/opened`, { method: 'POST' });
         config.onOpened?.(contactId);
       }
@@ -1680,6 +1680,7 @@
         .filter(b => b.status === 'confirmed' && new Date(b.startAt).getTime() > Date.now())
         .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
       if (state.contactId !== contactId) return;
+      state.loading = false;
       render();
       config.onThreadLoaded?.(state.threadItems);
     }
@@ -1703,12 +1704,20 @@
       state.composeReplyTo = null;
       state.composeView = 'compose';
       state.aiAssistAvailable = false;
+      state.upcomingBooking = null; // else the previous contact's booking shows in the instant render below
       state.done = opts.done === undefined ? null : opts.done;
       if (!hasSwitchedOnce) {
         hasSwitchedOnce = true;
         const stored = readStoredChannel(contactId);
         if (stored) state.composeChannel = stored;
       }
+      // Draw the new contact's header + compose bar immediately, with a
+      // "Loading..." thread, instead of leaving the previous contact's thread
+      // (or the "Select a conversation" placeholder) on screen until
+      // loadThread()'s four fetches finish -- on a phone that flash was the
+      // first thing you saw after tapping a row or a push notification.
+      state.loading = !!state.contactId;
+      if (state.contactId) render();
     }
 
     function handleRemoteUpdate(data) {

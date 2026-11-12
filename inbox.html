@@ -544,6 +544,13 @@ const STOP_STATUSES = ['stop', 'bad fit / blacklist', 'bad fit', 'blacklist'];
 // same contact every time the list refreshes for an unrelated reason
 // (changing the filter/sort/search, a live SSE update, ...).
 let initialContactId = new URLSearchParams(location.search).get('contact');
+// Deep link (e.g. tapping a PRA Inbox push notification): go straight to the
+// chat view with a loading state, instead of showing the conversation list
+// for a second and then jumping into the thread once conversations load.
+if (initialContactId) {
+  document.getElementById('chatView').classList.add('thread-open');
+  document.getElementById('chatPanel').innerHTML = '<div class="chat-empty">Loading…</div>';
+}
 
 function initials(name) { return String(name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase(); }
 // Outer avatar glow, by CRM status -- lead-stage-at-a-glance in the chat list.
@@ -900,6 +907,7 @@ async function loadConversations(quiet) {
     const contactRes = await fetch('/api/contacts/' + deepLinkedId);
     const contact = contactRes.ok ? (await contactRes.json()).contact : null;
     if (contact) selectConversation({ key: contact.id, contactId: contact.id, contact, displayName: `${contact.first} ${contact.last}`.trim(), lastAt: null, unreadCount: 0 });
+    else backToConvoList(); // deep-linked contact no longer exists: undo the early thread-open above
   } else if (selectedConvo) {
     const stillThere = conversations.find(c => c.key === selectedConvo.key);
     if (stillThere) selectConversation(stillThere, true);
