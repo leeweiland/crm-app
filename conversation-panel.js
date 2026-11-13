@@ -1259,13 +1259,14 @@
       const headerHtml = isFull ? `
         <div class="chat-panel-header">
           ${config.onBack ? `<button class="chat-back-btn" id="chatBackBtn" title="Back to chats">&larr;</button>` : ''}
-          <div>
+          <div class="chat-panel-head-main">
+            <!-- One line on every screen size: badge, name, status, assigned
+                 (crm-design-system.css .chat-panel-name-row). -->
             <span class="chat-panel-name-row">
               <span class="pra-badge pra-badge-${contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${contact?.programType ? escapeHtml(contact.programType) : 'SET TYPE'}</span>
               <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(config.getDisplayName ? (config.getDisplayName() || '') : `${contact?.first || ''} ${contact?.last || ''}`.trim())}</a>
+              <select class="pra-select chat-status-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
               ${contactId ? ownerFieldHtml(contact) : ''}
-              ${contactId ? createdPillHtml(contact) : ''}
-              ${contact?.renewal ? renewPillHtml(contact.renewal) : ''}
             </span>
             <div class="chat-panel-sub">
               <div class="chat-panel-sub-line">${[
@@ -1280,7 +1281,7 @@
                 zoomLinkHtml(config.currentUser),
               ].filter(Boolean).join(' · ')}</div>
               ${state.upcomingBooking ? `<div class="chat-panel-sub-line">${bookingLinkHtml()}</div>` : ''}
-              <div class="chat-panel-sub-line">${optOutTogglesHtml(contact)}</div>
+              <div class="chat-panel-sub-line">${contactId ? createdPillHtml(contact) : ''}${contact?.renewal ? renewPillHtml(contact.renewal) : ''}${optOutTogglesHtml(contact)}</div>
             </div>
           </div>
           ${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
@@ -1356,8 +1357,6 @@
               </div>
             </div>
           </div>
-          ${isFull ? `<select class="pra-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Change status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>` : ''}
-          ${isFull && contactId ? `<button class="pra-btn pra-btn-outline pra-btn-sm" id="chatGenSummaryImageBtn" type="button" title="Generate a summary image">Image</button>` : ''}
           ${!isFull && contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
       `;

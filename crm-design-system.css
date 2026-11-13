@@ -683,6 +683,35 @@ body { margin: 0; }
 .chat-panel-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; }
 .chat-panel-name-row .owner-field-select { flex: 0 0 auto; width: auto; }
 .chat-panel-name { font-weight: 700; font-size: .95rem; color: var(--pra-white); text-decoration: none; cursor: pointer; }
+/* Inbox chat panel header (layout 'full'), every screen size:
+   row 1 = back arrow | badge, name, status, assigned (one line, never wraps;
+   the name ellipsizes first, then status/assigned shrink);
+   row 2 = email/phone, time, opt-outs | Mark Done. */
+.chat-panel-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "back top top" ". sub done"; column-gap: 10px; row-gap: 6px; align-items: start; }
+.chat-panel-head-main { display: contents; }
+.chat-panel-header .chat-back-btn { grid-area: back; }
+.chat-panel-header .chat-panel-name-row { grid-area: top; flex-wrap: nowrap; min-width: 0; gap: 5px; }
+.chat-panel-header .chat-panel-sub { grid-area: sub; min-width: 0; }
+.chat-panel-header #chatMarkDoneBtn { grid-area: done; margin-left: 0 !important; align-self: start; }
+.chat-panel-header .chat-panel-name-row #chatPanelTypeBadge { flex-shrink: 0; }
+.chat-panel-header .chat-panel-name { flex: 0 1 auto; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Status + assigned: the same compact size, native <select> on desktop and
+   the phone-friendly button (crm-nav.js mobile select) at <=900px. */
+.chat-panel-header .chat-panel-name-row .chat-status-select,
+.chat-panel-header .chat-panel-name-row .owner-field-select,
+.chat-panel-header .chat-panel-name-row .owner-field-label {
+  flex: 0 1 auto; min-width: 52px; width: auto; max-width: clamp(70px, 18vw, 150px);
+  font-size: .72rem; line-height: 1.2; padding: 3px 20px 3px 8px; border-radius: 7px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-panel-header .chat-panel-name-row .owner-field-label { padding: 3px 0; }
+.chat-panel-header .chat-panel-name-row .mobile-select-trigger { padding: 3px 12px 3px 6px; font-size: .7rem; line-height: 1.2; gap: 2px; }
+.chat-panel-header .chat-panel-name-row .mobile-select-trigger-caret { font-size: .6em; }
+.chat-panel-header .chat-panel-sub-line .pra-badge, .chat-panel-header .chat-panel-sub-line > span { margin-right: 6px; }
+@media (max-width: 600px) {
+  .chat-panel-header .chat-panel-name-row .pra-badge { padding: 2px 6px; font-size: .6rem; }
+  .chat-panel-header .chat-panel-name { font-size: .9rem; }
+}
 .chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
 .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
 .chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
@@ -907,7 +936,10 @@ body { margin: 0; }
 /* Deliberately NOT flex:1/min-width -- that stretched this to fill the
    whole row width regardless of the status text length. Auto-width lets
    it shrink-wrap like every other pill/badge in this app. */
-.chat-panel-actions #chatStatusSelect { flex: 0 0 auto; width: auto; }
+/* The last two buttons in the row (booked call, schedule a meeting) open
+   their popups toward the LEFT, so a 280px popup next to the right edge of
+   a phone isn't cut off. */
+.chat-panel-actions #bookingPanel, .chat-panel-actions #schedulePanel { left: auto; right: 0; }
 /* Anchored under the Tasks button, not a full modal -- lists existing
    tasks (edit/delete) plus a quick-add form. Closes on click-out or
    Cancel, never needs its own scroll to be usable on a phone screen. */
@@ -977,12 +1009,12 @@ body { margin: 0; }
   .chat-panel .chat-panel-header,
   .chat-panel .chat-panel-actions,
   .chat-panel .track-summary {
-    max-height: 420px; overflow: hidden;
+    max-height: 420px;
     transition: max-height .22s ease, padding .22s ease, opacity .18s ease, border-width .22s ease;
   }
   .chat-panel.compose-focused .chat-panel-actions,
   .chat-panel.compose-focused .track-summary {
-    max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0;
+    max-height: 0; overflow: hidden; /* only while collapsed -- otherwise it clips the Tasks/Notes/Calls/calendar popups */ padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0;
   }
   /* The header doesn't vanish: it shrinks to one slim row with the back
      arrow, the Online/Gym badge and the name. */
