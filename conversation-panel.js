@@ -54,7 +54,7 @@
   function createdPillHtml(contact) {
     const ms = leadDateMs(contact);
     if (ms == null) return '';
-    return `<span class="chat-panel-created" style="margin-left:8px;white-space:nowrap" title="Earliest date this person appeared in any connected system (Hyros, Close, ActiveCampaign or this CRM)">Since ${fmtCreatedDate(new Date(ms).toISOString())}</span>`;
+    return `<span class="chat-panel-created" style="white-space:nowrap" title="Earliest date this person appeared in any connected system (Hyros, Close, ActiveCampaign or this CRM)">Since ${fmtCreatedDate(new Date(ms).toISOString())}</span>`;
   }
   // Compact date -- toLocaleString() always includes a time, which reads as
   // noise ("12:00:00 AM") for a task/note that was only ever given a date.
@@ -372,10 +372,43 @@
     const isPhone = () => window.matchMedia('(max-width: 900px)').matches;
     let fullViewportH = 0, keyboardSeen = false;
     const viewportH = () => (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+    // Keyboard opening keeps your place in the thread: measured BEFORE the
+    // keyboard/header animation, then held for ~1s while things resize. At
+    // (or within a bubble of) the bottom -> stays pinned to the bottom, so the
+    // last bubble rises above the keyboard. Scrolled up -> that same spot is
+    // kept the same distance from the bottom, i.e. bumped up just enough not
+    // to be covered. Same helper as chat-app's chat.html.
+    let anchorRaf = 0;
+    function holdThreadPosition() {
+      const th = container.querySelector('#chatThread');
+      if (!th) return;
+      const dist = Math.max(0, th.scrollHeight - th.scrollTop - th.clientHeight);
+      const fromBottom = dist < 60 ? 0 : dist;
+      // Held up to 2.5s (a cold first keyboard can take over 1s to resize the
+      // page), but let go the moment the person touches/scrolls the thread.
+      const until = performance.now() + 2500;
+      cancelAnimationFrame(anchorRaf);
+      const release = () => { cancelAnimationFrame(anchorRaf); th.removeEventListener('touchstart', release); th.removeEventListener('wheel', release); };
+      th.addEventListener('touchstart', release, { passive: true });
+      th.addEventListener('wheel', release, { passive: true });
+      setTimeout(release, 2600);
+      const step = () => {
+        const t = container.querySelector('#chatThread');
+        if (t) t.scrollTop = Math.max(0, t.scrollHeight - t.clientHeight - fromBottom);
+        if (performance.now() < until) anchorRaf = requestAnimationFrame(step);
+      };
+      anchorRaf = requestAnimationFrame(step);
+    }
     container.addEventListener('focusin', (e) => {
       if (!isPhone() || !e.target.closest('.compose-bar')) return;
-      if (!container.classList.contains('compose-focused')) { fullViewportH = viewportH(); keyboardSeen = false; }
+      if (!container.classList.contains('compose-focused')) { fullViewportH = viewportH(); keyboardSeen = false; holdThreadPosition(); }
       container.classList.add('compose-focused');
+    });
+    // Tapping a box that's still focused after the keyboard was dismissed
+    // doesn't fire focusin again -- the native keyboard event covers that.
+    window.Capacitor?.Plugins?.Keyboard?.addListener?.('keyboardWillShow', () => {
+      const a = document.activeElement;
+      if (isPhone() && a && container.contains(a) && a.closest('.compose-bar')) { holdThreadPosition(); container.classList.add('compose-focused'); }
     });
     container.addEventListener('focusout', () => {
       setTimeout(() => {
@@ -1279,9 +1312,10 @@
                 // timezone or that script isn't loaded.
                 contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
                 zoomLinkHtml(config.currentUser),
-              ].filter(Boolean).join(' · ')}</div>
+                contactId ? createdPillHtml(contact) : '',
+              ].filter(Boolean).join(' · ')}${contact?.renewal ? renewPillHtml(contact.renewal) : ''}</div>
               ${state.upcomingBooking ? `<div class="chat-panel-sub-line">${bookingLinkHtml()}</div>` : ''}
-              <div class="chat-panel-sub-line">${contactId ? createdPillHtml(contact) : ''}${contact?.renewal ? renewPillHtml(contact.renewal) : ''}${optOutTogglesHtml(contact)}</div>
+              <div class="chat-panel-sub-line chat-optout-line">${optOutTogglesHtml(contact)}</div>
             </div>
           </div>
           ${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}

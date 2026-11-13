@@ -707,7 +707,8 @@ body { margin: 0; }
 .chat-panel-header .chat-panel-name-row .owner-field-label { padding: 3px 0; }
 .chat-panel-header .chat-panel-name-row .mobile-select-trigger { padding: 3px 12px 3px 6px; font-size: .7rem; line-height: 1.2; gap: 2px; }
 .chat-panel-header .chat-panel-name-row .mobile-select-trigger-caret { font-size: .6em; }
-.chat-panel-header .chat-panel-sub-line .pra-badge, .chat-panel-header .chat-panel-sub-line > span { margin-right: 6px; }
+/* Email Opt Out + SMS Opt Out together on one line, flush left with the email and time lines above. */
+.chat-panel-header .chat-optout-line { white-space: nowrap; }
 @media (max-width: 600px) {
   .chat-panel-header .chat-panel-name-row .pra-badge { padding: 2px 6px; font-size: .6rem; }
   .chat-panel-header .chat-panel-name { font-size: .9rem; }
