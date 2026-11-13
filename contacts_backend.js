@@ -569,6 +569,14 @@ export async function handleContactsRequest(req, res, url) {
         // response go out first; the flow itself doesn't need to complete
         // before the client hears back that the status change saved.
         setImmediate(() => fireFlowTrigger("status_changed", { contactId: updated.id, payload: { prevStatus, status: updated.status } }));
+      } else if (String(updated.status || "").toUpperCase() === "ENROLLED" && typeof body.customFieldsPatch?.enrollKind === "string" && body.customFieldsPatch.enrollKind) {
+        // The Enrolled popup recording a sale (usually a Renewal) on someone
+        // who is ALREADY Enrolled: the status doesn't change, so nothing
+        // above fired and the sale never reached the sheets (Lee,
+        // 2026-11-13). Fire the same trigger so "5 ENROLLMENT / 6 RENEWAL /
+        // 7 TRAVEL FORM" run -- each starts with an enrollKind filter, and
+        // they are the only flows on status ENROLLED.
+        setImmediate(() => fireFlowTrigger("status_changed", { contactId: updated.id, payload: { prevStatus, status: updated.status, recorded: body.customFieldsPatch.enrollKind } }));
       }
       return sendJson(res, 200, { ok: true, contact: publicContact(updated) });
     }

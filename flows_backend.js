@@ -57,6 +57,23 @@ function escapeHtmlForEmail(s) {
 // (and every step after it) in "active" limbo permanently. Confirmed live:
 // several runs stuck mid-flow with no error logged anywhere, no way to tell
 // something had gone wrong short of noticing they never completed.
+// Sheet steps retry a transient Google failure (Lee, 2026-11-13: four
+// enrollment rows were silently lost to "fetch failed" in one minute).
+// Network errors, timeouts, 429 and 5xx only -- a real error (bad range,
+// no access) fails once as before. Each attempt re-reads the tab, so an
+// upsert that did land the first time just matches its own row.
+const TRANSIENT_SHEET_ERROR = /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket|network|(429|500|502|503|504)|rate limit|quota|backend error|internal error|unavailable/i;
+async function withSheetRetry(fn, label) {
+  const waits = [2000, 6000, 15000];
+  for (let attempt = 0; ; attempt++) {
+    try { return await fn(); }
+    catch (e) {
+      if (attempt >= waits.length || !TRANSIENT_SHEET_ERROR.test(e?.message || "")) throw e;
+      console.error(`[flows] ${label} failed (${e.message}) -- retry ${attempt + 1}/${waits.length}`);
+      await new Promise(r => setTimeout(r, waits[attempt]));
+    }
+  }
+}
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -636,7 +653,7 @@ async function advanceFlowRun(run, flow) {
     } else if (step.type === "google_sheet") {
       if (step.config.spreadsheetId && step.config.sheetName) {
         const row = (step.config.columns || []).map(tpl => resolveTemplate(tpl, ctx));
-        try { await withTimeout(appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row), 20000, "google_sheet append"); }
+        try { await withSheetRetry(() => withTimeout(appendSheetRow(step.config.spreadsheetId, step.config.sheetName, row), 20000, "google_sheet append"), "sheet append"); }
         catch (e) { console.error("[flows] sheet append failed", e.message); }
       }
       run.currentStepId = step.nextStepId || null;
@@ -644,7 +661,7 @@ async function advanceFlowRun(run, flow) {
       const cfg = step.config || {};
       if (cfg.spreadsheetId && cfg.sheetName && contact) {
         try {
-          await withTimeout((async () => {
+          await withSheetRetry(() => withTimeout((async () => {
             const { rows, accessToken } = await readSheetTabForUpsert(cfg.spreadsheetId, cfg.sheetName);
             const hdr = (rows[0] || []).map(c => String(c).trim().toLowerCase());
             // alwaysAppend: a renewal/travel sale is its own event, not a
@@ -685,7 +702,7 @@ async function advanceFlowRun(run, flow) {
               // bare number like "46287" on a column with no date format).
               await appendSheetRow(cfg.spreadsheetId, cfg.sheetName, newRow, "RAW");
             }
-          })(), 20000, "sheet_upsert");
+          })(), 20000, "sheet_upsert"), "sheet_upsert");
         } catch (e) { console.error("[flows] sheet_upsert failed", e.message); }
       }
       run.currentStepId = step.nextStepId || null;
