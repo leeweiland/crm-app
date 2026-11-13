@@ -171,6 +171,7 @@ function persistRowSideEffects(row, bodyOffset) {
   // instead of the provider's).
   if (!MESSAGES_PG) appendToJsonObjectFast(MESSAGE_ID_INDEX_FILE, row.id, { contactId: row.contactId, bodyOffset: bodyOffset?.offset ?? null, bodyLength: bodyOffset?.length ?? null, sourceType: row.sourceType || null, sourceId: row.sourceId || null, channel: row.channel, direction: row.direction, createdAt: row.createdAt, status: row.status });
   if (row.status === "failed" && row.direction === "outbound" && !SENDER_SIDE_FAILURE.test(row.failReason || "")) notifyFailedSend(row.contactId, row.channel);
+  if (row.status === "failed" || row.status === "bounced") notifyStaffFailedSend(row, row.status);
 }
 export function logMessage(fields) {
   const row = buildMessageRow(fields);
@@ -219,6 +220,15 @@ export function logMessagesBatch(fieldsList) {
 // crm_flows.json directly instead of importing flows_backend.js. Resolved
 // dynamically instead, at call time, well after both modules have finished
 // loading. Never allowed to throw into a send/webhook path over this.
+// Failed/bounced Inbox send -> tell the staff member who sent it (push +
+// banner, failed_sends.js). Same lazy import + never-throw rule as below.
+function notifyStaffFailedSend(m, status) {
+  if (status !== "failed" && status !== "bounced") return;
+  if (!m || m.sourceType !== "inbox") return;
+  import("./failed_sends.js")
+    .then(mod => mod.noteFailedSend(m, status))
+    .catch(e => console.error("[message_log] failed-send alert failed:", e.message));
+}
 function notifyFailedSend(contactId, channel) {
   import("./compliance_backend.js")
     .then(m => m.maybeAutoOptOutOnFailedSend(contactId, channel))
@@ -439,6 +449,7 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   recordDailyStatsTransition(found, oldStatus, status);
   try { noteSmsStatusChange(found, oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
   if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
+  if (status !== oldStatus) notifyStaffFailedSend({ ...found, contactId: entry.contactId }, status);
   return found;
 }
 // Postgres version of the status event: one atomic UPDATE finds the row by
@@ -454,6 +465,7 @@ function applyStatusEventPg(providerMessageId, status, extra, eventAtMs) {
   if (r.contactId) recomputeConversationSummary(r.contactId);
   try { noteSmsStatusChange(found, r.oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
   if (status === "failed" && r.oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(r.contactId, found.channel);
+  if (status !== r.oldStatus) notifyStaffFailedSend(found, status);
   return found;
 }
 // Batched sibling for a bulk-drain-sized run (2026-10-08) -- updates is an
@@ -516,6 +528,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
     recordDailyStatsTransition(found, oldStatus, status);
     try { noteSmsStatusChange(found, oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
     if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(found.contactId, found.channel);
+    if (status !== oldStatus) notifyStaffFailedSend(found, status);
   }
   return results;
 }

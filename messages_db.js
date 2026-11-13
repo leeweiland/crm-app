@@ -141,6 +141,15 @@ export function getSourceMessages(sourceType, sourceId) {
   const toJson = noTo.length ? new Map(q(`SELECT id, extra->'to' AS to_json FROM messages WHERE id = ANY($1)`, [noTo]).map(r => [r.id, r.to_json])) : null;
   return rows.map(r => ({ id: r.id, contactId: r.contact_id, to: r.to_addr ?? toJson?.get(r.id) ?? null, status: r.status, sentAt: r.sent_at || r.created_at, providerMessageId: r.provider_message_id }));
 }
+// Newest `limit` rows of one source, index-only (messages_source_slim) --
+// failed_sends.js reads a staff member's recent Inbox sends with this.
+export function sourceRecentSlim(sourceType, sourceId, limit = 400) {
+  if (!sourceType || !sourceId) return [];
+  return q(
+    `SELECT id, contact_id, to_addr, status, sent_at, created_at
+       FROM messages WHERE source_type = $1 AND source_id = $2 ORDER BY seq DESC LIMIT $3`, [sourceType, sourceId, limit]
+  );
+}
 // What crm_provider_id_index.json answered: does this provider id belong to
 // one of our messages, and which.
 export function getMessageByProviderId(providerMessageId) {

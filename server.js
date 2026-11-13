@@ -8,6 +8,7 @@ import { handleAuthRequest } from "./auth_backend.js";
 import { handleContactsRequest } from "./contacts_backend.js";
 import { handleStatusesRequest } from "./statuses_backend.js";
 import { handlePushRequest } from "./crm_push.js";
+import { handleFailedSendsRequest } from "./failed_sends.js";
 import { handleEmailRequest } from "./email_backend.js";
 import { handleCampaignsRequest } from "./campaigns_backend.js";
 import { handleAutomationsRequest } from "./automations_backend.js";
@@ -208,6 +209,7 @@ createServer(async (req, res) => {
   if (await handleContactsRequest(req, res, url)) return;
   if (await handleStatusesRequest(req, res, url)) return;
   if (await handlePushRequest(req, res, url)) return;
+  if (await handleFailedSendsRequest(req, res, url)) return;
   if (await handleEmailRequest(req, res, url)) return;
   if (await handleCampaignsRequest(req, res, url)) return;
   if (await handleAutomationsRequest(req, res, url)) return;

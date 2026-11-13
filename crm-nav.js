@@ -591,3 +591,67 @@ if (window.crmAppMode) (function () {
   }
   if (document.body) boot(); else document.addEventListener("DOMContentLoaded", boot);
 })();
+
+// Failed-send banner (Lee, 2026-11-13): a text or email YOU sent from the
+// Inbox that failed or bounced in the last 7 days shows as a red bar at the
+// top of every page. Clicking it opens that chat (and clears it); X clears
+// it. The same failure also pushes to your PRA Inbox app (failed_sends.js).
+(function () {
+  if (/\/login\.html$/.test(location.pathname)) return;
+  const style = document.createElement("style");
+  style.textContent = `
+    #crmFailedSends { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 1200;
+      width: min(640px, calc(100vw - 16px)); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+    #crmFailedSends .fs-item { pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 14px;
+      background: #c62828; color: #fff; border-radius: 9px; box-shadow: 0 6px 20px rgba(0,0,0,.28); cursor: pointer;
+      font-family: var(--font-primary, inherit); font-size: .84rem; line-height: 1.3; }
+    #crmFailedSends .fs-item:hover { background: #b71c1c; }
+    #crmFailedSends .fs-text { flex: 1; min-width: 0; }
+    #crmFailedSends .fs-text b { font-weight: 700; }
+    #crmFailedSends .fs-sub { display: block; opacity: .85; font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #crmFailedSends .fs-open { flex-shrink: 0; font-weight: 700; text-decoration: underline; font-size: .78rem; }
+    #crmFailedSends .fs-x { flex-shrink: 0; background: none; border: 0; color: #fff; font-size: 1.15rem; line-height: 1; padding: 2px 4px; cursor: pointer; opacity: .9; }
+    #crmFailedSends .fs-more { pointer-events: auto; align-self: center; background: #c62828; color: #fff; border-radius: 8px; padding: 4px 10px; font-size: .76rem; cursor: pointer; }`;
+  document.head.appendChild(style);
+  const esc = (s) => { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; };
+  const when = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
+  // Twilio/SES wording -> plain words; anything unknown is shown as-is.
+  const niceReason = (r) => !r ? "" : /1600 character/i.test(r) ? "Too long (over 1,600 characters)" : /opted out|unsubscribed|21610/i.test(r) ? "They opted out of texts" : /not a valid|invalid.*(number|phone)|21211|21614/i.test(r) ? "Not a valid phone number" : String(r).slice(0, 80);
+  let items = [], showAll = false, box = null;
+  async function dismiss(ids) {
+    items = items.filter(i => !ids.includes(i.id));
+    render();
+    try { await fetch("/api/failed-sends/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) }); } catch { /* shows again next load */ }
+  }
+  function render() {
+    if (!box) { box = document.createElement("div"); box.id = "crmFailedSends"; document.body.appendChild(box); }
+    const shown = showAll ? items : items.slice(0, 3);
+    box.innerHTML = shown.map(i => `
+      <div class="fs-item" data-id="${esc(i.id)}" data-contact="${esc(i.contactId || "")}" role="button" title="Open this chat">
+        <span class="fs-text"><b>${i.channel === "email" ? (i.status === "bounced" ? "Email bounced" : "Email failed to send") : "Text failed to send"}</b> to ${esc(i.name || "a contact")} · ${esc(when(i.at))}
+          ${i.reason || i.preview ? `<span class="fs-sub">${esc([niceReason(i.reason), i.preview ? "“" + i.preview + "”" : ""].filter(Boolean).join(" · "))}</span>` : ""}</span>
+        <span class="fs-open">Open chat</span>
+        <button class="fs-x" type="button" title="Dismiss" aria-label="Dismiss">&times;</button>
+      </div>`).join("") + (items.length > shown.length ? `<div class="fs-more">+${items.length - shown.length} more failed</div>` : "");
+    box.querySelectorAll(".fs-item").forEach(el => {
+      el.onclick = (e) => {
+        const id = el.dataset.id, contact = el.dataset.contact;
+        if (e.target.closest(".fs-x")) { e.stopPropagation(); dismiss([id]); return; }
+        dismiss([id]).finally(() => { if (contact) location.href = "/inbox.html?contact=" + encodeURIComponent(contact); });
+      };
+    });
+    const more = box.querySelector(".fs-more");
+    if (more) more.onclick = () => { showAll = true; render(); };
+  }
+  async function load() {
+    if (document.visibilityState === "hidden") return;
+    try {
+      const r = await fetch("/api/failed-sends");
+      if (!r.ok) return;
+      items = (await r.json()).items || [];
+      render();
+    } catch { /* offline -- try again next tick */ }
+  }
+  function boot() { load(); setInterval(load, 60000); document.addEventListener("visibilitychange", load); }
+  if (document.body) boot(); else document.addEventListener("DOMContentLoaded", boot);
+})();

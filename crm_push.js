@@ -66,6 +66,23 @@ async function sendOne(token, { title, body, data }) {
   return { ok: false, dead: r.status === 404 || code === "UNREGISTERED" || (code === "INVALID_ARGUMENT" && /registration token/i.test(msg)), error: msg };
 }
 
+// One push to every device a single staff user registered (e.g. "your text
+// to X failed"). Never throws.
+export async function pushToUser(userId, payload) {
+  try {
+    const targets = getTokens().filter(t => t.userId === userId);
+    if (!targets.length || !serviceAccount()) return;
+    const dead = [];
+    await Promise.all(targets.map(async t => {
+      const res = await sendOne(t.token, payload).catch(e => ({ ok: false, error: e.message }));
+      if (!res.ok) { console.error("[crm_push] send failed for user", t.userId, res.error); if (res.dead) dead.push(t.token); }
+    }));
+    if (dead.length) writeJson(TOKENS_FILE, getTokens().filter(t => !dead.includes(t.token)));
+  } catch (e) {
+    console.error("[crm_push] pushToUser failed:", e.message);
+  }
+}
+
 // Fire-and-forget from processTwilioInboundMessage. Never throws.
 export async function pushInboundSms({ contact, from, body }) {
   try {
