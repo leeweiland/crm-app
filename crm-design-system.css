@@ -683,36 +683,44 @@ body { margin: 0; }
 .chat-panel-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; }
 .chat-panel-name-row .owner-field-select { flex: 0 0 auto; width: auto; }
 .chat-panel-name { font-weight: 700; font-size: .95rem; color: var(--pra-white); text-decoration: none; cursor: pointer; }
-/* Inbox chat panel header (layout 'full'), every screen size:
-   row 1 = back arrow | badge, name, status, assigned (one line, never wraps;
-   the name ellipsizes first, then status/assigned shrink);
-   row 2 = email/phone, time, opt-outs | Mark Done. */
-.chat-panel-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "back top top" ". sub done"; column-gap: 10px; row-gap: 6px; align-items: start; }
-.chat-panel-head-main { display: contents; }
+/* Inbox chat panel header (layout 'full'), every screen size (Lee, 2026-11-13):
+   back | badge + full name
+        | email · phone                      (full width)
+        | time · Zoom          | status       (right column: one grid
+        | Since date           | assigned      column, so all three are
+        | Email/SMS Opt Out    | Mark Done     the same width) */
+.chat-panel-header { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "back top" ". sub"; column-gap: 10px; row-gap: 6px; align-items: start; }
 .chat-panel-header .chat-back-btn { grid-area: back; }
-.chat-panel-header .chat-panel-name-row { grid-area: top; flex-wrap: nowrap; min-width: 0; gap: 5px; }
-.chat-panel-header .chat-panel-sub { grid-area: sub; min-width: 0; }
-.chat-panel-header #chatMarkDoneBtn { grid-area: done; margin-left: 0 !important; align-self: start; }
+.chat-panel-header .chat-panel-name-row { grid-area: top; flex-wrap: wrap; min-width: 0; gap: 6px; }
 .chat-panel-header .chat-panel-name-row #chatPanelTypeBadge { flex-shrink: 0; }
-.chat-panel-header .chat-panel-name { flex: 0 1 auto; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Status + assigned: the same compact size, native <select> on desktop and
-   the phone-friendly button (crm-nav.js mobile select) at <=900px. */
-.chat-panel-header .chat-panel-name-row .chat-status-select,
-.chat-panel-header .chat-panel-name-row .owner-field-select,
-.chat-panel-header .chat-panel-name-row .owner-field-label {
-  flex: 0 1 auto; min-width: 52px; width: auto; max-width: clamp(70px, 18vw, 150px);
-  font-size: .72rem; line-height: 1.2; padding: 3px 20px 3px 8px; border-radius: 7px;
+.chat-panel-header .chat-panel-name { white-space: normal; overflow-wrap: anywhere; }
+.chat-panel-header .chat-panel-sub { grid-area: sub; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, max-content); column-gap: 10px; row-gap: 6px; align-items: center; }
+.chat-panel-header .cph-full { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+.chat-panel-header .cph-left { grid-column: 1; min-width: 0; }
+.chat-panel-header .cph-left:empty { min-height: 1px; }
+.chat-panel-header .cph-right { grid-column: 2; min-width: 0; max-width: min(50vw, 260px); display: flex; justify-content: stretch; }
+.chat-panel-header .cph-right:empty { display: none; }
+.chat-panel-header .chat-optout-line { white-space: nowrap; }
+.chat-panel-header .chat-optout-line .chat-optout-pill:first-child { margin-left: 0; } /* flush left with the email/time lines */
+/* Status, assigned and Mark Done: same size, same font, not bold, filling
+   the right column so they line up as one stack. */
+.chat-panel-header .cph-right select,
+.chat-panel-header .cph-right button,
+.chat-panel-header .cph-right .owner-field-label,
+.chat-panel-header .cph-right .mobile-select-anchor {
+  field-sizing: content; /* a <select> sizes to its SELECTED value, not its longest option */
+  flex: 1 1 auto; width: 100%; min-width: 0; box-sizing: border-box;
+  font-family: var(--font-primary); font-size: .74rem; font-weight: 400; line-height: 1.25;
+  padding: 4px 22px 4px 9px; border-radius: 7px; text-align: left;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.chat-panel-header .chat-panel-name-row .owner-field-label { padding: 3px 0; }
-.chat-panel-header .chat-panel-name-row .mobile-select-trigger { padding: 3px 12px 3px 6px; font-size: .7rem; line-height: 1.2; gap: 2px; }
-.chat-panel-header .chat-panel-name-row .mobile-select-trigger-caret { font-size: .6em; }
-/* Email Opt Out + SMS Opt Out together on one line, flush left with the email and time lines above. */
-.chat-panel-header .chat-optout-line { white-space: nowrap; }
-@media (max-width: 600px) {
-  .chat-panel-header .chat-panel-name-row .pra-badge { padding: 2px 6px; font-size: .6rem; }
-  .chat-panel-header .chat-panel-name { font-size: .9rem; }
-}
+.chat-panel-header .cph-right .mobile-select-wrap { display: contents; }
+.chat-panel-header .cph-right .mobile-select-anchor { padding: 0 !important; }
+.chat-panel-header .cph-right .mobile-select-trigger { padding: 4px 18px 4px 9px; font-size: .74rem; line-height: 1.25; gap: 4px; }
+.chat-panel-header .cph-right .mobile-select-trigger-caret { font-size: .6em; }
+.chat-panel-header .cph-right .owner-field-label { padding: 4px 0; }
+.chat-panel-header #chatMarkDoneBtn { margin: 0 !important; padding: 4px 9px; letter-spacing: 0; text-transform: none; }
+
 .chat-panel-name:hover { color: var(--pra-blue); text-decoration: underline; }
 .chat-panel-created { font-size: .72rem; font-weight: 400; color: var(--pra-dim); white-space: nowrap; }
 .chat-panel-sub { font-size: .74rem; color: var(--pra-dim); }
@@ -1023,6 +1031,7 @@ body { margin: 0; }
   .chat-panel.compose-focused .chat-panel-sub,
   .chat-panel.compose-focused #chatMarkDoneBtn,
   .chat-panel.compose-focused .chat-panel-name-row > *:not(#chatPanelTypeBadge):not(.chat-panel-name) { display: none; }
+  .chat-panel.compose-focused .chat-panel-header .chat-panel-sub { display: none; }
   #composeBody::placeholder { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 

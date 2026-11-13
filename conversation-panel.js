@@ -1289,36 +1289,40 @@
       const emailItems = state.threadItems.filter(i => i.itemType === 'email');
       const showToolbar = typeof config.showComposeToolbar === 'function' ? config.showComposeToolbar() : config.showComposeToolbar !== false;
 
+      // Header (Lee, 2026-11-13), every screen size:
+      //   badge + full name
+      //   email · phone
+      //   time · Zoom          | status   (full text)
+      //   Since date (+renew)  | assigned (same width as status)
+      //   Email/SMS Opt Out    | Mark Done (same size + font, not bold)
+      // The right-hand column is one grid column, so the three controls are
+      // always the same width (the widest of them, capped at ~half the row).
       const headerHtml = isFull ? `
         <div class="chat-panel-header">
           ${config.onBack ? `<button class="chat-back-btn" id="chatBackBtn" title="Back to chats">&larr;</button>` : ''}
-          <div class="chat-panel-head-main">
-            <!-- One line on every screen size: badge, name, status, assigned
-                 (crm-design-system.css .chat-panel-name-row). -->
-            <span class="chat-panel-name-row">
-              <span class="pra-badge pra-badge-${contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${contact?.programType ? escapeHtml(contact.programType) : 'SET TYPE'}</span>
-              <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(config.getDisplayName ? (config.getDisplayName() || '') : `${contact?.first || ''} ${contact?.last || ''}`.trim())}</a>
-              <select class="pra-select chat-status-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select>
-              ${contactId ? ownerFieldHtml(contact) : ''}
-            </span>
-            <div class="chat-panel-sub">
-              <div class="chat-panel-sub-line">${[
-                contact?.email ? escapeHtml(contact.email) : '',
-                contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}" onclick="event.preventDefault();event.stopPropagation();window.CallPopup.open({contactId:'${contactId}',phone:'${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}',anchorEl:this})">${escapeHtml(contact.phone)}</a>` : '',
-              ].filter(Boolean).join(' · ')}</div>
-              <div class="chat-panel-sub-line">${[
-                // The contact's own local time (see contact-time.js) -- ''
-                // (dropped by the filter) when the number doesn't reveal a
-                // timezone or that script isn't loaded.
-                contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
-                zoomLinkHtml(config.currentUser),
-                contactId ? createdPillHtml(contact) : '',
-              ].filter(Boolean).join(' · ')}${contact?.renewal ? renewPillHtml(contact.renewal) : ''}</div>
-              ${state.upcomingBooking ? `<div class="chat-panel-sub-line">${bookingLinkHtml()}</div>` : ''}
-              <div class="chat-panel-sub-line chat-optout-line">${optOutTogglesHtml(contact)}</div>
-            </div>
+          <span class="chat-panel-name-row">
+            <span class="pra-badge pra-badge-${contact?.programType || ''}" id="chatPanelTypeBadge" title="Click to change">${contact?.programType ? escapeHtml(contact.programType) : 'SET TYPE'}</span>
+            <a class="chat-panel-name" id="chatPanelNameLink">${escapeHtml(config.getDisplayName ? (config.getDisplayName() || '') : `${contact?.first || ''} ${contact?.last || ''}`.trim())}</a>
+          </span>
+          <div class="chat-panel-sub">
+            <div class="cph-full">${[
+              contact?.email ? escapeHtml(contact.email) : '',
+              contact?.phone ? `<a class="pra-tel-link" href="tel:${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}" onclick="event.preventDefault();event.stopPropagation();window.CallPopup.open({contactId:'${contactId}',phone:'${escapeHtml(contact.phone.replace(/[^\d+]/g, ''))}',anchorEl:this})">${escapeHtml(contact.phone)}</a>` : '',
+            ].filter(Boolean).join(' · ')}</div>
+            ${state.upcomingBooking ? `<div class="cph-full">${bookingLinkHtml()}</div>` : ''}
+            <div class="cph-left">${[
+              // The contact's own local time (see contact-time.js) -- ''
+              // (dropped by the filter) when the number doesn't reveal a
+              // timezone or that script isn't loaded.
+              contact?.phone && window.PRAContactTime ? window.PRAContactTime.chipHtml(contact.phone) : '',
+              zoomLinkHtml(config.currentUser),
+            ].filter(Boolean).join(' · ')}</div>
+            <div class="cph-right"><select class="pra-select chat-status-select" id="chatStatusSelect" style="${config.statusGlowStyle ? config.statusGlowStyle(contact?.status) : ''}"><option value="">Status...</option>${(config.allStatuses || []).map(s => `<option value="${escapeHtml(s.label)}" ${contact?.status === s.label ? 'selected' : ''}>${escapeHtml(s.label)}</option>`).join('')}</select></div>
+            <div class="cph-left">${contactId ? createdPillHtml(contact) : ''}${contact?.renewal ? renewPillHtml(contact.renewal) : ''}</div>
+            <div class="cph-right">${contactId ? ownerFieldHtml(contact) : ''}</div>
+            <div class="cph-left chat-optout-line">${optOutTogglesHtml(contact)}</div>
+            <div class="cph-right">${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}</div>
           </div>
-          ${contactId ? `<button class="pra-btn pra-btn-ghost pra-btn-sm" id="chatMarkDoneBtn" type="button" style="margin-left:auto" title="Mark as handled without replying">${markDoneLabel()}</button>` : ''}
         </div>
       ` : '';
 
