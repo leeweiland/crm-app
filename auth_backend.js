@@ -1256,8 +1256,30 @@ function praAppBridgeUser(req) {
   const ok = (req.method === "GET" && path === "/api/contacts") || (req.method === "PATCH" && /^\/api\/contacts\/[^/]+$/.test(path));
   return ok ? PRA_APP_USER : null;
 }
+// Thumbnail Studio's "YT Email" tab preps a campaign DRAFT for each new
+// long-form video (THUMBNAIL_STUDIO_BRIDGE_KEY, on crm-app and in
+// thumbnail-studio/.env as CRM_BRIDGE_KEY). It can read lists, segments and
+// footers, upload the thumbnail, create a campaign, and read/edit a campaign
+// that is still a draft (campaigns_backend.js refuses its PATCH otherwise).
+// No send, schedule, delete, duplicate or anything else.
+export const TS_BRIDGE_USER_ID = "thumbnail-studio-bridge";
+const TS_BRIDGE_USER = { id: TS_BRIDGE_USER_ID, first: "Thumbnail", last: "Studio", email: "thumbnail-studio@pacificrimathletics.com", role: "admin", archived: false };
+function tsBridgeUser(req) {
+  const want = process.env.THUMBNAIL_STUDIO_BRIDGE_KEY || "";
+  const got = String(req.headers["x-ts-key"] || "");
+  if (!want || !got || got.length !== want.length) return null;
+  if (!timingSafeEqual(Buffer.from(got), Buffer.from(want))) return null;
+  const path = String(req.url || "").split("?")[0];
+  const m = req.method;
+  const ok =
+    (m === "GET" && (path === "/api/lists" || path === "/api/segments" || path === "/api/footer-templates")) ||
+    (m === "POST" && (path === "/api/uploads/image" || path === "/api/campaigns")) ||
+    ((m === "GET" || m === "PATCH") && /^\/api\/campaigns\/[\w-]+$/.test(path));
+  return ok ? TS_BRIDGE_USER : null;
+}
 export function getSessionUser(req) {
   if (req.headers?.["x-pra-app-key"]) return praAppBridgeUser(req);
+  if (req.headers?.["x-ts-key"]) return tsBridgeUser(req);
   const token = getCookie(req, "crm_session");
   if (!token) return devAutoUser();
   const sessions = readJson(SESSIONS_FILE, {});

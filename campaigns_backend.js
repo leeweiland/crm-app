@@ -2,7 +2,7 @@ import { bestSendHours, releaseAtForHour } from "./send_time_db.js";
 import { randomUUID } from "crypto";
 import { statSync } from "fs";
 import { join } from "path";
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, DATA_DIR } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, DATA_DIR, TS_BRIDGE_USER_ID } from "./auth_backend.js";
 import { matchesSegment, SEGMENTS_FILE } from "./contacts_backend.js";
 import { segmentMembers } from "./segments_shared.js";
 import { getAllContacts, filterContacts, getContactById } from "./contacts_db.js";
@@ -591,6 +591,8 @@ export async function handleCampaignsRequest(req, res, url) {
     }
     if (req.method === "PATCH") {
       if (!campaign) return sendJson(res, 404, { error: "Not found" });
+      // Thumbnail Studio's key may only edit drafts (see auth_backend.js).
+      if (me.id === TS_BRIDGE_USER_ID && campaign.status !== "draft") return sendJson(res, 403, { error: "Only draft campaigns can be edited from Thumbnail Studio" });
       const body = await readJsonBody(req);
       const locked = campaign.status === "sent" || campaign.status === "sending";
       // Once sent, everything that actually went out (subject/blocks/
