@@ -63,10 +63,11 @@ window.EnrollPopup = (function () {
   // whatever it was BEFORE calling this, so nothing anywhere shows
   // "Enrolled" prematurely. opts.onCommitted() is how the caller finds out
   // it's real and can now show it.
-  // "manual" (far right) = just set the status to Enrolled -- no inputs, no
-  // sheet write. Its enrollKind is excluded by every one of the 3 flows'
-  // leading filter steps, so nothing runs off it.
-  const KIND_LABELS = { new: "New Enrollment", renewal: "Renewal", travel: "Travel", manual: "Manual" };
+  // "manual" (status only, no sheet write) is no longer offered (Lee,
+  // 2026-11-13): it left Online/Gym unset and no buyers-sheet row, so real
+  // students showed up as Online in the student app. Its handling below
+  // stays only so an old forceKind:"manual" can't break the popup.
+  const KIND_LABELS = { new: "New Enrollment", renewal: "Renewal", travel: "Travel" };
   const KIND_TITLES = { new: "Record Enrollment", renewal: "Record Renewal", travel: "Record Travel Booking", manual: "Mark as Enrolled" };
   // What each kind does on Save, spelled out right under the toggle so it's
   // never a surprise which sheet is about to get a new row -- see each
@@ -99,7 +100,7 @@ window.EnrollPopup = (function () {
     // Already enrolled -> this is never a first-time enrollment, so default
     // to Renewal instead (still just a default -- Travel/New stay one click
     // away via the toggle).
-    const initialKind = opts.forceKind || (String(contact.status || "").toUpperCase() === "ENROLLED" ? "renewal" : "new");
+    const initialKind = (opts.forceKind && KIND_LABELS[opts.forceKind] ? opts.forceKind : null) || (String(contact.status || "").toUpperCase() === "ENROLLED" ? "renewal" : "new");
 
     backdropEl = document.createElement("div");
     // NOT .modal-backdrop -- see crm-design-system.css's own comment on
