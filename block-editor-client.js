@@ -936,52 +936,19 @@ window.BlockEditor = (function () {
         el.addEventListener('click', (e) => {
           if (e.target.closest('a')) e.preventDefault();
         });
-        // Pasted HTML (e.g. from an old ActiveCampaign template) often
-        // carries its own inline padding/margin/border on wrapper elements.
-        // Left in place, that becomes a second, hidden layout source the
-        // style panel's Border/Margin/Padding fields don't control or even
-        // show -- stacking with whatever the block's own style is set to
-        // and looking like padding that "can't be removed". Stripping just
-        // those three properties (not color/font/etc, which are wanted)
-        // keeps paste useful while preventing that.
+        // Paste = the words, line breaks and links only, so pasted text looks
+        // exactly like typed text in this block (its font, size, color and
+        // line spacing) -- no colors, highlights, fonts, bold, padding etc.
+        // carried in from Docs/Gmail/web pages (Lee, 2026-11-13: pasted text
+        // came in with a black highlight). Links are kept and shown in PRA
+        // blue #009bff; a bare URL in plain text becomes a link too.
         el.addEventListener('paste', (e) => {
+          const cd = e.clipboardData || window.clipboardData;
+          if (!cd) return;
+          // An image paste is handled by the document-level handler above.
+          if ([...(cd.items || [])].some(it => it.kind === 'file' && /^image\//.test(it.type)) && !cd.getData('text/plain')) return;
           e.preventDefault();
-          const html = (e.clipboardData || window.clipboardData).getData('text/html');
-          const text = (e.clipboardData || window.clipboardData).getData('text/plain');
-          if (html) {
-            const frag = document.createElement('div');
-            frag.innerHTML = html;
-            // Google Docs wraps every paragraph in one inline <b id="docs-
-            // internal-guid-*"> -- inserting that as-is makes the browser
-            // split the wrapper and leave stray empty <p>s, i.e. phantom
-            // blank lines between paragraphs that had none.
-            frag.querySelectorAll('[id^="docs-internal-guid"]').forEach(w => w.replaceWith(...w.childNodes));
-            frag.querySelectorAll('[style]').forEach(node => {
-              // Docs gives every <p> an explicit margin:0pt; merely stripping
-              // it (below) would swap that for the browser's default 1em <p>
-              // margins and double every gap, so a source-declared zero stays zero.
-              const zeroMargin = node.tagName === 'P' && parseFloat(node.style.marginTop) === 0 && parseFloat(node.style.marginBottom) === 0;
-              node.style.removeProperty('padding');
-              ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'].forEach(p => node.style.removeProperty(p));
-              node.style.removeProperty('margin');
-              ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach(p => node.style.removeProperty(p));
-              node.style.removeProperty('border');
-              // Word processors stamp every span with its own explicit body
-              // size (Docs' default is 11pt = ~14.7px, shown as 15), so pasted
-              // text would ignore the email's default size and sit a hair
-              // smaller than the text around it. Ordinary body-size values
-              // (10.5-12.5pt / 14-16.7px) are dropped so the text inherits
-              // the email's default; headings and fine print keep their size.
-              const fs = node.style.fontSize;
-              const fsPx = /pt$/.test(fs) ? parseFloat(fs) * 4 / 3 : /px$/.test(fs) ? parseFloat(fs) : NaN;
-              if (fsPx >= 14 && fsPx <= 16.7) node.style.removeProperty('font-size');
-              if (zeroMargin) node.style.margin = '0';
-              if (!node.getAttribute('style')) node.removeAttribute('style');
-            });
-            document.execCommand('insertHTML', false, frag.innerHTML);
-          } else {
-            document.execCommand('insertText', false, text);
-          }
+          document.execCommand('insertHTML', false, cleanPasteHtml(cd.getData('text/html'), cd.getData('text/plain')));
         });
       });
       canvas.querySelectorAll('[data-move]').forEach(btn => {
@@ -1385,6 +1352,85 @@ window.BlockEditor = (function () {
 // Email-step modals' sticky head (.eb-modal-head, see crm-design-system.css)
 // -- its height varies (flow-builder's To/From/Subject fields wrap), so it's
 // measured rather than hardcoded, and re-measured whenever the modal opens.
+
+// ── Clean paste for text blocks ───────────────────────────────────────
+// Keeps only text, line breaks and links. Every block-level element (p, div,
+// li, headings, table rows) becomes a line break; consecutive blank lines are
+// capped at one. Links -> <a href> in #009bff; bare http(s)/www/domain.com
+// URLs in plain text are linked too.
+const PASTE_LINK_STYLE = 'color:#009bff;text-decoration:underline';
+function _pasteEsc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function _pasteSafeHref(h) {
+  h = String(h || '').trim();
+  if (/^(https?:|mailto:|tel:)/i.test(h) || /^%[A-Z_]+%$/.test(h)) return h;
+  if (/^www\./i.test(h)) return 'https://' + h;
+  return '';
+}
+const _PASTE_URL_RE = /\b((?:https?:\/\/|www\.)[^\s<>"]+|(?:[a-z0-9-]+\.)+(?:com|net|org|co|io|app|ly|me|us|tv|info|biz)(?:\/[^\s<>"]*)?)/gi;
+function _pasteLinkify(text) {
+  let out = '', last = 0;
+  text.replace(_PASTE_URL_RE, (m, _g, idx) => {
+    let url = m, trail = '';
+    while (/[.,!?;:)\]'"]$/.test(url)) { trail = url.slice(-1) + trail; url = url.slice(0, -1); }
+    if (!url) return m;
+    if (/@/.test(text.slice(Math.max(0, idx - 1), idx))) return m; // part of an email address
+    const href = /^https?:\/\//i.test(url) ? url : 'https://' + url;
+    out += _pasteEsc(text.slice(last, idx)) + `<a href="${_pasteEsc(href)}" style="${PASTE_LINK_STYLE}">${_pasteEsc(url)}</a>` + _pasteEsc(trail);
+    last = idx + m.length;
+    return m;
+  });
+  return out + _pasteEsc(text.slice(last));
+}
+function cleanPasteHtml(html, text) {
+  const parts = []; // {t:'text'|'link'|'br', ...}
+  const BLOCK = /^(P|DIV|LI|H[1-6]|TR|BLOCKQUOTE|PRE|SECTION|ARTICLE|HEADER|FOOTER|UL|OL|TABLE)$/;
+  const br = () => parts.push({ t: 'br' });
+  const endsWithBr = () => parts.length && parts[parts.length - 1].t === 'br';
+  function walk(node, linkHref) {
+    if (node.nodeType === 3) {
+      let v = node.nodeValue.replace(/\s+/g, ' ');
+      if (!parts.length || endsWithBr()) v = v.replace(/^ /, ''); // no stray space at a line start (markup newlines)
+      if (v) parts.push({ t: 'text', v, href: linkHref });
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName;
+    if (/^(STYLE|SCRIPT|HEAD|TITLE|META|LINK|O:P)$/.test(tag)) return;
+    if (tag === 'BR') { br(); return; }
+    if (tag === 'IMG') return;
+    const href = tag === 'A' ? (_pasteSafeHref(node.getAttribute('href')) || linkHref) : linkHref;
+    const isBlock = BLOCK.test(tag);
+    if (isBlock && parts.length && !endsWithBr()) br();
+    node.childNodes.forEach(c => walk(c, href));
+    if (isBlock && !endsWithBr()) br();
+  }
+  if (html) {
+    const frag = document.createElement('div');
+    frag.innerHTML = html;
+    walk(frag, '');
+  } else {
+    String(text || '').replace(/\r\n?/g, '\n').split('\n').forEach((line, i) => { if (i) br(); if (line) parts.push({ t: 'text', v: line, href: '' }); });
+  }
+  // Trim leading/trailing breaks, cap runs at two (= one blank line).
+  while (parts.length && parts[0].t === 'br') parts.shift();
+  while (parts.length && parts[parts.length - 1].t === 'br') parts.pop();
+  let out = '', run = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.t === 'br') { run++; if (run <= 2) out += '<br>'; continue; }
+    run = 0;
+    if (p.href) {
+      // merge adjacent text pieces of the same link into one <a>
+      let v = p.v;
+      while (parts[i + 1] && parts[i + 1].t === 'text' && parts[i + 1].href === p.href) v += parts[++i].v;
+      out += `<a href="${_pasteEsc(p.href)}" style="${PASTE_LINK_STYLE}">${_pasteEsc(v)}</a>`;
+    } else {
+      out += _pasteLinkify(p.v);
+    }
+  }
+  return out;
+}
+
 (function () {
   const sync = (head) => { const box = head.closest('.modal-box'); if (box) box.style.setProperty('--eb-head-h', head.offsetHeight + 'px'); };
   const start = () => document.querySelectorAll('.eb-modal-head').forEach(head => {
