@@ -1,6 +1,6 @@
 import { getContactById, updateContactByField } from "./contacts_db.js";
 import { getContactMessages } from "./message_index.js";
-import { getComplianceSettings } from "./integrations_backend.js";
+import { getComplianceSettings, getTwilioSettings } from "./integrations_backend.js";
 import { getConvoMeta, setConvoMeta } from "./conversation_meta.js";
 import { syncContactFields } from "./sqlite_inbox.js";
 import { appendToBlacklistSheet } from "./blacklist_sheet.js";
@@ -96,12 +96,48 @@ export function recheckStopStatus(contactId) {
 // "failed" (logMessage for an immediate send failure, and
 // updateMessageStatusByProviderId for a later delivery-webhook failure) --
 // the one channel-agnostic choke point both paths already go through.
-export function maybeAutoOptOutOnFailedSend(contactId, channel) {
+// Twilio error codes that are about the RECIPIENT's number -- the only SMS
+// failures that justify an auto opt-out. Everything else (30019 content too
+// long, 30007 carrier spam filter, 30034 A2P registration, 30001/30002
+// account/queue, 30022/30023 throughput caps, ...) is our message or our
+// account, and opting the contact out for it is wrong: confirmed live
+// 2026-11-13, a 1,281-character reply (20 segments, Twilio 30019) opted a
+// brand-new gym student out of texts.
+const SMS_RECIPIENT_SIDE_CODES = new Set(["21211", "21610", "21614", "30003", "30004", "30005", "30006"]);
+async function twilioErrorCode(sid) {
+  const { accountSid, authToken } = getTwilioSettings();
+  if (!sid || !accountSid || !authToken) return null;
+  const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages/${encodeURIComponent(sid)}.json`, {
+    headers: { Authorization: "Basic " + Buffer.from(`${accountSid}:${authToken}`).toString("base64") },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return j.error_code != null ? String(j.error_code) : null;
+}
+
+export async function maybeAutoOptOutOnFailedSend(contactId, channel, info = {}) {
   if (!contactId || (channel !== "email" && channel !== "sms")) return;
   const settings = getComplianceSettings();
   const field = channel === "email" ? "emailOptOut" : "smsOptOut";
   if (channel === "email" && !settings.autoOptOutFailedEmail) return;
   if (channel === "sms" && !settings.autoOptOutFailedSms) return;
+  // A Twilio delivery failure (it has a message SID): ask Twilio why, keep
+  // the reason on the message (the staff failed-send banner shows it), and
+  // only opt out when the number itself is the problem. No code / lookup
+  // failed -> don't opt out (texting a dead number once more is cheaper
+  // than silencing a real person).
+  if (channel === "sms" && info.providerMessageId) {
+    let code = null;
+    try { code = await twilioErrorCode(info.providerMessageId); } catch (e) { console.error("[compliance] Twilio error lookup failed:", e.message); }
+    if (code && info.messageId) {
+      try { const mdb = await import("./messages_db.js"); if (mdb.MESSAGES_PG) mdb.updateMessageFields(info.messageId, { failReason: `Twilio ${code}` }); } catch (e) { console.error("[compliance] failReason save failed:", e.message); }
+    }
+    if (!code || !SMS_RECIPIENT_SIDE_CODES.has(code)) {
+      console.log(`[compliance] SMS failed (Twilio ${code || "no code"}) -- not opting out ${contactId}`);
+      return;
+    }
+  }
   const contact = getContactById(contactId);
   if (!contact || contact[field]) return;
   const updated = updateContactByField("id", contactId, c => {

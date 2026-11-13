@@ -616,7 +616,7 @@ if (window.crmAppMode) (function () {
   const esc = (s) => { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; };
   const when = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
   // Twilio/SES wording -> plain words; anything unknown is shown as-is.
-  const niceReason = (r) => !r ? "" : /1600 character/i.test(r) ? "Too long (over 1,600 characters)" : /opted out|unsubscribed|21610/i.test(r) ? "They opted out of texts" : /not a valid|invalid.*(number|phone)|21211|21614/i.test(r) ? "Not a valid phone number" : String(r).slice(0, 80);
+  const niceReason = (r) => !r ? "" : /1600 character|Twilio (30019|21617)/i.test(r) ? "Too long for the carrier (send it shorter)" : /Twilio 30007/.test(r) ? "Blocked by the carrier as spam" : /Twilio (30003|30005|30006|21211|21614)/.test(r) ? "Their number can't get texts" : /Twilio 30034/.test(r) ? "Our texting number isn't registered" : /opted out|unsubscribed|21610/i.test(r) ? "They opted out of texts" : /not a valid|invalid.*(number|phone)|21211|21614/i.test(r) ? "Not a valid phone number" : String(r).slice(0, 80);
   let items = [], showAll = false, box = null;
   async function dismiss(ids) {
     items = items.filter(i => !ids.includes(i.id));

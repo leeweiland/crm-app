@@ -103,7 +103,9 @@ function buildMessageRow({ id, channel, direction, contactId, sourceType, source
 // rate limit, or a dropped connection. These must never reach the auto opt-out:
 // confirmed live (2026-11-01), hitting the daily quota opted out all 9,887
 // recipients of the sends it stopped.
-const SENDER_SIDE_FAILURE = /quota exceeded|rate exceeded|throttl|socket|EPIPE|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timed? ?out/i;
+// Also our own message/account problems (2026-11-13): a text over Twilio's
+// 1,600-character limit or a suspended/unauthenticated account.
+const SENDER_SIDE_FAILURE = /quota exceeded|rate exceeded|throttl|socket|EPIPE|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timed? ?out|1600 character|exceeds the|too long|21617|not active|authentication failed|fetch failed|aborted/i;
 function persistRowSideEffects(row, bodyOffset) {
   if (!MESSAGES_PG) {
     appendContactMessage(row);
@@ -229,9 +231,9 @@ function notifyStaffFailedSend(m, status) {
     .then(mod => mod.noteFailedSend(m, status))
     .catch(e => console.error("[message_log] failed-send alert failed:", e.message));
 }
-function notifyFailedSend(contactId, channel) {
+function notifyFailedSend(contactId, channel, info = {}) {
   import("./compliance_backend.js")
-    .then(m => m.maybeAutoOptOutOnFailedSend(contactId, channel))
+    .then(m => m.maybeAutoOptOutOnFailedSend(contactId, channel, info))
     .catch(e => console.error("[message_log] auto-opt-out-on-failure check failed:", e.message));
 }
 // Was a full scan+rewrite of the entire main log to find one row by
@@ -448,7 +450,7 @@ export function updateMessageStatusByProviderId(providerMessageId, status, extra
   if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
   recordDailyStatsTransition(found, oldStatus, status);
   try { noteSmsStatusChange(found, oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
-  if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel);
+  if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(entry.contactId, found.channel, { messageId: found.id, providerMessageId });
   if (status !== oldStatus) notifyStaffFailedSend({ ...found, contactId: entry.contactId }, status);
   return found;
 }
@@ -464,7 +466,7 @@ function applyStatusEventPg(providerMessageId, status, extra, eventAtMs) {
   if (status === "opened" || status === "clicked") recordEngagementHour(r.contactId, status, eventAtMs, Date.parse(r.createdAt));
   if (r.contactId) recomputeConversationSummary(r.contactId);
   try { noteSmsStatusChange(found, r.oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
-  if (status === "failed" && r.oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(r.contactId, found.channel);
+  if (status === "failed" && r.oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(r.contactId, found.channel, { messageId: r.id, providerMessageId: r.providerMessageId });
   if (status !== r.oldStatus) notifyStaffFailedSend(found, status);
   return found;
 }
@@ -527,7 +529,7 @@ export function updateMessageStatusesByProviderIdBatch(updates) {
     if (found.sourceType && found.sourceId && status !== "delivered") updateSourceMessageStatus(found.sourceType, found.sourceId, found.id, { status });
     recordDailyStatsTransition(found, oldStatus, status);
     try { noteSmsStatusChange(found, oldStatus, status); } catch (e) { console.error("[sms_stats] note failed:", e.message); }
-    if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(found.contactId, found.channel);
+    if (status === "failed" && oldStatus !== "failed" && found.direction === "outbound") notifyFailedSend(found.contactId, found.channel, { messageId: found.id, providerMessageId: updates[i].providerMessageId });
     if (status !== oldStatus) notifyStaffFailedSend(found, status);
   }
   return results;
