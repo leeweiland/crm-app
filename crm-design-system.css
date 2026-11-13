@@ -1023,10 +1023,6 @@ body { margin: 0; }
   .chat-panel.compose-focused .chat-panel-sub,
   .chat-panel.compose-focused #chatMarkDoneBtn,
   .chat-panel.compose-focused .chat-panel-name-row > *:not(#chatPanelTypeBadge):not(.chat-panel-name) { display: none; }
-  /* No quoted-email preview box under the reply box on phones (Lee: it
-     "should not be there"). The reply still goes out threaded with their
-     email quoted underneath, like any normal email reply. */
-  .compose-quote-preview { display: none; }
   #composeBody::placeholder { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
@@ -1036,3 +1032,8 @@ body { margin: 0; }
    handle above the compose bar sets (120-360px, saved per device). */
 .compose-row { flex: 0 0 auto; align-items: flex-end; }
 .compose-row textarea#composeBody { resize: none; min-height: 0; height: 38px; max-height: var(--compose-max-h, 120px); overflow-y: auto; line-height: 1.35; padding: 8px 12px; }
+
+/* No quoted-email preview box under the reply box, on any screen size (Lee:
+   "should not be there"). The reply still goes out threaded with their
+   email quoted underneath, like any normal email reply. */
+.compose-quote-preview { display: none; }
