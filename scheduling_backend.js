@@ -365,7 +365,7 @@ async function fetchFreeBusy(startISO, endISO, calendarId) {
   if (!r.ok) throw new Error("freeBusy failed: " + JSON.stringify(d));
   return (d.calendars?.[calendarId]?.busy || []).map(b => ({ start: new Date(b.start).getTime(), end: new Date(b.end).getTime() }));
 }
-export async function createCalendarEvent({ summary, description, startISO, durationMinutes, attendees, timezone, calendarId }) {
+export async function createCalendarEvent({ summary, description, startISO, durationMinutes, attendees, timezone, calendarId, location, sendUpdates = "all" }) {
   calendarId = calendarId || getCalendarId();
   const accessToken = await getCalendarAccessToken();
   const start = new Date(startISO);
@@ -377,7 +377,8 @@ export async function createCalendarEvent({ summary, description, startISO, dura
     attendees: (attendees || []).map(a => ({ email: a.email, displayName: a.name })),
     reminders: { useDefault: true },
   };
-  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=all`, {
+  if (location) body.location = location;
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=${encodeURIComponent(sendUpdates)}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -880,6 +881,49 @@ function buildCalendarTitle(booking) {
   return renderCalendarDescription(withBookingTokens, booking, et);
 }
 
+// Guest-invite calendar: a secondary calendar of the connected Google
+// account, created once by setup and stored here. Its NAME is what the lead
+// sees as the organizer of their invite.
+const GUEST_CALENDAR_FILE = "crm_scheduling_guest_calendar.json"; // { id, name, createdAt }
+function getGuestCalendarId() { return readJson(GUEST_CALENDAR_FILE, {})?.id || null; }
+// Staff event description: the usual template + staff-only links. Only ever
+// used on the guest-free staff event (see syncBookingToCalendar) -- never on
+// anything the lead receives.
+function buildStaffCalendarDescription(booking) {
+  const base = buildCalendarDescription(booking);
+  const manageUrl = `${getPublicBaseUrl()}/book/${booking.eventTypeSlug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
+  const links = [`Cancel / reschedule: ${manageUrl}`];
+  if (booking.contactId) links.push(`Open in CRM: ${getPublicBaseUrl()}/inbox.html?contact=${encodeURIComponent(booking.contactId)}`);
+  return `${links.join("\n")}\n\n${base}`;
+}
+// The lead's own invite: event name, where, and their own manage link --
+// none of the intake answers or staff links.
+async function syncGuestInvite(booking, et, guestCalendarId, timezone) {
+  const manageUrl = `${getPublicBaseUrl()}/book/${booking.eventTypeSlug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
+  const brand = (et.branding && et.branding.brandName) || DEFAULT_BRANDING.brandName;
+  const where = locationText(et.location);
+  const description = [`Your ${et.name} with ${brand}.`, where ? `Where: ${where}` : "", `Need to reschedule or cancel? ${manageUrl}`].filter(Boolean).join("\n\n");
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const created = await createCalendarEvent({
+        summary: `${et.name} \u2014 ${brand}`, description,
+        startISO: booking.startAt, durationMinutes: et.durationMinutes,
+        attendees: [{ email: booking.email, name: booking.name }], timezone,
+        calendarId: guestCalendarId, location: where || undefined, sendUpdates: "all",
+      });
+      booking.guestEventId = created.id; booking.guestCalendarId = guestCalendarId; booking.guestCalendarError = null;
+      return;
+    } catch (e) {
+      lastError = e;
+      console.error(`[scheduling] guest invite failed (attempt ${attempt}) for booking ${booking.id}: ${e.message}`);
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+  booking.guestCalendarId = guestCalendarId;
+  booking.guestCalendarError = String(lastError?.message || lastError || "Unknown error").slice(0, 500);
+}
+
 // Creates the staff Google Calendar event for a saved booking and records the
 // outcome ON the booking. This used to be a bare try/catch inside the POST
 // handler that swallowed every failure -- a booking whose calendar write
@@ -890,17 +934,25 @@ function buildCalendarTitle(booking) {
 async function syncBookingToCalendar(booking, et, calendar) {
   if (!calendarConfigured()) return;
   const calendarId = calendar.email || getCalendarId();
+  const timezone = booking.timezone || eventTypeAvailability(et, calendar).timezone;
+  // Separate guest calendar configured (Lee, 2026-11-14): the staff event
+  // gets NO guests -- so its description (intake answers + the staff-only
+  // Cancel / Open in CRM links) is never seen by the lead -- and the lead's
+  // Google invite comes from its own event on the guest calendar instead.
+  // Without one, the original single shared event (lead as guest).
+  const guestCalendarId = getGuestCalendarId();
   let lastError = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const created = await createCalendarEvent({
         summary: buildCalendarTitle(booking),
-        description: buildCalendarDescription(booking),
+        description: guestCalendarId ? buildStaffCalendarDescription(booking) : buildCalendarDescription(booking),
         startISO: booking.startAt, durationMinutes: et.durationMinutes,
-        attendees: [{ email: booking.email, name: booking.name }], timezone: booking.timezone || eventTypeAvailability(et, calendar).timezone,
-        calendarId,
+        attendees: guestCalendarId ? [] : [{ email: booking.email, name: booking.name }], timezone,
+        calendarId, sendUpdates: guestCalendarId ? "none" : "all",
       });
       booking.calendarEventId = created.id; booking.calendarId = calendarId; booking.calendarError = null;
+      if (guestCalendarId) await syncGuestInvite(booking, et, guestCalendarId, timezone);
       return;
     } catch (e) {
       lastError = e;
@@ -928,11 +980,15 @@ function syncBookingToCalendarInBackground(booking, et, calendar) {
     const [persisted] = updateJsonArrayRecordsByIds(BOOKINGS_FILE, [booking.id], (b) => {
       if (b.status !== "confirmed") return b;
       b.calendarEventId = booking.calendarEventId; b.calendarId = booking.calendarId; b.calendarError = booking.calendarError;
+      b.guestEventId = booking.guestEventId || null; b.guestCalendarId = booking.guestCalendarId || null; b.guestCalendarError = booking.guestCalendarError || null;
       b.updatedAt = new Date().toISOString();
       return b;
     });
     if (persisted && persisted.status !== "confirmed" && booking.calendarEventId) {
       deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
+    }
+    if (persisted && persisted.status !== "confirmed" && booking.guestEventId) {
+      deleteCalendarEvent(booking.guestEventId, booking.guestCalendarId).catch(() => {});
     }
   }).catch(e => console.error(`[scheduling] background calendar sync failed for booking ${booking.id}:`, e.message));
 }
@@ -1138,6 +1194,7 @@ export async function cancelBookingById(bookingId, { by, byLabel, notify = true 
   const et = getEventTypes().find(e => e.id === booking.eventTypeId);
   logBookingCancellation(booking, et, byLabel || by);
   if (booking.calendarEventId && calendarConfigured()) await deleteCalendarEvent(booking.calendarEventId, booking.calendarId).catch(() => {});
+  if (booking.guestEventId && calendarConfigured()) await deleteCalendarEvent(booking.guestEventId, booking.guestCalendarId).catch(() => {});
   const contact = getContactByIdFast(booking.contactId);
   if (notify && et && contact) sendCancellationNotification(booking, et, contact).catch(() => {});
   return booking;
