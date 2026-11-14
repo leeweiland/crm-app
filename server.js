@@ -22,6 +22,7 @@ import { handleReportingRequest } from "./reporting_backend.js";
 import { startReportPrewarm } from "./report_worker_client.js";
 import { handleImportRequest } from "./import_backend.js";
 import { handleFacebookRequest } from "./facebook_backend.js";
+import { handleGoogleAudienceRequest } from "./google_audience_backend.js";
 import { handleTrackingRequest } from "./tracking_backend.js";
 import { handleFormsRequest } from "./forms_backend.js";
 import { handleSchedulingRequest } from "./scheduling_backend.js";
@@ -221,6 +222,7 @@ createServer(async (req, res) => {
   if (await handleReportingRequest(req, res, url)) return;
   if (await handleImportRequest(req, res, url)) return;
   if (await handleFacebookRequest(req, res, url)) return;
+  if (await handleGoogleAudienceRequest(req, res, url)) return;
   if (await handleTrackingRequest(req, res, url)) return;
   if (await handleFormsRequest(req, res, url)) return;
   if (await handleSchedulingRequest(req, res, url)) return;

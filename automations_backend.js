@@ -12,6 +12,7 @@ import {
 } from "./automation_enrollments_db.js";
 import { sendEmail, reconstructEmailBody } from "./email_backend.js";
 import { addToCustomAudience } from "./facebook_backend.js";
+import { addToGoogleCustomerList } from "./google_audience_backend.js";
 import { maybeSnapshotVersion, listVersions, getVersion } from "./versions_shared.js";
 import { getEmailTheme } from "./integrations_backend.js";
 import { BOOKINGS_FILE, EVENT_TYPES_FILE, applyBookingTokens, getBookingTokenValues } from "./scheduling_backend.js";
@@ -60,7 +61,7 @@ function automationSnapshotFields(automation) {
 // "add_to_facebook_audience" degrades gracefully -- see facebook_backend.js
 // -- same "not configured yet" pattern as SES/Twilio.
 export const TRIGGER_TYPES = ["list_subscribe", "tag_added", "email_opened", "email_clicked", "page_visit", "form_submitted", "booking_created", "segment_member"];
-export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "condition", "jump_to_automation", "end_automation", "goal", "drip"];
+export const STEP_TYPES = ["send_email", "wait", "add_tag", "remove_tag", "add_to_facebook_audience", "add_to_google_audience", "condition", "jump_to_automation", "end_automation", "goal", "drip"];
 
 function getContact(id) { return getContactById(id); }
 function waitStepMs(step) {
@@ -349,6 +350,13 @@ async function advanceEnrollment(enrollment, automation) {
       const contact = getContact(enrollment.contactId);
       if (contact && step.config.audienceId) {
         await addToCustomAudience({ email: contact.email, phone: contact.phone, audienceId: step.config.audienceId }).catch(e => console.error("[automations] facebook audience add failed", e.message));
+      }
+      enrollment.currentStepId = step.nextStepId || null;
+    } else if (step.type === "add_to_google_audience") {
+      const contact = getContact(enrollment.contactId);
+      if (contact && step.config.userListId) {
+        const r = await addToGoogleCustomerList(step.config.userListId, [{ email: contact.email, phone: contact.phone }]).catch(e => ({ ok: false, reason: e.message }));
+        if (!r.ok) console.error("[automations] google customer list add failed", r.reason);
       }
       enrollment.currentStepId = step.nextStepId || null;
     } else if (step.type === "condition") {

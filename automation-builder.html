@@ -185,6 +185,7 @@
       <button data-type="add_tag">🏷 Add Tag</button>
       <button data-type="remove_tag">🏷 Remove Tag</button>
       <button data-type="add_to_facebook_audience">📘 Add to Facebook Audience</button>
+      <button data-type="add_to_google_audience">Add to Google Customer List</button>
       <button data-type="condition">🔀 Condition (Branch)</button>
       <button data-type="jump_to_automation">↪ Add to Automation</button>
       <button data-type="end_automation">⏹ End an Automation</button>
@@ -383,6 +384,33 @@ async function loadFacebookAudienceOptions(currentAudienceId) {
   };
 }
 
+async function loadGoogleListOptions(currentListId) {
+  const select = document.getElementById('cfgGoogleListSelect');
+  if (!select) return;
+  let d;
+  try {
+    const r = await fetch('/api/google/customer-lists');
+    d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.reason || 'request failed');
+  } catch (e) {
+    if (!select.isConnected) return;
+    select.innerHTML = `<option value="">Couldn't load lists (${escapeHtml(d?.reason || e.message)}) -- enter an ID below</option>`;
+    select.disabled = true;
+    return;
+  }
+  if (!select.isConnected) return;
+  const lists = d.lists || [];
+  if (!lists.length) { select.innerHTML = '<option value="">No customer lists found in Google Ads</option>'; select.disabled = true; return; }
+  select.innerHTML = '<option value="">Pick a list to fill in the fields below…</option>' +
+    lists.map(l => `<option value="${escapeHtml(l.id)}" data-name="${escapeHtml(l.name)}" ${String(l.id) === String(currentListId) ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+  select.disabled = false;
+  select.onchange = () => {
+    if (!select.value) return;
+    document.getElementById('cfgGoogleListId').value = select.value;
+    document.getElementById('cfgGoogleListName').value = select.options[select.selectedIndex].dataset.name || '';
+  };
+}
+
 // Recomputed once per render() (see below) -- stepId -> its 1-based
 // position among every send_email step in the automation, walking the
 // chain in the same order renderChainHtml draws it (including branches),
@@ -416,6 +444,7 @@ function stepSummary(step) {
   if (step.type === 'add_tag') return `Add tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
   if (step.type === 'remove_tag') return `Remove tag: ${escapeHtml(allTags.find(t => t.id === step.config.tagId)?.name || '—')}`;
   if (step.type === 'add_to_facebook_audience') return `Add to Custom Audience "${escapeHtml(step.config.audienceName || step.config.audienceId || '—')}"${facebookIsConfigured ? '' : ' (Facebook not configured yet)'}`;
+  if (step.type === 'add_to_google_audience') return `Add to Google customer list "${escapeHtml(step.config.userListName || step.config.userListId || '—')}"`;
   if (step.type === 'condition') {
     const c = step.config.filter?.all?.[0];
     return c ? `If ${c.field} ${c.op} ${escapeHtml(String(c.value))}` : 'No condition set';
@@ -427,7 +456,7 @@ function stepSummary(step) {
   return '';
 }
 function fmtDripTime(t) { const [h, m] = String(t || '09:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`; }
-const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation', goal: 'Goal', drip: 'Drip' };
+const TYPE_LABELS = { send_email: 'Send Email', wait: 'Wait', add_tag: 'Add Tag', remove_tag: 'Remove Tag', add_to_facebook_audience: 'Add to Facebook Audience', add_to_google_audience: 'Add to Google Customer List', condition: 'Condition', jump_to_automation: 'Add to Automation', end_automation: 'End Automation', goal: 'Goal', drip: 'Drip' };
 let facebookIsConfigured = false;
 
 function pct(n, d) { return d ? ((n / d) * 100).toFixed(1) + '%' : '0.0%'; }
@@ -918,6 +947,7 @@ function defaultConfig(type) {
   if (type === 'wait') return { amount: 1, unit: 'days' };
   if (type === 'add_tag' || type === 'remove_tag') return { tagId: '' };
   if (type === 'add_to_facebook_audience') return { audienceId: '', audienceName: '' };
+  if (type === 'add_to_google_audience') return { userListId: '', userListName: '' };
   if (type === 'condition') return { filter: { all: [{ field: 'status', op: 'eq', value: '' }] } };
   if (type === 'jump_to_automation' || type === 'end_automation') return { automationId: '' };
   if (type === 'goal') return { trigger: 'lead_status_change', status: null };
@@ -1147,6 +1177,16 @@ function openStepConfigModal(step, isNew) {
       <div class="field"><label class="pra-label">Custom Audience ID</label><input class="pra-input" id="cfgFbId" value="${escapeHtml(step.config.audienceId || '')}" placeholder="From Facebook Ads Manager, or pick one above"/></div>
     `;
     loadFacebookAudienceOptions(step.config.audienceId);
+  } else if (step.type === 'add_to_google_audience') {
+    body.innerHTML = `
+      <div class="pra-muted" style="font-size:.8rem;margin-bottom:10px">Adds the contact's email and phone to a Google Ads customer list (Customer Match), for Google retargeting and exclusions.</div>
+      <div class="field"><label class="pra-label">Google Customer List</label>
+        <select class="pra-select" id="cfgGoogleListSelect"><option value="">Loading lists…</option></select>
+      </div>
+      <div class="field"><label class="pra-label">List Name (for display)</label><input class="pra-input" id="cfgGoogleListName" value="${escapeHtml(step.config.userListName || '')}"/></div>
+      <div class="field"><label class="pra-label">List ID</label><input class="pra-input" id="cfgGoogleListId" value="${escapeHtml(step.config.userListId || '')}" placeholder="Pick one above"/></div>
+    `;
+    loadGoogleListOptions(step.config.userListId);
   } else if (step.type === 'condition') {
     const c = step.config.filter?.all?.[0] || { field: 'status', op: 'eq', value: '' };
     body.innerHTML = `
@@ -1184,6 +1224,7 @@ function openStepConfigModal(step, isNew) {
     if (step.type === 'wait') { step.config.amount = Number(document.getElementById('cfgAmount').value) || 1; step.config.unit = document.getElementById('cfgUnit').value; }
     else if (step.type === 'add_tag' || step.type === 'remove_tag') { step.config.tagId = document.getElementById('cfgTag').value; }
     else if (step.type === 'add_to_facebook_audience') { step.config.audienceName = document.getElementById('cfgFbName').value.trim(); step.config.audienceId = document.getElementById('cfgFbId').value.trim(); }
+    else if (step.type === 'add_to_google_audience') { step.config.userListName = document.getElementById('cfgGoogleListName').value.trim(); step.config.userListId = document.getElementById('cfgGoogleListId').value.trim(); }
     else if (step.type === 'condition') { step.config.filter = { all: [{ field: document.getElementById('cfgField').value, op: document.getElementById('cfgField').value === 'tags' ? 'includes' : 'eq', value: document.getElementById('cfgValue').value }] }; }
     else if (step.type === 'jump_to_automation' || step.type === 'end_automation') { step.config.automationId = document.getElementById('cfgAutomation').value; }
     else if (step.type === 'drip') { const spread = document.getElementById('cfgDripSpread').checked; step.config = { perDay: Math.max(0, Math.floor(Number(document.getElementById('cfgDripPerDay').value) || 0)), spread, releaseTime: document.getElementById('cfgDripTime').value || '09:00' }; }
