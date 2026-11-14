@@ -92,3 +92,7 @@
   background: var(--pra-panel); color: var(--pra-white); border: 1px solid var(--pra-blue); border-radius: 10px;
   font-family: var(--pra-font); font-weight: 700; font-size: 13px; line-height: 1.35; box-shadow: 0 12px 32px rgba(0,0,0,.45);
 }
+
+/* Facebook and Google set fonts on their table cells with rules that outrank a plain class, so force the theme fonts. */
+.pra-block, .pra-block *, .pra-pop, .pra-pop *, .pra-card, .pra-card *, .pra-toast { font-family: var(--pra-font) !important; }
+.pra-h, .pra-pop-h, .pra-pop-h *, .pra-sub, .pra-card-h { font-family: var(--pra-label) !important; }
