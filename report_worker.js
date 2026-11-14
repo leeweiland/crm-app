@@ -23,6 +23,8 @@ import os from "os";
 import { loadContactsCache, useContactsFromPostgres } from "./contacts_db.js";
 import { REPORTS_PG, ensureReportFunctions } from "./reports_pg.js";
 import { REPORT_JOBS } from "./reporting_backend.js";
+import { reportExtColumns } from "./ext_columns_backend.js";
+REPORT_JOBS.extColumns = reportExtColumns; // Ads Columns extension (see ext_columns_backend.js)
 
 try { os.setPriority(0, 19); } catch { /* best effort */ }
 

@@ -234,7 +234,7 @@ function workflowStepSourceIds(workflow) {
 // this app's primary conventions -- these are additional, not a
 // replacement.
 const SOCIAL_PARAM_PLATFORM = { e: "email", s: "sms", y: "youtube", f: "facebook", i: "instagram", l: "linkedin", x: "twitter", t: "tiktok" };
-function attributionKeyForVisit(v) {
+export function attributionKeyForVisit(v) {
   if (v.el) return v.el;
   if (!v.search) return null;
   let params;
@@ -963,7 +963,7 @@ export async function handleReportingRequest(req, res, url) {
 
   // Every heavy report is computed by report_worker.js in its own process
   // (see the comment above reportOverview) -- the server only relays it.
-  const JOB_ROUTES = { "/api/reporting/overview": "overview", "/api/reporting/sent-by-user": "sentByUser", "/api/reporting/attribution": "attribution", "/api/reporting/attribution/contacts": "attributionContacts", "/api/reporting/ads-report": "adsReport" };
+  const JOB_ROUTES = { "/api/reporting/overview": "overview", "/api/reporting/sent-by-user": "sentByUser", "/api/reporting/attribution": "attribution", "/api/reporting/attribution/contacts": "attributionContacts", "/api/reporting/ads-report": "adsReport", "/api/reporting/ext-columns": "extColumns" };
   const clicksMatch = p.match(/^\/api\/reporting\/contact-clicks\/([^/]+)$/);
   if ((JOB_ROUTES[p] || clicksMatch) && req.method === "GET") {
     if (p === "/api/reporting/sent-by-user" && !isAdmin(me)) return sendJson(res, 403, { error: "Admins only" });

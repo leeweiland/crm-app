@@ -1,0 +1,79 @@
+.pra-block {
+  position: absolute; top: 0; right: 10px; bottom: 0; z-index: 3;
+  display: flex !important; flex-direction: row; flex-wrap: nowrap; align-items: center;
+  width: max-content; max-width: calc(100% - 10px); overflow: hidden; white-space: nowrap;
+  background: #121722; color: #e8ecf3; border-left: 1px solid #2b3345;
+  font: 500 12.5px/1.2 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-variant-numeric: tabular-nums; cursor: default; box-sizing: border-box;
+}
+.pra-block * { box-sizing: border-box; }
+.pra-block > * { flex-shrink: 0; }
+.pra-head { background: #0d111a; align-items: stretch; }
+.pra-foot { background: #0d111a; font-weight: 700; }
+.pra-tools-sp, .pra-tools { width: 34px; flex: 0 0 34px; }
+.pra-tools { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-right: 1px solid #2b3345; }
+.pra-btn { all: unset; color: #8b93a7; cursor: pointer; width: 22px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
+.pra-btn:hover { color: #fff; background: #263049; }
+.pra-c { flex: 0 0 auto; text-align: right; padding: 0 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pra-c.pra-pos { color: #4ade80; }
+.pra-c.pra-neg { color: #f87171; }
+.pra-d { color: inherit !important; text-decoration: underline; text-decoration-color: #5b6787; text-underline-offset: 3px; cursor: pointer; }
+.pra-d:hover { text-decoration-color: #fff; }
+.pra-h {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; text-align: right;
+  padding: 0 9px; color: #9aa3b8; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  line-height: 1.15; cursor: grab; user-select: none; overflow: hidden;
+}
+.pra-h:hover { color: #fff; background: #1a2131; }
+.pra-msg { display: flex; align-items: center; padding: 0 12px; color: #c9d1e3; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pra-msg a { color: #7aa7ff; text-decoration: underline; cursor: pointer; margin: 0 4px; }
+.pra-msg.pra-err { color: #fca5a5; }
+.pra-loading { position: absolute; left: 34px; right: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, transparent, #7aa7ff, transparent); background-size: 50% 100%; animation: pra-slide 1s linear infinite; }
+@keyframes pra-slide { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+
+.pra-pop {
+  position: fixed; z-index: 2147483000; width: 330px; max-height: 340px; display: flex; flex-direction: column;
+  background: #121722; color: #e8ecf3; border: 1px solid #2b3345; border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.35);
+  font: 13px/1.35 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.pra-pop-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-weight: 700; border-bottom: 1px solid #2b3345; }
+.pra-pop-h span { color: #9aa3b8; font-weight: 600; }
+.pra-x { all: unset; margin-left: auto; cursor: pointer; color: #9aa3b8; font-size: 18px; line-height: 1; padding: 0 4px; }
+.pra-x:hover { color: #fff; }
+.pra-pop-b { overflow: auto; padding: 4px 0; }
+.pra-pop-b a { display: flex; flex-direction: column; padding: 6px 12px; color: #e8ecf3 !important; text-decoration: none; }
+.pra-pop-b a:hover { background: #1a2131; }
+.pra-pop-b a span { color: #9aa3b8; font-size: 12px; }
+.pra-pop-f { padding: 7px 12px; color: #7d869b; font-size: 11px; border-top: 1px solid #2b3345; }
+.pra-empty { padding: 10px 12px; color: #9aa3b8; }
+
+.pra-modal { position: fixed; inset: 0; z-index: 2147483000; background: rgba(8,10,16,.45); display: flex; align-items: center; justify-content: center; }
+.pra-card {
+  width: 460px; max-height: 86vh; display: flex; flex-direction: column; background: #121722; color: #e8ecf3;
+  border: 1px solid #2b3345; border-radius: 10px; box-shadow: 0 20px 50px rgba(0,0,0,.45);
+  font: 13px/1.35 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.pra-card-h { padding: 14px 16px 4px; font-size: 15px; font-weight: 700; }
+.pra-sub { padding: 8px 16px 6px; color: #9aa3b8; font-size: 12px; }
+.pra-list { overflow: auto; padding: 0 8px; }
+.pra-opt { display: grid; grid-template-columns: 18px 20px 130px 1fr; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px; cursor: grab; }
+.pra-opt:hover { background: #1a2131; }
+.pra-grip { color: #5b6787; font-size: 11px; letter-spacing: -2px; }
+.pra-card label, .pra-card span, .pra-card div { color: inherit; }
+.pra-lbl { font-weight: 600; color: #e8ecf3 !important; }
+.pra-tip { color: #7d869b; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pra-models { display: flex; gap: 18px; padding: 0 16px 6px; }
+.pra-models label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.pra-card-f { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #2b3345; }
+.pra-card-f span { flex: 1; }
+.pra-b1, .pra-b2 { all: unset; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.pra-b1 { background: #3b6ff5; color: #fff; }
+.pra-b1:hover { background: #4f7ff7; }
+.pra-b2 { color: #c9d1e3; border: 1px solid #2b3345; }
+.pra-b2:hover { background: #1a2131; }
+
+.pra-toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; max-width: 360px; padding: 10px 14px;
+  background: #121722; color: #e8ecf3; border: 1px solid #2b3345; border-radius: 8px;
+  font: 13px/1.35 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 12px 32px rgba(0,0,0,.35);
+}

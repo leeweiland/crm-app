@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "PRA Ads Columns",
+  "version": "1.0.0",
+  "description": "CRM columns (opt-ins, calls, enrollments, revenue, cost per each, ROAS) inside Meta Ads Manager and Google Ads.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://crm-app-production-eb8f.up.railway.app/*"
+  ],
+  "background": { "service_worker": "bg.js" },
+  "action": { "default_popup": "popup.html", "default_title": "PRA Ads Columns" },
+  "content_scripts": [
+    {
+      "matches": ["https://adsmanager.facebook.com/*", "https://business.facebook.com/adsmanager/*"],
+      "js": ["page_meta.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://adsmanager.facebook.com/*", "https://business.facebook.com/adsmanager/*", "https://ads.google.com/*"],
+      "js": ["columns.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
