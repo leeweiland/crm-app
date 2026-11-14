@@ -96,3 +96,4 @@
 /* Facebook and Google set fonts on their table cells with rules that outrank a plain class, so force the theme fonts. */
 .pra-block, .pra-block *, .pra-pop, .pra-pop *, .pra-card, .pra-card *, .pra-toast { font-family: var(--pra-font) !important; }
 .pra-h, .pra-pop-h, .pra-pop-h *, .pra-sub, .pra-card-h { font-family: var(--pra-label) !important; }
+.pra-h.pra-sorted { color: var(--pra-blue); }

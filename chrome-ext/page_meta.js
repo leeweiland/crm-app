@@ -40,8 +40,35 @@
       if (p && c.getBoundingClientRect().height > 20) stamp(c, p);
     }
   }
+  // Second job: hold the Name column at the width content.js remembered
+  // (data-pra-name-w on <html>). Meta keeps that width per tab and forgets it on
+  // navigation/refresh; this calls the table's own resize callback -- the same
+  // one a drag of the column edge calls -- once per table/tab/width.
+  const applied = new WeakMap();
+  function holdWidth() {
+    const root = document.documentElement;
+    const want = Number(root.dataset.praNameW || 0);
+    if (!want || root.dataset.praMouseDown === "1") return;
+    const table = document.querySelector('[role="table"]');
+    const cell = table && table.querySelector("[data-pra-id]");
+    if (!cell) return;
+    let f = fiberOf(table), props = null;
+    for (let i = 0; i < 12 && f; i++) { if (f.memoizedProps && f.memoizedProps.onColumnResizeEndCallback) { props = f.memoizedProps; break; } f = f.return; }
+    if (!props || props.isColumnResizing) return;
+    const nameKey = [].concat(props.children || []).flat(3).map(k => k && k.props && k.props.columnKey).find(k => typeof k === "string" && k.startsWith(PREFIX));
+    if (!nameKey) return;
+    const sig = location.pathname + "|" + nameKey + "|" + want;
+    if (applied.get(table) === sig) return;
+    applied.set(table, sig);
+    const cr = cell.getBoundingClientRect();
+    const head = [...table.querySelectorAll('[role="columnheader"]')].find(h => { const r = h.getBoundingClientRect(); return r.left <= cr.left + 14 && r.right >= cr.right - 14; });
+    const headW = head ? head.getBoundingClientRect().width : cr.width;
+    if (Math.abs(headW - want) <= 4) return;
+    props.onColumnResizeEndCallback(Math.round(want - (headW - cr.width)), nameKey);
+  }
+
   let queued = false;
-  const kick = () => { if (queued) return; queued = true; setTimeout(() => { queued = false; try { scan(); } catch { /* keep going */ } }, 150); };
+  const kick = () => { if (queued) return; queued = true; setTimeout(() => { queued = false; try { scan(); holdWidth(); } catch { /* keep going */ } }, 150); };
   new MutationObserver(kick).observe(document.documentElement, { childList: true, subtree: true });
   setInterval(kick, 1500);
   kick();

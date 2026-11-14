@@ -21,6 +21,43 @@
   } catch { /* extension reloaded */ }
   const save = () => { try { chrome.storage.sync.set({ cols: settings.cols, model: settings.model }); } catch { /* ignore */ } ver++; };
 
+  // ── Name column width that sticks ──
+  // Meta and Google each keep the Name column's width per tab and drop it on
+  // navigation/refresh. The width you last dragged it to is remembered here (one
+  // value per platform) and re-applied on every tab: Meta through its own table's
+  // resize callback (page_meta.js reads data-pra-name-w), Google by setting the
+  // name cells' width. A drag is recognised as a mousedown on the table header or
+  // the Name column's edge that leaves the width changed when the mouse comes up.
+  const WKEY = "praNameW_" + PLATFORM;
+  let nameW = null, downW = null;
+  const root = document.documentElement;
+  const publishW = () => { if (nameW) root.dataset.praNameW = String(nameW); };
+  // Until you drag it yourself, the Name column defaults to room for every CRM column plus ~220px of name.
+  try { chrome.storage.local.get(WKEY, (s) => { nameW = s?.[WKEY] || (activeCols().length * COL_W + 34 + 220); publishW(); }); } catch { /* ignore */ }
+  const nameHeaderNow = () => { const r = A.rows(); return r.length ? A.header(r[0].host) : null; };
+  document.addEventListener("mousedown", (e) => {
+    const h = nameHeaderNow();
+    if (!h) return;
+    const r = h.getBoundingClientRect();
+    const onEdge = Math.abs(e.clientX - r.right) < 14 && e.clientY >= r.top - 4;
+    if (!onEdge && !e.target.closest?.('[role="columnheader"]')) return;
+    if (e.target.closest?.(".pra-block")) return;
+    downW = r.width;
+    root.dataset.praMouseDown = "1";
+  }, true);
+  document.addEventListener("mouseup", () => {
+    if (downW == null) return;
+    const before = downW;
+    downW = null;
+    setTimeout(() => {
+      root.dataset.praMouseDown = "";
+      const h = nameHeaderNow();
+      if (!h) return;
+      const w = Math.round(h.getBoundingClientRect().width);
+      if (Math.abs(w - before) > 3) { nameW = w; try { chrome.storage.local.set({ [WKEY]: w }); } catch { /* ignore */ } publishW(); }
+    }, 500);
+  }, true);
+
   // ── Date range from the page ──
   const MON = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
   const DATE_RE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? (\d{1,2})(?:, (\d{4}))?/g;
@@ -130,6 +167,11 @@
       return out;
     },
     header() { const t = this.table(); return t ? this.nameHeader(t) : null; },
+    nameCells() {
+      const t = this.table(), nh = t && this.nameHeader(t);
+      if (!nh) return [];
+      return [nh, ...t.querySelectorAll(`ess-cell[essfield="${CSS.escape(nh.getAttribute("essfield"))}"]`)];
+    },
     footer() {
       const t = this.table(), nh = t && this.nameHeader(t);
       const sr = nh && t.querySelector(".particle-table-summary-row");
@@ -217,7 +259,11 @@
     const tools = `<div class="pra-tools"><button class="pra-btn" data-act="cfg" title="Configure columns">${ICON_GEAR}</button><button class="pra-btn" data-act="refresh" title="Refresh CRM numbers">${ICON_REFRESH}</button></div>`;
     if (error === "login") return tools + `<div class="pra-msg">Not logged in to the CRM. <a data-act="login">Log in</a>, then refresh.</div>`;
     if (error) return tools + `<div class="pra-msg pra-err" title="${esc(error)}">${esc(error)}</div>`;
-    const cols = activeCols().map((c, i) => `<div class="pra-h" draggable="true" data-i="${i}" style="width:${COL_W}px" title="${esc(c.tip || c.label)} (drag to reorder)">${esc(c.label)}</div>`).join("");
+    const sortHint = PLATFORM === "google" ? "click to sort, drag to reorder" : "drag to reorder";
+    const cols = activeCols().map((c, i) => {
+      const arrow = sortBy?.k === c.k ? (sortBy.dir > 0 ? " ▲" : " ▼") : "";
+      return `<div class="pra-h${arrow ? " pra-sorted" : ""}" draggable="true" data-i="${i}" data-k="${c.k}" style="width:${COL_W}px" title="${esc(c.tip || c.label)} (${sortHint})">${esc(c.label)}${arrow}</div>`;
+    }).join("");
     return tools + cols + (loading ? `<div class="pra-loading"></div>` : "");
   }
   function widthNeeded() { return activeCols().length * COL_W + 34; }
@@ -255,6 +301,12 @@
       if (hb.dataset.key !== String(ver)) { hb.dataset.key = String(ver); hb.innerHTML = headerHtml(); }
       if (!narrowWarned && rows[0].host.getBoundingClientRect().width < widthNeeded() + 190) { narrowWarned = true; toast("Drag the right edge of the Name column wider to make room for the CRM columns."); }
     }
+    // Google: hold the remembered Name width (not while the mouse is down, so a drag isn't fought).
+    if (PLATFORM === "google" && nameW && downW == null && head) {
+      const want = nameW + "px";
+      for (const el of A.nameCells()) if (el.style.width !== want) el.style.width = want;
+    }
+    if (PLATFORM === "google") applySort(rows, level, fresh);
     const foot = A.footer(rows[0].host);
     if (foot) {
       const fb = block(foot, "foot");
@@ -267,6 +319,37 @@
       }
     }
   }
+  // ── Sorting (Google only) ──
+  // Google's rows are plain flex rows in one column container, so CSS `order`
+  // re-sorts them on screen without touching Google's own code. Meta's table only
+  // renders the rows in view and positions each one itself, so it can't be
+  // re-sorted from outside. Clicking a CRM header: high-to-low, low-to-high, off.
+  let sortBy = null; // { k, dir: -1 | 1 }
+  let sortSig = "";
+  function applySort(rows, level, fresh) {
+    const t = A.table();
+    if (!t) return;
+    const all = [...t.querySelectorAll(".particle-table-row")];
+    const sig = `${sortBy?.k}|${sortBy?.dir}|${ver}|${all.length}|${rows.map(r => r.id).join(",")}`;
+    if (sig === sortSig) return;
+    sortSig = sig;
+    if (!sortBy || !fresh) { for (const r of all) r.style.order = ""; return; }
+    const col = BY_KEY[sortBy.k];
+    const val = (id) => { const m = id ? (data[level]?.[id] || ZERO) : null; const v = m ? col.get(m) : null; return v == null || !Number.isFinite(v) ? null : v; };
+    const ranked = rows.map((r, i) => ({ row: r.host.closest(".particle-table-row"), v: val(r.id), i }))
+      .sort((a, b) => (a.v == null) - (b.v == null) || (a.v == null ? a.i - b.i : (a.v - b.v) * sortBy.dir || a.i - b.i));
+    ranked.forEach((x, n) => { if (x.row) x.row.style.order = String(n + 1); });
+    for (const r of all) {
+      if (r.classList.contains("particle-table-summary-row")) r.style.order = "100000";
+      else if (!ranked.some(x => x.row === r)) r.style.order = "0"; // drafts row stays on top
+    }
+  }
+  function toggleSort(k) {
+    if (PLATFORM !== "google") { toast("Meta's table can't be re-sorted by outside columns. Use the gear to pick columns; sorting works in Google Ads."); return; }
+    sortBy = sortBy?.k !== k ? { k, dir: -1 } : sortBy.dir === -1 ? { k, dir: 1 } : null;
+    ver++;
+  }
+
   let lastRangeAt = 0, lastRange = null;
   function findRangeTextThrottled() {
     if (Date.now() - lastRangeAt < 1500) return lastRange;
@@ -277,6 +360,8 @@
 
   // ── Clicks ──
   function onClick(e) {
+    const sh = e.target.closest(".pra-h[data-k]");
+    if (sh) { e.preventDefault(); return toggleSort(sh.dataset.k); }
     const a = e.target.closest("[data-act], .pra-d");
     if (!a) return;
     e.preventDefault();
