@@ -85,8 +85,61 @@
       return { campaigns: ids("selected_campaign_ids"), adsets: ids("selected_adset_ids") };
     },
   };
-  // Google Ads: not wired yet (needs the page's table layout); nothing is drawn there.
-  const google = { rows: () => [], header: () => null, footer: () => null, level: () => "campaign", selection: () => ({ campaigns: [], adsets: [] }) };
+  // Google Ads: the page has no IDs in its table. A row's ID comes from the
+  // "Campaign ID" / "Ad group ID" / "Ad ID" column when that column is shown,
+  // otherwise campaigns and ad groups are matched by name (the CRM sends the
+  // names; campaign names are unique per account, a duplicated ad group name is
+  // left blank rather than guessed). The Ads tab needs the Ad ID column.
+  const ID_HEADER = { campaign: /^Campaign ID\b/i, adset: /^Ad group ID\b/i, ad: /^Ad ID\b/i };
+  let nameIndex = { at: null };
+  function idByName(level, name) {
+    if (!data?.names || level === "ad") return null;
+    if (nameIndex.at !== data) {
+      nameIndex = { at: data };
+      for (const lvl of ["campaign", "adset"]) {
+        const m = new Map();
+        for (const [id, n] of Object.entries(data.names[lvl] || {})) m.set(n, m.has(n) ? null : id);
+        nameIndex[lvl] = m;
+      }
+    }
+    return nameIndex[level]?.get(name) || null;
+  }
+  const google = {
+    table() { return document.querySelector('ess-table[debugid="main-ess-table"]') || document.querySelector("ess-table"); },
+    level() { const p = location.pathname; return /\/aw\/adgroups/.test(p) ? "adset" : /\/aw\/ads\b/.test(p) ? "ad" : "campaign"; },
+    headers(t) { return [...t.querySelectorAll('[role="columnheader"]')]; },
+    nameHeader(t) { const hs = this.headers(t); return hs.find(h => h.classList.contains("last-frozen-column")) || hs.find(h => h.getAttribute("essfield") === "name") || null; },
+    rows() {
+      const t = this.table();
+      if (!t) return [];
+      const nh = this.nameHeader(t);
+      if (!nh) return [];
+      const lvl = this.level();
+      const nf = nh.getAttribute("essfield");
+      const idf = this.headers(t).find(h => ID_HEADER[lvl].test(h.innerText.trim()))?.getAttribute("essfield");
+      const out = [];
+      for (const r of t.querySelectorAll(".particle-table-row")) {
+        if (r.classList.contains("particle-table-summary-row")) continue;
+        const host = r.querySelector(`ess-cell[essfield="${CSS.escape(nf)}"]`);
+        if (!host) continue;
+        let id = idf ? (r.querySelector(`ess-cell[essfield="${CSS.escape(idf)}"]`)?.innerText || "").replace(/\D/g, "") : "";
+        if (!id) id = idByName(lvl, (host.innerText || "").split("\n")[0].trim());
+        // Rows not matched yet still get a block (dots until the CRM answers), so the header and totals appear.
+        out.push({ host, id: id || "", type: lvl });
+      }
+      return out;
+    },
+    header() { const t = this.table(); return t ? this.nameHeader(t) : null; },
+    footer() {
+      const t = this.table(), nh = t && this.nameHeader(t);
+      const sr = nh && t.querySelector(".particle-table-summary-row");
+      return sr ? sr.querySelector(`ess-cell[essfield="${CSS.escape(nh.getAttribute("essfield"))}"]`) : null;
+    },
+    selection() {
+      const u = new URL(location.href);
+      return { campaigns: [u.searchParams.get("campaignId")].filter(Boolean), adsets: [u.searchParams.get("adGroupId")].filter(Boolean) };
+    },
+  };
   const A = PLATFORM === "meta" ? meta : google;
 
   // ── Data ──
@@ -170,7 +223,7 @@
   function widthNeeded() { return activeCols().length * COL_W + 34; }
 
   function render() {
-    if (PLATFORM !== "meta") return;
+
     const rows = A.rows();
     if (!rows.length) return;
     const now = findRangeTextThrottled();
@@ -194,7 +247,7 @@
       const key = `${id}|${ver}`;
       if (b.dataset.key === key) continue;
       b.dataset.key = key;
-      const m = fresh ? (data[type]?.[id] || ZERO) : null;
+      const m = fresh && id ? (data[type]?.[id] || ZERO) : null;
       b.innerHTML = `<div class="pra-tools-sp"></div>` + activeCols().map(c => valueCell(c, m, `${type}:${id}`)).join("");
     }
     if (head) {

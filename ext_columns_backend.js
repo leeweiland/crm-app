@@ -103,15 +103,21 @@ async function googleSpendAndMap(startStr, endStr) {
   for (const row of await search(`SELECT campaign.id, metrics.cost_micros, metrics.impressions, metrics.clicks FROM campaign WHERE segments.date BETWEEN '${startStr}' AND '${endStr}'`)) {
     campSpend.set(String(row.campaign.id), { spend: (Number(row.metrics.costMicros) || 0) / 1e6, impressions: Number(row.metrics.impressions) || 0, clicks: Number(row.metrics.clicks) || 0, linkClicks: Number(row.metrics.clicks) || 0 });
   }
+  // Google Ads' table has no IDs in the page, so the extension matches campaign and
+  // ad group rows by name (campaign names are unique per account) -- hence the names.
   const cached = readJson(MAP_FILE.google, null);
-  let map = cached && Date.now() - cached.at < MAP_TTL_MS ? cached.map : null;
+  let map = cached && cached.names && Date.now() - cached.at < MAP_TTL_MS ? cached.map : null;
+  let names = map ? cached.names : null;
   if (!map) {
     map = {};
+    names = { campaign: {}, adset: {} };
     for (const row of await search(`SELECT ad_group_ad.ad.id, ad_group.id, campaign.id FROM ad_group_ad`)) map[String(row.adGroupAd.ad.id)] = { adset: String(row.adGroup.id), campaign: String(row.campaign.id) };
-    writeJson(MAP_FILE.google, { at: Date.now(), map });
+    for (const row of await search(`SELECT campaign.id, campaign.name FROM campaign WHERE campaign.status != 'REMOVED'`)) names.campaign[String(row.campaign.id)] = row.campaign.name;
+    for (const row of await search(`SELECT ad_group.id, ad_group.name FROM ad_group WHERE ad_group.status != 'REMOVED'`)) names.adset[String(row.adGroup.id)] = row.adGroup.name;
+    writeJson(MAP_FILE.google, { at: Date.now(), map, names });
   }
   for (const [id, p] of Object.entries(map)) if (!parent.has(id)) parent.set(id, p);
-  return { spend, parent, campSpend };
+  return { spend, parent, campSpend, names };
 }
 
 // ── Enrollments, straight from CALLS TRACKING ("Result" = Enrolled, dated by "Date Of Enrollment") ──
@@ -252,7 +258,8 @@ export async function reportExtColumns(params = {}) {
   }
 
   let spendError = null, spend = new Map(), parent = new Map(), campSpend = new Map();
-  try { ({ spend, parent, campSpend = new Map() } = platform === "meta" ? await metaSpendAndMap(startStr, endStr) : await googleSpendAndMap(startStr, endStr)); }
+  let names = null;
+  try { ({ spend, parent, campSpend = new Map(), names = null } = platform === "meta" ? await metaSpendAndMap(startStr, endStr) : await googleSpendAndMap(startStr, endStr)); }
   catch (e) { spendError = e.message; }
 
   for (const [id, s] of spend) { if (!ads.has(id)) ads.set(id, blank()); Object.assign(ads.get(id), s); }
@@ -283,6 +290,6 @@ export async function reportExtColumns(params = {}) {
   return {
     platform, model, start: startStr, end: endStr, generatedAt: new Date().toISOString(),
     ad: obj(ads), adset: obj(adsets), campaign: obj(campaigns), totals: round(totals), parents,
-    people, unknownAd, spendError, enrollError,
+    people, unknownAd, spendError, enrollError, names,
   };
 }
