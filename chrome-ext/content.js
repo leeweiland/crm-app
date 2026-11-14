@@ -8,7 +8,7 @@
   const PLATFORM = location.hostname === "ads.google.com" ? "google" : "meta";
   const COLS = window.PRA_COLUMNS, FMT = window.PRA_FMT;
   const BY_KEY = Object.fromEntries(COLS.map(c => [c.k, c]));
-  const COL_W = 88;
+  const COL_W = 92;
   const DEFAULTS = { cols: window.PRA_DEFAULT_COLS.slice(), model: "first" };
   let settings = { ...DEFAULTS };
   let data = null, dataKey = null, loading = false, error = null, crmUrl = "https://crm-app-production-eb8f.up.railway.app";
@@ -28,30 +28,56 @@
   // resize callback (page_meta.js reads data-pra-name-w), Google by setting the
   // name cells' width. A drag is recognised as a mousedown on the table header or
   // the Name column's edge that leaves the width changed when the mouse comes up.
+  // Google: EVERY column you drag is remembered (essfield -> width), since Google
+  // forgets them all on navigation/refresh -- e.g. widen Status once and its
+  // "Eligible (Learning) ..." text stops wrapping into fat rows.
   const WKEY = "praNameW_" + PLATFORM;
-  let nameW = null, downW = null;
+  const GKEY = "praColW_google";
+  let nameW = null, downW = null, colW = {}, downCols = null;
   const root = document.documentElement;
   const publishW = () => { if (nameW) root.dataset.praNameW = String(nameW); };
-  // Until you drag it yourself, the Name column defaults to room for every CRM column plus ~220px of name.
-  // Google's CRM columns sit beside the name column, so there it keeps Google's own width until you drag it.
-  try { chrome.storage.local.get(WKEY, (s) => { nameW = s?.[WKEY] || (PLATFORM === "meta" ? activeCols().length * COL_W + 34 + 220 : null); publishW(); }); } catch { /* ignore */ }
+  if (PLATFORM === "meta") {
+    // Until you drag it yourself, the Name column defaults to room for every CRM column plus ~220px of name.
+    try { chrome.storage.local.get(WKEY, (s) => { nameW = s?.[WKEY] || (activeCols().length * COL_W + 34 + 220); publishW(); }); } catch { /* ignore */ }
+  } else {
+    try { chrome.storage.local.get(GKEY, (s) => { colW = s?.[GKEY] || {}; }); } catch { /* ignore */ }
+  }
   const nameHeaderNow = () => { const r = A.rows(); return r.length ? A.header(r[0].host) : null; };
+  const googleHeaderWidths = () => {
+    const t = A.table?.();
+    const out = {};
+    if (t) for (const h of t.querySelectorAll('[role="columnheader"][essfield]')) out[h.getAttribute("essfield")] = Math.round(h.getBoundingClientRect().width);
+    return out;
+  };
   document.addEventListener("mousedown", (e) => {
+    if (e.target.closest?.(".pra-block")) return;
+    if (PLATFORM === "google") {
+      if (!e.target.closest?.("ess-table")) return;
+      downCols = googleHeaderWidths();
+      downW = 1;
+      return;
+    }
     const h = nameHeaderNow();
     if (!h) return;
     const r = h.getBoundingClientRect();
     const onEdge = Math.abs(e.clientX - r.right) < 14 && e.clientY >= r.top - 4;
     if (!onEdge && !e.target.closest?.('[role="columnheader"]')) return;
-    if (e.target.closest?.(".pra-block")) return;
     downW = r.width;
     root.dataset.praMouseDown = "1";
   }, true);
   document.addEventListener("mouseup", () => {
     if (downW == null) return;
-    const before = downW;
-    downW = null;
+    const before = downW, beforeCols = downCols;
     setTimeout(() => {
+      downW = null; downCols = null;
       root.dataset.praMouseDown = "";
+      if (PLATFORM === "google") {
+        const now = googleHeaderWidths();
+        let changed = false;
+        for (const [f, w] of Object.entries(now)) if (beforeCols?.[f] != null && Math.abs(w - beforeCols[f]) > 3) { colW[f] = w; changed = true; }
+        if (changed) { try { chrome.storage.local.set({ [GKEY]: colW }); } catch { /* ignore */ } }
+        return;
+      }
       const h = nameHeaderNow();
       if (!h) return;
       const w = Math.round(h.getBoundingClientRect().width);
@@ -331,10 +357,13 @@
       if (hb.dataset.key !== String(ver)) { hb.dataset.key = String(ver); hb.innerHTML = headerHtml(); }
       if (!GOOGLE_COL && !narrowWarned && rows[0].host.getBoundingClientRect().width < widthNeeded() + 190) { narrowWarned = true; toast("Drag the right edge of the Name column wider to make room for the CRM columns."); }
     }
-    // Google: hold the remembered Name width (not while the mouse is down, so a drag isn't fought).
-    if (PLATFORM === "google" && nameW && downW == null && head) {
-      const want = nameW + "px";
-      for (const el of A.nameCells()) if (el.style.width !== want) el.style.width = want;
+    // Google: hold every remembered column width (not while the mouse is down, so a drag isn't fought).
+    if (PLATFORM === "google" && downW == null) {
+      const t = A.table();
+      if (t) for (const [f, w] of Object.entries(colW)) {
+        const want = w + "px";
+        for (const el of t.querySelectorAll(`[essfield="${CSS.escape(f)}"]`)) if (el.style.width !== want) el.style.width = want;
+      }
     }
     if (PLATFORM === "google") applySort(rows, level, fresh);
     if (GOOGLE_COL) googleSpacers();

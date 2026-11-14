@@ -34,11 +34,11 @@
 .pra-d:hover { color: var(--pra-blue) !important; }
 .pra-h {
   flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; text-align: right;
-  padding: 0 6px; color: var(--pra-dim); font-family: var(--pra-label); font-weight: 400; font-size: 9px;
-  letter-spacing: .06em; text-transform: uppercase; line-height: 1.2; white-space: normal;
+  padding: 0 5px; color: var(--pra-white); font-family: var(--pra-label); font-weight: 400; font-size: 11px;
+  letter-spacing: .02em; text-transform: uppercase; line-height: 1.2; white-space: normal;
   cursor: grab; user-select: none; overflow: hidden;
 }
-.pra-h:hover { color: var(--pra-white); background: var(--pra-panel-2); }
+.pra-h:hover { color: var(--pra-blue); background: var(--pra-panel-2); }
 .pra-msg { display: flex; align-items: center; padding: 0 12px; color: var(--pra-white); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pra-msg a { color: var(--pra-blue); text-decoration: underline; cursor: pointer; margin: 0 4px; }
 .pra-msg.pra-err { color: var(--pra-red); }
