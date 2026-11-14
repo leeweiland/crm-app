@@ -967,6 +967,10 @@ body { margin: 0; }
    to actually win the cascade, since both are single-class selectors. */
 .compose-schedule-panel, .emoji-picker-panel, .gif-picker-panel, .msg-react-panel { position: fixed; top: auto; left: auto; right: auto; bottom: auto; overflow-y: auto; }
 .msg-react-panel { width: auto; padding: 6px 8px; }
+.msg-react-panel.copy-only .msg-react-row { display: none; }
+.msg-menu-item { display: block; width: 100%; margin-top: 4px; padding: 8px 14px; background: rgba(255,255,255,0.06); border: 1px solid var(--pra-border); border-radius: 8px; color: var(--pra-white); font: inherit; font-size: .9rem; text-align: left; cursor: pointer; white-space: nowrap; }
+.msg-react-panel.copy-only .msg-menu-item, #composePasteMenu .msg-menu-item { margin-top: 0; }
+.msg-menu-item:hover { border-color: var(--pra-blue); }
 .task-panel-list { max-height: 220px; overflow-y: auto; margin-bottom: 10px; }
 .task-panel-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pra-border); }
 .task-panel-row:last-child { border-bottom: none; }

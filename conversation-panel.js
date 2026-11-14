@@ -353,6 +353,8 @@
         if (composeGifPanel?.classList.contains('open') && !composeGifPanel.contains(e.target) && e.target.id !== 'composeGifBtn' && !e.target.closest('#composeGifBtn')) inst._toggleComposeGifPanel(false);
         const msgReactPanel = root.querySelector('#msgReactPanel');
         if (msgReactPanel?.classList.contains('open') && !msgReactPanel.contains(e.target)) inst._toggleMsgReactPanel(false);
+        const composePasteMenu = root.querySelector('#composePasteMenu');
+        if (composePasteMenu?.classList.contains('open') && !composePasteMenu.contains(e.target)) composePasteMenu.classList.remove('open');
       }
     });
   }
@@ -1024,6 +1026,47 @@
       if (!r || !r.ok) { showToast('Could not send', true); return; }
       loadThread();
     }
+    // Copy / paste of message text (Lee, 2026-11-14). The copied text is also
+    // kept in localStorage so Paste works even where the browser/app won't
+    // let a page read the system clipboard.
+    let copyingText = '';
+    const LAST_COPY_KEY = 'crmLastCopiedText';
+    async function copyMessageText(text) {
+      if (!text) return;
+      try { localStorage.setItem(LAST_COPY_KEY, text); } catch {}
+      let ok = false;
+      try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } } catch {}
+      if (!ok) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove();
+        } catch {}
+      }
+      if (typeof showToast === 'function') showToast('Copied');
+    }
+    async function pasteIntoCompose() {
+      const bodyEl = container.querySelector('#composeBody');
+      if (!bodyEl) return;
+      let text = '';
+      try { if (navigator.clipboard?.readText) text = await navigator.clipboard.readText(); } catch {}
+      if (!text) { try { text = localStorage.getItem(LAST_COPY_KEY) || ''; } catch {} }
+      if (!text) { if (typeof showToast === 'function') showToast('Nothing copied yet', true); return; }
+      insertAtCursor(bodyEl, text);
+      if (contactIdForDraft()) state.composeDraftByContact[contactIdForDraft()] = bodyEl.value;
+      fitComposeBody();
+    }
+    function contactIdForDraft() { return state.contactId || null; }
+    function placePanelAt(panel, x, y) {
+      panel.style.visibility = 'hidden';
+      panel.style.left = '0px'; panel.style.top = '0px';
+      const w = panel.offsetWidth, h = panel.offsetHeight;
+      const left = Math.max(8, Math.min(x - w / 2, window.innerWidth - w - 8));
+      let top = y - h - 12;
+      if (top < 8) top = Math.min(y + 12, window.innerHeight - h - 8);
+      panel.style.left = left + 'px'; panel.style.top = top + 'px';
+      panel.style.visibility = '';
+    }
     function _toggleMsgReactPanel(forceOpen, x, y) {
       const panel = container.querySelector('#msgReactPanel');
       if (!panel) return;
@@ -1416,6 +1459,13 @@
             ${QUICK_REACT_EMOJIS.map(e => `<button type="button" class="mab-emoji" data-emoji="${e}">${e}</button>`).join('')}
             <button type="button" class="mab-emoji-plus" id="msgReactMoreBtn" title="More emoji">+</button>
           </div>
+          <button type="button" class="msg-menu-item" id="msgCopyBtn">Copy text</button>
+        </div>
+        <!-- Long-press / right-click in the typing box (Lee, 2026-11-14):
+             Paste the last copied text -- e.g. a good text Alexis sent one
+             lead, reused for another. -->
+        <div class="task-panel msg-react-panel" id="composePasteMenu">
+          <button type="button" class="msg-menu-item" id="composePasteBtn">Paste</button>
         </div>
         ` : ''}
         <div class="compose-resize-handle" id="composeResizeHandle" title="Drag to resize"></div>
@@ -1540,27 +1590,54 @@
       if (showToolbar) {
         let msgLongPressTimer = null;
         const cancelMsgLongPress = () => { if (msgLongPressTimer) { clearTimeout(msgLongPressTimer); msgLongPressTimer = null; } };
+        // Outbound bubbles open the same bar with only "Copy text" (Lee,
+        // 2026-11-14: reuse a good text on another lead); inbound get the
+        // reactions plus Copy.
+        const openMsgMenu = (bubble, x, y) => {
+          const text = bubble.textContent.trim();
+          const inbound = !!bubble.closest('.bubble-row.inbound');
+          reactingToText = text; copyingText = text;
+          const panel = container.querySelector('#msgReactPanel');
+          if (panel) panel.classList.toggle('copy-only', !inbound);
+          const copyBtn = container.querySelector('#msgCopyBtn');
+          if (copyBtn) copyBtn.style.display = text ? '' : 'none';
+          if (!inbound && !text) return;
+          _toggleMsgReactPanel(true, x, y);
+        };
         threadEl.addEventListener('touchstart', (e) => {
-          const bubble = e.target.closest('.bubble-row.inbound .sms-bubble');
+          const bubble = e.target.closest('.bubble-row .sms-bubble');
           if (!bubble) return;
           const touch = e.touches[0];
           const x = touch.clientX, y = touch.clientY;
           // textContent skips the <img> (an MMS/GIF bubble) automatically --
           // an image-only message just reacts with no quoted text, same as
           // if there'd been nothing to quote.
-          const text = bubble.textContent.trim();
-          msgLongPressTimer = setTimeout(() => { reactingToText = text; _toggleMsgReactPanel(true, x, y); msgLongPressTimer = null; }, 450);
+          msgLongPressTimer = setTimeout(() => { openMsgMenu(bubble, x, y); msgLongPressTimer = null; }, 450);
         }, { passive: true });
         threadEl.addEventListener('touchmove', cancelMsgLongPress, { passive: true });
         threadEl.addEventListener('touchend', cancelMsgLongPress);
         threadEl.addEventListener('touchcancel', cancelMsgLongPress);
         threadEl.addEventListener('contextmenu', (e) => {
-          const bubble = e.target.closest('.bubble-row.inbound .sms-bubble');
+          const bubble = e.target.closest('.bubble-row .sms-bubble');
           if (!bubble) return;
           e.preventDefault();
-          reactingToText = bubble.textContent.trim();
-          _toggleMsgReactPanel(true, e.clientX, e.clientY);
+          openMsgMenu(bubble, e.clientX, e.clientY);
         });
+        const msgCopyBtn = container.querySelector('#msgCopyBtn');
+        if (msgCopyBtn) msgCopyBtn.onclick = () => { _toggleMsgReactPanel(false); copyMessageText(copyingText); };
+        // Typing box: right-click (desktop) / long-press (phone) -> Paste.
+        const composePasteMenu = container.querySelector('#composePasteMenu');
+        const composeBodyForPaste = container.querySelector('#composeBody');
+        if (composePasteMenu && composeBodyForPaste) {
+          composeBodyForPaste.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            _toggleMsgReactPanel(false);
+            composePasteMenu.classList.add('open');
+            placePanelAt(composePasteMenu, e.clientX, e.clientY);
+          });
+          const pasteBtn = container.querySelector('#composePasteBtn');
+          if (pasteBtn) pasteBtn.onclick = () => { composePasteMenu.classList.remove('open'); pasteIntoCompose(); };
+        }
         const msgReactPanel = container.querySelector('#msgReactPanel');
         msgReactPanel?.querySelectorAll('.mab-emoji').forEach(btn => btn.onclick = () => { _toggleMsgReactPanel(false); sendQuickReaction(btn.dataset.emoji); });
         const msgReactMoreBtn = container.querySelector('#msgReactMoreBtn');
