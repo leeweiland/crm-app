@@ -97,3 +97,7 @@
 .pra-block, .pra-block *, .pra-pop, .pra-pop *, .pra-card, .pra-card *, .pra-toast { font-family: var(--pra-font) !important; }
 .pra-h, .pra-pop-h, .pra-pop-h *, .pra-sub, .pra-card-h { font-family: var(--pra-label) !important; }
 .pra-h.pra-sorted { color: var(--pra-blue); }
+
+/* Google Ads: the block is its own column beside the Campaign/Ad group/Ad column, not an overlay. */
+.pra-block.pra-gcol { position: relative !important; top: auto; right: auto !important; bottom: auto; max-width: none; flex: 0 0 auto; align-self: stretch; z-index: 1; }
+.pra-block.pra-gcol.pra-spacer { background: transparent; border-left: 1px solid transparent; }

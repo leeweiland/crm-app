@@ -33,7 +33,8 @@
   const root = document.documentElement;
   const publishW = () => { if (nameW) root.dataset.praNameW = String(nameW); };
   // Until you drag it yourself, the Name column defaults to room for every CRM column plus ~220px of name.
-  try { chrome.storage.local.get(WKEY, (s) => { nameW = s?.[WKEY] || (activeCols().length * COL_W + 34 + 220); publishW(); }); } catch { /* ignore */ }
+  // Google's CRM columns sit beside the name column, so there it keeps Google's own width until you drag it.
+  try { chrome.storage.local.get(WKEY, (s) => { nameW = s?.[WKEY] || (PLATFORM === "meta" ? activeCols().length * COL_W + 34 + 220 : null); publishW(); }); } catch { /* ignore */ }
   const nameHeaderNow = () => { const r = A.rows(); return r.length ? A.header(r[0].host) : null; };
   document.addEventListener("mousedown", (e) => {
     const h = nameHeaderNow();
@@ -229,20 +230,49 @@
   }
 
   // ── Drawing ──
+  // Meta: the block lives inside the Name cell (Meta's table is absolutely
+  // positioned, so nothing can be inserted between its columns). Google: the
+  // rows are plain flex rows, so the block is its own column inserted right
+  // after the Campaign/Ad group/Ad cell -- it never covers the ad previews or
+  // the edit buttons.
+  const GOOGLE_COL = PLATFORM === "google";
   function block(host, kind) {
-    let b = host.querySelector(":scope > .pra-block");
+    let b = GOOGLE_COL
+      ? (host.nextElementSibling?.classList.contains("pra-block") ? host.nextElementSibling : null)
+      : host.querySelector(":scope > .pra-block");
+    if (b && !b.classList.contains("pra-" + kind)) { b.className = "pra-block pra-" + kind + (GOOGLE_COL ? " pra-gcol" : ""); b.dataset.key = ""; }
     if (!b) {
-      if (getComputedStyle(host).position === "static") host.style.position = "relative";
+      if (!GOOGLE_COL && getComputedStyle(host).position === "static") host.style.position = "relative";
       b = document.createElement("div");
-      b.className = "pra-block pra-" + kind;
+      b.className = "pra-block pra-" + kind + (GOOGLE_COL ? " pra-gcol" : "");
       b.addEventListener("click", onClick);
       b.addEventListener("dragstart", onDragStart);
       b.addEventListener("dragover", onDragOver);
       b.addEventListener("drop", onDrop);
       for (const ev of ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup", "dragstart", "dragover", "dragenter", "drop", "keydown"]) b.addEventListener(ev, e => e.stopPropagation());
-      host.appendChild(b);
+      if (GOOGLE_COL) host.after(b); else host.appendChild(b);
     }
     return b;
+  }
+  // Google rows that get no block (e.g. "Total: Account") still need an empty
+  // column of the same width, or every column after it would shift left.
+  function googleSpacers() {
+    const t = A.table();
+    if (!t) return;
+    const nh = A.nameHeader(t);
+    if (!nh) return;
+    const f = CSS.escape(nh.getAttribute("essfield"));
+    for (const cell of t.querySelectorAll(`ess-cell[essfield="${f}"]`)) {
+      if (cell.nextElementSibling?.classList.contains("pra-block")) continue;
+      const s = document.createElement("div");
+      s.className = "pra-block pra-gcol pra-spacer";
+      s.innerHTML = `<div class="pra-tools-sp"></div>` + activeCols().map(() => `<div class="pra-c" style="width:${COL_W}px"></div>`).join("");
+      cell.after(s);
+    }
+    for (const s of t.querySelectorAll(".pra-spacer")) {
+      const want = activeCols().length;
+      if (s.childElementCount - 1 !== want) s.innerHTML = `<div class="pra-tools-sp"></div>` + activeCols().map(() => `<div class="pra-c" style="width:${COL_W}px"></div>`).join("");
+    }
   }
   function valueCell(col, m, ref) {
     const v = m ? col.get(m) : null;
@@ -283,7 +313,7 @@
     const head = A.header(rows[0].host);
     const headRight = head ? head.getBoundingClientRect().right : null;
     const align = (b, host) => {
-      if (headRight == null) return;
+      if (headRight == null || GOOGLE_COL) return;
       const want = Math.round(host.getBoundingClientRect().right - headRight + 10) + "px";
       if (b.style.right !== want) b.style.right = want;
     };
@@ -299,7 +329,7 @@
     if (head) {
       const hb = block(head, "head");
       if (hb.dataset.key !== String(ver)) { hb.dataset.key = String(ver); hb.innerHTML = headerHtml(); }
-      if (!narrowWarned && rows[0].host.getBoundingClientRect().width < widthNeeded() + 190) { narrowWarned = true; toast("Drag the right edge of the Name column wider to make room for the CRM columns."); }
+      if (!GOOGLE_COL && !narrowWarned && rows[0].host.getBoundingClientRect().width < widthNeeded() + 190) { narrowWarned = true; toast("Drag the right edge of the Name column wider to make room for the CRM columns."); }
     }
     // Google: hold the remembered Name width (not while the mouse is down, so a drag isn't fought).
     if (PLATFORM === "google" && nameW && downW == null && head) {
@@ -307,6 +337,7 @@
       for (const el of A.nameCells()) if (el.style.width !== want) el.style.width = want;
     }
     if (PLATFORM === "google") applySort(rows, level, fresh);
+    if (GOOGLE_COL) googleSpacers();
     const foot = A.footer(rows[0].host);
     if (foot) {
       const fb = block(foot, "foot");
