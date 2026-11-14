@@ -628,7 +628,7 @@ if (window.crmAppMode) (function () {
     const shown = showAll ? items : items.slice(0, 3);
     box.innerHTML = shown.map(i => `
       <div class="fs-item" data-id="${esc(i.id)}" data-contact="${esc(i.contactId || "")}" role="button" title="Open this chat">
-        <span class="fs-text"><b>${i.channel === "email" ? (i.status === "bounced" ? "Email bounced" : "Email failed to send") : "Text failed to send"}</b> to ${esc(i.name || "a contact")} · ${esc(when(i.at))}
+        <span class="fs-text">${i.senderName ? `<b>${esc(i.senderName)}:</b> ` : ""}<b>${i.channel === "email" ? (i.status === "bounced" ? "Email bounced" : "Email failed to send") : "Text failed to send"}</b> to ${esc(i.name || "a contact")} · ${esc(when(i.at))}
           ${i.reason || i.preview ? `<span class="fs-sub">${esc([niceReason(i.reason), i.preview ? "“" + i.preview + "”" : ""].filter(Boolean).join(" · "))}</span>` : ""}</span>
         <span class="fs-open">Open chat</span>
         <button class="fs-x" type="button" title="Dismiss" aria-label="Dismiss">&times;</button>

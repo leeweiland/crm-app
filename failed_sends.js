@@ -12,7 +12,12 @@
 // The list is read straight from the messages table through the
 // messages_source_slim covering index (source_type, source_id, seq), so it
 // is index-only no matter how big the table gets.
-import { readJson, writeJson, readJsonBody, sendJson, getSessionUser } from "./auth_backend.js";
+import { readJson, writeJson, readJsonBody, sendJson, getSessionUser, USERS_FILE, isAdmin } from "./auth_backend.js";
+
+// Admins also get every other team member's failures (Lee, 2026-11-14):
+// same banner + push, labeled with who sent it.
+const staffUsers = () => readJson(USERS_FILE, []).filter(u => u && u.id);
+const userName = (u) => (u ? [u.first, u.last].filter(Boolean).join(" ") || u.email || "" : "");
 
 const DISMISSED_FILE = "crm_failed_send_dismissed.json"; // { [userId]: { [messageId]: dismissedAtIso } }
 const WINDOW_DAYS = 7;
@@ -28,25 +33,43 @@ export function noteFailedSend(m, status) {
       let name = "";
       try { const c = m.contactId ? getContactById(m.contactId) : null; name = c ? [c.first, c.last].filter(Boolean).join(" ") || c.phone || c.email || "" : ""; } catch { /* name is optional */ }
       const isEmail = m.channel === "email";
+      const data = { contactId: m.contactId ? String(m.contactId) : "", kind: "failed_send" };
       await pushToUser(m.sourceId, {
         title: isEmail ? "Email failed to send" : "Text failed to send",
         body: `Your ${isEmail ? "email" : "text"} to ${name || "this contact"} didn't go through. Tap to open the chat.`,
-        data: { contactId: m.contactId ? String(m.contactId) : "", kind: "failed_send" },
+        data,
       });
+      const users = staffUsers();
+      const sender = users.find(u => u.id === m.sourceId);
+      for (const admin of users.filter(u => isAdmin(u) && u.id !== m.sourceId)) {
+        await pushToUser(admin.id, {
+          title: `${userName(sender) || "A team member"}'s ${isEmail ? "email" : "text"} failed`,
+          body: `${userName(sender) || "Their"} ${isEmail ? "email" : "text"} to ${name || "a contact"} didn't go through. Tap to open the chat.`,
+          data,
+        });
+      }
     })().catch(e => console.error("[failed_sends] push failed:", e.message));
   } catch (e) {
     console.error("[failed_sends] noteFailedSend failed:", e.message);
   }
 }
 
-async function listFor(userId) {
+async function listFor(me) {
+  const users = staffUsers();
+  // An admin sees everyone's failed sends; everyone else only their own.
+  const senders = isAdmin(me) ? users : users.filter(u => u.id === me.id);
+  const out = [];
+  for (const u of senders) out.push(...(await listForSender(u.id, me.id)).map(i => ({ ...i, senderId: u.id, senderName: u.id === me.id ? "" : userName(u) })));
+  return out.sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+}
+async function listForSender(userId, viewerId) {
   const mdb = await import("./messages_db.js");
   if (!mdb.MESSAGES_PG) return [];
   const { getContactsMapByIds } = await import("./contacts_db.js");
   const since = new Date(Date.now() - WINDOW_DAYS * 86400000).toISOString();
   // Last 400 Inbox sends by this user, newest first, index-only.
   const recent = mdb.sourceRecentSlim("inbox", userId, 400).filter(r => FAILED.has(r.status) && (r.created_at || "") >= since);
-  const dismissed = readJson(DISMISSED_FILE, {})[userId] || {};
+  const dismissed = readJson(DISMISSED_FILE, {})[viewerId] || {};
   const open = recent.filter(r => !dismissed[r.id]);
   if (!open.length) return [];
   const details = new Map(mdb.getMessagesByIds(open.map(r => r.id)).map(m => [m.id, m]));
@@ -73,7 +96,7 @@ export async function handleFailedSendsRequest(req, res, url) {
   const me = getSessionUser(req);
   if (!me) return sendJson(res, 401, { error: "Not logged in" });
   if (p === "/api/failed-sends" && req.method === "GET") {
-    try { return sendJson(res, 200, { items: await listFor(me.id) }); }
+    try { return sendJson(res, 200, { items: await listFor(me) }); }
     catch (e) { console.error("[failed_sends] list failed:", e.message); return sendJson(res, 200, { items: [] }); }
   }
   if (p === "/api/failed-sends/dismiss" && req.method === "POST") {
