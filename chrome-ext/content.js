@@ -8,7 +8,7 @@
   const PLATFORM = location.hostname === "ads.google.com" ? "google" : "meta";
   const COLS = window.PRA_COLUMNS, FMT = window.PRA_FMT;
   const BY_KEY = Object.fromEntries(COLS.map(c => [c.k, c]));
-  const COL_W = 80;
+  const COL_W = 88;
   const DEFAULTS = { cols: window.PRA_DEFAULT_COLS.slice(), model: "first" };
   let settings = { ...DEFAULTS };
   let data = null, dataKey = null, loading = false, error = null, crmUrl = "https://crm-app-production-eb8f.up.railway.app";
@@ -253,7 +253,7 @@
     if (head) {
       const hb = block(head, "head");
       if (hb.dataset.key !== String(ver)) { hb.dataset.key = String(ver); hb.innerHTML = headerHtml(); }
-      if (!narrowWarned && rows[0].host.getBoundingClientRect().width < widthNeeded() + 140) { narrowWarned = true; toast("Drag the right edge of the Name column wider to make room for the CRM columns."); }
+      if (!narrowWarned && rows[0].host.getBoundingClientRect().width < widthNeeded() + 190) { narrowWarned = true; toast("Drag the right edge of the Name column wider to make room for the CRM columns."); }
     }
     const foot = A.footer(rows[0].host);
     if (foot) {

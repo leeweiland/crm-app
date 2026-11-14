@@ -1,26 +1,70 @@
 {
   "manifest_version": 3,
   "name": "PRA Ads Columns",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "CRM columns (opt-ins, calls, enrollments, revenue, cost per each, ROAS) inside Meta Ads Manager and Google Ads.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "https://crm-app-production-eb8f.up.railway.app/*"
   ],
-  "background": { "service_worker": "bg.js" },
-  "action": { "default_popup": "popup.html", "default_title": "PRA Ads Columns" },
+  "background": {
+    "service_worker": "bg.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PRA Ads Columns",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
   "content_scripts": [
     {
-      "matches": ["https://adsmanager.facebook.com/*", "https://business.facebook.com/adsmanager/*"],
-      "js": ["page_meta.js"],
+      "matches": [
+        "https://adsmanager.facebook.com/*",
+        "https://business.facebook.com/adsmanager/*"
+      ],
+      "js": [
+        "page_meta.js"
+      ],
       "world": "MAIN",
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://adsmanager.facebook.com/*", "https://business.facebook.com/adsmanager/*", "https://ads.google.com/*"],
-      "js": ["columns.js", "content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "https://adsmanager.facebook.com/*",
+        "https://business.facebook.com/adsmanager/*",
+        "https://ads.google.com/*"
+      ],
+      "js": [
+        "columns.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*"
+      ],
+      "matches": [
+        "https://adsmanager.facebook.com/*",
+        "https://business.facebook.com/*",
+        "https://ads.google.com/*"
+      ]
     }
   ]
 }
