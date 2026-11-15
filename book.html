@@ -447,7 +447,10 @@ function renderForm() {
   `;
   document.getElementById('backToPicker').onclick = () => { selectedSlot = null; renderPicker(); };
   document.getElementById('bkSubmit').onclick = submitBooking;
-  document.querySelectorAll('[data-q]').forEach(el => { el.addEventListener('input', updateSubmitVisibility); el.addEventListener('change', updateSubmitVisibility); });
+  document.querySelectorAll('[data-q]').forEach(el => {
+    el.addEventListener('input', (e) => { updateSubmitVisibility(); scheduleAiScreen(e); });
+    el.addEventListener('change', (e) => { updateSubmitVisibility(); scheduleAiScreen(e); });
+  });
   updateSubmitVisibility();
 }
 
@@ -482,10 +485,54 @@ function matchingQuestionRule(answers, action) {
   }
   return null;
 }
+// AI-screened answers are checked as soon as they're typed (debounced), not
+// only on Confirm -- an AI rule set to "Hide submit button" must hide the
+// button before anyone can click it. aiScreen caches the verdict for the
+// exact answers it was given; a changed answer re-checks.
+const aiQuestions = () => (eventType.questions || []).filter(q => (q.logic || []).some(r => r.op === 'ai_disqualify'));
+const aiRuleOf = (q) => (q.logic || []).find(r => r.op === 'ai_disqualify');
+let aiScreen = { key: '', state: '', token: '', hidden: false, redirectUrl: '' };
+let aiScreenTimer = null;
+function aiKey(answers) { return aiQuestions().map(q => `${q.id}=${answers[q.id] || ''}`).join('|'); }
+let aiScreenPromise = null;
+function runAiScreenNow() {
+  const key = aiKey(currentAnswers());
+  if (aiScreen.key === key && aiScreen.state === 'pending' && aiScreenPromise) return aiScreenPromise; // same check already running -- wait on it
+  aiScreenPromise = runAiScreenOnce();
+  return aiScreenPromise;
+}
+async function runAiScreenOnce() {
+  const answers = currentAnswers();
+  const key = aiKey(answers);
+  if (!aiQuestions().length) return;
+  if (aiQuestions().some(q => !String(answers[q.id] || '').trim())) { aiScreen = { key: '', state: '' }; updateSubmitVisibility(); return; }
+  if (aiScreen.key === key && aiScreen.state && aiScreen.state !== 'error') return;
+  aiScreen = { key, state: 'pending' };
+  updateSubmitVisibility();
+  let v = { pass: true };
+  try {
+    const sr = await fetch('/api/scheduling/screen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, answers, onlyAi: true }), signal: AbortSignal.timeout(25000) });
+    if (sr.ok) v = await sr.json();
+  } catch { /* fail open */ }
+  if (aiKey(currentAnswers()) !== key) return; // answer changed while checking -- that newer check wins
+  aiScreen = v.pass ? { key, state: 'pass', token: v.token || '' } : { key, state: 'fail', hidden: !!v.hidden, redirectUrl: v.redirectUrl || '' };
+  updateSubmitVisibility();
+}
+function scheduleAiScreen(e) {
+  if (!e || !e.target || !aiQuestions().some(q => q.id === e.target.dataset.q)) return;
+  clearTimeout(aiScreenTimer);
+  aiScreenTimer = setTimeout(runAiScreenNow, e.type === 'change' ? 0 : 1200);
+}
 function updateSubmitVisibility() {
   const btn = document.getElementById('bkSubmit');
   if (!btn || formEmbed) return;
-  btn.style.display = matchingQuestionRule(currentAnswers(), 'hide_submit') ? 'none' : '';
+  const answers = currentAnswers();
+  const current = aiScreen.key && aiScreen.key === aiKey(answers);
+  const aiHidden = current && aiScreen.state === 'fail' && aiScreen.hidden;
+  btn.style.display = matchingQuestionRule(answers, 'hide_submit') || aiHidden ? 'none' : '';
+  const checking = current && aiScreen.state === 'pending';
+  btn.disabled = !!checking;
+  btn.textContent = checking ? 'Checking…' : 'Confirm Booking';
 }
 function showScreening(open) {
   let el = document.getElementById('bkScreening');
@@ -535,20 +582,21 @@ async function submitBooking() {
   const redirectRule = matchingQuestionRule(answers, 'redirect');
   if (redirectRule) { leaveTo(redirectRule.redirectUrl || 'https://www.youtube.com/@leeweiland'); return; }
   let screenToken;
-  if ((eventType.questions || []).some(q => (q.logic || []).some(r => r.op === 'ai_disqualify'))) {
+  if (aiQuestions().length) {
+    clearTimeout(aiScreenTimer);
     btn.disabled = true;
-    showScreening(true);
-    let verdict = { pass: true };
-    try {
-      const sr = await fetch('/api/scheduling/screen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, answers }), signal: AbortSignal.timeout(25000) });
-      if (sr.ok) verdict = await sr.json();
-    } catch { /* fail open -- an outage never blocks a booking */ }
-    if (!verdict.pass) {
-      const aiRule = (eventType.questions || []).flatMap(q => q.logic || []).find(r => r.op === 'ai_disqualify');
-      leaveTo(verdict.redirectUrl || (aiRule && aiRule.redirectUrl) || 'https://www.youtube.com/@leeweiland');
+    if (!(aiScreen.key === aiKey(answers) && (aiScreen.state === 'pass' || aiScreen.state === 'fail'))) {
+      showScreening(true);
+      await runAiScreenNow();
+      showScreening(false);
+    }
+    if (aiScreen.state === 'fail') {
+      if (aiScreen.hidden) { updateSubmitVisibility(); return; }
+      const aiRule = aiRuleOf(aiQuestions()[0]);
+      leaveTo(aiScreen.redirectUrl || (aiRule && aiRule.redirectUrl) || 'https://www.youtube.com/@leeweiland');
       return;
     }
-    screenToken = verdict.token;
+    screenToken = aiScreen.token;
   }
   btn.disabled = true; btn.textContent = 'Booking…';
 
@@ -644,7 +692,7 @@ async function submitBooking() {
   if (!r.ok) {
     errEl.textContent = d.error || 'Something went wrong.';
     btn.disabled = false; btn.textContent = 'Confirm Booking'; showScreening(false);
-    if (d.disqualified) { leaveTo(d.redirectUrl || 'https://www.youtube.com/@leeweiland'); return; }
+    if (d.disqualified) { if (d.redirectUrl) leaveTo(d.redirectUrl); else { btn.style.display = 'none'; errEl.textContent = ''; } return; }
     if (r.status === 409) { await loadSlots(); selectedDate = null; selectedSlot = null; renderPicker(); }
     if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
     return;

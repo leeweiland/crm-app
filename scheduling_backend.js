@@ -555,7 +555,7 @@ function screenTokenValid(et, answers, token) {
 // page never showed a Confirm button, so there's nowhere to send them).
 // AI checks run concurrently and fail OPEN (an outage blocks nobody), same
 // as the forms engine.
-async function screenBookingAnswers(et, answers, { skipAi = false } = {}) {
+async function screenBookingAnswers(et, answers, { skipAi = false, onlyAi = false } = {}) {
   const ai = [];
   for (const q of et.questions || []) {
     const val = (answers || {})[q.id];
@@ -566,13 +566,15 @@ async function screenBookingAnswers(et, answers, { skipAi = false } = {}) {
         }
         continue;
       }
-      if (!evalQuestionRule(rule, val)) continue;
+      if (onlyAi || !evalQuestionRule(rule, val)) continue;
       if (rule.action === "hide_submit") return { pass: false, hidden: true, redirectUrl: "" };
       if (rule.action === "redirect") return { pass: false, hidden: false, redirectUrl: rule.redirectUrl || "" };
     }
   }
   const failed = (await Promise.all(ai)).find(Boolean);
-  if (failed) return { pass: false, hidden: false, redirectUrl: failed.redirectUrl || "" };
+  // An AI rule set to "Hide submit button" (Lee, 2026-11-14) blocks without
+  // sending anywhere -- the page just never shows Confirm.
+  if (failed) return failed.action === "hide_submit" ? { pass: false, hidden: true, redirectUrl: "" } : { pass: false, hidden: false, redirectUrl: failed.redirectUrl || "" };
   return { pass: true };
 }
 // Flow tokens for this event type's own questions -- {{payload.<code>}} and
@@ -1417,11 +1419,11 @@ export async function handleSchedulingRequest(req, res, url) {
   }
 
   if (p === "/api/scheduling/screen" && req.method === "POST") {
-    const { slug, answers } = await readJsonBody(req);
+    const { slug, answers, onlyAi } = await readJsonBody(req);
     const et = getEventTypes().find(e => eventTypeHasSlug(e, slug) && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
-    const r = await screenBookingAnswers(et, answers);
-    return sendJson(res, 200, r.pass ? { pass: true, token: signScreen(et, answers) } : { pass: false, redirectUrl: r.redirectUrl || "" });
+    const r = await screenBookingAnswers(et, answers, { onlyAi: !!onlyAi });
+    return sendJson(res, 200, r.pass ? { pass: true, token: signScreen(et, answers) } : { pass: false, hidden: !!r.hidden, redirectUrl: r.redirectUrl || "" });
   }
 
   if (p === "/api/scheduling/bookings" && req.method === "POST") {

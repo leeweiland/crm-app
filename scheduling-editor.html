@@ -714,8 +714,8 @@ function questionLogicHtml(q, i) {
         <div class="q-logic-rule" style="border:1px solid var(--pra-border);border-radius:8px;padding:8px;margin-bottom:6px">
           <select class="pra-select" data-ql-op="${i}:${j}" style="margin-bottom:6px">${Object.entries(Q_LOGIC_OPS).map(([v, l]) => `<option value="${v}" ${r.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
           <textarea class="pra-input" data-ql-value="${i}:${j}" rows="${r.op === 'ai_disqualify' || r.op === 'contains_any_of' || r.op === 'any_of' ? 3 : 1}" placeholder="${r.op === 'ai_disqualify' ? 'Disqualify when the answer…' : 'Value'}" style="margin-bottom:6px">${escapeHtml(r.value || '')}</textarea>
-          ${r.op === 'ai_disqualify' ? '' : `<select class="pra-select" data-ql-action="${i}:${j}" style="margin-bottom:6px">${Object.entries(Q_LOGIC_ACTIONS).map(([v, l]) => `<option value="${v}" ${r.action === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`}
-          ${r.op === 'ai_disqualify' || r.action === 'redirect' ? `<input class="pra-input" data-ql-url="${i}:${j}" value="${escapeHtml(r.redirectUrl || '')}" placeholder="Redirect URL (e.g. https://www.youtube.com/@leeweiland)" style="margin-bottom:6px"/>` : ''}
+          <select class="pra-select" data-ql-action="${i}:${j}" style="margin-bottom:6px">${Object.entries(Q_LOGIC_ACTIONS).map(([v, l]) => `<option value="${v}" ${r.action === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          ${r.action === 'redirect' ? `<input class="pra-input" data-ql-url="${i}:${j}" value="${escapeHtml(r.redirectUrl || '')}" placeholder="Redirect URL (e.g. https://www.youtube.com/@leeweiland)" style="margin-bottom:6px"/>` : ''}
           <div style="text-align:right"><button class="q-card-del" data-ql-del="${i}:${j}">&times; Remove rule</button></div>
         </div>`).join('')}
       <button class="pra-btn pra-btn-ghost pra-btn-sm" data-ql-add="${i}" type="button">+ Add logic</button>
@@ -730,7 +730,7 @@ function wireQuestionLogic() {
   });
   document.querySelectorAll('[data-ql-op]').forEach(el => el.onchange = () => {
     const r = at(el.dataset.qlOp); r.op = el.value;
-    if (r.op === 'ai_disqualify') { r.action = 'redirect'; if (!r.redirectUrl) r.redirectUrl = 'https://www.youtube.com/@leeweiland'; }
+    if (!r.action) r.action = 'hide_submit';
     renderQuestions(); saveDebounced();
   });
   document.querySelectorAll('[data-ql-value]').forEach(el => el.oninput = () => { at(el.dataset.qlValue).value = el.value; saveDebounced(); });
