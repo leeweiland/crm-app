@@ -1819,10 +1819,14 @@ export async function handleSchedulingRequest(req, res, url) {
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
+      const nameBefore = et.name;
       for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability", "linkedFormId"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       const slugBefore = et.slug;
-      if ("name" in body && !("slug" in body)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
+      // Only an actual rename re-derives the link -- a plain save of an
+      // unchanged name used to re-slug too, which moved a calendar sharing
+      // another's name (Body Mastery Call -apply) to "-2" (Lee, 2026-11-14).
+      if ("name" in body && !("slug" in body) && String(body.name) !== String(nameBefore)) et.slug = uniqueSlug(String(body.name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "meeting", eventTypes, et.id);
       if ("slug" in body && body.slug) et.slug = uniqueSlug(String(body.slug).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""), eventTypes, et.id);
       if (et.slug !== slugBefore) et.previousSlugs = [...new Set([...(et.previousSlugs || []), slugBefore])].filter(x => x && x !== et.slug);
       et.updatedAt = new Date().toISOString();
