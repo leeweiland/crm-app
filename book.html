@@ -57,6 +57,12 @@ try { if (window.self !== window.top) document.documentElement.classList.add('bk
   .bk-label { font-size: .78rem; font-weight: 600; margin-bottom: 5px; display: block; }
   .bk-input, .bk-textarea { width: 100%; padding: 9px 12px; border: 1px solid var(--bk-border); border-radius: 8px; font-size: .88rem; font-family: inherit; color: var(--bk-text); background: var(--bk-bg); }
   .bk-input:focus, .bk-textarea:focus { outline: none; border-color: var(--bk-accent); }
+  .bk-screening { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px; padding: 24px; text-align: center; background: color-mix(in srgb, var(--bk-bg) 94%, transparent); color: var(--bk-text); font-family: var(--bk-font-secondary); }
+  .bk-screening.open { display: flex; }
+  .bk-screening .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--bk-border); border-top-color: var(--bk-accent); animation: bkspin .8s linear infinite; }
+  .bk-screening .t1 { font-family: var(--bk-font-primary); font-weight: 700; font-size: 1.05rem; }
+  .bk-screening .t2 { color: var(--bk-dim); font-size: .88rem; max-width: 340px; }
+  @keyframes bkspin { to { transform: rotate(360deg); } }
   .bk-btn { background: var(--bk-accent); color: #fff; border: none; border-radius: 8px; padding: 11px 18px; font-size: .88rem; font-weight: 700; cursor: pointer; font-family: inherit; width: 100%; }
   .bk-btn:hover { opacity: .9; }
   .bk-btn:disabled { opacity: .5; cursor: default; }
@@ -441,6 +447,58 @@ function renderForm() {
   `;
   document.getElementById('backToPicker').onclick = () => { selectedSlot = null; renderPicker(); };
   document.getElementById('bkSubmit').onclick = submitBooking;
+  document.querySelectorAll('[data-q]').forEach(el => { el.addEventListener('input', updateSubmitVisibility); el.addEventListener('change', updateSubmitVisibility); });
+  updateSubmitVisibility();
+}
+
+// ── Question logic (Lee, 2026-11-14) -- same ops as the form builder's
+// per-question logic. "hide_submit" hides Confirm (the career filter);
+// "redirect" fires on Confirm; ai_disqualify is checked server-side on
+// Confirm behind a short "reviewing your answers" screen. ──
+function currentAnswers() {
+  const out = {};
+  (eventType.questions || []).forEach(q => { const el = document.querySelector(`[data-q="${q.id}"]`); if (el) out[q.id] = el.value.trim(); });
+  return out;
+}
+function evalQuestionRule(rule, value) {
+  const lc = x => String(x ?? '').toLowerCase();
+  const target = lc(rule.value), scalar = lc(value);
+  if (rule.op === 'is_answered') return !!scalar.trim();
+  if (rule.op === 'is_empty') return !scalar.trim();
+  if (rule.op === 'equals') return scalar.trim() === target.trim();
+  if (rule.op === 'not_equals') return scalar.trim() !== target.trim();
+  if (rule.op === 'contains') return scalar.includes(target);
+  const candidates = target.split(',').map(x => x.trim()).filter(Boolean);
+  if (rule.op === 'any_of') return candidates.includes(scalar.trim());
+  if (rule.op === 'contains_any_of') return candidates.some(c => scalar.includes(c));
+  return false;
+}
+function matchingQuestionRule(answers, action) {
+  for (const q of eventType.questions || []) {
+    for (const rule of q.logic || []) {
+      if (rule.op === 'ai_disqualify' || rule.action !== action) continue;
+      if (evalQuestionRule(rule, answers[q.id])) return rule;
+    }
+  }
+  return null;
+}
+function updateSubmitVisibility() {
+  const btn = document.getElementById('bkSubmit');
+  if (!btn || formEmbed) return;
+  btn.style.display = matchingQuestionRule(currentAnswers(), 'hide_submit') ? 'none' : '';
+}
+function showScreening(open) {
+  let el = document.getElementById('bkScreening');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'bkScreening'; el.className = 'bk-screening';
+    el.innerHTML = '<div class="spin"></div><div class="t1">Reviewing your answers…</div><div class="t2">Please don\'t close this page. We\'re preparing your video and welcome message on the next page.</div>';
+    document.body.appendChild(el);
+  }
+  el.classList.toggle('open', !!open);
+}
+function leaveTo(url) {
+  try { top.location.href = url; } catch { location.href = url; }
 }
 
 async function submitBooking() {
@@ -473,6 +531,25 @@ async function submitBooking() {
     return;
   }
   const btn = document.getElementById('bkSubmit');
+  if (matchingQuestionRule(answers, 'hide_submit')) { btn.style.display = 'none'; return; }
+  const redirectRule = matchingQuestionRule(answers, 'redirect');
+  if (redirectRule) { leaveTo(redirectRule.redirectUrl || 'https://www.youtube.com/@leeweiland'); return; }
+  let screenToken;
+  if ((eventType.questions || []).some(q => (q.logic || []).some(r => r.op === 'ai_disqualify'))) {
+    btn.disabled = true;
+    showScreening(true);
+    let verdict = { pass: true };
+    try {
+      const sr = await fetch('/api/scheduling/screen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug, answers }), signal: AbortSignal.timeout(25000) });
+      if (sr.ok) verdict = await sr.json();
+    } catch { /* fail open -- an outage never blocks a booking */ }
+    if (!verdict.pass) {
+      const aiRule = (eventType.questions || []).flatMap(q => q.logic || []).find(r => r.op === 'ai_disqualify');
+      leaveTo(verdict.redirectUrl || (aiRule && aiRule.redirectUrl) || 'https://www.youtube.com/@leeweiland');
+      return;
+    }
+    screenToken = verdict.token;
+  }
   btn.disabled = true; btn.textContent = 'Booking…';
 
   // A redirect target is known synchronously (it's part of the event type
@@ -489,7 +566,7 @@ async function submitBooking() {
   // wait (the calendar availability check plus the write) down to instant.
   const fireBookingRequest = () => fetch('/api/scheduling/bookings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
+    body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined, screenToken: screenToken || undefined }),
     keepalive: true,
   }).catch(() => {}); // nothing left to show for a failure once whoever's waiting has already moved on
 
@@ -547,7 +624,7 @@ async function submitBooking() {
   try {
     r = await fetch('/api/scheduling/bookings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined }),
+      body: JSON.stringify({ slug, startAt: selectedSlot, timezone: selectedTz, answers, formAnswers: prefillFormAnswersJson || undefined, formAnswerLabels: prefillFormAnswerLabels || undefined, vid: visitorId || undefined, screenToken: screenToken || undefined }),
       signal: controller.signal,
     });
     d = await r.json();
@@ -566,7 +643,8 @@ async function submitBooking() {
   }
   if (!r.ok) {
     errEl.textContent = d.error || 'Something went wrong.';
-    btn.disabled = false; btn.textContent = 'Confirm Booking';
+    btn.disabled = false; btn.textContent = 'Confirm Booking'; showScreening(false);
+    if (d.disqualified) { leaveTo(d.redirectUrl || 'https://www.youtube.com/@leeweiland'); return; }
     if (r.status === 409) { await loadSlots(); selectedDate = null; selectedSlot = null; renderPicker(); }
     if (formEmbed) parent.postMessage({ type: 'pf-booked', success: false, error: errEl.textContent }, location.origin);
     return;

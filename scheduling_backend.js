@@ -1,4 +1,4 @@
-import { randomUUID, randomBytes } from "crypto";
+import { randomUUID, randomBytes, createHmac, createHash } from "crypto";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -491,7 +491,102 @@ function newEventType({ name, description, durationMinutes, location, branding, 
   };
 }
 function publicEventType(et) {
-  return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) }, questions: et.questions || [] };
+  // An ai_disqualify rule's criteria text stays server-side (same as
+  // forms_backend.js does for forms) -- the page only needs to know a
+  // screen exists, not what it screens for.
+  const questions = (et.questions || []).map(q => !(q.logic || []).some(r => r.op === "ai_disqualify") ? q
+    : { ...q, logic: q.logic.map(r => r.op === "ai_disqualify" ? { ...r, value: undefined } : r) });
+  return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) }, questions };
+}
+
+// ── Question logic (Lee, 2026-11-14) -- same rule shape and op set as form
+// fields (public-form.html's evalCondition): { op, value, action,
+// redirectUrl }. Actions on a calendar: "hide_submit" (the Confirm button
+// disappears, e.g. the career filter) and "redirect" (checked on Confirm;
+// ai_disqualify always behaves as a redirect). Enforced again here since the
+// booking endpoint is public.
+function evalQuestionRule(rule, value) {
+  const lc = (x) => String(x ?? "").toLowerCase();
+  const target = lc(rule.value);
+  const scalar = lc(value);
+  if (rule.op === "is_answered") return !!scalar.trim();
+  if (rule.op === "is_empty") return !scalar.trim();
+  if (rule.op === "equals") return scalar.trim() === target.trim();
+  if (rule.op === "not_equals") return scalar.trim() !== target.trim();
+  if (rule.op === "contains") return scalar.includes(target);
+  const candidates = target.split(",").map(x => x.trim()).filter(Boolean);
+  if (rule.op === "any_of") return candidates.includes(scalar.trim());
+  if (rule.op === "contains_any_of") return candidates.some(c => scalar.includes(c));
+  return false;
+}
+async function askClaudeScreen(criteria, label, answer) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-5", max_tokens: 10,
+      system: `You are screening one answer to a single booking-form question against a business's disqualification criteria. Given the criteria and the respondent's answer, decide whether the answer PASSES (does not match the disqualifying criteria) or FAILS (matches it). Reply with EXACTLY one word: PASS or FAIL. Nothing else.\n\nDisqualification criteria: ${criteria}`,
+      messages: [{ role: "user", content: `Respondent's answer to "${label || "this question"}": ${String(answer ?? "")}` }],
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!r.ok) throw new Error(`Anthropic error ${r.status}`);
+  const d = await r.json();
+  return String((d.content || []).find(b => b.type === "text")?.text || "").trim().toUpperCase().startsWith("PASS");
+}
+// A pass from /api/scheduling/screen is handed back as a signed token so the
+// booking itself doesn't re-ask the AI (a second, possibly different answer
+// would drop a visitor who was already sent to the thank-you page).
+const SCREEN_SECRET = process.env.SCREEN_TOKEN_SECRET || randomBytes(32).toString("hex");
+function screenAnswersHash(et, answers) {
+  const parts = (et.questions || []).filter(q => (q.logic || []).some(r => r.op === "ai_disqualify")).map(q => `${q.id}=${String((answers || {})[q.id] ?? "")}`);
+  return createHash("sha256").update(`${et.id}|${parts.join("|")}`).digest("hex");
+}
+function signScreen(et, answers) {
+  const exp = Date.now() + 2 * 3600e3;
+  return `${exp}.${createHmac("sha256", SCREEN_SECRET).update(`${exp}|${screenAnswersHash(et, answers)}`).digest("hex")}`;
+}
+function screenTokenValid(et, answers, token) {
+  const [exp, sig] = String(token || "").split(".");
+  if (!exp || !sig || Number(exp) < Date.now()) return false;
+  return sig === createHmac("sha256", SCREEN_SECRET).update(`${exp}|${screenAnswersHash(et, answers)}`).digest("hex");
+}
+// { pass, redirectUrl, hidden } -- hidden = a hide_submit rule matched (the
+// page never showed a Confirm button, so there's nowhere to send them).
+// AI checks run concurrently and fail OPEN (an outage blocks nobody), same
+// as the forms engine.
+async function screenBookingAnswers(et, answers, { skipAi = false } = {}) {
+  const ai = [];
+  for (const q of et.questions || []) {
+    const val = (answers || {})[q.id];
+    for (const rule of q.logic || []) {
+      if (rule.op === "ai_disqualify") {
+        if (!skipAi && rule.value && process.env.ANTHROPIC_API_KEY && String(val ?? "").trim()) {
+          ai.push(askClaudeScreen(rule.value, q.label, val).then(pass => (pass ? null : rule)).catch(e => { console.error("[scheduling] AI screen failed (letting through):", e.message); return null; }));
+        }
+        continue;
+      }
+      if (!evalQuestionRule(rule, val)) continue;
+      if (rule.action === "hide_submit") return { pass: false, hidden: true, redirectUrl: "" };
+      if (rule.action === "redirect") return { pass: false, hidden: false, redirectUrl: rule.redirectUrl || "" };
+    }
+  }
+  const failed = (await Promise.all(ai)).find(Boolean);
+  if (failed) return { pass: false, hidden: false, redirectUrl: failed.redirectUrl || "" };
+  return { pass: true };
+}
+// Flow tokens for this event type's own questions -- {{payload.<code>}} and
+// {{payload.<question text>}}, same dual keying as a form's answers.
+function questionPayload(et, answers) {
+  const out = {};
+  for (const q of et.questions || []) {
+    if (CORE_QUESTION_TYPES.includes(q.type)) continue;
+    const v = (answers || {})[q.id];
+    if (v === undefined || v === null || v === "") continue;
+    out[q.code || slugQuestion(q)] = v;
+    if (q.label) out[q.label] = v;
+  }
+  return out;
 }
 function slugQuestion(q) {
   const base = String(q.label || q.type || q.id).toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -1321,14 +1416,26 @@ export async function handleSchedulingRequest(req, res, url) {
     }
   }
 
+  if (p === "/api/scheduling/screen" && req.method === "POST") {
+    const { slug, answers } = await readJsonBody(req);
+    const et = getEventTypes().find(e => eventTypeHasSlug(e, slug) && e.active);
+    if (!et) return sendJson(res, 404, { error: "Event type not found" });
+    const r = await screenBookingAnswers(et, answers);
+    return sendJson(res, 200, r.pass ? { pass: true, token: signScreen(et, answers) } : { pass: false, redirectUrl: r.redirectUrl || "" });
+  }
+
   if (p === "/api/scheduling/bookings" && req.method === "POST") {
-    const { slug, startAt, timezone, answers, formAnswers, formAnswerLabels, vid } = await readJsonBody(req);
+    const { slug, startAt, timezone, answers, formAnswers, formAnswerLabels, vid, screenToken } = await readJsonBody(req);
     const eventTypes = getEventTypes();
     const et = eventTypes.find(e => eventTypeHasSlug(e, slug) && e.active);
     if (!et) return sendJson(res, 404, { error: "Event type not found" });
     if (!startAt) return sendJson(res, 400, { error: "startAt is required" });
     const questionError = validateQuestionAnswers(et.questions, answers);
     if (questionError) return sendJson(res, 400, { error: questionError });
+    if ((et.questions || []).some(q => (q.logic || []).length)) {
+      const screen = await screenBookingAnswers(et, answers, { skipAi: screenTokenValid(et, answers, screenToken) });
+      if (!screen.pass) return sendJson(res, 403, { error: "Not eligible to book", disqualified: true, redirectUrl: screen.redirectUrl || "" });
+    }
     const identity = extractBookingIdentity(et.questions, answers);
     const { name, email } = identity;
     // Made internationally dialable once, here (see phone_util.js) -- so the
@@ -1455,6 +1562,7 @@ export async function handleSchedulingRequest(req, res, url) {
       // of only the one combined Notes blob.
       payload: {
         ...(bookingFormAnswers || {}),
+        ...questionPayload(et, answers),
         "Event Type": et.name, "When": when, "Name": name, "Email": booking.email, "Phone": booking.phone, "Notes": notes || "",
         // "When" is rendered in the INVITEE's timezone. Timezone names it (e.g.
         // "Europe/London"); Calendar Time is the same moment on the staff

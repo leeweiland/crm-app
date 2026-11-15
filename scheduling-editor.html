@@ -692,14 +692,57 @@ function questionCardHtml(q, i) {
           </select>
         </div>
       ` : ''}
+      ${!AUTO_MAPPED_TYPES.includes(q.type) ? questionLogicHtml(q, i) : ''}
       <div style="text-align:right;margin-top:4px"><button class="q-card-del" data-q-del="${i}" title="${isOnlyEmail ? "An event type needs one Email question" : "Delete question"}" ${isOnlyEmail ? 'disabled' : ''}>&times; Delete</button></div>
     </div>
   `;
 }
 
+// Per-question logic (Lee, 2026-11-14) -- same rule shape as the form
+// builder's: { op, value, action, redirectUrl }. "Hide submit button" is the
+// calendar's version of a form's hide-Next (e.g. the career filter);
+// "AI disqualifies" screens the answer with AI on Confirm (behind a short
+// "reviewing your answers" screen) and sends a fail to the redirect URL.
+const Q_LOGIC_OPS = { equals: 'Is exactly', any_of: 'Is any of (comma list)', contains_any_of: 'Contains any of (comma list)', contains: 'Contains', ai_disqualify: 'AI disqualifies (criteria)' };
+const Q_LOGIC_ACTIONS = { hide_submit: 'Hide submit button', redirect: 'Redirect to URL' };
+function questionLogicHtml(q, i) {
+  const rules = q.logic || [];
+  return `
+    <div class="field q-logic">
+      <label class="pra-label" style="font-size:.7rem">Logic</label>
+      ${rules.map((r, j) => `
+        <div class="q-logic-rule" style="border:1px solid var(--pra-border);border-radius:8px;padding:8px;margin-bottom:6px">
+          <select class="pra-select" data-ql-op="${i}:${j}" style="margin-bottom:6px">${Object.entries(Q_LOGIC_OPS).map(([v, l]) => `<option value="${v}" ${r.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <textarea class="pra-input" data-ql-value="${i}:${j}" rows="${r.op === 'ai_disqualify' || r.op === 'contains_any_of' || r.op === 'any_of' ? 3 : 1}" placeholder="${r.op === 'ai_disqualify' ? 'Disqualify when the answer…' : 'Value'}" style="margin-bottom:6px">${escapeHtml(r.value || '')}</textarea>
+          ${r.op === 'ai_disqualify' ? '' : `<select class="pra-select" data-ql-action="${i}:${j}" style="margin-bottom:6px">${Object.entries(Q_LOGIC_ACTIONS).map(([v, l]) => `<option value="${v}" ${r.action === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`}
+          ${r.op === 'ai_disqualify' || r.action === 'redirect' ? `<input class="pra-input" data-ql-url="${i}:${j}" value="${escapeHtml(r.redirectUrl || '')}" placeholder="Redirect URL (e.g. https://www.youtube.com/@leeweiland)" style="margin-bottom:6px"/>` : ''}
+          <div style="text-align:right"><button class="q-card-del" data-ql-del="${i}:${j}">&times; Remove rule</button></div>
+        </div>`).join('')}
+      <button class="pra-btn pra-btn-ghost pra-btn-sm" data-ql-add="${i}" type="button">+ Add logic</button>
+    </div>`;
+}
+function wireQuestionLogic() {
+  const at = (key) => { const [i, j] = key.split(':').map(Number); return draft.questions[i].logic[j]; };
+  document.querySelectorAll('[data-ql-add]').forEach(el => el.onclick = () => {
+    const q = draft.questions[+el.dataset.qlAdd];
+    q.logic = [...(q.logic || []), { id: crypto.randomUUID(), op: 'contains_any_of', value: '', action: 'hide_submit', redirectUrl: '' }];
+    renderQuestions(); saveDebounced();
+  });
+  document.querySelectorAll('[data-ql-op]').forEach(el => el.onchange = () => {
+    const r = at(el.dataset.qlOp); r.op = el.value;
+    if (r.op === 'ai_disqualify') { r.action = 'redirect'; if (!r.redirectUrl) r.redirectUrl = 'https://www.youtube.com/@leeweiland'; }
+    renderQuestions(); saveDebounced();
+  });
+  document.querySelectorAll('[data-ql-value]').forEach(el => el.oninput = () => { at(el.dataset.qlValue).value = el.value; saveDebounced(); });
+  document.querySelectorAll('[data-ql-action]').forEach(el => el.onchange = () => { at(el.dataset.qlAction).action = el.value; renderQuestions(); saveDebounced(); });
+  document.querySelectorAll('[data-ql-url]').forEach(el => el.oninput = () => { at(el.dataset.qlUrl).redirectUrl = el.value.trim(); saveDebounced(); });
+  document.querySelectorAll('[data-ql-del]').forEach(el => el.onclick = () => { const [i, j] = el.dataset.qlDel.split(':').map(Number); draft.questions[i].logic.splice(j, 1); renderQuestions(); saveDebounced(); });
+}
+
 function renderQuestions() {
   document.getElementById('questionsList').innerHTML = draft.questions.map(questionCardHtml).join('');
   wireQuestions();
+  wireQuestionLogic();
 }
 
 // Every question edit also refreshes the two calendar-event previews below
