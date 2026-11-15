@@ -110,6 +110,18 @@
   .time-slot { padding: 10px 14px; border: 1px solid var(--bk-accent); color: var(--bk-accent); border-radius: 8px; font-size: .86rem; cursor: pointer; text-align: center; background: none; font-family: inherit; }
   .time-slot:hover { background: var(--bk-accent); color: #fff; }
   .time-placeholder { color: var(--bk-dim); font-size: .84rem; text-align: center; padding: 40px 8px; }
+  /* Questions preview (click a time) -- same look as book.html's form step. */
+  .pvf-field { margin-bottom: 16px; }
+  .pvf-label { font-size: .78rem; font-weight: 600; margin-bottom: 5px; display: block; }
+  .pvf-input, .pvf-textarea { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--bk-border); border-radius: 8px; font-size: .88rem; font-family: inherit; color: var(--bk-text); background: var(--bk-bg); }
+  .pvf-input:focus, .pvf-textarea:focus { outline: none; border-color: var(--bk-accent); }
+  .pvf-radio-group { display: flex; flex-direction: column; gap: 8px; }
+  .pvf-radio { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--bk-border); border-radius: 8px; cursor: pointer; font-size: .88rem; line-height: 1.3; }
+  .pvf-radio input { accent-color: var(--bk-accent); width: 18px; height: 18px; margin: 0; flex-shrink: 0; }
+  .pvf-radio:has(input:checked) { border-color: var(--bk-accent); background: color-mix(in srgb, var(--bk-accent) 8%, transparent); }
+  .pvf-btn { background: var(--bk-accent); color: #fff; border: none; border-radius: 8px; padding: 11px 18px; font-size: .88rem; font-weight: 700; font-family: inherit; width: 100%; cursor: default; }
+  .pvf-back { font-size: .82rem; color: var(--bk-dim); margin-bottom: 16px; display: inline-block; cursor: pointer; }
+  .pvf-note { font-size: .72rem; color: var(--bk-dim); margin-top: 10px; text-align: center; }
 
   /* ── Mobile-only step elements, same pattern as the real book.html --
        hidden on desktop where info/calendar/times fit side by side. ── */
@@ -432,7 +444,7 @@ function monthLabel(d) { return d.toLocaleDateString('en-US', { month: 'long', y
 // behaves exactly like it will for a real visitor (minus actually being
 // able to submit a booking -- that's what "View Live Page" is for). ──
 const previewTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-let rawSlotIsos = [], slotsByLocalDate = {}, selectedDate = null, calViewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let rawSlotIsos = [], slotsByLocalDate = {}, selectedDate = null, previewSlot = null, calViewMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
 async function loadPreviewSlots() {
   if (!draft?.slug) { rawSlotIsos = []; slotsByLocalDate = {}; return; }
@@ -464,9 +476,63 @@ function snapToFirstAvailableMonth() {
   if (!inViewMonth) { const first = new Date(dates[0] + 'T12:00:00'); calViewMonth = new Date(first.getFullYear(), first.getMonth(), 1); }
 }
 
+// Clicking a time in the preview shows the booking form step with this
+// event type's questions, same as book.html (Lee, 2026-11-14). Typed
+// answers stay in pvAnswers so live question edits don't wipe them; local
+// logic (hide submit) is applied, AI screening is not run in the preview.
+let pvAnswers = {};
+function pvRuleMatches(rule, value) {
+  const lc = x => String(x ?? '').toLowerCase();
+  const target = lc(rule.value), scalar = lc(value);
+  if (rule.op === 'equals') return scalar.trim() === target.trim();
+  if (rule.op === 'contains') return scalar.includes(target);
+  const c = target.split(',').map(x => x.trim()).filter(Boolean);
+  if (rule.op === 'any_of') return c.includes(scalar.trim());
+  if (rule.op === 'contains_any_of') return c.some(x => scalar.includes(x));
+  return false;
+}
+function pvUpdateSubmit() {
+  const btn = document.getElementById('pvfSubmit');
+  if (!btn) return;
+  const hidden = (draft.questions || []).some(q => (q.logic || []).some(r => r.op !== 'ai_disqualify' && r.action === 'hide_submit' && pvRuleMatches(r, pvAnswers[q.id])));
+  btn.style.display = hidden ? 'none' : '';
+  const note = document.getElementById('pvfHiddenNote');
+  if (note) note.style.display = hidden ? '' : 'none';
+}
+function renderFormPreview(grid) {
+  grid.classList.remove('with-times');
+  const when = new Date(previewSlot).toLocaleString('en-US', { timeZone: previewTz, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const esc = v => escapeHtml(v).replace(/"/g, '&quot;');
+  const field = (q) => {
+    const label = `<label class="pvf-label">${escapeHtml(q.label || QUESTION_TYPE_LABELS[q.type] || 'Question')}${q.required || q.type === 'email' ? '' : ' (optional)'}</label>`;
+    const v = pvAnswers[q.id] || '';
+    if (q.type === 'long_text') return `<div class="pvf-field">${label}<textarea class="pvf-textarea" data-pvq="${q.id}" rows="2">${escapeHtml(v)}</textarea></div>`;
+    if (q.type === 'dropdown') return `<div class="pvf-field">${label}<select class="pvf-input" data-pvq="${q.id}"><option value="">Select…</option>${(q.options || []).map(o => `<option value="${esc(o)}" ${o === v ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}</select></div>`;
+    if (q.type === 'multiple_choice') return `<div class="pvf-field">${label}<div class="pvf-radio-group">${(q.options || []).map(o => `<label class="pvf-radio"><input type="radio" name="pv_${q.id}" data-pvq="${q.id}" value="${esc(o)}" ${o === v ? 'checked' : ''}/><span>${escapeHtml(o)}</span></label>`).join('')}</div></div>`;
+    return `<div class="pvf-field">${label}<input class="pvf-input" type="${q.type === 'email' ? 'email' : 'text'}" data-pvq="${q.id}" value="${esc(v)}"/></div>`;
+  };
+  const hasAi = (draft.questions || []).some(q => (q.logic || []).some(r => r.op === 'ai_disqualify'));
+  grid.insertAdjacentHTML('beforeend', `
+    <div class="bk-body">
+      <a class="pvf-back" id="pvfBack">&larr; Back</a>
+      <div class="bk-meta-row" style="margin-bottom:14px">🕐 ${when}</div>
+      ${(draft.questions || []).map(field).join('')}
+      <button class="pvf-btn" id="pvfSubmit" type="button" title="Preview only -- nothing is booked">Confirm Booking</button>
+      <div class="pvf-note" id="pvfHiddenNote" style="display:none">Submit button hidden by this question's logic.</div>
+      <div class="pvf-note">Preview only -- nothing is booked.${hasAi ? ' The AI check runs on the live page, not here.' : ''}</div>
+    </div>`);
+  document.getElementById('pvfBack').onclick = () => { previewSlot = null; renderCalendar(); };
+  grid.querySelectorAll('[data-pvq]').forEach(el => {
+    const save = () => { if (el.type === 'radio' && !el.checked) return; pvAnswers[el.dataset.pvq] = el.value; pvUpdateSubmit(); };
+    el.addEventListener('input', save); el.addEventListener('change', save);
+  });
+  pvUpdateSubmit();
+}
+
 function renderCalendar() {
   const grid = document.getElementById('pvGrid');
   grid.querySelectorAll('.bk-body, .bk-times-col').forEach(el => el.remove());
+  if (previewSlot) { renderFormPreview(grid); return; }
   grid.classList.toggle('with-times', !!selectedDate);
 
   const dates = Object.keys(slotsByLocalDate).sort();
@@ -490,7 +556,7 @@ function renderCalendar() {
   const canNext = new Date(year, month, 1) < new Date(maxMonth.getFullYear(), maxMonth.getMonth(), 1);
   const times = (slotsByLocalDate[selectedDate] || []).map(iso => {
     const label = new Date(iso).toLocaleTimeString('en-US', { timeZone: previewTz, hour: 'numeric', minute: '2-digit' });
-    return `<div class="time-slot">${label}</div>`;
+    return `<div class="time-slot" data-pv-slot="${iso}">${label}</div>`;
   }).join('');
 
   const bodyHtml = `
@@ -525,6 +591,7 @@ function renderCalendar() {
   grid.insertAdjacentHTML('beforeend', bodyHtml);
 
   grid.querySelectorAll('[data-date]').forEach(el => el.onclick = () => { selectedDate = el.dataset.date; renderCalendar(); });
+  grid.querySelectorAll('[data-pv-slot]').forEach(el => el.onclick = () => { previewSlot = el.dataset.pvSlot; renderCalendar(); });
   const prevBtn = document.getElementById('pvPrevMonth'), nextBtn = document.getElementById('pvNextMonth');
   if (prevBtn) prevBtn.onclick = () => { calViewMonth = new Date(year, month - 1, 1); renderCalendar(); };
   if (nextBtn) nextBtn.onclick = () => { calViewMonth = new Date(year, month + 1, 1); renderCalendar(); };
@@ -743,6 +810,7 @@ function renderQuestions() {
   document.getElementById('questionsList').innerHTML = draft.questions.map(questionCardHtml).join('');
   wireQuestions();
   wireQuestionLogic();
+  if (previewSlot) renderCalendar();
 }
 
 // Every question edit also refreshes the two calendar-event previews below
@@ -751,9 +819,9 @@ function renderQuestions() {
 // previewed there always matches the form as currently edited, not just as
 // last saved.
 function wireQuestions() {
-  document.querySelectorAll('[data-q-label]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qLabel].label = el.value; saveDebounced(); refreshCalendarPreviewDebounced(); });
+  document.querySelectorAll('[data-q-label]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qLabel].label = el.value; saveDebounced(); if (previewSlot) renderCalendar(); refreshCalendarPreviewDebounced(); });
   document.querySelectorAll('[data-q-type]').forEach(el => el.onchange = () => { draft.questions[+el.dataset.qType].type = el.value; renderQuestions(); saveDebounced(); refreshCalendarPreviewDebounced(); });
-  document.querySelectorAll('[data-q-options]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qOptions].options = el.value.split('\n').map(s => s.trim()).filter(Boolean); saveDebounced(); refreshCalendarPreviewDebounced(); });
+  document.querySelectorAll('[data-q-options]').forEach(el => el.oninput = () => { draft.questions[+el.dataset.qOptions].options = el.value.split('\n').map(s => s.trim()).filter(Boolean); saveDebounced(); refreshCalendarPreviewDebounced(); if (previewSlot) renderCalendar(); });
   document.querySelectorAll('[data-q-required]').forEach(el => el.onclick = () => {
     const idx = +el.dataset.qRequired;
     if (draft.questions[idx].type === 'email') return; // always required, not toggleable
