@@ -993,13 +993,13 @@ function buildStaffCalendarDescription(booking) {
   if (booking.contactId) links.push(`Open in CRM: ${getPublicBaseUrl()}/inbox.html?contact=${encodeURIComponent(booking.contactId)}`);
   return `${links.join("\n")}\n\n${base}`;
 }
-// The lead's own invite: event name, where, and their own manage link --
-// none of the intake answers or staff links.
+// The lead's own invite: event name and where -- no intake answers, staff
+// links, or cancel/reschedule link (Lee, 2026-11-14: leads don't get a
+// one-click cancel on the calendar invite).
 async function syncGuestInvite(booking, et, guestCalendarId, timezone) {
-  const manageUrl = `${getPublicBaseUrl()}/book/${booking.eventTypeSlug}/manage?booking=${booking.id}&token=${booking.cancelToken}`;
   const brand = (et.branding && et.branding.brandName) || DEFAULT_BRANDING.brandName;
   const where = locationText(et.location);
-  const description = [`Your ${et.name} with ${brand}.`, where ? `Where: ${where}` : "", `Need to reschedule or cancel? ${manageUrl}`].filter(Boolean).join("\n\n");
+  const description = [`Your ${et.name} with ${brand}.`, where ? `Where: ${where}` : ""].filter(Boolean).join("\n\n");
   let lastError = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
