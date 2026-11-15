@@ -443,9 +443,9 @@ const DEFAULT_CANCELLATION = { enabled: true, email: { subject: "", previewText:
 // placeholder/options/mapToCustomFieldId) and the same AUTO_MAPPED_TYPES
 // split form-builder.html uses: the four core types write straight to the
 // matching contact.first/last/email/phone property, never to customFields.
-const QUESTION_TYPES = ["first_name", "last_name", "email", "phone", "short_text", "long_text", "dropdown"];
+const QUESTION_TYPES = ["first_name", "last_name", "email", "phone", "short_text", "long_text", "dropdown", "multiple_choice"];
 const CORE_QUESTION_TYPES = ["first_name", "last_name", "email", "phone"];
-const QUESTION_TYPE_LABELS = { first_name: "First name", last_name: "Last name", email: "Email", phone: "Phone", short_text: "Short answer", long_text: "Long answer", dropdown: "Dropdown" };
+const QUESTION_TYPE_LABELS = { first_name: "First name", last_name: "Last name", email: "Email", phone: "Phone", short_text: "Short answer", long_text: "Long answer", dropdown: "Dropdown", multiple_choice: "Multiple choice" };
 function newQuestion(type, overrides) {
   return { id: randomUUID(), type, label: QUESTION_TYPE_LABELS[type] || "", required: false, placeholder: "", options: [], mapToCustomFieldId: "", ...(overrides || {}) };
 }
@@ -1753,7 +1753,7 @@ export async function handleSchedulingRequest(req, res, url) {
     // regardless of what was actually being asked.
     for (const q of et.questions || []) {
       if (CORE_QUESTION_TYPES.includes(q.type)) continue;
-      sampleAnswers[q.id] = q.type === "dropdown" && (q.options || []).length ? q.options[0]
+      sampleAnswers[q.id] = (q.type === "dropdown" || q.type === "multiple_choice") && (q.options || []).length ? q.options[0]
         : q.placeholder ? q.placeholder
         : q.type === "long_text" ? "This is a sample long-answer response, to show roughly how much room a real one takes up."
         : "Sample answer";

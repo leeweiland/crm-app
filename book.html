@@ -55,6 +55,10 @@ try { if (window.self !== window.top) document.documentElement.classList.add('bk
   .time-placeholder { color: var(--bk-dim); font-size: .84rem; text-align: center; padding: 40px 8px; }
   .bk-field { margin-bottom: 16px; }
   .bk-label { font-size: .78rem; font-weight: 600; margin-bottom: 5px; display: block; }
+  .bk-radio-group { display: flex; flex-direction: column; gap: 8px; }
+  .bk-radio { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--bk-border); border-radius: 8px; cursor: pointer; font-size: .88rem; line-height: 1.3; }
+  .bk-radio input { accent-color: var(--bk-accent); width: 18px; height: 18px; margin: 0; flex-shrink: 0; cursor: pointer; }
+  .bk-radio:has(input:checked) { border-color: var(--bk-accent); background: color-mix(in srgb, var(--bk-accent) 8%, transparent); }
   .bk-input, .bk-textarea { width: 100%; padding: 9px 12px; border: 1px solid var(--bk-border); border-radius: 8px; font-size: .88rem; font-family: inherit; color: var(--bk-text); background: var(--bk-bg); }
   .bk-input:focus, .bk-textarea:focus { outline: none; border-color: var(--bk-accent); }
   .bk-screening { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px; padding: 24px; text-align: center; background: color-mix(in srgb, var(--bk-bg) 94%, transparent); color: var(--bk-text); font-family: var(--bk-font-secondary); }
@@ -395,7 +399,7 @@ function renderPicker() {
 // one, all configured from the Design panel's Questions section. Whichever
 // ones the form step already collected (formEmbed handoff) get hidden and
 // silently prefilled here instead of asked a second time.
-const QUESTION_DEFAULT_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Question', long_text: 'Question', dropdown: 'Question' };
+const QUESTION_DEFAULT_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Question', long_text: 'Question', dropdown: 'Question', multiple_choice: 'Question' };
 function questionPrefill(q) {
   if (q.type === 'first_name' && prefillFirst) return prefillFirst;
   if (q.type === 'last_name' && prefillLast) return prefillLast;
@@ -412,6 +416,13 @@ function questionFieldHtml(q) {
   const style = questionHidden(q) ? ' style="display:none"' : '';
   const prefill = escapeHtml(questionPrefill(q));
   if (q.type === 'long_text') return `<div class="bk-field"${style}>${label}<textarea class="bk-textarea" data-q="${q.id}" rows="2" placeholder="${escapeHtml(q.placeholder || '')}">${prefill}</textarea></div>`;
+  // Radio buttons (Lee, 2026-11-14): the picked option is mirrored into a
+  // hidden [data-q] input so every reader of [data-q] (answers, logic,
+  // required check) works the same as for a dropdown.
+  if (q.type === 'multiple_choice') {
+    const radios = (q.options || []).map(o => `<label class="bk-radio"><input type="radio" name="q_${q.id}" value="${escapeHtml(o).replace(/"/g, '&quot;')}" onchange="const h=document.querySelector('[data-q=&quot;${q.id}&quot;]');h.value=this.value;h.dispatchEvent(new Event('change',{bubbles:true}))"/><span>${escapeHtml(o)}</span></label>`).join('');
+    return `<div class="bk-field"${style}>${label}<div class="bk-radio-group" role="radiogroup">${radios}</div><input type="hidden" data-q="${q.id}" value=""/></div>`;
+  }
   if (q.type === 'dropdown') {
     const opts = (q.options || []).map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
     return `<div class="bk-field"${style}>${label}<select class="bk-input" data-q="${q.id}"><option value="">Select…</option>${opts}</select></div>`;

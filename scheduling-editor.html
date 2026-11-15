@@ -666,7 +666,7 @@ function setColorField(colorId, hexId, value) {
 // contact property (short_text/long_text/dropdown), same AUTO_MAPPED_TYPES
 // split form-builder.html uses.
 let customFieldsState = [];
-const QUESTION_TYPE_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown' };
+const QUESTION_TYPE_LABELS = { first_name: 'First name', last_name: 'Last name', email: 'Email', phone: 'Phone', short_text: 'Short answer', long_text: 'Long answer', dropdown: 'Dropdown', multiple_choice: 'Multiple choice (radio buttons)' };
 const AUTO_MAPPED_TYPES = ['first_name', 'last_name', 'email', 'phone'];
 
 function questionCardHtml(q, i) {
@@ -677,7 +677,7 @@ function questionCardHtml(q, i) {
       <div class="field"><select class="pra-select" data-q-type="${i}" ${isOnlyEmail ? 'disabled title="An event type needs one Email question"' : ''}>
         ${Object.entries(QUESTION_TYPE_LABELS).map(([v, l]) => `<option value="${v}" ${q.type === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></div>
-      ${q.type === 'dropdown' ? `<div class="field"><textarea class="pra-input" data-q-options="${i}" rows="3" placeholder="One option per line">${escapeHtml((q.options || []).join('\n'))}</textarea></div>` : ''}
+      ${q.type === 'dropdown' || q.type === 'multiple_choice' ? `<div class="field"><textarea class="pra-input" data-q-options="${i}" rows="3" placeholder="One option per line">${escapeHtml((q.options || []).join('\n'))}</textarea></div>` : ''}
       <div class="q-card-row">
         <div class="toggle-switch ${q.required || q.type === 'email' ? 'on' : ''}" data-q-required="${i}" ${q.type === 'email' ? 'title="Email is always required"' : ''}></div>
         <label>Required</label>
