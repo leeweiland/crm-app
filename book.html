@@ -550,7 +550,12 @@ function showScreening(open) {
   if (!el) {
     el = document.createElement('div');
     el.id = 'bkScreening'; el.className = 'bk-screening';
-    el.innerHTML = '<div class="spin"></div><div class="t1">Reviewing your answers…</div><div class="t2">Please don\'t close this page. We\'re preparing your video and welcome message on the next page.</div>';
+    // Text is set per event type in the calendar editor (Questions > "Checking
+    // answers" screen); these are the defaults when left blank.
+    const sc = eventType.screening || {};
+    el.innerHTML = '<div class="spin"></div><div class="t1"></div><div class="t2"></div>';
+    el.querySelector('.t1').textContent = sc.title || 'Reviewing your answers…';
+    el.querySelector('.t2').textContent = sc.message || "Please don't close this page. We're preparing your video and welcome message on the next page.";
     document.body.appendChild(el);
   }
   el.classList.toggle('open', !!open);

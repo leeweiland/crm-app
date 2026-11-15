@@ -496,7 +496,7 @@ function publicEventType(et) {
   // screen exists, not what it screens for.
   const questions = (et.questions || []).map(q => !(q.logic || []).some(r => r.op === "ai_disqualify") ? q
     : { ...q, logic: q.logic.map(r => r.op === "ai_disqualify" ? { ...r, value: undefined } : r) });
-  return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) }, questions };
+  return { id: et.id, slug: et.slug, name: et.name, description: et.description, durationMinutes: et.durationMinutes, location: et.location, branding: { ...DEFAULT_BRANDING, ...(et.branding || {}) }, questions, screening: et.screening || null };
 }
 
 // ── Question logic (Lee, 2026-11-14) -- same rule shape and op set as form
@@ -1822,7 +1822,7 @@ export async function handleSchedulingRequest(req, res, url) {
     if (req.method === "PATCH") {
       const body = await readJsonBody(req);
       const nameBefore = et.name;
-      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability", "linkedFormId"]) if (k in body) et[k] = body[k];
+      for (const k of ["name", "description", "durationMinutes", "location", "active", "statusId", "calendarId", "questions", "screening", "notifyEmails", "confirmation", "cancellation", "reminders", "includeFormAnswersInCalendar", "calendarDescriptionTemplate", "calendarTitleTemplate", "availability", "linkedFormId"]) if (k in body) et[k] = body[k];
       if ("branding" in body) et.branding = { ...DEFAULT_BRANDING, ...(et.branding || {}), ...(body.branding || {}) };
       const slugBefore = et.slug;
       // Only an actual rename re-derives the link -- a plain save of an

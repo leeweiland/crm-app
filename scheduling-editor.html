@@ -272,6 +272,15 @@
             <div id="questionsList"></div>
             <button class="pra-btn pra-btn-ghost pra-btn-sm" id="addQuestionBtn">+ Add Question</button>
           </div>
+
+          <!-- Shown while an "AI disqualifies" answer is being checked after
+               Confirm is clicked (Lee, 2026-11-14). Blank = default text. -->
+          <div class="fb-side-section">
+            <div class="fb-side-title">Checking answers screen</div>
+            <div class="ed-hint" style="margin-bottom:8px">Shows over the form while the AI checks an answer after Confirm is clicked (usually about a second). Leave blank for the default.</div>
+            <div class="field"><label class="pra-label">Headline</label><input class="pra-input" id="fScreenTitle" placeholder="Reviewing your answers…"/></div>
+            <div class="field"><label class="pra-label">Message</label><textarea class="pra-input" id="fScreenMsg" rows="3" placeholder="Please don't close this page. We're preparing your video and welcome message on the next page."></textarea></div>
+          </div>
         </div>
 
         <div class="ed-resizer" id="edResizer" title="Drag to resize"></div>
@@ -845,6 +854,7 @@ function renderQuestions() {
   document.getElementById('questionsList').innerHTML = draft.questions.map(questionCardHtml).join('');
   wireQuestions();
   wireQuestionLogic();
+  fillScreeningFields();
   if (previewSlot) renderCalendar();
 }
 
@@ -881,6 +891,16 @@ function wireQuestions() {
     draft.questions[idx].mapToCustomFieldId = el.value;
     saveDebounced();
   });
+}
+// "Checking answers" screen text -- filled once the draft loads (see
+// fillScreeningFields, called from renderQuestions on every load/render).
+function fillScreeningFields() {
+  const t = document.getElementById('fScreenTitle'), m = document.getElementById('fScreenMsg');
+  if (!t || !m || t.dataset.filled) return;
+  t.value = draft.screening?.title || ''; m.value = draft.screening?.message || '';
+  t.dataset.filled = '1';
+  const save = () => { draft.screening = { title: t.value.trim(), message: m.value.trim() }; saveDebounced(); };
+  t.oninput = save; m.oninput = save;
 }
 document.getElementById('addQuestionBtn').onclick = () => {
   draft.questions.push({ id: crypto.randomUUID(), label: '', type: 'short_text', required: false, placeholder: '', options: [], mapToCustomFieldId: '' });
@@ -1213,7 +1233,7 @@ async function saveNow() {
     body: JSON.stringify({
       name: draft.name, description: draft.description, durationMinutes: draft.durationMinutes,
       location: draft.location, statusId: draft.statusId,
-      calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions,
+      calendarId: draft.calendarId, branding: draft.branding, questions: draft.questions, screening: draft.screening || null,
       notifyEmails: draft.notifyEmails, linkedFormId: draft.linkedFormId || null, confirmation: draft.confirmation, cancellation: draft.cancellation, reminders: draft.reminders, availability: draft.availability,
       includeFormAnswersInCalendar: draft.includeFormAnswersInCalendar, calendarDescriptionTemplate: draft.calendarDescriptionTemplate, calendarTitleTemplate: draft.calendarTitleTemplate,
     }),
